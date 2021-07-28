@@ -161,3 +161,4 @@ title = {OpenCLIP},
 year = {2021}
 }
 ```
+[![DOI](https://zenodo.org/badge/390536799.svg)](https://zenodo.org/badge/latestdoi/390536799)
