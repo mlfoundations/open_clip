@@ -24,5 +24,6 @@ authors:
   - family-names: Schmidt
     given-names: Ludwig
 title: Open Clip
-version: 0.0.1
+version: v0.1
+doi: 10.5281/zenodo.5143773
 date-released: 2021-07-28
