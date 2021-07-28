@@ -2,9 +2,14 @@
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). 
 
-The goal of this repository is to match the accuracy of the original CLIP models when trained on the same dataset. For example, our implementation reaches 22.2% top-1 ImageNet when training a ResNet 50x4 on the 3 million images in the Conceptual Captions dataset, and 32.7% top-1 ImageNet accuracy when training a RN50 on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md). OpenAI's CLIP model reaches 31.3% on the same subset of YFCC.
+The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
+Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-Note that `src/clip` is a copy of OpenAI's official [repo](https://github.com/openai/CLIP) with minimal changes.
+As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
+
+This codebase is work in progress, and we invite all to contribute in making it more acessible and useful. In the future, we plan to add support for TPU training and release larger models. We hope this codebase facilitates and promotes further research in contrastive image-text learning.
+
+Note that `src/clip` is a copy of OpenAI's official [repository](https://github.com/openai/CLIP) with minimal changes.
 
 ## Data
 
@@ -13,7 +18,7 @@ Note that `src/clip` is a copy of OpenAI's official [repo](https://github.com/op
 
 OpenCLIP reads a CSV file with two columns: a path to an image, and a text caption. The names of the columns are passed as an argument to `main.py`.
 
-The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the following script from our repository:
+The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the script from our repository:
 
 ```
 python3 src/data/gather_cc.py path/to/Train_GCC-training.tsv path/to/Validation_GCC-1.1.0-Validation.tsv
@@ -24,7 +29,7 @@ Our training set contains 2.89M images, and our validation set contains 13K imag
 
 ### YFCC and other datasets
 
-In addition to specifying the training data via CSV files as mentioned above, our codebase also supports [webdataset](https://github.com/webdataset/webdataset), which is recommended for larger scale datasets. The expected format is a series of `.tar` files. Each of these `.tar` files should contain two files for each training example, one for the image and one for the corresponding text. Both files should have the same name but different extensions. For instance, `shard_001.tar` could contain files such as `abc.jpg` and `abc.txt`. You can learn more about `webdataset` at [https://github.com/webdataset/webdataset](https://github.com/webdataset/webdataset). We use `.tar` files with 1000 data points each, which we create using [tarp](https://github.com/webdataset/tarp).
+In addition to specifying the training data via CSV files as mentioned above, our codebase also supports [webdataset](https://github.com/webdataset/webdataset), which is recommended for larger scale datasets. The expected format is a series of `.tar` files. Each of these `.tar` files should contain two files for each training example, one for the image and one for the corresponding text. Both files should have the same name but different extensions. For instance, `shard_001.tar` could contain files such as `abc.jpg` and `abc.txt`. You can learn more about `webdataset` at [https://github.com/webdataset/webdataset](https://github.com/webdataset/webdataset). We use `.tar` files with 1,000 data points each, which we create using [tarp](https://github.com/webdataset/tarp).
 
 You can download the YFCC dataset from [Multimedia Commons](http://mmcommons.org/).
 Similar to OpenAI, we used a subset of YFCC to reach the aforementioned accuracy numbers.
@@ -68,8 +73,8 @@ nohup python -u src/training/main.py \
     --workers=8
 ```
 
-Note: `imagenet-val` is the path to the *val* set of ImageNet for zeroshot evaluation, not the train set!
-You can remove this argument if you do not want to perform zeroshot on imagenet throughout training. Note that the `val` folder should contain subfolders, if it doesn't please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
+Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
+You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
 This command should produce the following training curve:
 
@@ -99,6 +104,10 @@ python src/training/main.py \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
 
+## Trained models
+
+You can find our ResNet-50 trained on YFCC-15M [here](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing). 
+
 ## Scaling trends
 
 The plot below shows how zero-shot performance of CLIP models varies as we scale the number of samples used for training. Zero-shot performance increases steadily for both ImageNet and [ImageNetV2](https://arxiv.org/abs/1902.10811), and is far from saturated at ~15M samples.
@@ -109,22 +118,24 @@ The plot below shows how zero-shot performance of CLIP models varies as we scale
 
 **TL;DR:** CLIP models have high effective robustness, even at small scales.
 
-CLIP models are particularly intriguing because they are more robust to natural distribution shifts.
+CLIP models are particularly intriguing because they are more robust to natural distribution shifts (see Section 3.3 in the [CLIP paper](https://arxiv.org/abs/2103.00020)).
 This phenomena is illustrated by the figure below, with ImageNet accuracy on the x-axis
-and [ImageNetV2](https://arxiv.org/abs/1902.10811) (a reproduction of the ImageNet) accuracy on the y-axis.
-Standard training denotes training on the ImageNet train set while the CLIP zero-shot models
-are shown with stars.
+and [ImageNetV2](https://arxiv.org/abs/1902.10811) (a reproduction of the ImageNet validation set with distribution shift) accuracy on the y-axis.
+Standard training denotes training on the ImageNet train set and the CLIP zero-shot models
+are shown as stars.
 
 ![CLIP scatter plot](/docs/effective_robustness.png)
 
-As observed by [Taori et al., 2020](https://arxiv.org/abs/2007.00644), in-distribution
-and out-of-distribution accuracy follow a predictable linear trend. Effective robustness
-measures movement above this red line. Even though the models trained with
-this codebase are much lower accuracy than those trained by OpenAI, they lie on the same
-trend of improved effective robustness (purple line). Therefore, we can study what makes
-CLIP robust without needing industry compute.
+As observed by [Taori et al., 2020](https://arxiv.org/abs/2007.00644) and [Miller et al., 2021](https://arxiv.org/abs/2107.04649), the in-distribution
+and out-of-distribution accuracies of models trained on ImageNet follow a predictable linear trend (the red line in the above plot). *Effective robustness*
+quantifies robustness as accuracy beyond this baseline, i.e., how far a model lies above the red line. Ideally a model would not suffer from distribution shift and fall on the y = x line ([trained human labelers are within a percentage point of the y = x line](http://proceedings.mlr.press/v119/shankar20c.html)).
 
-For more more information on effective robustness please see:
+Even though the CLIP models trained with
+this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
+trend of improved effective robustness (the purple line). Therefore, we can study what makes
+CLIP robust without requiring industrial-scale compute.
+
+For more more information on effective robustness, please see:
 
 - [Recht et al., 2019](https://arxiv.org/abs/1902.10811).
 - [Taori et al., 2020](https://arxiv.org/abs/2007.00644).
@@ -132,8 +143,20 @@ For more more information on effective robustness please see:
 
 ## The Team
 
+We are a group of researchers at UW, Google, Stanford, Amazon, Columbia, and Berkeley.
 
-[Gabriel Ilharco*](http://gabrielilharco.com/), [Mitchell Wortsman*](https://mitchellnw.github.io/), [Nicholas Carlini](https://nicholas.carlini.com/), [Rohan Taori](https://www.rohantaori.com/), [Achal Dave](http://www.achaldave.com/), [Vaishaal Shankar](http://vaishaal.com/), [
-Hongseok Namkoong](https://hsnamkoong.github.io/), [John Miller](https://people.eecs.berkeley.edu/~miller_john/), [Hannaneh Hajishirzi](https://homes.cs.washington.edu/~hannaneh/), [Ali Farhadi](https://homes.cs.washington.edu/~ali/), [Ludwig Schmidt](https://people.csail.mit.edu/ludwigs/)
+[Gabriel Ilharco*](http://gabrielilharco.com/), [Mitchell Wortsman*](https://mitchellnw.github.io/), [Nicholas Carlini](https://nicholas.carlini.com/), [Rohan Taori](https://www.rohantaori.com/), [Achal Dave](http://www.achaldave.com/), [Vaishaal Shankar](http://vaishaal.com/), [John Miller](https://people.eecs.berkeley.edu/~miller_john/), [Hongseok Namkoong](https://hsnamkoong.github.io/), [Hannaneh Hajishirzi](https://homes.cs.washington.edu/~hannaneh/), [Ali Farhadi](https://homes.cs.washington.edu/~ali/), [Ludwig Schmidt](https://people.csail.mit.edu/ludwigs/)
 
-Special thanks to Jong Wook Kim and Alec Radford!
+Special thanks to [Jong Wook Kim](https://jongwook.kim/) and [Alec Radford](https://github.com/Newmu) for help with reproducing CLIP!
+
+## Citing
+
+If you found this repository useful, please consider citing:
+```
+@misc{Ilharco_Open_Clip_2021,
+author = {Ilharco, Gabriel and Wortsman, Mitchell and Carlini, Nicholas and Taori, Rohan and Dave, Achal and Shankar, Vaishaal and Namkoong, Hongseok and Miller, John and Hajishirzi, Hannaneh and Farhadi, Ali and Schmidt, Ludwig},
+month = {7},
+title = {Open Clip},
+year = {2021}
+}
+```
