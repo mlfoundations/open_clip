@@ -153,12 +153,26 @@ Special thanks to [Jong Wook Kim](https://jongwook.kim/) and [Alec Radford](http
 
 If you found this repository useful, please consider citing:
 ```
-@misc{Ilharco_OpenCLIP_2021,
-author = {Ilharco, Gabriel and Wortsman, Mitchell and Carlini, Nicholas and Taori, Rohan and Dave, Achal and Shankar, Vaishaal and Namkoong, Hongseok and Miller, John and Hajishirzi, Hannaneh and Farhadi, Ali and Schmidt, Ludwig},
-doi = {10.5281/zenodo.5143773},
-month = {7},
-title = {OpenCLIP},
-year = {2021}
+@software{ilharco_gabriel_2021_5143773,
+  author       = {Ilharco, Gabriel and
+                  Wortsman, Mitchell and
+                  Carlini, Nicholas and
+                  Taori, Rohan and
+                  Dave, Achal and
+                  Shankar, Vaishaal and
+                  Namkoong, Hongseok and
+                  Miller, John and
+                  Hajishirzi, Hannaneh and
+                  Farhadi, Ali and
+                  Schmidt, Ludwig},
+  title        = {OpenCLIP},
+  month        = jul,
+  year         = 2021,
+  note         = {If you use this software, please cite it as below.},
+  publisher    = {Zenodo},
+  version      = {0.1},
+  doi          = {10.5281/zenodo.5143773},
+  url          = {https://doi.org/10.5281/zenodo.5143773}
 }
 ```
 [![DOI](https://zenodo.org/badge/390536799.svg)](https://zenodo.org/badge/latestdoi/390536799)
