@@ -83,7 +83,7 @@ When run on a machine with 8 GPUs the command should produce the following train
 
 More detailed curves for Conceptual Captions are given at [/docs/clip_conceptual_captions.md](/docs/clip_conceptual_captions.md).
 
-When training a RN50 on YFCC the exact same hyperparameters as above are used, except we change `lr` to `5e-4`.
+When training a RN50 on YFCC the same hyperparameters as above are used, with the exception of `lr=5e-4` and `epochs=32`.
 
 Note that to use another model, like `ViT-B/32` or `RN50x4`, use `--model RN50x4`.
 
