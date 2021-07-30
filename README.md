@@ -76,11 +76,15 @@ nohup python -u src/training/main.py \
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
-This command should produce the following training curve:
+When run on 8 GPUs the command should produce the following training curve for Conceptual Captions:
 
 ![CLIP zero shot training curve](/docs/clip_zeroshot.png)
 
-More detailed curves are given in [/docs/clip_conceptual_captions.md](/docs/clip_conceptual_captions.md)
+More detailed curves for Conceptual Captions are given at [/docs/clip_conceptual_captions.md](/docs/clip_conceptual_captions.md).
+
+When training a RN50 on YFCC the exact same hyperparameters as above are used, except we change `lr` to `5e-4`.
+
+Note that to use another model, like `ViT-B/32` or `RN50x4`, use `--model RN50x4`.
 
 ### Launch tensorboard:
 ```
