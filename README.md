@@ -70,7 +70,8 @@ nohup python -u src/training/main.py \
     --lr=1e-3 \
     --wd=0.1 \
     --epochs=30 \
-    --workers=8
+    --workers=8 \
+    --model RN50
 ```
 
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
