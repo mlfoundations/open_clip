@@ -76,7 +76,7 @@ nohup python -u src/training/main.py \
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
-When run on 8 GPUs the command should produce the following training curve for Conceptual Captions:
+When run on a machine with 8 GPUs the command should produce the following training curve for Conceptual Captions:
 
 ![CLIP zero shot training curve](/docs/clip_zeroshot.png)
 
