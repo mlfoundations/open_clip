@@ -85,7 +85,7 @@ More detailed curves for Conceptual Captions are given at [/docs/clip_conceptual
 
 When training a RN50 on YFCC the same hyperparameters as above are used, with the exception of `lr=5e-4` and `epochs=32`.
 
-Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT-B/16`, use `--model RN50x4`.
+Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT-B/16`, specify with `--model RN50x4`.
 
 ### Launch tensorboard:
 ```
