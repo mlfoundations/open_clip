@@ -20,7 +20,7 @@ OpenCLIP reads a CSV file with two columns: a path to an image, and a text capti
 
 The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the script from our repository:
 
-```
+```bash
 python3 src/data/gather_cc.py path/to/Train_GCC-training.tsv path/to/Validation_GCC-1.1.0-Validation.tsv
 ```
 
@@ -40,14 +40,14 @@ The indices of images in this subset are in [OpenAI's CLIP repository](https://g
 
 ### Install dependencies
 
-```
-conda env create -f environment.yml
-source activate open_clip
+```bash
+conda env create
+conda activate open_clip
 ```
 
 ### Add directory to pythonpath:
 
-```
+```bash
 cd open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
 ```
@@ -55,7 +55,7 @@ export PYTHONPATH="$PYTHONPATH:$PWD/src"
 
 ### Sample running code:
 
-```
+```bash
 nohup python -u src/training/main.py \
     --save-frequency 1 \
     --zeroshot-frequency 1 \
@@ -88,7 +88,7 @@ When training a RN50 on YFCC the same hyperparameters as above are used, with th
 Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT-B/16`, specify with `--model RN50x4`.
 
 ### Launch tensorboard:
-```
+```bash
 tensorboard --logdir=logs/tensorboard/ --port=7777
 ```
 
@@ -157,7 +157,7 @@ Special thanks to [Jong Wook Kim](https://jongwook.kim/) and [Alec Radford](http
 ## Citing
 
 If you found this repository useful, please consider citing:
-```
+```bibtex
 @software{ilharco_gabriel_2021_5143773,
   author       = {Ilharco, Gabriel and
                   Wortsman, Mitchell and
@@ -181,7 +181,7 @@ If you found this repository useful, please consider citing:
 }
 ```
 
-```
+```bibtex
 @inproceedings{Radford2021LearningTV,
   title={Learning Transferable Visual Models From Natural Language Supervision},
   author={Alec Radford and Jong Wook Kim and Chris Hallacy and A. Ramesh and Gabriel Goh and Sandhini Agarwal and Girish Sastry and Amanda Askell and Pamela Mishkin and Jack Clark and Gretchen Krueger and Ilya Sutskever},
