@@ -83,7 +83,7 @@ if __name__ == "__main__":
             print("Test", row)
             if row is None: continue
             id, caption, url = row
-            fp = "val/"+str(id%1000)+"/"+str(id)+".jpg"
+            fp = split+"/"+str(id%1000)+"/"+str(id)+".jpg"
             print(fp)
             if os.path.exists(os.path.join(ROOT,fp)):
                 out.write("%s\t%s\n"%(caption,fp))
