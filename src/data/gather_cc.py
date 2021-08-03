@@ -83,7 +83,7 @@ if __name__ == "__main__":
             if row is None: continue
             id, caption, url = row
             fp = os.path.join(ROOT, split, str(id % 1000), str(id) + ".jpg")
-            if os.path.exists(os.path.join(ROOT,fp)):
+            if os.path.exists(fp):
                 out.write("%s\t%s\n"%(caption,fp))
             else:
                 print("Drop", id)
