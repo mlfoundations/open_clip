@@ -60,11 +60,11 @@ if __name__ == "__main__":
 
     if not os.path.exists(ROOT):
         os.mkdir(ROOT)
-        os.mkdir(ROOT+"/train")
-        os.mkdir(ROOT+"/val")
+        os.mkdir(os.path.join(ROOT,"train"))
+        os.mkdir(os.path.join(ROOT,"val"))
         for i in range(1000):
-            os.mkdir(ROOT+"/train/"+str(i))
-            os.mkdir(ROOT+"/val/"+str(i))
+            os.mkdir(os.path.join(ROOT,"train", str(i)))
+            os.mkdir(os.path.join(ROOT,"val", str(i)))
 
     
     p = mp.Pool(300)
@@ -80,11 +80,9 @@ if __name__ == "__main__":
         out.write("title\tfilepath\n")
         
         for row in results:
-            print("Test", row)
             if row is None: continue
             id, caption, url = row
-            fp = os.path.join(split, str(id % 1000), str(id) + ".jpg")
-            print(fp)
+            fp = os.path.join(ROOT, split, str(id % 1000), str(id) + ".jpg")
             if os.path.exists(os.path.join(ROOT,fp)):
                 out.write("%s\t%s\n"%(caption,fp))
             else:
