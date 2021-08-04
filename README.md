@@ -111,7 +111,10 @@ python src/training/main.py \
 
 ## Trained models
 
-You can find our ResNet-50 trained on YFCC-15M [here](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing). 
+Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
+
+* [ResNet-50](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing) (32.7% / 27.9%)
+* [ResNet-101](https://drive.google.com/file/d/1vOorR3pKkuuA_Gv7OgqMtaETNjTmy_3m/view?usp=sharing) (34.8% / 30.0%) 
 
 ## Scaling trends
 
