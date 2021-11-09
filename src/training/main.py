@@ -213,6 +213,16 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
                     },
                     os.path.join(args.checkpoint_path, f"epoch_{epoch + 1}.pt"),
                 )
+            if args.save_most_recent:
+                torch.save(
+                    {
+                        "epoch": epoch + 1,
+                        "name": args.name,
+                        "state_dict": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                    },
+                    os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
+                )
 
     if args.wandb and (args.gpu == 0 or (not args.distributed)):
         wandb.finish()
