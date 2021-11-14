@@ -6,6 +6,7 @@ import functools
 import braceexpand
 import random
 import pdb
+import json
 
 import pandas as pd
 import numpy as np
@@ -56,7 +57,8 @@ def preprocess_txt(text):
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
     dir_path = os.path.dirname(shards)
-    sizes = eval(open(os.path.join(dir_path, 'sizes.json'), 'r').read())
+    sizes_filename = os.path.join(dir_path, 'sizes.json')
+    sizes = json.load(open(sizes_filename, 'r'))
     total_size = sum(
         [int(sizes[os.path.basename(shard)]) for shard in shards_list])
     num_shards = len(shards_list)
