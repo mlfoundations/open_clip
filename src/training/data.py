@@ -57,10 +57,15 @@ def preprocess_txt(text):
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
     dir_path = os.path.dirname(shards)
-    sizes_filename = os.path.join(dir_path, 'sizes.json')
-    sizes = json.load(open(sizes_filename, 'r'))
-    total_size = sum(
-        [int(sizes[os.path.basename(shard)]) for shard in shards_list])
+    if 'sizes.json' in os.listdir(dir_path):
+        sizes_filename = os.path.join(dir_path, 'sizes.json')
+        sizes = json.load(open(sizes_filename, 'r'))
+        total_size = sum(
+            [int(sizes[os.path.basename(shard)]) for shard in shards_list])
+    elif '__len__' in os.listdir(dir_path):
+        total_size = eval(open(os.path.join(dir_path, '__len__'), 'r').read())
+    else:
+        raise ValueError(f'Could not find dataset size in {dir_path}')
     num_shards = len(shards_list)
     return total_size, num_shards
 
