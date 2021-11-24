@@ -11,6 +11,8 @@ This codebase is work in progress, and we invite all to contribute in making it 
 
 Note that `src/clip` is a copy of OpenAI's official [repository](https://github.com/openai/CLIP) with minimal changes.
 
+To robustly fine-tuning a *trained* zero-shot model on a downstream task such as ImageNet please see [our wise-ft repository](https://github.com/mlfoundations/wise-ft). As described in our associated paper on [robust fine-tuning of zero-shot models](https://arxiv.org/abs/2109.01903), we introduce a technique for fine-tuning a zero-shot model while preserving robustness OOD.
+
 ## Data
 
 
