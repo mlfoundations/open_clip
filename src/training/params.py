@@ -201,6 +201,12 @@ def parse_args():
         type=lambda x: [int(a) for a in x.split(",")],
         help="In DP, which GPUs to use for multigpu training",
     )
+    parser.add_argument(
+        "--horovod",
+        default=False,
+        action="store_true",
+        help="Use horovod for distributed training."
+    )
     args = parser.parse_args()
     args.aggregate = not args.skip_aggregate
 

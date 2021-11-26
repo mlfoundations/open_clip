@@ -35,7 +35,8 @@ def is_master(args):
 
 def main_worker(gpu, ngpus_per_node, log_queue, args):
     args.gpu = gpu
-    args.rank = gpu
+    if not args.horovod:
+        args.rank = gpu
     setup_worker_logging(args.rank, log_queue, args.log_level)
 
     # Log and save params.
@@ -48,7 +49,7 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
             
-    if args.distributed:
+    if args.distributed and not args.horovod:
         dist.init_process_group(
             backend=args.dist_backend,
             init_method=args.dist_url,
@@ -96,9 +97,9 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         # args.batch_size = args.batch_size / ngpus_per_node)
         # args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
 
-        if args.distributed and args.use_bn_sync:
+        if args.distributed and args.use_bn_sync and not args.horovod:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        if args.distributed:
+        if args.distributed and not args.horovod:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         if args.dp:
             model = torch.nn.DataParallel(model, device_ids=args.multigpu)
@@ -130,6 +131,12 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         )
         total_steps = data["train"].dataloader.num_batches * args.epochs
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+
+        if args.horovod:
+            import horovod.torch as hvd
+            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     scaler = GradScaler() if args.precision == "amp" else None
 
@@ -300,7 +307,14 @@ def main():
     # Distributed training = training on more than one GPU.
     # Also easily possible to extend to multiple nodes & multiple GPUs.
     args.distributed = (args.gpu is None) and torch.cuda.is_available() and (not args.dp)
-    if args.distributed:
+    if args.horovod:
+        import horovod.torch as hvd
+        hvd.init()
+        torch.cuda.set_device(hvd.local_rank())
+        args.world_size = hvd.size()
+        args.rank = hvd.rank()
+        main_worker(hvd.local_rank(), torch.cuda.device_count(), log_queue, args)
+    elif args.distributed:
         ngpus_per_node = torch.cuda.device_count()
         args.world_size = ngpus_per_node
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, log_queue, args))
