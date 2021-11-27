@@ -19,7 +19,7 @@ import wandb
 import logging
 
 def is_master(args):
-    return (not args.distributed) or args.gpu == 0
+    return (not args.distributed) or (not args.horovod and args.gpu == 0) or (args.horovod and hvd.rank() == 0)
 
 def get_loss(model, images, texts, loss_img, loss_txt, args):
     image_features, text_features, logit_scale = model(images, texts)
@@ -95,8 +95,6 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
 
-        optimizer.zero_grad()
-
         images, texts = batch
         if args.gpu is not None:
             images = images.cuda(args.gpu, non_blocking=True)
@@ -105,6 +103,8 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         data_time = time.time() - end
 
         m = model.module if (args.distributed or args.dp) and not args.horovod else model
+
+        optimizer.zero_grad()
 
         # with automatic mixed precision.
         if args.precision == "amp":
