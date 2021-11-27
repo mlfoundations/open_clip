@@ -13,7 +13,11 @@ import torch.multiprocessing as mp
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import GradScaler
-import horovod.torch as hvd
+
+try:
+    import horovod.torch as hvd
+except ImportError:
+    print("Horovod not installed")
 
 from clip.clip import _transform, load
 from clip.model import convert_weights, CLIP

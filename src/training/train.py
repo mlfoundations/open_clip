@@ -8,7 +8,11 @@ import torch.nn as nn
 
 from torch.cuda.amp import autocast
 import torch.distributed as dist
-import horovod.torch as hvd
+
+try:
+    import horovod.torch as hvd
+except ImportError:
+    print("Horovod not installed")
 
 from .zero_shot import zero_shot_eval
 
@@ -103,6 +107,10 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         data_time = time.time() - end
 
         m = model.module if (args.distributed or args.dp) and not args.horovod else model
+
+        # computation barrier
+        if args.horovod:
+            hvd.allgather(torch.tensor(0))
 
         optimizer.zero_grad()
 
