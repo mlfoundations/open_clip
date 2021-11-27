@@ -104,7 +104,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
 
         data_time = time.time() - end
 
-        m = model.module if args.distributed or args.dp else model
+        m = model.module if (args.distributed or args.dp) and not args.horovod else model
 
         # with automatic mixed precision.
         if args.precision == "amp":
