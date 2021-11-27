@@ -108,9 +108,9 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
 
         m = model.module if (args.distributed or args.dp) and not args.horovod else model
 
-        # computation barrier
+        # ensure all computations caught up
         if args.horovod:
-            hvd.barrier()
+            optimizer.synchronize()
 
         optimizer.zero_grad()
 
