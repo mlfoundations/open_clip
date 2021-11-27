@@ -26,8 +26,8 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
     logit_scale = logit_scale.mean()
     if args.distributed and args.aggregate:
         if args.horovod:
-            all_image_features = hvd.gatherall(image_features)
-            all_text_features = hvd.gatherall(text_features)
+            all_image_features = hvd.allgather(image_features)
+            all_text_features = hvd.allgather(text_features)
         else:
             world_size = dist.get_world_size()
             rank = dist.get_rank()
