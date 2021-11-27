@@ -11,7 +11,7 @@ def zero_shot_classifier(model, classnames, templates, args):
         for classname in tqdm(classnames):
             texts = [template(classname) for template in templates] #format with class
             texts = clip.tokenize(texts).to(args.gpu) #tokenize
-            if args.distributed:
+            if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
             elif args.dp:
                 class_embeddings = model(None, texts)
@@ -38,7 +38,7 @@ def run(model, classifier, dataloader, args):
             target = target.to(args.gpu)
 
             # predict
-            if args.distributed:
+            if args.distributed and not args.horovod:
                 image_features = model.module.encode_image(images)
             elif args.dp:
                 image_features = model(images, None)
