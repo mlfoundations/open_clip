@@ -110,7 +110,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
 
         # computation barrier
         if args.horovod:
-            hvd.allgather(torch.tensor([0]))
+            hvd.barrier()
 
         optimizer.zero_grad()
 
