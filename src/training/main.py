@@ -275,7 +275,7 @@ def main():
         return 1
 
     args.log_path = os.path.join(args.logs, args.name, "out.log")
-    if os.path.exists(args.log_path):
+    if os.path.exists(args.log_path) and not args.horovod:
         print(
             "Error. Experiment already exists. Use --name {} to specify a new experiment."
         )
