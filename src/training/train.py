@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from torch.cuda.amp import autocast
 import torch.distributed as dist
+import horovod.torch as hvd
 
 from .zero_shot import zero_shot_eval
 
@@ -24,29 +25,33 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
     image_features, text_features, logit_scale = model(images, texts)
     logit_scale = logit_scale.mean()
     if args.distributed and args.aggregate:
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
+        if args.horovod:
+            all_image_features = hvd.gatherall(image_features)
+            all_text_features = hvd.gatherall(text_features)
+        else:
+            world_size = dist.get_world_size()
+            rank = dist.get_rank()
 
-        # We gather tensors from all gpus to get more negatives to contrast with.
-        gathered_image_features = [
-            torch.zeros_like(image_features) for _ in range(world_size)
-        ]
-        gathered_text_features = [
-            torch.zeros_like(text_features) for _ in range(world_size)
-        ]
-        dist.all_gather(gathered_image_features, image_features)
-        dist.all_gather(gathered_text_features, text_features)
+            # We gather tensors from all gpus to get more negatives to contrast with.
+            gathered_image_features = [
+                torch.zeros_like(image_features) for _ in range(world_size)
+            ]
+            gathered_text_features = [
+                torch.zeros_like(text_features) for _ in range(world_size)
+            ]
+            dist.all_gather(gathered_image_features, image_features)
+            dist.all_gather(gathered_text_features, text_features)
 
-        all_image_features = torch.cat(
-            [image_features]
-            + gathered_image_features[:rank]
-            + gathered_image_features[rank + 1 :]
-        )
-        all_text_features = torch.cat(
-            [text_features]
-            + gathered_text_features[:rank]
-            + gathered_text_features[rank + 1 :]
-        )
+            all_image_features = torch.cat(
+                [image_features]
+                + gathered_image_features[:rank]
+                + gathered_image_features[rank + 1 :]
+            )
+            all_text_features = torch.cat(
+                [text_features]
+                + gathered_text_features[:rank]
+                + gathered_text_features[rank + 1 :]
+            )
 
         # this is needed to send gradients back everywhere.
         logits_per_image = logit_scale * all_image_features @ all_text_features.t()
