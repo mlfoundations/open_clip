@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import GradScaler
+import horovod.torch as hvd
 
 from clip.clip import _transform, load
 from clip.model import convert_weights, CLIP
@@ -130,10 +131,9 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
             eps=args.eps,
         )
         total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        scheduler = cosine_lr(optimizer, args.lr*args.world_size if args.horovod else args.lr, args.warmup, total_steps)
 
         if args.horovod:
-            import horovod.torch as hvd
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
@@ -308,7 +308,6 @@ def main():
     # Also easily possible to extend to multiple nodes & multiple GPUs.
     args.distributed = (args.gpu is None) and torch.cuda.is_available() and (not args.dp)
     if args.horovod:
-        import horovod.torch as hvd
         hvd.init()
         torch.cuda.set_device(hvd.local_rank())
         args.world_size = hvd.size()
