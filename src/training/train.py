@@ -118,7 +118,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
                     optimizer.synchronize()
                     with optimizer.skip_synchronize():
                         scaler.scale(total_loss).backward()
-                        scaler.step(optimizer)
+                        optimizer.step()
                 else:
                     scaler.scale(total_loss).backward()
                     scaler.step(optimizer)
