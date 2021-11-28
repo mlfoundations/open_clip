@@ -99,6 +99,8 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
 
+        optimizer.zero_grad()
+
         images, texts = batch
         if args.gpu is not None:
             images = images.cuda(args.gpu, non_blocking=True)
@@ -112,14 +114,19 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         if args.precision == "amp":
             with autocast():
                 total_loss = get_loss(model, images, texts, loss_img, loss_txt, args)
-                optimizer.zero_grad()
-                scaler.scale(total_loss).backward()
-                scaler.step(optimizer)
+                if args.horovod:
+                    optimizer.synchronize()
+                    with hvd.skip_synchronize():
+                        scaler.scale(total_loss).backward()
+                        scaler.step(optimizer)
+                else:
+                    scaler.scale(total_loss).backward()
+                    scaler.step(optimizer)
+
             scaler.update()
 
         else:
             total_loss = get_loss(model, images, texts, loss_img, loss_txt, args)
-            optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
 
