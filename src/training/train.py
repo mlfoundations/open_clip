@@ -32,6 +32,9 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
         if args.horovod:
             all_image_features = hvd.allgather(image_features)
             all_text_features = hvd.allgather(text_features)
+
+            if hvd.rank() != 0:
+                return torch.tensor(0, device=all_image_features.device)
         else:
             world_size = dist.get_world_size()
             rank = dist.get_rank()
@@ -99,7 +102,6 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
 
-        optimizer.zero_grad()
 
         images, texts = batch
         if args.gpu is not None:
@@ -110,12 +112,16 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
 
         m = model.module if (args.distributed or args.dp) and not args.horovod else model
 
+        if args.horovod and args.precision == 'amp':
+            optimizer.syncronize()
+
+        optimizer.zero_grad()
+
         # with automatic mixed precision.
         if args.precision == "amp":
             with autocast():
                 total_loss = get_loss(model, images, texts, loss_img, loss_txt, args)
                 if args.horovod:
-                    optimizer.synchronize()
                     with optimizer.skip_synchronize():
                         scaler.scale(total_loss).backward()
                         optimizer.step()
