@@ -116,7 +116,24 @@ python src/training/main.py \
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
 
 * [ResNet-50](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing) (32.7% / 27.9%)
-* [ResNet-101](https://drive.google.com/file/d/1vOorR3pKkuuA_Gv7OgqMtaETNjTmy_3m/view?usp=sharing) (34.8% / 30.0%) 
+* [ResNet-101](https://drive.google.com/file/d/1vOorR3pKkuuA_Gv7OgqMtaETNjTmy_3m/view?usp=sharing) (34.8% / 30.0%)
+
+## Interface
+
+Instead of providing an interface for `open_clip`, we re-use [OpenAI's](https://github.com/openai/CLIP).
+
+If you have an open_clip checkpoint saved at the path `open_clip_checkpoint_pth` you can run the following code to store an OpenAI CLIP compatible checkpoint at `clip_checkpoint_pth`
+```python
+import torch
+open_clip_cp = torch.load(open_clip_checkpoint_pth)
+open_clip_sd = {k[7:]:v for k, v in open_clip_cp['state_dict'].items()}
+torch.save(open_clip_sd, clip_checkpoint_pth)
+```
+now you can use OpenAI's interface
+```python
+import clip # import OpenAI's CLIP
+model = clip.load(clip_checkpoint_pth)
+```
 
 ## Scaling trends
 
