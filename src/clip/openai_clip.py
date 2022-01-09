@@ -56,8 +56,10 @@ def _download(url: str, root: str = os.path.expanduser("~/.cache/clip")):
 
     return download_target
 
+
 def _convert_to_rgb(image):
     return image.convert('RGB')
+
 
 def _transform(n_px: int, is_train: bool):
     normalize = Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
@@ -76,7 +78,6 @@ def _transform(n_px: int, is_train: bool):
             ToTensor(),
             normalize,
         ])
-
 
 
 def available_models() -> List[str]:
@@ -129,8 +130,8 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         if str(device) == "cpu":
             model.float()
         return model, \
-               _transform(model.visual.input_resolution, is_train=True), \
-               _transform(model.visual.input_resolution, is_train=False)
+               _transform(model.visual.image_size, is_train=True), \
+               _transform(model.visual.image_size, is_train=False)
 
     # patch the device names
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])
@@ -175,8 +176,8 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         model.float()
 
     return model, \
-           _transform(model.input_resolution.item(), is_train=True), \
-           _transform(model.input_resolution.item(), is_train=False)
+           _transform(model.image_size.item(), is_train=True), \
+           _transform(model.image_size.item(), is_train=False)
 
 
 def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:

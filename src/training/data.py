@@ -24,8 +24,7 @@ from webdataset.utils import identity
 import webdataset as wds
 
 
-
-from clip.clip import tokenize
+from clip.openai_clip import tokenize
 
 
 class CsvDataset(Dataset):
@@ -46,13 +45,16 @@ class CsvDataset(Dataset):
         texts = tokenize([str(self.captions[idx])])[0]
         return images, texts
 
+
 @dataclass
 class DataInfo:
     dataloader: DataLoader
     sampler: DistributedSampler
 
+
 def preprocess_txt(text):
     return tokenize([str(text)])[0]
+
 
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
@@ -64,10 +66,17 @@ def get_dataset_size(shards):
             [int(sizes[os.path.basename(shard)]) for shard in shards_list])
     elif '__len__' in os.listdir(dir_path):
         total_size = eval(open(os.path.join(dir_path, '__len__'), 'r').read())
+    elif 'cc3m-train' in shards:
+        # FIXME constant for full wds w/o sizes.json / len. Will vary for each download of CC3M
+        total_size = 2905954
+    elif 'cc12m-train' in shards:
+        # FIXME constants for full wds w/o sizes.json / len. Will vary for each download of CC12M
+        total_size = 10968539
     else:
         raise ValueError(f'Could not find dataset size in {dir_path}')
     num_shards = len(shards_list)
     return total_size, num_shards
+
 
 def get_imagenet(args, preprocess_fns, split):
     assert split in ["train", "val", "v2"]
@@ -114,6 +123,7 @@ def get_imagenet(args, preprocess_fns, split):
 
     return DataInfo(dataloader, sampler)
 
+
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
     n_elements, n_batches = 0, 0
@@ -122,6 +132,7 @@ def count_samples(dataloader):
         n_elements += len(images)
         assert len(images) == len(texts)
     return n_elements, n_batches
+
 
 def get_wds_dataset(args, preprocess_img, is_train):
     input_shards = args.train_data if is_train else args.val_data
@@ -143,7 +154,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     )
     dataset = (
         wds.WebDataset(shardlist)
-        .decode("pil")
+        .decode("pil", handler=wds.ignore_and_continue)
         .rename(image="jpg;png", text="txt")
         .map_dict(image=preprocess_img, text=preprocess_txt)
         .to_tuple("image", "text")
@@ -160,6 +171,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     dataloader.num_samples = num_samples
 
     return DataInfo(dataloader, None)
+
 
 def get_csv_dataset(args, preprocess_fn, is_train):
     input_filename = args.train_data if is_train else args.val_data
@@ -188,6 +200,7 @@ def get_csv_dataset(args, preprocess_fn, is_train):
 
     return DataInfo(dataloader, sampler)
 
+
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
@@ -213,12 +226,14 @@ def get_data(args, preprocess_fns):
     if args.train_data:
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
             args, preprocess_train, is_train=True)
+
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
             args, preprocess_val, is_train=False)
 
     if args.imagenet_val is not None:
         data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")
+
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
 
