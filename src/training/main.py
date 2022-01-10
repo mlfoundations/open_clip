@@ -54,19 +54,26 @@ def main():
     # Distributed training = training on more than one GPU.
     # Also easily possible to extend to multiple nodes & multiple GPUs.
     args.distributed = False
-    args.horovod = False
     args.dp = False
     args.world_size = 1
     args.rank = 0  # global rank
     args.local_rank = 0
-    if is_using_horovod():
+    if args.horovod:
         hvd.init()
         local_rank = int(hvd.local_rank())
         args.world_size = hvd.size()
         args.rank = hvd.rank()
-        args.horovod = True
         args.distributed = True
     elif is_using_distributed():
+        if 'SLURM_PROCID' in os.environ:
+            # FIXME this needs debugging
+            args.rank = int(os.environ['SLURM_PROCID'])
+            os.environ['RANK'] = os.environ['SLURM_PROCID']
+            os.environ['LOCAL_RANK'] = os.environ['SLURM_LOCALID']
+            args.world_size = int(os.environ['WORLD_SIZE'])
+            for k, v in os.environ.items():
+                if 'SLURM' in k:
+                    print(k, v)
         assert 'LOCAL_RANK' in os.environ  # current torch uses env var only for passing args to workers
         local_rank = int(os.environ['LOCAL_RANK'])
         torch.distributed.init_process_group(
@@ -74,6 +81,7 @@ def main():
             init_method=args.dist_url)
         args.world_size = torch.distributed.get_world_size()
         args.rank = torch.distributed.get_rank()
+        print('DDP init', args.world_size, args.rank, args.local_rank)  # FIXME debug
         args.distributed = True
     else:
         args.world_size = 1  # DP is still a world-size of 1
