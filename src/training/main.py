@@ -45,6 +45,8 @@ def is_using_horovod():
 def is_using_distributed():
     if 'WORLD_SIZE' in os.environ:
         return int(os.environ['WORLD_SIZE']) > 1
+    if 'SLURM_NTASKS' in os.environ:
+        return int(os.environ['SLURM_NTASKS']) > 1
     return False
 
 
@@ -70,10 +72,7 @@ def main():
             args.rank = int(os.environ['SLURM_PROCID'])
             os.environ['RANK'] = os.environ['SLURM_PROCID']
             os.environ['LOCAL_RANK'] = os.environ['SLURM_LOCALID']
-            args.world_size = int(os.environ['WORLD_SIZE'])
-            for k, v in os.environ.items():
-                if 'SLURM' in k:
-                    print(k, v)
+            os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
         assert 'LOCAL_RANK' in os.environ  # current torch uses env var only for passing args to workers
         local_rank = int(os.environ['LOCAL_RANK'])
         torch.distributed.init_process_group(

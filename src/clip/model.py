@@ -339,9 +339,9 @@ class CLIPVisionCfg:
 class CLIPTextCfg:
     context_length: int
     vocab_size: int
-    transformer_width: int
-    transformer_heads: int
-    transformer_layers: int
+    width: int
+    heads: int
+    layers: int
 
 
 class CLIP(nn.Module):
