@@ -17,7 +17,7 @@ def parse_args():
         "--train-data",
         type=str,
         default=None,
-        help="Path to csv filewith training data",
+        help="Path to csv file with training data",
     )
     parser.add_argument(
         "--val-data",
@@ -200,6 +200,18 @@ def parse_args():
         default=None,
         type=lambda x: [int(a) for a in x.split(",")],
         help="In DP, which GPUs to use for multigpu training",
+    )
+    parser.add_argument(
+        "--multinode",
+        default=False,
+        action="store_true",
+        help="Use multi-node training."
+    )
+    parser.add_argument(
+        "--rank",
+        default=None,
+        type=int,
+        help="The global rank of the current device."
     )
     args = parser.parse_args()
     args.aggregate = not args.skip_aggregate
