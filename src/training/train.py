@@ -18,7 +18,7 @@ import wandb
 import logging
 
 def is_master(args):
-    return (not args.distributed) or args.gpu == 0
+    return (not args.distributed) or args.rank == 0
 
 def get_loss(model, images, texts, loss_img, loss_txt, args):
     image_features, text_features, logit_scale = model(images, texts)

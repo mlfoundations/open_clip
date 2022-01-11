@@ -31,11 +31,11 @@ def convert_models_to_fp32(model):
             p.grad.data = p.grad.data.float()
 
 def is_master(args):
-    return (not args.distributed) or args.gpu == 0 or args.dp
+    return (not args.distributed) or args.rank == 0 or args.dp
 
 def main_worker(gpu, ngpus_per_node, log_queue, args):
     args.gpu = gpu
-    args.rank = gpu
+    args.rank = gpu if args.rank is None else args.rank
     setup_worker_logging(args.rank, log_queue, args.log_level)
 
     # Log and save params.
@@ -162,7 +162,7 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
     # determine if this worker should save logs and checkpoints.
     # only do so if it is the 0th worker.
     args.save_logs = (args.logs is not None and args.logs != '' and args.logs.lower() != 'none') and (
-        (not args.distributed) or args.gpu == 0
+        is_master(args)
     )
     writer = None
     if args.save_logs and args.tensorboard:
@@ -200,7 +200,7 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
             evaluate(model, data, epoch + 1, args, writer, steps)
 
         # Saving checkpoints.
-        if args.save_logs and (args.gpu == 0 or (not args.distributed)):
+        if args.save_logs and is_master(args):
             if (epoch + 1) == args.epochs or (
                 args.save_frequency > 0 and ((epoch + 1) % args.save_frequency) == 0
             ):
@@ -268,7 +268,7 @@ def main():
         return 1
 
     args.log_path = os.path.join(args.logs, args.name, "out.log")
-    if os.path.exists(args.log_path):
+    if not args.multinode and os.path.exists(args.log_path):
         print(
             "Error. Experiment already exists. Use --name {} to specify a new experiment."
         )
@@ -300,7 +300,20 @@ def main():
     # Distributed training = training on more than one GPU.
     # Also easily possible to extend to multiple nodes & multiple GPUs.
     args.distributed = (args.gpu is None) and torch.cuda.is_available() and (not args.dp)
-    if args.distributed:
+    if args.multinode:
+        # we assume slurm setup but this should be easily extendable to other setups
+        ngpus_per_node = torch.cuda.device_count()
+        args.rank = int(os.environ["SLURM_PROCID"]) if not args.rank else args.rank
+        args.world_size = int(os.environ["WORLD_SIZE"])
+        os.environ['RANK'] = str(args.rank)
+        if args.rank == 0 and os.path.exists(args.log_path):
+            print(
+                "Error. Experiment already exists. Use --name {} to specify a new experiment."
+            )
+            return -1
+
+        main_worker(args.rank % ngpus_per_node, ngpus_per_node, log_queue, args)
+    elif args.distributed:
         ngpus_per_node = torch.cuda.device_count()
         args.world_size = ngpus_per_node
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, log_queue, args))
