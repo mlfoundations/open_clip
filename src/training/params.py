@@ -213,6 +213,12 @@ def parse_args():
         type=int,
         help="The global rank of the current device."
     )
+    parser.add_argument(
+        "--use-zero",
+        default=False,
+        action="store_true",
+        help="Use ZeRO redundancy optimizer."
+    )
     args = parser.parse_args()
     args.aggregate = not args.skip_aggregate
 

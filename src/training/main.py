@@ -18,6 +18,7 @@ from clip.clip import _transform, load
 from clip.model import convert_weights, CLIP
 from training.train import train, evaluate
 from training.data import get_data
+from training.zero_optimizer import createZeroRedundancyAdamW
 from training.params import parse_args
 from training.logger import setup_primary_logging, setup_worker_logging
 from training.scheduler import cosine_lr
@@ -119,15 +120,18 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         optimizer = None
         scheduler = None
     else:
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
+        if args.use_zero:
+            optimizer = createZeroRedundancyAdamW(gain_or_bias_params, rest_params, args)
+        else:
+            optimizer = optim.AdamW(
+                [
+                    {"params": gain_or_bias_params, "weight_decay": 0.},
+                    {"params": rest_params, "weight_decay": args.wd},
+                ],
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                eps=args.eps,
+            )
         total_steps = data["train"].dataloader.num_batches * args.epochs
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
