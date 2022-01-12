@@ -91,7 +91,7 @@ Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT
 
 ### Distributed Training:
 
-Here's an example slurm script:
+Here's an example SLURM script:
 
 ```bash
 #!/bin/bash -x
@@ -136,7 +136,7 @@ srun python -u src/training/main.py \
     --dist-url="env://"
 ```
 
-Note: our implementation assumes SLURM usage but the code should be easily adaptible with the `--rank` flag and minor tweaks to `src/main.py`.
+Note: our implementation assumes SLURM usage but the code should be easily adaptable with the `--rank` flag and minor tweaks to `src/training/main.py`.
 
 ### Launch tensorboard:
 ```bash
