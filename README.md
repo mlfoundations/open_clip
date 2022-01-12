@@ -107,7 +107,7 @@ conda activate open_clip
 export NCCL_DEBUG=INFO
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export MASTER_PORT=12802
-export WORLD_SIZE=8
+export WORLD_SIZE=16
 
 echo "NODELIST="${SLURM_NODELIST}
 master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
