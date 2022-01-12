@@ -89,6 +89,55 @@ When training a RN50 on YFCC the same hyperparameters as above are used, with th
 
 Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT-B/16`, specify with `--model RN50x4`.
 
+### Distributed Training:
+
+Here's an example slurm script:
+
+```bash
+#!/bin/bash -x
+#SBATCH --nodes=4
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=24
+#SBATCH --time=00:05:00
+
+eval "$(/path/to/miniconda3/bin/conda shell.bash hook)" # init conda
+conda activate open_clip
+
+export NCCL_DEBUG=INFO
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export MASTER_PORT=12802
+export WORLD_SIZE=8
+
+echo "NODELIST="${SLURM_NODELIST}
+master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_ADDR=$master_addr
+echo "MASTER_ADDR="$MASTER_ADDR
+
+cd open_clip
+export PYTHONPATH="$PYTHONPATH:$PWD/src"
+srun python -u src/training/main.py \
+    --save-frequency 1 \
+    --zeroshot-frequency 1 \
+    --report-to tensorboard \
+    --train-data="/path/to/train_data.csv"  \
+    --val-data="/path/to/validation_data.csv"  \
+    --csv-img-key filepath \
+    --csv-caption-key title \
+    --imagenet-val=/path/to/imagenet/root/val/ \
+    --warmup 10000 \
+    --batch-size=128 \
+    --lr=1e-3 \
+    --wd=0.1 \
+    --epochs=30 \
+    --workers=23 \
+    --model RN50 \
+    --multinode \
+    --dist-url="env://"
+```
+
+Note: our implementation assumes SLURM usage but the code should be easily adaptible with the `--rank` flag and minor tweaks to `src/main.py`.
+
 ### Launch tensorboard:
 ```bash
 tensorboard --logdir=logs/tensorboard/ --port=7777
