@@ -306,11 +306,6 @@ def main():
         args.rank = int(os.environ["SLURM_PROCID"]) if not args.rank else args.rank
         args.world_size = int(os.environ["WORLD_SIZE"])
         os.environ['RANK'] = str(args.rank)
-        if args.rank == 0 and os.path.exists(args.log_path):
-            print(
-                "Error. Experiment already exists. Use --name {} to specify a new experiment."
-            )
-            return -1
 
         main_worker(args.rank % ngpus_per_node, ngpus_per_node, log_queue, args)
     elif args.distributed:
