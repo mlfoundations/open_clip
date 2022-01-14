@@ -6,8 +6,10 @@ from pathlib import Path
 import json
 
 import wandb
+import bitsandbytes as bnb
 import torch
 from torch import optim
+from torch.distributed.optim import ZeroRedundancyOptimizer
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.backends.cudnn as cudnn
@@ -18,7 +20,6 @@ from clip.clip import _transform, load
 from clip.model import convert_weights, CLIP
 from training.train import train, evaluate
 from training.data import get_data
-from training.zero_optimizer import createZeroRedundancyAdamW
 from training.params import parse_args
 from training.logger import setup_primary_logging, setup_worker_logging
 from training.scheduler import cosine_lr
@@ -121,7 +122,30 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         scheduler = None
     else:
         if args.use_zero:
-            optimizer = createZeroRedundancyAdamW(gain_or_bias_params, rest_params, args)
+            if args.adamw_8bit:
+                optimizer = bnb.optim.AdamW8bit
+            else:
+                optimizer = optim.AdamW
+            optimizer = ZeroRedundancyOptimizer(
+                rest_params,
+                optimizer,
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                weight_decay=args.wd,
+                eps=args.eps,
+            )
+            optimizer.add_param_group({"params": gain_or_bias_params, "weight_decay": 0.})
+        elif args.adamw_8bit:
+            optimizer = bnb.optim.AdamW8bit(
+                [
+                    {"params": gain_or_bias_params, "weight_decay": 0.},
+                    {"params": rest_params, "weight_decay": args.wd},
+                ],
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                eps=args.eps,
+            )
+            model.token_embedding = bnb.nn.StableEmbedding(model_info['vocab_size'], model_info['transformer_width'])
         else:
             optimizer = optim.AdamW(
                 [
