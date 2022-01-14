@@ -173,19 +173,11 @@ class ResidualAttentionBlock(nn.Module):
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
-        if d_model == 1664:
-            self.mlp = nn.Sequential(OrderedDict([
-                ("c_fc", nn.Linear(d_model, 8192)),
-                ("gelu", QuickGELU()),
-                ("c_proj", nn.Linear(8192, d_model))
-            ]))
-        else:
-            self.mlp = nn.Sequential(OrderedDict([
-                ("c_fc", nn.Linear(d_model, d_model * 4)),
-                ("gelu", QuickGELU()),
-                ("c_proj", nn.Linear(d_model * 4, d_model))
-            ]))
-
+        self.mlp = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(d_model * 4, d_model))
+        ]))
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
 
@@ -200,18 +192,24 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None, gradient_checkpointing: bool = False):
         super().__init__()
         self.width = width
         self.layers = layers
+        self.gradient_checkpointing = gradient_checkpointing
+        if gradient_checkpointing:
+            self.checkpoints = int((layers)**0.5 + 0.5)
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
     def forward(self, x: torch.Tensor):
+        # not conducive to TorchScript so must be altered later
+        if self.gradient_checkpointing:
+            return torch.utils.checkpoint.checkpoint_sequential(self.resblocks, self.checkpoints, x)
         return self.resblocks(x)
 
 
 class VisualTransformer(nn.Module):
-    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, gradient_checkpointing: bool = False):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -222,7 +220,7 @@ class VisualTransformer(nn.Module):
         self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        self.transformer = Transformer(width, layers, heads)
+        self.transformer = Transformer(width, layers, heads, gradient_checkpointing=gradient_checkpointing)
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
@@ -260,7 +258,8 @@ class CLIP(nn.Module):
                  vocab_size: int,
                  transformer_width: int,
                  transformer_heads: int,
-                 transformer_layers: int
+                 transformer_layers: int,
+                 gradient_checkpointing: bool = False
                  ):
         super().__init__()
 
@@ -283,14 +282,16 @@ class CLIP(nn.Module):
                 width=vision_width,
                 layers=vision_layers,
                 heads=vision_heads,
-                output_dim=embed_dim
+                output_dim=embed_dim,
+                gradient_checkpointing=gradient_checkpointing
             )
 
         self.transformer = Transformer(
             width=transformer_width,
             layers=transformer_layers,
             heads=transformer_heads,
-            attn_mask=self.build_attention_mask()
+            attn_mask=self.build_attention_mask(),
+            gradient_checkpointing=gradient_checkpointing
         )
 
         self.vocab_size = vocab_size

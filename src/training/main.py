@@ -77,6 +77,8 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         assert os.path.exists(model_config_file)
         with open(model_config_file, 'r') as f:
             model_info = json.load(f)
+        if args.gradient_checkpointing:
+            model_info['gradient_checkpointing'] = True
         model = CLIP(**model_info)
         convert_weights(model)
         preprocess_train = _transform(model.visual.input_resolution, is_train=True)

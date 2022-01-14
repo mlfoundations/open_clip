@@ -227,6 +227,12 @@ def parse_args():
         action="store_true",
         help="Use 8-bit optimizer."
     )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        default=False,
+        action="store_true",
+        help="Use gradient checkpointing."
+    )
     args = parser.parse_args()
     args.aggregate = not args.skip_aggregate
 
