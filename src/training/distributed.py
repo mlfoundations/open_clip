@@ -41,28 +41,20 @@ def is_using_distributed():
 
 def world_info_from_env():
     local_rank = 0
-    if 'SLURM_LOCALID' in os.environ:
-        local_rank = int(os.environ['SLURM_LOCALID'])
-    elif 'MPI_LOCALRANKID' in os.environ:
-        local_rank = int(os.environ['MPI_LOCALRANKID'])
-    elif 'LOCAL_RANK' in os.environ:
-        local_rank = int(os.environ['LOCAL_RANK'])
-
+    for v in ('SLURM_LOCALID', 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'LOCAL_RANK'):
+        if v in os.environ:
+            local_rank = int(os.environ[v])
+            break
     global_rank = 0
-    if 'SLURM_PROCID' in os.environ:
-        global_rank = int(os.environ['SLURM_PROCID'])
-    elif 'PMI_RANK' in os.environ:
-        global_rank = int(os.environ['PMI_RANK'])
-    elif 'RANK' in os.environ:
-        global_rank = int(os.environ['RANK'])
-
+    for v in ('SLURM_PROCID', 'PMI_RANK', 'OMPI_COMM_WORLD_RANK', 'RANK'):
+        if v in os.environ:
+            global_rank = int(os.environ[v])
+            break
     world_size = 1
-    if 'SLURM_NTASKS' in os.environ:
-        world_size = int(os.environ['SLURM_NTASKS'])
-    elif 'PMI_SIZE' in os.environ:
-        world_size = int(os.environ['PMI_SIZE'])
-    elif 'WORLD_SIZE' in os.environ:
-        world_size = int(os.environ['WORLD_SIZE'])
+    for v in ('SLURM_NTASKS', 'PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'WORLD_SIZE'):
+        if v in os.environ:
+            world_size = int(os.environ[v])
+            break
 
     return local_rank, global_rank, world_size
 
@@ -112,7 +104,7 @@ def init_distributed_device(args):
             args.multigpu = list(range(torch.cuda.device_count()))
     if torch.cuda.is_available():
         device = 'cuda'
-        if args.distributed:
+        if args.distributed and not args.no_set_device_rank:
             device += ':%d' % args.local_rank
         torch.cuda.set_device(device)
     else:

@@ -211,6 +211,12 @@ def parse_args():
         action="store_true",
         help="Use horovod for distributed training."
     )
+    parser.add_argument(
+        "--no-set-device-rank",
+        default=False,
+        action="store_true",
+        help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
