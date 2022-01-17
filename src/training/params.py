@@ -67,6 +67,12 @@ def parse_args():
         help="Where to store tensorboard logs. Use None to avoid storing logs.",
     )
     parser.add_argument(
+        "--log-local",
+        action="store_true",
+        default=False,
+        help="log files on local master, otherwise global master only.",
+    )
+    parser.add_argument(
         "--name",
         type=str,
         default=None,

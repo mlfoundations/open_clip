@@ -1,36 +1,32 @@
+import json
 import os
 import time
-import json
-import numpy as np
 
+import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.distributed as dist
 import torch.distributed.nn
+import torch.nn as nn
+import torch.nn.functional as F
 
 try:
     import horovod.torch as hvd
 except ImportError:
-    print("Horovod not installed")
+    hvd = None
 
+from .distributed import is_master
 from .zero_shot import zero_shot_eval
 
-import sys
-import pdb
 from contextlib import suppress
 import wandb
 import logging
-
-
-def is_master(args):
-    return args.local_rank == 0
 
 
 def gather_features(
         image_features, text_features,
         local_loss=False, gather_with_grad=False, rank=0, world_size=1, horovod=False):
     if horovod:
+        assert hvd is not None, 'Please install horovod'
         if gather_with_grad:
             all_image_features = hvd.allgather(image_features)
             all_text_features = hvd.allgather(text_features)

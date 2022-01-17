@@ -1,104 +1,33 @@
-import os
-import time
+import json
 import logging
-from time import gmtime, strftime
+import os
 from datetime import datetime
 from pathlib import Path
-import json
 
-import wandb
 import torch
-from torch import optim
-import torch.distributed as dist
 import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
+import wandb
+from torch import optim
 from torch.cuda.amp import GradScaler
+from torch.utils.tensorboard import SummaryWriter
+
+from clip.model import convert_weights_to_fp16, CLIP
+from clip.openai_clip import _transform, load
+from training.data import get_data
+from training.distributed import is_master, init_distributed_device, world_info_from_env
+from training.logger import setup_logging
+from training.params import parse_args
+from training.scheduler import cosine_lr
+from training.train import train_one_epoch, evaluate
 
 try:
     import horovod.torch as hvd
 except ImportError:
     print("Horovod not installed")
 
-from clip.openai_clip import _transform, load
-from clip.model import convert_weights_to_fp16, CLIP
-from training.train import train_one_epoch, evaluate
-from training.data import get_data
-from training.params import parse_args
-from training.logger import setup_logging
-from training.scheduler import cosine_lr
-
-
-def is_master(args):
-    return args.local_rank == 0
-
-
-def is_using_horovod():
-    # FIXME will this be distinct for horovod or overlap with other uses of Slurm (ie slurm + DDP)?
-    ompi_vars = ["OMPI_COMM_WORLD_RANK", "OMPI_COMM_WORLD_SIZE"]
-    pmi_vars = ["PMI_RANK", "PMI_SIZE"]
-    if all([var in os.environ for var in ompi_vars]) or all([var in os.environ for var in pmi_vars]):
-        return True
-    else:
-        return False
-
-
-def is_using_distributed():
-    if 'WORLD_SIZE' in os.environ:
-        return int(os.environ['WORLD_SIZE']) > 1
-    if 'SLURM_NTASKS' in os.environ:
-        return int(os.environ['SLURM_NTASKS']) > 1
-    return False
-
 
 def main():
     args = parse_args()
-
-    # Distributed training = training on more than one GPU.
-    # Also easily possible to extend to multiple nodes & multiple GPUs.
-    args.distributed = False
-    args.dp = False
-    args.world_size = 1
-    args.rank = 0  # global rank
-    args.local_rank = 0
-    if args.horovod:
-        hvd.init()
-        local_rank = int(hvd.local_rank())
-        args.world_size = hvd.size()
-        args.rank = hvd.rank()
-        args.distributed = True
-    elif is_using_distributed():
-        if 'SLURM_PROCID' in os.environ:
-            # FIXME this needs debugging
-            args.rank = int(os.environ['SLURM_PROCID'])
-            os.environ['RANK'] = os.environ['SLURM_PROCID']
-            os.environ['LOCAL_RANK'] = os.environ['SLURM_LOCALID']
-            os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
-        assert 'LOCAL_RANK' in os.environ  # current torch uses env var only for passing args to workers
-        local_rank = int(os.environ['LOCAL_RANK'])
-        torch.distributed.init_process_group(
-            backend=args.dist_backend,
-            init_method=args.dist_url)
-        args.world_size = torch.distributed.get_world_size()
-        args.rank = torch.distributed.get_rank()
-        print('DDP init', args.world_size, args.rank, args.local_rank)  # FIXME debug
-        args.distributed = True
-    else:
-        args.world_size = 1  # DP is still a world-size of 1
-        local_rank = 0
-        args.multigpu = []
-        if args.dp and not args.multigpu:
-            args.multigpu = list(range(torch.cuda.device_count()))
-
-    args.local_rank = local_rank
-    if torch.cuda.is_available():
-        device = 'cuda'
-        if args.distributed:
-            device += ':%d' % local_rank
-        torch.cuda.set_device(device)
-    else:
-        device = 'cpu'
-    args.device = device
-    device = torch.device(device)
 
     # get the name of the experiments
     if args.name is None:
@@ -111,25 +40,42 @@ def main():
             f"p_{args.precision}",
         ])
 
-    # Log and save params.
-    args.log_path = os.path.join(args.logs, args.name, f"out-{local_rank}.log")
-    if os.path.exists(args.log_path):
-        print(
-            "Error. Experiment already exists. Use --name {} to specify a new experiment."
-        )
-        return -1
+    # discover initial world args early so we can log properly
+    args.distributed = False
+    args.dp = False
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
 
-    args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
-    args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
-    args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
-    args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
-    for dirname in [args.tensorboard_path, args.checkpoint_path]:
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
+    log_base_path = os.path.join(args.logs, args.name)
+    os.makedirs(log_base_path, exist_ok=True)
+
+    args.log_path = None
+    if is_master(args, local=args.log_local):
+        log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
+        args.log_path = os.path.join(log_base_path, log_filename)
+        if os.path.exists(args.log_path):
+            print(
+                "Error. Experiment already exists. Use --name {} to specify a new experiment."
+            )
+            return -1
 
     # Set logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
+
+    # fully initialize distributed device environment
+    device = init_distributed_device(args)
+
+    args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
+    args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
+    if is_master(args):
+        args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
+        args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+        for dirname in [args.tensorboard_path, args.checkpoint_path]:
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+    else:
+        args.tensorboard_path = ''
+        args.checkpoint_path = ''
 
     if args.copy_codebase:
         copy_codebase(args)
@@ -138,11 +84,11 @@ def main():
     if args.horovod:
         logging.info(
             f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {local_rank}), total {args.world_size}.')
+            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
     elif args.distributed:
         logging.info(
             f'Running in distributed mode with multiple processes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {local_rank}), total {args.world_size}.')
+            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
     else:
         if args.dp:
             logging.info(f'Running with a single process, DataParallel on {len(args.multigpu)} GPUs.')
@@ -250,9 +196,8 @@ def main():
     cudnn.benchmark = True
     cudnn.deterministic = False
 
-    # determine if this worker should save logs and checkpoints.
-    # only do so if it is the 0th worker.
-    args.save_logs = args.logs and args.logs.lower() != 'none' and args.local_rank == 0
+    # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
+    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
         writer = SummaryWriter(args.tensorboard_path)
@@ -281,7 +226,7 @@ def main():
         evaluate(model, data, 0, args, writer)
 
     for epoch in range(start_epoch, args.epochs):
-        if args.local_rank == 0:
+        if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
         train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
@@ -315,13 +260,11 @@ def main():
                     os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
                 )
 
-    if args.wandb and args.local_rank == 0:
+    if args.wandb and is_master(args):
         wandb.finish()
 
 
 def copy_codebase(args):
-    import sys
-    import subprocess
     from shutil import copytree, ignore_patterns
     new_code_path = os.path.join(args.logs, args.name, "code")
     if os.path.exists(new_code_path):
