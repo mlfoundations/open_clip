@@ -229,6 +229,11 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         if args.val_data is not None:
             evaluate(model, data, epoch + 1, args, writer, steps)
 
+        # Consolidate if using ZeRO
+        if args.use_zero and ((epoch+1) == args.epochs or (
+            args.save_frequency > 0 and ((epoch + 1) % args.save_frequency)==0
+        ) or args.save_most_recent):
+            optimizer.consolidate_state_dict(0)
         # Saving checkpoints.
         if args.save_logs and is_master(args):
             if (epoch + 1) == args.epochs or (

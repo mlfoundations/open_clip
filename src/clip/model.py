@@ -175,7 +175,7 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, d_model * 4)),
-            ("gelu", QuickGELU()),
+            ("gelu", nn.GELU()),
             ("c_proj", nn.Linear(d_model * 4, d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
