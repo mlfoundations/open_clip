@@ -1,9 +1,11 @@
 import json
 import logging
 import os
+import random
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import wandb
@@ -24,6 +26,12 @@ try:
     import horovod.torch as hvd
 except ImportError:
     print("Horovod not installed")
+
+
+def random_seed(seed=42, rank=0):
+    torch.manual_seed(seed + rank)
+    np.random.seed(seed + rank)
+    random.seed(seed + rank)
 
 
 def main():
@@ -95,14 +103,6 @@ def main():
         else:
             logging.info(f'Running with a single process. Device {args.device}.')
 
-    if is_master(args):
-        logging.info("Params:")
-        params_file = os.path.join(args.logs, args.name, "params.txt")
-        with open(params_file, "w") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
-                f.write(f"{name}: {val}\n")
 
     # Do not use skip_reset unless you want to use on of the CLIP model
     if args.openai_pretrained:
@@ -128,7 +128,16 @@ def main():
         if args.precision == "fp16":
             convert_weights_to_fp16(model)
 
-        print(model)
+    if is_master(args):
+        logging.info("Model:")
+        logging.info(f"{str(model)}")
+        logging.info("Params:")
+        params_file = os.path.join(args.logs, args.name, "params.txt")
+        with open(params_file, "w") as f:
+            for name in sorted(vars(args)):
+                val = getattr(args, name)
+                logging.info(f"  {name}: {val}")
+                f.write(f"{name}: {val}\n")
 
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
