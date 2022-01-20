@@ -26,6 +26,11 @@ from webdataset.shardlists import IterableDataset, Composable, ShardSample, Simp
 
 from .distributed import world_info_from_env
 
+try:
+    import horovod.torch as hvd
+except ImportError:
+    hvd = None
+
 from clip.openai_clip import tokenize
 
 
@@ -165,18 +170,16 @@ class DistPytorchEnv:
             return
 
         if self.rank is None:
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if hvd is not None and hvd.is_initialized():
+                self.rank = hvd.rank(), hvd.size()
+            elif torch.distributed.is_available() and torch.distributed.is_initialized():
                 group = self.group or torch.distributed.group.WORLD
-                self.rank = torch.distributed.get_rank(group=group), torch.distributed.get_world_size(
-                    group=group
-                )
+                self.rank = torch.distributed.get_rank(group=group), \
+                            torch.distributed.get_world_size(group=group)
             else:
                 _, rank, world_size = world_info_from_env()
                 if world_size > 1:
                     self.rank = (rank, world_size)
-
-        # FIXME debug this mess
-        print(self.nodeinfo, self.rank)
 
         if self.worker is None:
             worker_info = torch.utils.data.get_worker_info()

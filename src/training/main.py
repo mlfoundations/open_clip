@@ -25,7 +25,7 @@ from training.train import train_one_epoch, evaluate
 try:
     import horovod.torch as hvd
 except ImportError:
-    print("Horovod not installed")
+    hvd = None
 
 
 def random_seed(seed=42, rank=0):
