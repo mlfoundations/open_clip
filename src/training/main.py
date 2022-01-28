@@ -37,6 +37,9 @@ def random_seed(seed=42, rank=0):
 def main():
     args = parse_args()
 
+    # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
+    args.model = args.model.replace('/', '-')
+
     # get the name of the experiments
     if args.name is None:
         args.name = '-'.join([
@@ -53,11 +56,10 @@ def main():
     args.dp = False
     args.local_rank, args.rank, args.world_size = world_info_from_env()
 
-    log_base_path = os.path.join(args.logs, args.name)
-    os.makedirs(log_base_path, exist_ok=True)
-
     args.log_path = None
     if is_master(args, local=args.log_local):
+        log_base_path = os.path.join(args.logs, args.name)
+        os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
         if os.path.exists(args.log_path):
@@ -103,7 +105,6 @@ def main():
         else:
             logging.info(f'Running with a single process. Device {args.device}.')
 
-
     # Do not use skip_reset unless you want to use on of the CLIP model
     if args.openai_pretrained:
         model, preprocess_train, preprocess_val = load(
@@ -115,7 +116,7 @@ def main():
         if args.precision == "amp" or args.precision == "fp32":
             model = model.float()
     else:
-        model_config_file = Path(__file__).parent / f"model_configs/{args.model.replace('/', '-')}.json"
+        model_config_file = Path(__file__).parent / f"model_configs/{args.model}.json"
         print('Loading model from', model_config_file)
         assert os.path.exists(model_config_file)
         with open(model_config_file, 'r') as f:

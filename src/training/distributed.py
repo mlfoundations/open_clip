@@ -103,9 +103,10 @@ def init_distributed_device(args):
         if args.dp and not args.multigpu:
             args.multigpu = list(range(torch.cuda.device_count()))
     if torch.cuda.is_available():
-        device = 'cuda'
         if args.distributed and not args.no_set_device_rank:
-            device += ':%d' % args.local_rank
+            device = 'cuda:%d' % args.local_rank
+        else:
+            device = 'cuda:0'
         torch.cuda.set_device(device)
     else:
         device = 'cpu'

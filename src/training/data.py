@@ -73,14 +73,16 @@ def get_dataset_size(shards):
             [int(sizes[os.path.basename(shard)]) for shard in shards_list])
     elif '__len__' in os.listdir(dir_path):
         total_size = eval(open(os.path.join(dir_path, '__len__'), 'r').read())
-    elif 'cc3m-train' in shards:
-        # FIXME constant for full wds w/o sizes.json / len. Will vary for each download of CC3M
-        total_size = 2905954
-    elif 'cc12m-train' in shards:
-        # FIXME constants for full wds w/o sizes.json / len. Will vary for each download of CC12M
-        total_size = 10968539
     else:
-        raise ValueError(f'Could not find dataset size in {dir_path}')
+        # name / path based hacks (NOTE: specific to a given download / instances of dataset in terms of samples)
+        if 'cc3m-train' in shards:
+            total_size = 2905954
+        elif 'cc12m' in shards:
+            total_size = 10968539
+        elif 'laion' in dir_path.lower():
+            total_size = 407332084
+        else:
+            raise ValueError(f'Could not find dataset size in {dir_path}')
     num_shards = len(shards_list)
     return total_size, num_shards
 
@@ -273,6 +275,10 @@ class DistShardList(IterableDataset, DistPytorchEnv, Composable):
             )
 
 
+def filter_no_caption(sample):
+    return 'txt' in sample
+
+
 def get_wds_dataset(args, preprocess_img, is_train):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -293,6 +299,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     )
     dataset = (
         wds.WebDataset(shardlist)
+        .select(filter_no_caption)
         .decode("pil", handler=wds.ignore_and_continue)
         .rename(image="jpg;png", text="txt")
         .map_dict(image=preprocess_img, text=preprocess_txt)
