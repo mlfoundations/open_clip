@@ -233,6 +233,12 @@ def parse_args():
         action="store_true",
         help="Use gradient checkpointing."
     )
+    parser.add_argument(
+        "--sharded-loss",
+        default=False,
+        action="store_true",
+        help="Use sharded loss calculation."
+    )
     args = parser.parse_args()
     args.aggregate = not args.skip_aggregate
 

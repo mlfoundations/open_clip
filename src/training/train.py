@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from torch.cuda.amp import autocast
 import torch.distributed as dist
+import torch.distributed.nn
 
 from .zero_shot import zero_shot_eval
 
@@ -23,7 +24,7 @@ def is_master(args):
 def get_loss(model, images, texts, loss_img, loss_txt, args):
     image_features, text_features, logit_scale = model(images, texts)
     logit_scale = logit_scale.mean()
-    if args.distributed and args.aggregate:
+    if args.distributed and args.aggregate and not args.sharded_loss:
         world_size = dist.get_world_size()
         rank = dist.get_rank()
 
@@ -52,11 +53,44 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
         logits_per_image = logit_scale * all_image_features @ all_text_features.t()
         logits_per_text = logits_per_image.t()
 
+    elif args.distributed and args.aggregate and args.sharded_loss:
+        gathered_image_features = torch.cat(dist.nn.all_gather(image_features))
+        gathered_text_features = torch.cat(dist.nn.all_gather(text_features))
+        logits_per_image = logit_scale * image_features @ gathered_text_features.t()
+        logits_per_text = logit_scale * text_features @ gathered_image_features.t()
+        # world_size = dist.get_world_size()
+        # rank = dist.get_rank()
+
+        # # We gather tensors from all gpus to get more negatives to contrast with.
+        # gathered_image_features = [
+        #     torch.zeros_like(image_features) for _ in range(world_size)
+        # ]
+        # gathered_text_features = [
+        #     torch.zeros_like(text_features) for _ in range(world_size)
+        # ]
+        # dist.all_gather(gathered_image_features, image_features)
+        # dist.all_gather(gathered_text_features, text_features)
+
+        # all_image_features = torch.cat(
+        #     gathered_image_features[:rank]
+        #     + [image_features]
+        #     + gathered_image_features[rank + 1 :]
+        # )
+        # all_text_features = torch.cat(
+        #     gathered_text_features[:rank]
+        #     + [text_features]
+        #     + gathered_text_features[rank + 1 :]
+        # )       
+
+        # logits_per_image = logit_scale * image_features @ all_text_features.t()
+        # logits_per_text = logit_scale * text_features @ all_image_features.t()
     else:
         logits_per_image = logit_scale * image_features @ text_features.t()
         logits_per_text = logit_scale * text_features @ image_features.t()
 
     ground_truth = torch.arange(len(logits_per_image)).long()
+    if args.sharded_loss:
+        ground_truth += dist.get_rank() * len(logits_per_image)
     if args.gpu is not None:
         ground_truth = ground_truth.cuda(args.gpu, non_blocking=True)
 
