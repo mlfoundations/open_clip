@@ -65,7 +65,10 @@ def get_dataset_size(shards):
     elif '__len__' in os.listdir(dir_path):
         total_size = eval(open(os.path.join(dir_path, '__len__'), 'r').read())
     else:
-        raise ValueError(f'Could not find dataset size in {dir_path}')
+        if 'laion' in dir_path.lower():
+            total_size = 407332084
+        else:
+            raise ValueError(f'Could not find dataset size in {dir_path}')
     num_shards = len(shards_list)
     return total_size, num_shards
 
@@ -143,6 +146,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     )
     dataset = (
         wds.WebDataset(shardlist)
+        .select(filter_no_caption)
         .decode("pil")
         .rename(image="jpg;png", text="txt")
         .map_dict(image=preprocess_img, text=preprocess_txt)
@@ -160,6 +164,9 @@ def get_wds_dataset(args, preprocess_img, is_train):
     dataloader.num_samples = num_samples
 
     return DataInfo(dataloader, None)
+
+def filter_no_caption(x):
+    return 'txt' in x
 
 def get_csv_dataset(args, preprocess_fn, is_train):
     input_filename = args.train_data if is_train else args.val_data

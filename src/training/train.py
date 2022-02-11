@@ -58,32 +58,6 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
         gathered_text_features = torch.cat(dist.nn.all_gather(text_features))
         logits_per_image = logit_scale * image_features @ gathered_text_features.t()
         logits_per_text = logit_scale * text_features @ gathered_image_features.t()
-        # world_size = dist.get_world_size()
-        # rank = dist.get_rank()
-
-        # # We gather tensors from all gpus to get more negatives to contrast with.
-        # gathered_image_features = [
-        #     torch.zeros_like(image_features) for _ in range(world_size)
-        # ]
-        # gathered_text_features = [
-        #     torch.zeros_like(text_features) for _ in range(world_size)
-        # ]
-        # dist.all_gather(gathered_image_features, image_features)
-        # dist.all_gather(gathered_text_features, text_features)
-
-        # all_image_features = torch.cat(
-        #     gathered_image_features[:rank]
-        #     + [image_features]
-        #     + gathered_image_features[rank + 1 :]
-        # )
-        # all_text_features = torch.cat(
-        #     gathered_text_features[:rank]
-        #     + [text_features]
-        #     + gathered_text_features[rank + 1 :]
-        # )       
-
-        # logits_per_image = logit_scale * image_features @ all_text_features.t()
-        # logits_per_text = logit_scale * text_features @ all_image_features.t()
     else:
         logits_per_image = logit_scale * image_features @ text_features.t()
         logits_per_text = logit_scale * text_features @ image_features.t()
