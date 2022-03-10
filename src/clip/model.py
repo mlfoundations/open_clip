@@ -190,7 +190,7 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, act_layer: Callable = QuickGELU):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, act_layer: Callable = nn.GELU):
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
@@ -216,7 +216,7 @@ class ResidualAttentionBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(
             self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None,
-            act_layer: Callable = QuickGELU):
+            act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
@@ -230,7 +230,7 @@ class Transformer(nn.Module):
 class VisualTransformer(nn.Module):
     def __init__(
             self, image_size: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
-            act_layer: Callable = QuickGELU):
+            act_layer: Callable = nn.GELU):
         super().__init__()
         self.image_size = image_size
         self.output_dim = output_dim
@@ -362,7 +362,7 @@ class CLIP(nn.Module):
 
         self.context_length = text_cfg.context_length
 
-        act_layer = QuickGELU
+        act_layer = nn.GELU
         if vision_cfg.timm_model_name:
             self.visual = TimmModel(
                 vision_cfg.timm_model_name,
