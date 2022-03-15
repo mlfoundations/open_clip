@@ -3,12 +3,11 @@ import argparse
 
 def get_default_params(model_name):
     # Params from paper (https://arxiv.org/pdf/2103.00020.pdf)
-    if model_name in ["RN50", "RN101", "RN50x4"]:
-        return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.999, "eps": 1.0e-8}
-    elif model_name == "ViT-B/32":
+    model_name = model_name.lower()
+    if "vit" in model_name:
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.98, "eps": 1.0e-6}
     else:
-        return {}
+        return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.999, "eps": 1.0e-8}
 
 
 def parse_args():
@@ -68,6 +67,12 @@ def parse_args():
         help="Where to store tensorboard logs. Use None to avoid storing logs.",
     )
     parser.add_argument(
+        "--log-local",
+        action="store_true",
+        default=False,
+        help="log files on local master, otherwise global master only.",
+    )
+    parser.add_argument(
         "--name",
         type=str,
         default=None,
@@ -94,13 +99,6 @@ def parse_args():
         default=False,
         action="store_true",
         help="Whether to use batch norm sync.")
-    parser.add_argument(
-        "--gpu",
-        type=int,
-        default=None,
-        help="Specify a single GPU to run the code on for debugging."
-        "Leave at None to use all available GPUs.",
-    )
     parser.add_argument(
         "--skip-scheduler",
         action="store_true",
@@ -132,13 +130,25 @@ def parse_args():
         "--precision",
         choices=["amp", "fp16", "fp32"],
         default="amp",
-        help="Floating point precition."
+        help="Floating point precision."
     )
     parser.add_argument(
         "--model",
-        choices=["RN50", "RN101", "RN50x4", "ViT-B/32"],
+        type=str,
         default="RN50",
         help="Name of the vision backbone to use.",
+    )
+    parser.add_argument(
+        "--local-loss",
+        default=False,
+        action="store_true",
+        help="calculate loss w/ local features @ global (instead of realizing full global @ global matrix)"
+    )
+    parser.add_argument(
+        "--gather-with-grad",
+        default=False,
+        action="store_true",
+        help="enable full distributed gradient for feature gather"
     )
     parser.add_argument(
         "--openai-pretrained",
@@ -149,18 +159,12 @@ def parse_args():
     # arguments for distributed training
     parser.add_argument(
         "--dist-url",
-        default="tcp://127.0.0.1:6100",
+        default="env://",
         type=str,
         help="url used to set up distributed training",
     )
     parser.add_argument(
         "--dist-backend", default="nccl", type=str, help="distributed backend"
-    )
-    parser.add_argument(
-        "--skip-aggregate",
-        default=False,
-        action="store_true",
-        help="whether to aggregate features across gpus before computing the loss"
     )
     parser.add_argument(
         "--report-to",
@@ -201,8 +205,22 @@ def parse_args():
         type=lambda x: [int(a) for a in x.split(",")],
         help="In DP, which GPUs to use for multigpu training",
     )
+    parser.add_argument(
+        "--horovod",
+        default=False,
+        action="store_true",
+        help="Use horovod for distributed training."
+    )
+    parser.add_argument(
+        "--no-set-device-rank",
+        default=False,
+        action="store_true",
+        help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=4242, help="Default random seed."
+    )
     args = parser.parse_args()
-    args.aggregate = not args.skip_aggregate
 
     # If some params are not passed, we use the default values based on model name.
     default_params = get_default_params(args.model)

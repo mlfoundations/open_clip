@@ -1,45 +1,137 @@
-import os
-import time
-import logging
-from time import gmtime, strftime
-from pathlib import Path
 import json
+import logging
+import os
+import random
+from datetime import datetime
+from pathlib import Path
 
-import wandb
+import numpy as np
 import torch
-from torch import optim
-import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
+import wandb
+from torch import optim
 from torch.cuda.amp import GradScaler
+from torch.utils.tensorboard import SummaryWriter
 
-from clip.clip import _transform, load
-from clip.model import convert_weights, CLIP
-from training.train import train, evaluate
+from clip.model import convert_weights_to_fp16, CLIP
+from clip.openai_clip import _transform, load
 from training.data import get_data
+from training.distributed import is_master, init_distributed_device, world_info_from_env
+from training.logger import setup_logging
 from training.params import parse_args
-from training.logger import setup_primary_logging, setup_worker_logging
 from training.scheduler import cosine_lr
+from training.train import train_one_epoch, evaluate
 
-# Used by https://github.com/openai/CLIP/issues/83 but not below.
-# Keeping it incase needed.
-def convert_models_to_fp32(model):
-    for p in model.parameters():
-        p.data = p.data.float()
-        if p.grad:
-            p.grad.data = p.grad.data.float()
+try:
+    import horovod.torch as hvd
+except ImportError:
+    hvd = None
 
-def is_master(args):
-    return (not args.distributed) or args.gpu == 0 or args.dp
 
-def main_worker(gpu, ngpus_per_node, log_queue, args):
-    args.gpu = gpu
-    args.rank = gpu
-    setup_worker_logging(args.rank, log_queue, args.log_level)
+def random_seed(seed=42, rank=0):
+    torch.manual_seed(seed + rank)
+    np.random.seed(seed + rank)
+    random.seed(seed + rank)
 
-    # Log and save params.
+
+def main():
+    args = parse_args()
+
+    # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
+    args.model = args.model.replace('/', '-')
+
+    # get the name of the experiments
+    if args.name is None:
+        args.name = '-'.join([
+            datetime.now().strftime("%Y_%m_%d-%H_%M_%S"),
+            f"model_{args.model}",
+            f"lr_{args.lr}",
+            f"b_{args.batch_size}",
+            f"j_{args.workers}",
+            f"p_{args.precision}",
+        ])
+
+    # discover initial world args early so we can log properly
+    args.distributed = False
+    args.dp = False
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
+
+    args.log_path = None
+    if is_master(args, local=args.log_local):
+        log_base_path = os.path.join(args.logs, args.name)
+        os.makedirs(log_base_path, exist_ok=True)
+        log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
+        args.log_path = os.path.join(log_base_path, log_filename)
+        if os.path.exists(args.log_path):
+            print(
+                "Error. Experiment already exists. Use --name {} to specify a new experiment."
+            )
+            return -1
+
+    # Set logger
+    args.log_level = logging.DEBUG if args.debug else logging.INFO
+    setup_logging(args.log_path, args.log_level)
+
+    # fully initialize distributed device environment
+    device = init_distributed_device(args)
+
+    args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
+    args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
     if is_master(args):
+        args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
+        args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+        for dirname in [args.tensorboard_path, args.checkpoint_path]:
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+    else:
+        args.tensorboard_path = ''
+        args.checkpoint_path = ''
+
+    if args.copy_codebase:
+        copy_codebase(args)
+
+    assert args.precision in ['amp', 'fp16', 'fp32']
+    if args.horovod:
+        logging.info(
+            f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
+            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
+    elif args.distributed:
+        logging.info(
+            f'Running in distributed mode with multiple processes. Device: {args.device}.'
+            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
+    else:
+        if args.dp:
+            logging.info(f'Running with a single process, DataParallel on {len(args.multigpu)} GPUs.')
+        else:
+            logging.info(f'Running with a single process. Device {args.device}.')
+
+    # Do not use skip_reset unless you want to use on of the CLIP model
+    if args.openai_pretrained:
+        model, preprocess_train, preprocess_val = load(
+            args.model,
+            device=args.device,
+            jit=False,
+            is_train=True)
+        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
+        if args.precision == "amp" or args.precision == "fp32":
+            model = model.float()
+    else:
+        model_config_file = Path(__file__).parent / f"model_configs/{args.model}.json"
+        print('Loading model from', model_config_file)
+        assert os.path.exists(model_config_file)
+        with open(model_config_file, 'r') as f:
+            model_info = json.load(f)
+        model = CLIP(**model_info)
+        preprocess_train = _transform(model.visual.image_size, is_train=True)
+        preprocess_val = _transform(model.visual.image_size, is_train=False)
+
+        model.to(device=device)
+        if args.precision == "fp16":
+            convert_weights_to_fp16(model)
+
+    if is_master(args):
+        logging.info("Model:")
+        logging.info(f"{str(model)}")
         logging.info("Params:")
         params_file = os.path.join(args.logs, args.name, "params.txt")
         with open(params_file, "w") as f:
@@ -47,73 +139,24 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
                 val = getattr(args, name)
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
-            
-    if args.distributed:
-        dist.init_process_group(
-            backend=args.dist_backend,
-            init_method=args.dist_url,
-            world_size=args.world_size,
-            rank=args.rank,
-        )
-    
-    if args.dp:
-        args.batch_size *= args.world_size
 
-    if args.gpu is not None:
-        logging.info(f"Use GPU: {args.gpu} for training")
-        torch.cuda.set_device(args.gpu)
-
-    # Do not use skip_reset unless you want to use on of the CLIP model
-    if args.openai_pretrained:
-        model, preprocess_train, preprocess_val = load(
-            args.model,
-            jit=False,
-            is_train=True)
-    else:
-        model_config_file = Path(__file__).parent / f"model_configs/{args.model.replace('/', '-')}.json"
-        print('Loading model from', model_config_file)
-        assert os.path.exists(model_config_file)
-        with open(model_config_file, 'r') as f:
-            model_info = json.load(f)
-        model = CLIP(**model_info)
-        convert_weights(model)
-        preprocess_train = _transform(model.visual.input_resolution, is_train=True)
-        preprocess_val = _transform(model.visual.input_resolution, is_train=False)
-
-
-    # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-    if args.precision == "amp" or args.precision == "fp32" or args.gpu is None:
-        convert_models_to_fp32(model)
-
-    if not torch.cuda.is_available():
-        model.float()
-        logging.warning("using CPU, this will be slow")
-    else:
-        model.cuda(args.gpu)
-        if args.precision == "fp16":
-            convert_weights(model)
-        # Previously batch size and workers were global and not per GPU.
-        # args.batch_size = args.batch_size / ngpus_per_node)
-        # args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-
-        if args.distributed and args.use_bn_sync:
+    if args.distributed and not args.horovod:
+        if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        if args.distributed:
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        if args.dp:
-            model = torch.nn.DataParallel(model, device_ids=args.multigpu)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
 
-        if args.precision == "fp16":
-            convert_weights(model)
+    if args.dp:
+        model = torch.nn.DataParallel(model, device_ids=args.multigpu)
 
     data = get_data(args, (preprocess_train, preprocess_val))
+    assert 'train' in data or 'val' in data, 'At least one of train or val datasets must be specified'
 
-    exclude = lambda n : "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-    include = lambda n : not exclude(n)
+    exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+    include = lambda n, p: not exclude(n, p)
 
     named_parameters = list(model.named_parameters())
-    gain_or_bias_params = [p for n, p in named_parameters if exclude(n) and p.requires_grad]
-    rest_params = [p for n, p in named_parameters if include(n) and p.requires_grad]
+    gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
+    rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
     if args.train_data is None:
         optimizer = None
@@ -131,18 +174,22 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         total_steps = data["train"].dataloader.num_batches * args.epochs
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
+        if args.horovod:
+            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
     scaler = GradScaler() if args.precision == "amp" else None
 
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
         if os.path.isfile(args.resume):
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
+            if 'cuda' in args.device:
                 # Map model to be loaded to specified single gpu.
-                loc = "cuda:{}".format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
+                checkpoint = torch.load(args.resume, map_location=device)
+            else:
+                checkpoint = torch.load(args.resume)
             start_epoch = checkpoint["epoch"]
             sd = checkpoint["state_dict"]
             if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
@@ -159,11 +206,8 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
     cudnn.benchmark = True
     cudnn.deterministic = False
 
-    # determine if this worker should save logs and checkpoints.
-    # only do so if it is the 0th worker.
-    args.save_logs = (args.logs is not None and args.logs != '' and args.logs.lower() != 'none') and (
-        (not args.distributed) or args.gpu == 0
-    )
+    # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
+    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
         writer = SummaryWriter(args.tensorboard_path)
@@ -185,38 +229,40 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
-    if args.train_data is None:
-        evaluate(model, data, start_epoch, args, writer, 0)
+    if 'train' not in data:
+        evaluate(model, data, start_epoch, args, writer)
         return
-    elif start_epoch == 0 and args.val_data is not None:
-        evaluate(model, data, 0, args, writer, 0)
+    elif start_epoch == 0 and 'val' in data:
+        evaluate(model, data, 0, args, writer)
 
     for epoch in range(start_epoch, args.epochs):
-        if args.gpu == 0:
+        if is_master(args):
             logging.info(f'Start epoch {epoch}')
-        train(model, data, epoch, optimizer, scaler, scheduler, args, writer)
-        steps = data["train"].dataloader.num_batches * (epoch + 1)
-        if args.val_data is not None:
-            evaluate(model, data, epoch + 1, args, writer, steps)
+
+        train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
+        completed_epoch = epoch + 1
+
+        if any([v in data for v in ('val', 'imagenet-val', 'imagenet-v2')]):
+            evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.
-        if args.save_logs and (args.gpu == 0 or (not args.distributed)):
-            if (epoch + 1) == args.epochs or (
-                args.save_frequency > 0 and ((epoch + 1) % args.save_frequency) == 0
+        if args.save_logs:
+            if completed_epoch == args.epochs or (
+                args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
             ):
                 torch.save(
                     {
-                        "epoch": epoch + 1,
+                        "epoch": completed_epoch,
                         "name": args.name,
                         "state_dict": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
                     },
-                    os.path.join(args.checkpoint_path, f"epoch_{epoch + 1}.pt"),
+                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
             if args.save_most_recent:
                 torch.save(
                     {
-                        "epoch": epoch + 1,
+                        "epoch": completed_epoch,
                         "name": args.name,
                         "state_dict": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
@@ -224,93 +270,33 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
                     os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
                 )
 
-    if args.wandb and (args.gpu == 0 or (not args.distributed)):
+    if args.wandb and is_master(args):
         wandb.finish()
 
 
-def main():
-    args = parse_args()
-
-    # get the name of the experiments
-    if args.name is None:
-        args.name = strftime(
-            f"lr={args.lr}_"
-            f"wd={args.wd}_"
-            f"agg={args.aggregate}_"
-            f"model={args.model}_"
-            f"batchsize={args.batch_size}_workers={args.workers}_date=%Y-%m-%d-%H-%M-%S",
-            gmtime(),
-        )
-
-    if args.copy_codebase:
-        import sys, subprocess
-        from shutil import copytree, ignore_patterns
-        new_code_path = os.path.join(args.logs, args.name, "code")
-        if os.path.exists(new_code_path):
-            print(
-                f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
-            )
-            return -1
-        print(f"Copying codebase to {new_code_path}")
-        current_code_path = os.path.realpath(__file__)
-        for _ in range(3):
-            current_code_path = os.path.dirname(current_code_path)
-        copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
-        print("Done copying code.")
-        os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{os.path.join(new_code_path, 'src')}"
-        main_file = os.path.join(new_code_path, "src", "training", "main.py")
-        argv = sys.argv
-        argv.remove('--copy-codebase')
-        argv.extend(['--name', args.name])
-        command = [sys.executable] + argv
-        print("Executing command:", " ".join(command))
-        subprocess.check_call(command)
-        return 1
-
-    args.log_path = os.path.join(args.logs, args.name, "out.log")
-    if os.path.exists(args.log_path):
+def copy_codebase(args):
+    from shutil import copytree, ignore_patterns
+    new_code_path = os.path.join(args.logs, args.name, "code")
+    if os.path.exists(new_code_path):
         print(
-            "Error. Experiment already exists. Use --name {} to specify a new experiment."
+            f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
         )
         return -1
-
-    assert args.precision in ['amp', 'fp16', 'fp32']
-    #assert args.model in ['RN50', 'RN101', 'RN50x4', 'ViT-B/32'] or os.path.exists(args.model)
-
-    args.ngpus_per_node = torch.cuda.device_count()
-
-    args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
-    args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
-
-    args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
-    args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
-    for dirname in [args.tensorboard_path, args.checkpoint_path]:
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
-    
-
-    # Set multiprocessing type to spawn.
-    # This is important for logging to work with multiprocessing.
-    torch.multiprocessing.set_start_method("spawn")
-
-    # Set logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    log_queue = setup_primary_logging(args.log_path, args.log_level)
-
-    # Distributed training = training on more than one GPU.
-    # Also easily possible to extend to multiple nodes & multiple GPUs.
-    args.distributed = (args.gpu is None) and torch.cuda.is_available() and (not args.dp)
-    if args.distributed:
-        ngpus_per_node = torch.cuda.device_count()
-        args.world_size = ngpus_per_node
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, log_queue, args))
-    else:
-        if args.dp:
-            args.gpu = args.multigpu[0]
-            args.world_size = len(args.multigpu)
-        else:
-            args.world_size = 1
-        main_worker(args.gpu, None, log_queue, args)
+    print(f"Copying codebase to {new_code_path}")
+    current_code_path = os.path.realpath(__file__)
+    for _ in range(3):
+        current_code_path = os.path.dirname(current_code_path)
+    copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
+    print("Done copying code.")
+    # os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{os.path.join(new_code_path, 'src')}"
+    # main_file = os.path.join(new_code_path, "src", "training", "main.py")
+    # argv = sys.argv
+    # argv.remove('--copy-codebase')
+    # argv.extend(['--name', args.name])
+    # command = [sys.executable] + argv
+    # print("Executing command:", " ".join(command))
+    # subprocess.check_call(command)
+    return 1
 
 
 if __name__ == "__main__":

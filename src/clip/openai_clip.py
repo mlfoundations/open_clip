@@ -21,8 +21,13 @@ _MODELS = {
     "RN50": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
     "RN101": "https://openaipublic.azureedge.net/clip/models/8fa8567bab74a42d41c5915025a8e4538c3bdbe8804a470a72f30b0d94fab599/RN101.pt",
     "RN50x4": "https://openaipublic.azureedge.net/clip/models/7e526bd135e493cef0776de27d5f42653e6b4c8bf9e0f653bb11773263205fdd/RN50x4.pt",
+    "RN50x16": "https://openaipublic.azureedge.net/clip/models/52378b407f34354e150460fe41077663dd5b39c54cd0bfd2b27167a4a06ec9aa/RN50x16.pt",
+    "RN50x64": "https://openaipublic.azureedge.net/clip/models/be1cfb55d75a9666199fb2206c106743da0f6468c9d327f3e0d0a543a9919d9c/RN50x64.pt",
     "ViT-B/32": "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
+    "ViT-B/16": "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
+    "ViT-L/14": "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt",
 }
+
 
 
 def _download(url: str, root: str = os.path.expanduser("~/.cache/clip")):
@@ -56,8 +61,10 @@ def _download(url: str, root: str = os.path.expanduser("~/.cache/clip")):
 
     return download_target
 
+
 def _convert_to_rgb(image):
     return image.convert('RGB')
+
 
 def _transform(n_px: int, is_train: bool):
     normalize = Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
@@ -78,13 +85,17 @@ def _transform(n_px: int, is_train: bool):
         ])
 
 
-
 def available_models() -> List[str]:
     """Returns the names of available CLIP models"""
     return list(_MODELS.keys())
 
 
-def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit=True, is_train=False, pretrained=True):
+def load(
+        name: str,
+        device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
+        jit=True,
+        is_train=False,
+        pretrained=True):
     """Load a CLIP model
     Parameters
     ----------
@@ -129,8 +140,8 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         if str(device) == "cpu":
             model.float()
         return model, \
-               _transform(model.visual.input_resolution, is_train=True), \
-               _transform(model.visual.input_resolution, is_train=False)
+               _transform(model.visual.image_size, is_train=True), \
+               _transform(model.visual.image_size, is_train=False)
 
     # patch the device names
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])
@@ -175,8 +186,8 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         model.float()
 
     return model, \
-           _transform(model.input_resolution.item(), is_train=True), \
-           _transform(model.input_resolution.item(), is_train=False)
+           _transform(model.image_size.item(), is_train=True), \
+           _transform(model.image_size.item(), is_train=False)
 
 
 def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:

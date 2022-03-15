@@ -1,10 +1,11 @@
 {
     "embed_dim": 512,
     "vision_cfg": {
-        "image_size": 224,
-        "vision_layers": 12,
-        "vision_width": 768,
-        "vision_patch_size": 16
+        "timm_model_name": "vit_small_patch16_224",
+        "timm_model_pretrained": false,
+        "timm_pool": "",
+        "timm_proj": "linear",
+        "image_size": 224
     },
     "text_cfg": {
         "context_length": 77,

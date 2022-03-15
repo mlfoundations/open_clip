@@ -1,17 +1,18 @@
 from tqdm import tqdm
 import torch
-import clip.clip as clip
+import clip.openai_clip as clip
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 import logging
+
 
 def zero_shot_classifier(model, classnames, templates, args):
     with torch.no_grad():
         zeroshot_weights = []
         for classname in tqdm(classnames):
             texts = [template(classname) for template in templates] #format with class
-            texts = clip.tokenize(texts).to(args.gpu) #tokenize
-            if args.distributed:
+            texts = clip.tokenize(texts).to(args.device) #tokenize
+            if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
             elif args.dp:
                 class_embeddings = model(None, texts)
@@ -21,7 +22,7 @@ def zero_shot_classifier(model, classnames, templates, args):
             class_embedding = class_embeddings.mean(dim=0)
             class_embedding /= class_embedding.norm()
             zeroshot_weights.append(class_embedding)
-        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(args.gpu)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(args.device)
     return zeroshot_weights
 
 
@@ -30,15 +31,16 @@ def accuracy(output, target, topk=(1,)):
     correct = pred.eq(target.view(1, -1).expand_as(pred))
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) for k in topk]
 
+
 def run(model, classifier, dataloader, args):
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader):
-            images = images.to(args.gpu)
-            target = target.to(args.gpu)
+            images = images.to(args.device)
+            target = target.to(args.device)
 
             # predict
-            if args.distributed:
+            if args.distributed and not args.horovod:
                 image_features = model.module.encode_image(images)
             elif args.dp:
                 image_features = model(images, None)
@@ -56,6 +58,7 @@ def run(model, classifier, dataloader, args):
     top1 = (top1 / n)
     top5 = (top5 / n)
     return top1, top5
+
 
 def zero_shot_eval(model, data, epoch, args):
 
@@ -83,7 +86,6 @@ def zero_shot_eval(model, data, epoch, args):
         top1, top5 = run(model, classifier, data['imagenet-v2'].dataloader, args)
         results['imagenetv2-zeroshot-val-top1'] = top1
         results['imagenetv2-zeroshot-val-top5'] = top5
-
 
     logging.info('Finished zero-shot imagenet.')
 
