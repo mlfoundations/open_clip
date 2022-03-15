@@ -221,7 +221,7 @@ class DistShardList(IterableDataset, DistPytorchEnv, Composable):
 
         self.verbose = verbose
         if self.verbose:
-            print("PytorchShardList init")
+            logger.debug("PytorchShardList init")
         self.epoch = -1
         self.epoch_shuffle = epoch_shuffle
         self.shuffle = shuffle
@@ -249,22 +249,22 @@ class DistShardList(IterableDataset, DistPytorchEnv, Composable):
                 )
             epoch = int(os.environ["WDS_EPOCH"])
             if self.verbose:
-                print(f"PytorchShardList epochshuffle {epoch}")
+                logger.debug(f"PytorchShardList epochshuffle {epoch}")
             random.Random(epoch).shuffle(urls)
         if self.split_by_node:
             rank, world = self.rank or (0, 1)
             if self.verbose:
-                print(f"PytorchShardList rank {rank} of {world}")
+                logging.debug(f"PytorchShardList rank {rank} of {world}")
             urls = urls[rank::world]
         if self.split_by_worker:
             worker, nworkers = self.worker or (0, 1)
             if self.verbose:
-                print(f"PytorchShardList worker {worker} of {nworkers}")
+                logging.debug(f"PytorchShardList worker {worker} of {nworkers}")
             urls = urls[worker::nworkers]
         if self.shuffle:
             random.Random(self.epoch + 17).shuffle(urls)
         if self.verbose:
-            print(f"PytorchShardList got {len(urls)} urls")
+            logging.debug(f"PytorchShardList got {len(urls)} urls")
         for url in urls:
             yield dict(
                 url=url,
