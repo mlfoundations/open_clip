@@ -353,6 +353,7 @@ class CLIP(nn.Module):
             embed_dim: int,
             vision_cfg: CLIPVisionCfg,
             text_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
     ):
         super().__init__()
         if isinstance(vision_cfg, dict):
@@ -362,7 +363,11 @@ class CLIP(nn.Module):
 
         self.context_length = text_cfg.context_length
 
-        act_layer = nn.GELU
+        # OpenAI models are  pretrained w/ QuickGELU but native nn.GELU is both faster and more
+        # memory efficient in recent PyTorch releases (>= 1.10).
+        # NOTE: timm models always use native GELU regardless of quick_gelu flag.
+        act_layer = QuickGELU if quick_gelu else nn.GELU
+
         if vision_cfg.timm_model_name:
             self.visual = TimmModel(
                 vision_cfg.timm_model_name,
@@ -372,7 +377,7 @@ class CLIP(nn.Module):
                 embed_dim=embed_dim,
                 image_size=vision_cfg.image_size
             )
-            act_layer = nn.GELU  # so that text transformer doesn't use quickgelu w/ timm models
+            act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
         elif isinstance(vision_cfg.layers, (tuple, list)):
             vision_heads = vision_cfg.width * 32 // 64
             self.visual = ModifiedResNet(
@@ -526,10 +531,24 @@ def build_model(state_dict: dict):
     transformer_heads = transformer_width // 64
     transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith(f"transformer.resblocks")))
 
+    vision_cfg = CLIPVisionCfg(
+        layers=vision_layers,
+        width=vision_width,
+        patch_size=vision_patch_size,
+        image_size=image_size,
+    )
+    text_cfg = CLIPTextCfg(
+        context_length=context_length,
+        vocab_size=vocab_size,
+        width=transformer_width,
+        heads=transformer_heads,
+        layers=transformer_layers
+    )
     model = CLIP(
         embed_dim,
-        image_size, vision_layers, vision_width, vision_patch_size,
-        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers
+        vision_cfg=vision_cfg,
+        text_cfg=text_cfg,
+        quick_gelu=True,  # OpenAI models were trained with QuickGELU
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:

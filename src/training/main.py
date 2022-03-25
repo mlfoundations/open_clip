@@ -149,7 +149,7 @@ def main():
         model = torch.nn.DataParallel(model, device_ids=args.multigpu)
 
     data = get_data(args, (preprocess_train, preprocess_val))
-    assert 'train' in data or 'val' in data, 'At least one of train or val datasets must be specified'
+    assert len(data), 'At least one train or eval dataset must be specified'
 
     exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
     include = lambda n, p: not exclude(n, p)
