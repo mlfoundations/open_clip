@@ -2,9 +2,9 @@
     "embed_dim": 512,
     "vision_cfg": {
         "image_size": 224,
-        "vision_layers": 12,
-        "vision_width": 768,
-        "vision_patch_size": 16
+        "layers": 12,
+        "width": 768,
+        "patch_size": 16
     },
     "text_cfg": {
         "context_length": 77,
