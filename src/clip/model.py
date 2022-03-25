@@ -526,10 +526,23 @@ def build_model(state_dict: dict):
     transformer_heads = transformer_width // 64
     transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith(f"transformer.resblocks")))
 
+    vision_cfg = CLIPVisionCfg(
+        layers=vision_layers,
+        width=vision_width,
+        patch_size=vision_patch_size,
+        image_size=image_size,
+    )
+    text_cfg = CLIPTextCfg(
+        context_length=context_length,
+        vocab_size=vocab_size,
+        width=transformer_width,
+        heads=transformer_heads,
+        layers=transformer_layers
+    )
     model = CLIP(
         embed_dim,
-        image_size, vision_layers, vision_width, vision_patch_size,
-        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers
+        vision_cfg=vision_cfg,
+        text_cfg=text_cfg,
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
