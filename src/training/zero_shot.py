@@ -14,8 +14,6 @@ def zero_shot_classifier(model, classnames, templates, args):
             texts = clip.tokenize(texts).to(args.device) #tokenize
             if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
-            elif args.dp:
-                class_embeddings = model(None, texts)
             else:
                 class_embeddings = model.encode_text(texts)
             class_embeddings /= class_embeddings.norm(dim=-1, keepdim=True)
@@ -42,8 +40,6 @@ def run(model, classifier, dataloader, args):
             # predict
             if args.distributed and not args.horovod:
                 image_features = model.module.encode_image(images)
-            elif args.dp:
-                image_features = model(images, None)
             else:
                 image_features = model.encode_image(images)
             image_features /= image_features.norm(dim=-1, keepdim=True)

@@ -63,7 +63,6 @@ def init_distributed_device(args):
     # Distributed training = training on more than one GPU.
     # Also easily possible to extend to multiple nodes & multiple GPUs.
     args.distributed = False
-    args.dp = False
     args.world_size = 1
     args.rank = 0  # global rank
     args.local_rank = 0
@@ -97,11 +96,7 @@ def init_distributed_device(args):
             args.world_size = torch.distributed.get_world_size()
             args.rank = torch.distributed.get_rank()
         args.distributed = True
-    else:
-        # DP is still a world-size of 1
-        args.multigpu = []
-        if args.dp and not args.multigpu:
-            args.multigpu = list(range(torch.cuda.device_count()))
+
     if torch.cuda.is_available():
         if args.distributed and not args.no_set_device_rank:
             device = 'cuda:%d' % args.local_rank

@@ -53,7 +53,6 @@ def main():
 
     # discover initial world args early so we can log properly
     args.distributed = False
-    args.dp = False
     args.local_rank, args.rank, args.world_size = world_info_from_env()
 
     args.log_path = None
@@ -100,10 +99,7 @@ def main():
             f'Running in distributed mode with multiple processes. Device: {args.device}.'
             f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
     else:
-        if args.dp:
-            logging.info(f'Running with a single process, DataParallel on {len(args.multigpu)} GPUs.')
-        else:
-            logging.info(f'Running with a single process. Device {args.device}.')
+        logging.info(f'Running with a single process. Device {args.device}.')
 
     # Do not use skip_reset unless you want to use on of the CLIP model
     if args.openai_pretrained:
@@ -144,9 +140,6 @@ def main():
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
-
-    if args.dp:
-        model = torch.nn.DataParallel(model, device_ids=args.multigpu)
 
     data = get_data(args, (preprocess_train, preprocess_val))
     assert len(data), 'At least one train or eval dataset must be specified'
