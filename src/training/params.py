@@ -95,7 +95,8 @@ def parse_args():
     parser.add_argument(
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
     )
-    parser.add_argument("--use-bn-sync",
+    parser.add_argument(
+        "--use-bn-sync",
         default=False,
         action="store_true",
         help="Whether to use batch norm sync.")
@@ -192,18 +193,6 @@ def parse_args():
         default=False,
         action="store_true",
         help="If true, we copy the entire base on the log diretory, and execute from there."
-    )
-    parser.add_argument(
-        "--dp",
-        default=False,
-        action="store_true",
-        help="Use DP instead of DDP."
-    )
-    parser.add_argument(
-        "--multigpu",
-        default=None,
-        type=lambda x: [int(a) for a in x.split(",")],
-        help="In DP, which GPUs to use for multigpu training",
     )
     parser.add_argument(
         "--horovod",
