@@ -1,3 +1,4 @@
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Tuple, Union, Callable
@@ -163,7 +164,6 @@ class ModifiedResNet(nn.Module):
         return x
 
     def forward(self, x):
-        x = x.to(self.conv1.weight.dtype)
         x = self.stem(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -363,7 +363,7 @@ class CLIP(nn.Module):
 
         self.context_length = text_cfg.context_length
 
-        # OpenAI models are  pretrained w/ QuickGELU but native nn.GELU is both faster and more
+        # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
         # memory efficient in recent PyTorch releases (>= 1.10).
         # NOTE: timm models always use native GELU regardless of quick_gelu flag.
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -395,7 +395,8 @@ class CLIP(nn.Module):
                 width=vision_cfg.width,
                 layers=vision_cfg.layers,
                 heads=vision_heads,
-                output_dim=embed_dim
+                output_dim=embed_dim,
+                act_layer=act_layer,
             )
 
         self.transformer = Transformer(
@@ -443,10 +444,6 @@ class CLIP(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
-
-    @property
-    def dtype(self):
-        return next(self.visual.parameters()).dtype
 
     def encode_image(self, image):
         return self.visual(image)
@@ -552,8 +549,7 @@ def build_model(state_dict: dict):
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
-        if key in state_dict:
-            del state_dict[key]
+        state_dict.pop(key, None)
 
     convert_weights_to_fp16(model)
     model.load_state_dict(state_dict)

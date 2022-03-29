@@ -8,13 +8,14 @@ from typing import Union, List
 
 import torch
 from PIL import Image
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, RandomResizedCrop
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, RandomResizedCrop,\
+    InterpolationMode
 from tqdm import tqdm
 
 from clip.model import build_model
 from clip.tokenizer import SimpleTokenizer as _Tokenizer
 
-__all__ = ["available_models", "load", "tokenize"]
+__all__ = ["available_models", "load", "tokenize", "image_transform"]
 _tokenizer = _Tokenizer()
 
 _MODELS = {
@@ -65,19 +66,24 @@ def _convert_to_rgb(image):
     return image.convert('RGB')
 
 
-def _transform(n_px: int, is_train: bool):
-    normalize = Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
+def image_transform(
+        image_size: int,
+        is_train: bool,
+        mean=(0.48145466, 0.4578275, 0.40821073),
+        std=(0.26862954, 0.26130258, 0.27577711)
+):
+    normalize = Normalize(mean=mean, std=std)
     if is_train:
         return Compose([
-            RandomResizedCrop(n_px, scale=(0.9, 1.0), interpolation=Image.BICUBIC),
+            RandomResizedCrop(image_size, scale=(0.9, 1.0), interpolation=InterpolationMode.BICUBIC),
             _convert_to_rgb,
             ToTensor(),
             normalize,
         ])
     else:
         return Compose([
-            Resize(n_px, interpolation=Image.BICUBIC),
-            CenterCrop(n_px),
+            Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+            CenterCrop(image_size),
             _convert_to_rgb,
             ToTensor(),
             normalize,
@@ -93,9 +99,9 @@ def load(
         name: str,
         device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
         jit=True,
-        is_train=False,
-        pretrained=True):
+):
     """Load a CLIP model
+
     Parameters
     ----------
     name : str
@@ -104,6 +110,7 @@ def load(
         The device to put the loaded model
     jit : bool
         Whether to load the optimized JIT model (default) or more hackable non-JIT model.
+
     Returns
     -------
     model : torch.nn.Module
@@ -139,8 +146,8 @@ def load(
         if str(device) == "cpu":
             model.float()
         return model, \
-               _transform(model.visual.image_size, is_train=True), \
-               _transform(model.visual.image_size, is_train=False)
+            image_transform(model.visual.image_size, is_train=True), \
+            image_transform(model.visual.image_size, is_train=False)
 
     # patch the device names
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])
@@ -181,23 +188,24 @@ def load(
         model.apply(patch_float)
         patch_float(model.encode_image)
         patch_float(model.encode_text)
-
         model.float()
 
     return model, \
-           _transform(model.image_size.item(), is_train=True), \
-           _transform(model.image_size.item(), is_train=False)
+        image_transform(model.image_size.item(), is_train=True), \
+        image_transform(model.image_size.item(), is_train=False)
 
 
 def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
     """
     Returns the tokenized representation of given input string(s)
+
     Parameters
     ----------
     texts : Union[str, List[str]]
         An input string or a list of input strings to tokenize
     context_length : int
         The context length to use; all CLIP models use 77 as the context length
+
     Returns
     -------
     A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
@@ -211,8 +219,8 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.Lo
     result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
 
     for i, tokens in enumerate(all_tokens):
-        if len(tokens) > context_length: # Truncate
-            tokens = tokens[:context_length]
+        if len(tokens) > context_length:
+            tokens = tokens[:context_length]  # Truncate
         result[i, :len(tokens)] = torch.tensor(tokens)
 
     return result

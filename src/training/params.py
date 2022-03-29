@@ -25,6 +25,18 @@ def parse_args():
         help="Path to csv file with validation data",
     )
     parser.add_argument(
+        "--train-num-samples",
+        type=int,
+        default=None,
+        help="Number of samples in dataset. Required for webdataset if not available in info file.",
+    )
+    parser.add_argument(
+        "--val-num-samples",
+        type=int,
+        default=None,
+        help="Number of samples in dataset. Useful for webdataset if not available in info file.",
+    )
+    parser.add_argument(
         "--dataset-type",
         choices=["webdataset", "csv", "auto"],
         default="auto",
@@ -119,7 +131,7 @@ def parse_args():
         "--zeroshot-frequency", type=int, default=2, help="How often to run zero shot."
     )
     parser.add_argument(
-        "--regression-frequency", type=int, default=2, help="How often to run zero shot."
+        "--val-frequency", type=int, default=1, help="How often to run evaluation with val data."
     )
     parser.add_argument(
         "--resume",
@@ -156,6 +168,12 @@ def parse_args():
         default=False,
         action='store_true',
         help="Use the openai pretrained models.",
+    )
+    parser.add_argument(
+        "--force-quick-gelu",
+        default=False,
+        action='store_true',
+        help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
     # arguments for distributed training
     parser.add_argument(
