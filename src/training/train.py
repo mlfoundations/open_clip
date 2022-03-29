@@ -1,6 +1,9 @@
 import json
+import logging
+import math
 import os
 import time
+from contextlib import suppress
 
 import numpy as np
 import torch
@@ -8,6 +11,7 @@ import torch.distributed as dist
 import torch.distributed.nn
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 
 try:
     import horovod.torch as hvd
@@ -16,10 +20,6 @@ except ImportError:
 
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
-
-from contextlib import suppress
-import wandb
-import logging
 
 
 def gather_features(
@@ -113,6 +113,24 @@ class ClipLoss(nn.Module):
         return total_loss
 
 
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
 def unwrap_model(model):
     if hasattr(model, 'module'):
         return model.module
@@ -121,10 +139,9 @@ def unwrap_model(model):
 
 
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
-    os.environ["WDS_EPOCH"] = str(epoch)
-
     device = torch.device(args.device)
     autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+
     model.train()
     loss = ClipLoss(args.local_loss, args.gather_with_grad, args.rank, args.world_size, args.horovod)
 
@@ -132,6 +149,10 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     if args.distributed and sampler is not None:
         sampler.set_epoch(epoch)
     num_batches_per_epoch = dataloader.num_batches
+
+    loss_m = AverageMeter()
+    batch_time_m = AverageMeter()
+    data_time_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
@@ -141,7 +162,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         images = images.to(device=device, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
-        data_time = time.time() - end
+        data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         with autocast():
@@ -163,90 +184,110 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        logit_scale = unwrap_model(model).logit_scale
         with torch.no_grad():
-            logit_scale.clamp_(0, 4.6052)
+            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
-        batch_time = time.time() - end
+        batch_time_m.update(time.time() - end)
         end = time.time()
 
-        if is_master(args) and (i % 100) == 0:
-            num_samples = i * len(images) * args.world_size
+        if is_master(args) and (i % 100 == 0 or i == num_batches_per_epoch - 1):
+            batch_size = len(images)
+            num_samples = i * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * i / num_batches_per_epoch
-            loss_scalar = total_loss.item()
+
+            # note loss meter is a coarse sample, just master node and per log update
+            loss_m.update(total_loss.item(), batch_size)
             logit_scale_scalar = logit_scale.item()
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples}/{samples_per_epoch} ({percent_complete:.0f}%)]\t"
-                f"Loss: {loss_scalar:.6f}\tData (t) {data_time:.3f}\tBatch (t) {batch_time:.3f}"
+                f"Loss: {loss_m.avg:.6f}\tData (t) {data_time_m.avg:.3f}\tBatch (t) {batch_time_m.avg:.3f}"
                 f"\tLR: {optimizer.param_groups[0]['lr']:5f}\tlogit_scale {logit_scale_scalar:.3f}"
             )
-            # save train loss / etc.
 
-            timestep = epoch * num_batches_per_epoch + i
+            # save train loss / etc.
             log_data = {
-                "loss": loss_scalar,
-                "data_time": data_time,
-                "batch_time": batch_time,
+                "loss": loss_m.avg,
+                "data_time": data_time_m.avg,
+                "batch_time": batch_time_m.avg,
                 "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
-
             for name, val in log_data.items():
                 name = "train/" + name
                 if tb_writer is not None:
-                    tb_writer.add_scalar(name, val, timestep)
+                    tb_writer.add_scalar(name, val, step)
                 if args.wandb:
-                    wandb.log({name: val, 'step': timestep})
+                    wandb.log({name: val, 'step': step})
+
+            # resetting batch / data time meters per log window
+            batch_time_m.reset()
+            data_time_m.reset()
+    # end for
 
 
 def evaluate(model, data, epoch, args, tb_writer=None):
-    if not is_master(args):
-        return
-    device = torch.device(args.device)
     metrics = {}
+    if not is_master(args):
+        return metrics
+    device = torch.device(args.device)
     model.eval()
 
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
     metrics.update(zero_shot_metrics)
 
-    if 'val' in data:
+    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
+        num_samples = 0
+        samples_per_val = dataloader.num_samples
 
+        # FIXME this does not scale past small eval datasets
+        # all_image_features @ all_text_features will blow up memory and compute very quickly
         cumulative_loss = 0.0
-        num_elements = 0.0
         all_image_features, all_text_features = [], []
         with torch.no_grad():
-            for batch in dataloader:
+            for i, batch in enumerate(dataloader):
                 images, texts = batch
                 images = images.to(device=device, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 
-                image_features, text_features, logit_scale = model(images, texts)
-                all_image_features.append(image_features)
-                all_text_features.append(text_features)
-                logit_scale = logit_scale.mean()
-                logits_per_image = logit_scale * image_features @ text_features.t()
-                logits_per_text = logits_per_image.t()
+                with autocast():
+                    image_features, text_features, logit_scale = model(images, texts)
+                    # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
+                    # however, system RAM is easily exceeded and compute time becomes problematic
+                    all_image_features.append(image_features.cpu())
+                    all_text_features.append(text_features.cpu())
+                    logit_scale = logit_scale.mean()
+                    logits_per_image = logit_scale * image_features @ text_features.t()
+                    logits_per_text = logits_per_image.t()
 
-                batch_size = images.shape[0]
-                labels = torch.arange(batch_size, device=device).long()
-                total_loss = (
-                    F.cross_entropy(logits_per_image, labels) +
-                    F.cross_entropy(logits_per_text, labels)
-                ) / 2
+                    batch_size = images.shape[0]
+                    labels = torch.arange(batch_size, device=device).long()
+                    total_loss = (
+                        F.cross_entropy(logits_per_image, labels) +
+                        F.cross_entropy(logits_per_text, labels)
+                    ) / 2
+
                 cumulative_loss += total_loss * batch_size
-                num_elements += batch_size
+                num_samples += batch_size
+                if is_master(args) and (i % 100) == 0:
+                    logging.info(
+                        f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
+                        f"Loss: {cumulative_loss / num_samples:.6f}\t")
 
             val_metrics = get_metrics(
                 image_features=torch.cat(all_image_features),
                 text_features=torch.cat(all_text_features),
-                logit_scale=logit_scale
+                logit_scale=logit_scale.cpu(),
             )
-            loss = cumulative_loss / num_elements
+            loss = cumulative_loss / num_samples
             metrics.update(
-                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_elements": num_elements}
+                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
+
+    if not metrics:
+        return metrics
 
     logging.info(
         f"Eval Epoch: {epoch} "

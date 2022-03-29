@@ -1,30 +1,22 @@
-import os
-import sys
-import math
-import logging
-import functools
-import braceexpand
-import random
-import pdb
+import ast
 import json
-
-import pandas as pd
-import numpy as np
-import pyarrow as pa
-from PIL import Image
-
-from typing import Union
+import logging
+import math
+import os
+import random
 from dataclasses import dataclass
+from itertools import islice
 
+import braceexpand
+import numpy as np
+import pandas as pd
 import torch
+import torchvision.datasets as datasets
+import webdataset as wds
+from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
-import torchvision.datasets as datasets
-from webdataset.utils import identity
-import webdataset as wds
-from webdataset.shardlists import IterableDataset, Composable, ShardSample, SimpleShardSample
 
-from .distributed import world_info_from_env
 
 try:
     import horovod.torch as hvd
@@ -66,23 +58,20 @@ def preprocess_txt(text):
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
     dir_path = os.path.dirname(shards)
-    if 'sizes.json' in os.listdir(dir_path):
-        sizes_filename = os.path.join(dir_path, 'sizes.json')
+    sizes_filename = os.path.join(dir_path, 'sizes.json')
+    len_filename = os.path.join(dir_path, '__len__')
+    if os.path.exists(sizes_filename):
         sizes = json.load(open(sizes_filename, 'r'))
-        total_size = sum(
-            [int(sizes[os.path.basename(shard)]) for shard in shards_list])
-    elif '__len__' in os.listdir(dir_path):
-        total_size = eval(open(os.path.join(dir_path, '__len__'), 'r').read())
+        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
+    elif os.path.exists(len_filename):
+        # FIXME this used to be eval(open(...)) but that seemed rather unsafe
+        total_size = ast.literal_eval(open(len_filename, 'r').read())
     else:
-        # name / path based hacks (NOTE: specific to a given download / instances of dataset in terms of samples)
-        if 'cc3m-train' in shards:
-            total_size = 2905954
-        elif 'cc12m' in shards:
-            total_size = 10968539
-        elif 'laion' in dir_path.lower():
-            total_size = 407332084
-        else:
-            raise ValueError(f'Could not find dataset size in {dir_path}')
+        total_size = None  # num samples undefined
+        # some common dataset sizes (at time of authors last download)
+        # cc3m-train: 2905954
+        # cc12m: 10968539
+        # LAION-400m: 407332084
     num_shards = len(shards_list)
     return total_size, num_shards
 
@@ -97,7 +86,7 @@ def get_imagenet(args, preprocess_fns, split):
         dataset = ImageNetV2Dataset(location=args.imagenet_v2, transform=preprocess_val)
     else:
         if is_train:
-            data_path  = args.imagenet_train
+            data_path = args.imagenet_train
             preprocess_fn = preprocess_train
         else:
             data_path = args.imagenet_val
@@ -143,140 +132,20 @@ def count_samples(dataloader):
     return n_elements, n_batches
 
 
-class DistPytorchEnv:
-    """A class encapsulating the PyTorch node/worker environment."""
-
-    def __init__(self, group=None):
-        """Initialize rank/worker information."""
-        import socket
-
-        super().__init__()
-        self.rank = None
-        self.worker = None
-        self.group = group
-        self.nodeinfo = (socket.gethostname(), os.getpid())
-        self.update_env()
-
-    def update_env(self):
-        """Update information about node and worker environment.
-        This code is written this way because the torch.distributed info is
-        available only in the environment where the loader is created.
-        This class retains that environment info when it is serialized.
-        """
-        from webdataset import gopen
-
-        try:
-            import torch
-            import torch.distributed
-        except Exception:
-            return
-
-        if self.rank is None:
-            if hvd is not None and hvd.is_initialized():
-                self.rank = hvd.rank(), hvd.size()
-            elif torch.distributed.is_available() and torch.distributed.is_initialized():
-                group = self.group or torch.distributed.group.WORLD
-                self.rank = torch.distributed.get_rank(group=group), \
-                            torch.distributed.get_world_size(group=group)
-            else:
-                _, rank, world_size = world_info_from_env()
-                if world_size > 1:
-                    self.rank = (rank, world_size)
-
-        if self.worker is None:
-            worker_info = torch.utils.data.get_worker_info()
-            if worker_info is not None:
-                self.worker = worker_info.id, worker_info.num_workers
-
-        gopen.info["nodeinfo"] = self.nodeinfo
-        gopen.info["rank"], gopen.info["size"] = self.rank or (-1, -1)
-        gopen.info["worker_id"], gopen.info["num_workers"] = self.worker or (-1, -1)
-
-
-class DistShardList(IterableDataset, DistPytorchEnv, Composable):
-    """An iterable dataset yielding a list of urls.
-    This understands the PyTorch distributed and worker APIs and splits shards
-    accordingly.
-    """
-
-    def __init__(
-        self,
-        urls,
-        epoch_shuffle=False,
-        shuffle=True,
-        split_by_worker=True,
-        split_by_node=True,
-        verbose=False,
-    ):
-        """Create a ShardList.
-        :param urls: a list of URLs as a Python list or brace notation string
-        :param shuffle: shuffle samples before iterating
-        :param split_by_node: split shards by node if True
-        :param split_by_worker: split shards by worker if True
-        :param group: group used for determining rank/world_size
-        If WDS_SHUFFLE is in the environment, it is used for shuffling shards prior
-        to splitting; this assigns different shards to different nodes on each epoch.
-        """
-        super().__init__()
-
-        self.verbose = verbose
-        if self.verbose:
-            logger.debug("PytorchShardList init")
-        self.epoch = -1
-        self.epoch_shuffle = epoch_shuffle
-        self.shuffle = shuffle
-        self.split_by_worker = split_by_worker
-        self.split_by_node = split_by_node
-        if not isinstance(urls, ShardSample):
-            urls = SimpleShardSample(urls)
-        self.shardsample = urls
-
-    def set_epoch(self, epoch):
-        """Set the current epoch. Used for per-node shuffling."""
-        self.epoch = epoch - 1
-
-    def __iter__(self):
-        """Return an iterator over the shards."""
-        self.epoch += 1
-        if hasattr(self.shardsample, "set_epoch"):
-            self.shardsample.set_epoch(self.epoch)
-        self.update_env()
-        urls = self.shardsample.sample()
-        if self.epoch_shuffle:
-            if "WDS_EPOCH" not in os.environ:
-                raise ValueError(
-                    "when specifying epoch_shuffle, you must provide the epoch in the WDS_EPOCH environment variable"
-                )
-            epoch = int(os.environ["WDS_EPOCH"])
-            if self.verbose:
-                logger.debug(f"PytorchShardList epochshuffle {epoch}")
-            random.Random(epoch).shuffle(urls)
-        if self.split_by_node:
-            rank, world = self.rank or (0, 1)
-            if self.verbose:
-                logging.debug(f"PytorchShardList rank {rank} of {world}")
-            urls = urls[rank::world]
-        if self.split_by_worker:
-            worker, nworkers = self.worker or (0, 1)
-            if self.verbose:
-                logging.debug(f"PytorchShardList worker {worker} of {nworkers}")
-            urls = urls[worker::nworkers]
-        if self.shuffle:
-            random.Random(self.epoch + 17).shuffle(urls)
-        if self.verbose:
-            logging.debug(f"PytorchShardList got {len(urls)} urls")
-        for url in urls:
-            yield dict(
-                url=url,
-                __url__=url,
-                __worker__=str(self.worker),
-                __rank__=str(self.rank),
-                __nodeinfo__=str(self.nodeinfo),
-            )
-
-
 def filter_no_caption(sample):
     return 'txt' in sample
+
+
+def log_and_continue(exn):
+    """Call in an exception handler to ignore any exception, isssue a warning, and continue."""
+    logging.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    return True
+
+
+_SHARD_SHUFFLE_SIZE = 2000
+_SHARD_SHUFFLE_INITIAL = 500
+_SAMPLE_SHUFFLE_SIZE = 5000
+_SAMPLE_SHUFFLE_INITIAL = 1000
 
 
 def get_wds_dataset(args, preprocess_img, is_train):
@@ -285,34 +154,57 @@ def get_wds_dataset(args, preprocess_img, is_train):
 
     # The following code is adapted from https://github.com/tmbdev/webdataset-examples/blob/master/main-wds.py
     num_samples, num_shards = get_dataset_size(input_shards)
-    if is_train and args.distributed:
-        max_shards_per_node = math.ceil(num_shards / args.world_size)
-        num_samples = args.world_size * (num_samples * max_shards_per_node // num_shards)
-        num_batches = num_samples // (args.batch_size * args.world_size)
-        num_samples = num_batches * args.batch_size * args.world_size
+    if not num_samples:
+        if is_train:
+            num_samples = args.train_num_samples
+            if not num_samples:
+                raise RuntimeError(
+                    'Currently, number of dataset samples must be specified for training dataset. '
+                    'Please specify via `--train-num-samples` if no dataset length info present.')
+        else:
+            num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
+
+    pipeline = [wds.SimpleShardList(input_shards)]
+    # at this point we have an iterator over all the shards
+    if is_train:
+        pipeline.extend([
+            wds.detshuffle(bufsize=_SHARD_SHUFFLE_SIZE, initial=_SHARD_SHUFFLE_INITIAL, seed=args.seed),
+            wds.split_by_node,
+            wds.split_by_worker,
+            # at this point, we have an iterator over the shards assigned to each worker at each node
+            wds.tarfile_to_samples(handler=log_and_continue),
+            wds.shuffle(
+                bufsize=_SAMPLE_SHUFFLE_INITIAL,
+                initial=_SAMPLE_SHUFFLE_INITIAL,
+                rng=random.Random(args.seed)),
+        ])
     else:
-        num_batches = num_samples // args.batch_size
-    shardlist = DistShardList(
-        input_shards,
-        epoch_shuffle=is_train,
-        split_by_node=is_train  # NOTE: we do eval on a single gpu.
-    )
-    dataset = (
-        wds.WebDataset(shardlist)
-        .select(filter_no_caption)
-        .decode("pil", handler=wds.ignore_and_continue)
-        .rename(image="jpg;png", text="txt")
-        .map_dict(image=preprocess_img, text=preprocess_txt)
-        .to_tuple("image", "text")
-        .batched(args.batch_size, partial=not is_train or not args.distributed)
-    )
+        pipeline.extend([
+            wds.split_by_worker,
+            # at this point, we have an iterator over the shards assigned to each worker
+            wds.tarfile_to_samples(handler=log_and_continue),
+        ])
+    pipeline.extend([
+        wds.select(filter_no_caption),
+        wds.decode("pil", handler=log_and_continue),
+        wds.rename(image="jpg;png", text="txt"),
+        wds.map_dict(image=preprocess_img, text=preprocess_txt),
+        wds.to_tuple("image", "text"),
+        wds.batched(args.batch_size, partial=not is_train),
+    ])
+
+    dataset = wds.DataPipeline(*pipeline)
     dataloader = wds.WebLoader(
-        dataset, batch_size=None, shuffle=False, num_workers=args.workers,
+        dataset, batch_size=None, shuffle=False, num_workers=args.workers
     )
-    if is_train and args.distributed:
-        # With DDP, we need to make sure that all nodes get the same number of batches;
-        # we do that by reusing a little bit of data.
-        dataloader = dataloader.repeat(2).slice(num_batches)
+
+    # rounding up (ceil) for both train and val, for train we'll roll-over and duplicate a few samples to
+    # get same number of full batches on each node, for evaluation the last batch(es) will be partial.
+    world_size = args.world_size if is_train else 1
+    num_batches = math.ceil(num_samples / (args.batch_size * world_size))
+    num_samples = num_batches * args.batch_size * world_size
+    if num_batches:
+        dataloader = dataloader.with_epoch(num_batches)
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
