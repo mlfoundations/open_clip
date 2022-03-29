@@ -152,7 +152,6 @@ def get_wds_dataset(args, preprocess_img, is_train):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
 
-    # The following code is adapted from https://github.com/tmbdev/webdataset-examples/blob/master/main-wds.py
     num_samples, num_shards = get_dataset_size(input_shards)
     if not num_samples:
         if is_train:
@@ -174,7 +173,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
             # at this point, we have an iterator over the shards assigned to each worker at each node
             wds.tarfile_to_samples(handler=log_and_continue),
             wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_INITIAL,
+                bufsize=_SAMPLE_SHUFFLE_SIZE,
                 initial=_SAMPLE_SHUFFLE_INITIAL,
                 rng=random.Random(args.seed)),
         ])
@@ -186,7 +185,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
         ])
     pipeline.extend([
         wds.select(filter_no_caption),
-        wds.decode("pil", handler=log_and_continue),
+        wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png", text="txt"),
         wds.map_dict(image=preprocess_img, text=preprocess_txt),
         wds.to_tuple("image", "text"),
@@ -194,17 +193,20 @@ def get_wds_dataset(args, preprocess_img, is_train):
     ])
 
     dataset = wds.DataPipeline(*pipeline)
-    dataloader = wds.WebLoader(
-        dataset, batch_size=None, shuffle=False, num_workers=args.workers
-    )
+    if is_train:
+        # roll over and repeat a few samples to get same number of full batches on each node
+        global_batch_size = args.batch_size * args.world_size
+        num_batches = math.ceil(num_samples / global_batch_size)
+        if args.workers > 1:
+            # is it worth ensuring number batches divisible by workers?
+            num_batches = math.ceil(num_batches / args.workers) * args.workers
+        num_samples = num_batches * global_batch_size
+        dataset = dataset.with_epoch(num_batches)
+    else:
+        # last batches are partial, eval is done on single (master) node
+        num_batches = math.ceil(num_samples / args.batch_size)
 
-    # rounding up (ceil) for both train and val, for train we'll roll-over and duplicate a few samples to
-    # get same number of full batches on each node, for evaluation the last batch(es) will be partial.
-    world_size = args.world_size if is_train else 1
-    num_batches = math.ceil(num_samples / (args.batch_size * world_size))
-    num_samples = num_batches * args.batch_size * world_size
-    if num_batches:
-        dataloader = dataloader.with_epoch(num_batches)
+    dataloader = wds.WebLoader(dataset, batch_size=None, shuffle=False, num_workers=args.workers)
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
