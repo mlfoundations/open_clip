@@ -10,19 +10,18 @@ import wandb
 from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
+try:
+    import horovod.torch as hvd
+except ImportError:
+    hvd = None
 
-from clip.factory import create_model_and_transforms
+from open_clip import create_model_and_transforms
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
 
 
 def random_seed(seed=42, rank=0):

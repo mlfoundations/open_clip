@@ -22,7 +22,7 @@ try:
 except ImportError:
     hvd = None
 
-from clip import tokenize
+from open_clip import tokenize
 
 
 class CsvDataset(Dataset):

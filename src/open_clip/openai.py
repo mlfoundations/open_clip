@@ -9,15 +9,15 @@ from .model import build_model
 from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained
 from .transform import image_transform
 
-__all__ = ["available_openai_models", "load_openai"]
+__all__ = ["list_openai_models", "load_openai_model"]
 
 
-def available_openai_models() -> List[str]:
+def list_openai_models() -> List[str]:
     """Returns the names of available CLIP models"""
     return list_pretrained_tag_models('openai')
 
 
-def load_openai(
+def load_openai_model(
         name: str,
         device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
         jit=True,
@@ -45,7 +45,7 @@ def load_openai(
     elif os.path.isfile(name):
         model_path = name
     else:
-        raise RuntimeError(f"Model {name} not found; available models = {available_openai_models()}")
+        raise RuntimeError(f"Model {name} not found; available models = {list_openai_models()}")
 
     try:
         # loading JIT archive

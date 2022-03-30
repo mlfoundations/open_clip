@@ -49,8 +49,11 @@ _PRETRAINED = {
 }
 
 
-def list_pretrained(as_tuple: bool = False):
-    return [(k, t) if as_tuple else ':'.join([k, t]) for k in _PRETRAINED.keys() for t in _PRETRAINED[k].keys()]
+def list_pretrained(as_str: bool = False):
+    """ returns list of pretrained models
+    Returns a tuple (model_name, pretrain_tag) by default or 'name:tag' if as_str == True
+    """
+    return [':'.join([k, t]) if as_str else (k, t) for k in _PRETRAINED.keys() for t in _PRETRAINED[k].keys()]
 
 
 def list_pretrained_tag_models(tag: str):

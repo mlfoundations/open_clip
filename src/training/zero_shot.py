@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from clip import tokenize
+from open_clip import tokenize
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 

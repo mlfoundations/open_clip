@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 
 from .model import CLIP, convert_weights_to_fp16
-from .openai import load_openai
+from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
 
@@ -25,14 +25,14 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
 def create_model_and_transforms(
         model_name: str,
         pretrained: str,
-        precision: str,
-        device: torch.device,
+        precision: str = 'fp32',
+        device: torch.device = torch.device('cpu'),
         force_quick_gelu: bool = False,
 ):
     pretrained = pretrained.lower()
     if pretrained == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model, preprocess_train, preprocess_val = load_openai(model_name, device=device, jit=False)
+        model, preprocess_train, preprocess_val = load_openai_model(model_name, device=device, jit=False)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
         if precision == "amp" or precision == "fp32":
             model = model.float()
@@ -67,6 +67,7 @@ def create_model_and_transforms(
 
         model.to(device=device)
         if precision == "fp16":
+            assert device.type != 'cpu'
             convert_weights_to_fp16(model)
 
     return model, preprocess_train, preprocess_val

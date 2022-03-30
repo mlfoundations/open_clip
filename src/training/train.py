@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 import wandb
 
-from clip.loss import ClipLoss
+from open_clip import ClipLoss
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 
