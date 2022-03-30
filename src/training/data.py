@@ -5,7 +5,6 @@ import math
 import os
 import random
 from dataclasses import dataclass
-from itertools import islice
 
 import braceexpand
 import numpy as np
@@ -23,7 +22,7 @@ try:
 except ImportError:
     hvd = None
 
-from clip.openai_clip import tokenize
+from clip import tokenize
 
 
 class CsvDataset(Dataset):

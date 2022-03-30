@@ -164,10 +164,10 @@ def parse_args():
         help="enable full distributed gradient for feature gather"
     )
     parser.add_argument(
-        "--openai-pretrained",
-        default=False,
-        action='store_true',
-        help="Use the openai pretrained models.",
+        "--pretrained",
+        default='',
+        type=str,
+        help="Use a pretrained model with the specified tag or file path.",
     )
     parser.add_argument(
         "--force-quick-gelu",

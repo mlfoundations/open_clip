@@ -1,9 +1,7 @@
-import json
 import logging
 import os
 import random
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -13,8 +11,7 @@ from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
-from clip.model import convert_weights_to_fp16, CLIP
-from clip.openai_clip import image_transform, load
+from clip.factory import create_model_and_transforms
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
@@ -106,29 +103,13 @@ def main():
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
 
-    # Do not use skip_reset unless you want to use one of the CLIP models
-    if args.openai_pretrained:
-        model, preprocess_train, preprocess_val = load(
-            args.model, device=args.device, jit=False)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if args.precision == "amp" or args.precision == "fp32":
-            model = model.float()
-    else:
-        model_config_file = Path(__file__).parent / f"model_configs/{args.model}.json"
-        logging.info(f'Loading model from {model_config_file}.')
-        assert os.path.exists(model_config_file)
-        with open(model_config_file, 'r') as f:
-            model_info = json.load(f)
-        if args.force_quick_gelu:
-            # cmd-line override for use of QuickGELU on non-OpenAI transformer models
-            model_info["quick_gelu"] = True
-        model = CLIP(**model_info)
-        preprocess_train = image_transform(model.visual.image_size, is_train=True)
-        preprocess_val = image_transform(model.visual.image_size, is_train=False)
-
-        model.to(device=device)
-        if args.precision == "fp16":
-            convert_weights_to_fp16(model)
+    model, preprocess_train, preprocess_val = create_model_and_transforms(
+        args.model,
+        args.pretrained,
+        precision=args.precision,
+        device=device,
+        force_quick_gelu=args.force_quick_gelu,
+    )
 
     if is_master(args):
         logging.info("Model:")

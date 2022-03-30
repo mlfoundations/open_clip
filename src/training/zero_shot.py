@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-import clip.openai_clip as clip
+from clip import tokenize
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
@@ -14,7 +14,7 @@ def zero_shot_classifier(model, classnames, templates, args):
         zeroshot_weights = []
         for classname in tqdm(classnames):
             texts = [template(classname) for template in templates]  # format with class
-            texts = clip.tokenize(texts).to(args.device)  # tokenize
+            texts = tokenize(texts).to(args.device)  # tokenize
             if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
             else:
