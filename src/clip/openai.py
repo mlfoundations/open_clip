@@ -68,8 +68,8 @@ def load_openai(
         if str(device) == "cpu":
             model.float()
         return model, \
-               image_transform(model.visual.image_size, is_train=True), \
-               image_transform(model.visual.image_size, is_train=False)
+            image_transform(model.visual.image_size, is_train=True), \
+            image_transform(model.visual.image_size, is_train=False)
 
     # patch the device names
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])

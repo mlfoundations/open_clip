@@ -5,8 +5,8 @@ from pathlib import Path
 
 import torch
 
-from .openai_clip import load_openai
 from .model import CLIP, convert_weights_to_fp16
+from .openai import load_openai
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
 
