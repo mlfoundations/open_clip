@@ -149,6 +149,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     if args.distributed and sampler is not None:
         sampler.set_epoch(epoch)
     num_batches_per_epoch = dataloader.num_batches
+    sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
     loss_m = AverageMeter()
     batch_time_m = AverageMeter()
@@ -189,20 +190,23 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         batch_time_m.update(time.time() - end)
         end = time.time()
-
-        if is_master(args) and (i % 100 == 0 or i == num_batches_per_epoch - 1):
+        batch_count = i + 1
+        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
-            num_samples = i * batch_size * args.world_size
+            num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples
-            percent_complete = 100.0 * i / num_batches_per_epoch
+            percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
-            # note loss meter is a coarse sample, just master node and per log update
+            # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
             logit_scale_scalar = logit_scale.item()
             logging.info(
-                f"Train Epoch: {epoch} [{num_samples}/{samples_per_epoch} ({percent_complete:.0f}%)]\t"
-                f"Loss: {loss_m.avg:.6f}\tData (t) {data_time_m.avg:.3f}\tBatch (t) {batch_time_m.avg:.3f}"
-                f"\tLR: {optimizer.param_groups[0]['lr']:5f}\tlogit_scale {logit_scale_scalar:.3f}"
+                f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
+                f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
+                f"Data (t): {data_time_m.avg:.3f} "
+                f"Batch (t): {batch_time_m.avg:.3f} "
+                f"LR: {optimizer.param_groups[0]['lr']:5f} "
+                f"Logit Scale: {logit_scale_scalar:.3f}"
             )
 
             # save train loss / etc.

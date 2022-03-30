@@ -175,6 +175,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
                 bufsize=_SAMPLE_SHUFFLE_SIZE,
                 initial=_SAMPLE_SHUFFLE_INITIAL,
                 rng=random.Random(args.seed)),
+            #wds.repeatedly,  # FIXME determine if this is beneficial
         ])
     else:
         pipeline.extend([
@@ -196,16 +197,32 @@ def get_wds_dataset(args, preprocess_img, is_train):
         # roll over and repeat a few samples to get same number of full batches on each node
         global_batch_size = args.batch_size * args.world_size
         num_batches = math.ceil(num_samples / global_batch_size)
-        if args.workers > 1:
-            # is it worth ensuring number batches divisible by workers?
-            num_batches = math.ceil(num_batches / args.workers) * args.workers
+        num_workers = max(1, args.workers)
+        num_worker_batches = math.ceil(num_batches / num_workers)  # per dataloader worker
+        num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_batches)
+        dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
 
     dataloader = wds.WebLoader(dataset, batch_size=None, shuffle=False, num_workers=args.workers)
+
+    # FIXME not clear which approach is better, with_epoch before vs after dataloader?
+    # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
+    # if is_train:
+    #     # roll over and repeat a few samples to get same number of full batches on each node
+    #     global_batch_size = args.batch_size * args.world_size
+    #     num_batches = math.ceil(num_samples / global_batch_size)
+    #     num_workers = max(1, args.workers)
+    #     num_batches = math.ceil(num_batches / num_workers) * num_workers
+    #     num_samples = num_batches * global_batch_size
+    #     dataloader = dataloader.with_epoch(num_batches)
+    # else:
+    #     # last batches are partial, eval is done on single (master) node
+    #     num_batches = math.ceil(num_samples / args.batch_size)
+
+    # add meta-data to dataloader instance for convenience
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
