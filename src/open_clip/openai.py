@@ -5,9 +5,8 @@ from typing import Union, List
 
 import torch
 
-from .model import build_model
+from .model import build_model_from_openai_state_dict
 from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained
-from .transform import image_transform
 
 __all__ = ["list_openai_models", "load_openai_model"]
 
@@ -60,23 +59,25 @@ def load_openai_model(
 
     if not jit:
         try:
-            model = build_model(state_dict or model.state_dict()).to(device)
+            model = build_model_from_openai_state_dict(state_dict or model.state_dict()).to(device)
         except KeyError:
-            sd = {k[7:]: v for k,v in state_dict["state_dict"].items()}
-            model = build_model(sd).to(device)
+            sd = {k[7:]: v for k, v in state_dict["state_dict"].items()}
+            model = build_model_from_openai_state_dict(sd).to(device)
 
         if str(device) == "cpu":
             model.float()
-        return model, \
-            image_transform(model.visual.image_size, is_train=True), \
-            image_transform(model.visual.image_size, is_train=False)
+        return model
 
     # patch the device names
     device_holder = torch.jit.trace(lambda: torch.ones([]).to(torch.device(device)), example_inputs=[])
     device_node = [n for n in device_holder.graph.findAllNodes("prim::Constant") if "Device" in repr(n)][-1]
 
     def patch_device(module):
-        graphs = [module.graph] if hasattr(module, "graph") else []
+        try:
+            graphs = [module.graph] if hasattr(module, "graph") else []
+        except RuntimeError:
+            graphs = []
+
         if hasattr(module, "forward1"):
             graphs.append(module.forward1.graph)
 
@@ -96,7 +97,11 @@ def load_openai_model(
         float_node = float_input.node()
 
         def patch_float(module):
-            graphs = [module.graph] if hasattr(module, "graph") else []
+            try:
+                graphs = [module.graph] if hasattr(module, "graph") else []
+            except RuntimeError:
+                graphs = []
+
             if hasattr(module, "forward1"):
                 graphs.append(module.forward1.graph)
 
@@ -112,6 +117,6 @@ def load_openai_model(
         patch_float(model.encode_text)
         model.float()
 
-    return model, \
-        image_transform(model.image_size.item(), is_train=True), \
-        image_transform(model.image_size.item(), is_train=False)
+    # ensure image_size attr available at consistent location for both jit and non-jit
+    model.visual.image_size = model.input_resolution.item()
+    return model

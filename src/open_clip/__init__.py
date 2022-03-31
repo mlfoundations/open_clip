@@ -1,4 +1,4 @@
-from .factory import create_model_and_transforms
+from .factory import create_model, create_model_and_transforms
 from .loss import ClipLoss
 from .model import CLIP, CLIPTextCfg, CLIPVisionCfg, convert_weights_to_fp16
 from .openai import load_openai_model, list_openai_models

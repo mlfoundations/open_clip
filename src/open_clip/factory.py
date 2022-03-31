@@ -22,17 +22,18 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
     return state_dict
 
 
-def create_model_and_transforms(
+def create_model(
         model_name: str,
-        pretrained: str,
+        pretrained: str = '',
         precision: str = 'fp32',
         device: torch.device = torch.device('cpu'),
+        jit: bool = False,
         force_quick_gelu: bool = False,
 ):
     pretrained = pretrained.lower()
     if pretrained == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model, preprocess_train, preprocess_val = load_openai_model(model_name, device=device, jit=False)
+        model = load_openai_model(model_name, device=device, jit=jit)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
         if precision == "amp" or precision == "fp32":
             model = model.float()
@@ -62,12 +63,26 @@ def create_model_and_transforms(
             else:
                 logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
 
-        preprocess_train = image_transform(model.visual.image_size, is_train=True)
-        preprocess_val = image_transform(model.visual.image_size, is_train=False)
-
         model.to(device=device)
         if precision == "fp16":
             assert device.type != 'cpu'
             convert_weights_to_fp16(model)
 
+        if jit:
+            model = torch.jit.script(model)
+
+    return model
+
+
+def create_model_and_transforms(
+        model_name: str,
+        pretrained: str = '',
+        precision: str = 'fp32',
+        device: torch.device = torch.device('cpu'),
+        jit: bool = False,
+        force_quick_gelu: bool = False,
+):
+    model = create_model(model_name, pretrained, precision, device, jit, force_quick_gelu)
+    preprocess_train = image_transform(model.visual.image_size, is_train=True)
+    preprocess_val = image_transform(model.visual.image_size, is_train=False)
     return model, preprocess_train, preprocess_val

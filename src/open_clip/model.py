@@ -179,8 +179,8 @@ class LayerNorm(nn.LayerNorm):
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        ret = super().forward(x.to(torch.float32))
-        return ret.to(orig_type)
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        return x.to(orig_type)
 
 
 class QuickGELU(nn.Module):
@@ -500,7 +500,7 @@ def convert_weights_to_fp16(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
-def build_model(state_dict: dict):
+def build_model_from_openai_state_dict(state_dict: dict):
     vit = "visual.proj" in state_dict
 
     if vit:
