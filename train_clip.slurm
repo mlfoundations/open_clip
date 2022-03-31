@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=23:59:00
 #SBATCH --mem=32GB
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:4
 #SBATCH --job-name=train_openclip
 
 module purge
@@ -14,6 +14,7 @@ module purge
 singularity exec --nv \
 	--overlay /scratch/aaj458/singularity_containers/openclip.ext3:ro \
 	--overlay /vast/work/public/ml-datasets/conceptual-captions/cc_data.sqf:ro \
+	--overlay /vast/work/public/ml-datasets/imagenet/imagenet-val.sqf:ro \
 	/scratch/work/public/singularity/cuda11.2.2-cudnn8-devel-ubuntu20.04.sif \
 	/bin/bash -c 'source /ext3/env.sh; conda activate openclip; \
 				  export PYTHONPATH="$PYTHONPATH:$PWD/src"; \
