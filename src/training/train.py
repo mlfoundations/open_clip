@@ -203,7 +203,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 
     logging.info(
         f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
     )
 
     if args.save_logs:

@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+import pathlib
+import re
+from copy import deepcopy
 from pathlib import Path
 
 import torch
@@ -9,6 +12,38 @@ from .model import CLIP, convert_weights_to_fp16
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
+
+
+_MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
+_MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
+
+
+def _natural_key(string_):
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
+
+
+def _rescan_model_configs():
+    global _MODEL_CONFIGS
+
+    config_ext = ('.json',)
+    config_files = []
+    for config_path in _MODEL_CONFIG_PATHS:
+        if config_path.is_file() and config_path.suffix in config_ext:
+            config_files.append(config_path)
+        elif config_path.is_dir():
+            for ext in config_ext:
+                config_files.extend(config_path.glob(f'*{ext}'))
+
+    for cf in config_files:
+        with open(cf, 'r') as f:
+            model_cfg = json.load(f)
+            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+                _MODEL_CONFIGS[cf.stem] = model_cfg
+
+    _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
+
+
+_rescan_model_configs()  # initial populate of model config registry
 
 
 def load_state_dict(checkpoint_path: str, map_location='cpu'):
@@ -38,11 +73,13 @@ def create_model(
         if precision == "amp" or precision == "fp32":
             model = model.float()
     else:
-        model_config_file = Path(__file__).parent / f"model_configs/{model_name}.json"
-        logging.info(f'Loading model config from {model_config_file}.')
-        assert os.path.exists(model_config_file)
-        with open(model_config_file, 'r') as f:
-            model_cfg = json.load(f)
+        if model_name in _MODEL_CONFIGS:
+            logging.info(f'Loading {model_name} model config.')
+            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
+        else:
+            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
+            raise RuntimeError(f'Model config for {model_name} not found.')
+
         if force_quick_gelu:
             # override for use of QuickGELU on non-OpenAI transformer models
             model_cfg["quick_gelu"] = True
@@ -62,6 +99,7 @@ def create_model(
                 model.load_state_dict(load_state_dict(checkpoint_path))
             else:
                 logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+                raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
 
         model.to(device=device)
         if precision == "fp16":
@@ -86,3 +124,24 @@ def create_model_and_transforms(
     preprocess_train = image_transform(model.visual.image_size, is_train=True)
     preprocess_val = image_transform(model.visual.image_size, is_train=False)
     return model, preprocess_train, preprocess_val
+
+
+def list_models():
+    """ enumerate available model architectures based on config files """
+    model_config_path = Path(__file__).parent / f"model_configs/"
+    config_files = model_config_path.glob('*.json')
+    models = []
+    for cf in config_files:
+        with open(cf, 'r') as f:
+            model_cfg = json.load(f)
+            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+                models.append(cf.stem)
+    return sorted(models, key=_natural_key)
+
+
+def add_model_config(path):
+    """ add model config path or file and update registry """
+    if not isinstance(path, Path):
+        path = Path(path)
+    _MODEL_CONFIG_PATHS.append(path)
+    _rescan_model_configs()
