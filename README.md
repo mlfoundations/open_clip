@@ -145,26 +145,20 @@ train our largest models:
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=open_clip
 
-# load low-level libraries
-ml purge
 eval "$(/path/to/conda/bin/conda shell.bash hook)" # init conda
 conda activate open_clip
-ml use $OTHERSTAGES
-ml GCC/10.3.0
-ml NCCL/2.10.3-1-CUDA-11.3
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export MASTER_PORT=12802
 
 master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_ADDR=$master_addr"i"
+export MASTER_ADDR=$master_addr
 
-cd /p/scratch/ccstdl/gordon2/open_clip
+cd /shared/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
 srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
     --save-frequency 1 \
-    --zeroshot-frequency 1 \
     --report-to tensorboard \
-    --train-data="/p/scratch/ccstdl/katta1/LAION-400M/laion400m-dat-release/{00000..41455}.tar" \
+    --train-data="/data/LAION-400M/{00000..41455}.tar" \
     --warmup 2000 \
     --batch-size=256 \
     --epochs=32 \
