@@ -202,7 +202,7 @@ python src/training/main.py \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
 
-### Sample evaluationy, from local checkpoint:
+### Sample evaluating local checkpoint:
 
 ```bash
 python src/training/main.py \
@@ -211,7 +211,7 @@ python src/training/main.py \
     --preretrained /path/to/checkpoints/epoch_K.pt
 ```
 
-### Sample zero-shot evaluation, from hosted pretrained:
+### Sample evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
 
 ```bash
 python src/training/main.py \
