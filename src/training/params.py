@@ -175,6 +175,18 @@ def parse_args():
         action='store_true',
         help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
+    parser.add_argument(
+        "--torchscript",
+        default=False,
+        action='store_true',
+        help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
+    )
+    parser.add_argument(
+        "--trace",
+        default=False,
+        action='store_true',
+        help="torch.jit.trace the model for inference / eval only",
+    )
     # arguments for distributed training
     parser.add_argument(
         "--dist-url",
@@ -217,6 +229,12 @@ def parse_args():
         default=False,
         action="store_true",
         help="Use horovod for distributed training."
+    )
+    parser.add_argument(
+        "--ddp-static-graph",
+        default=False,
+        action='store_true',
+        help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
     )
     parser.add_argument(
         "--no-set-device-rank",

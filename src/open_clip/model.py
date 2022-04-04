@@ -1,7 +1,7 @@
 import math
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Tuple, Union, Callable
+from typing import Tuple, Union, Callable, Optional
 
 import numpy as np
 import torch
@@ -184,8 +184,8 @@ class LayerNorm(nn.LayerNorm):
 
 
 class QuickGELU(nn.Module):
+    # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
-        # NOTE I do not know why this is the default. Slower than nn.GELU or nn.SiLU and use more GPU memory
         return x * torch.sigmoid(1.702 * x)
 
 
@@ -203,28 +203,31 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
 
-    def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
-    def forward(self, x: torch.Tensor):
-        x = x + self.attention(self.ln_1(x))
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
 
 class Transformer(nn.Module):
     def __init__(
-            self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None,
+            self, width: int, layers: int, heads: int,
             act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(
-            *[ResidualAttentionBlock(width, heads, attn_mask, act_layer=act_layer) for _ in range(layers)])
+        self.resblocks = nn.ModuleList([
+            ResidualAttentionBlock(width, heads, act_layer=act_layer)
+            for _ in range(layers)
+        ])
 
-    def forward(self, x: torch.Tensor):
-        return self.resblocks(x)
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        for r in self.resblocks:
+            x = r(x, attn_mask=attn_mask)
+        return x
 
 
 class VisualTransformer(nn.Module):
@@ -402,7 +405,6 @@ class CLIP(nn.Module):
             width=text_cfg.width,
             layers=text_cfg.layers,
             heads=text_cfg.heads,
-            attn_mask=self.build_attention_mask(),
             act_layer=act_layer,
         )
 
@@ -413,6 +415,8 @@ class CLIP(nn.Module):
 
         self.text_projection = nn.Parameter(torch.empty(text_cfg.width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
 
@@ -452,7 +456,7 @@ class CLIP(nn.Module):
 
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
@@ -553,3 +557,19 @@ def build_model_from_openai_state_dict(state_dict: dict):
     convert_weights_to_fp16(model)
     model.load_state_dict(state_dict)
     return model.eval()
+
+
+def trace_model(model, batch_size=256, device=torch.device('cpu')):
+    model.eval()
+    image_size = model.visual.image_size
+    example_images = torch.ones((batch_size, 3, image_size, image_size), device=device)
+    example_text = torch.zeros((batch_size, model.context_length), dtype=torch.int, device=device)
+    model = torch.jit.trace_module(
+        model,
+        inputs=dict(
+            forward=(example_images, example_text),
+            encode_text=(example_text,),
+            encode_image=(example_images,)
+        ))
+    model.visual.image_size = image_size
+    return model

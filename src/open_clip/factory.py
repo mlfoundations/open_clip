@@ -65,6 +65,7 @@ def create_model(
         jit: bool = False,
         force_quick_gelu: bool = False,
 ):
+    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     pretrained = pretrained.lower()
     if pretrained == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')

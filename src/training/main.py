@@ -15,7 +15,7 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms
+from open_clip import create_model_and_transforms, trace_model
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
@@ -108,7 +108,11 @@ def main():
         precision=args.precision,
         device=device,
         force_quick_gelu=args.force_quick_gelu,
+        jit=args.torchscript,
     )
+
+    if args.trace:
+        model = trace_model(model, batch_size=args.batch_size, device=device)
 
     if is_master(args):
         logging.info("Model:")
@@ -124,10 +128,16 @@ def main():
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
+        ddp_args = {}
+        if args.ddp_static_graph:
+            # this doesn't exist in older PyTorch, arg only added if enabled
+            ddp_args['static_graph'] = True
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
     data = get_data(args, (preprocess_train, preprocess_val))
-    assert len(data), 'At least one train or eval dataset must be specified'
+    assert len(data), 'At least one train or eval dataset must be specified.'
+    if args.trace:
+        assert 'train' not in data, 'Cannot train with traced model'
 
     exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
     include = lambda n, p: not exclude(n, p)
