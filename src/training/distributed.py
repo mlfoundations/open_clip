@@ -61,7 +61,7 @@ def world_info_from_env():
 
 def init_distributed_device(args):
     # Distributed training = training on more than one GPU.
-    # Also easily possible to extend to multiple nodes & multiple GPUs.
+    # Works in both single and multi-node scenarios.
     args.distributed = False
     args.world_size = 1
     args.rank = 0  # global rank
@@ -73,6 +73,9 @@ def init_distributed_device(args):
         args.rank = hvd.rank()
         args.world_size = hvd.size()
         args.distributed = True
+        os.environ['LOCAL_RANK'] = str(args.local_rank)
+        os.environ['RANK'] = str(args.rank)
+        os.environ['WORLD_SIZE'] = str(args.world_size)
     elif is_using_distributed():
         if 'SLURM_PROCID' in os.environ:
             # DDP via SLURM

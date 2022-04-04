@@ -5,6 +5,8 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
+We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a ViT-B/32 text encoder and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, on ImageNet1k.
+
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
 This codebase is work in progress, and we invite all to contribute in making it more acessible and useful. In the future, we plan to add support for TPU training and release larger models. We hope this codebase facilitates and promotes further research in contrastive image-text learning. Please submit an issue or send an email if you have any other requests or suggestions.
@@ -45,7 +47,8 @@ The indices of images in this subset are in [OpenAI's CLIP repository](https://g
 ### Install dependencies
 
 ```bash
-conda env create
+# Create a conda environment (heavily recommended)
+conda create -n open_clip python=3.10
 conda activate open_clip
 ```
 
@@ -53,11 +56,11 @@ conda activate open_clip
 
 ```bash
 cd open_clip
-export PYTHONPATH="$PYTHONPATH:$PWD/src"
+python setup.py install
 ```
 
 
-### Sample running code:
+### Sample single-process running code:
 
 ```bash
 nohup python -u src/training/main.py \
@@ -80,6 +83,100 @@ nohup python -u src/training/main.py \
 
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
+
+## Multi-GPU and Beyond
+
+This code has been battle tested up to 1024 A100s and offers a variety of solutions
+for distributed training. We include native support for SLURM clusters.
+
+As the number of devices used to train increases, so does the space complexity of
+the the logit matrix. Using a naïve all-gather scheme, space complexity will be
+`O(n^2)`. Instead, complexity may become effectively linear if the flags
+`--gather-with-grad` and `--local-loss` are used. This alteration results in one-to-one
+numerical results as the naïve method.
+
+### Single-Node
+
+We make use of `torchrun` to launch distributed jobs. The following launches a
+a job on a node of 4 GPUs:
+
+```bash
+cd open_clip/src
+torchrun --nproc_per_node 4 -m training.main \
+    --train-data '/data/cc12m/cc12m-train-{0000..2175}.tar' \
+    --train-num-samples 10968539 \
+    --dataset-type webdataset \
+    --batch-size 320 \
+    --precision amp \
+    --workers 4 \
+    --imagenet-val /data/imagenet/validation/
+```
+
+### Multi-Node
+
+The same script above works, so long as users include information about the number
+of nodes and host node.
+
+```bash
+cd open_clip/src
+torchrun --nproc_per_node=4 \
+    --rdzv_endpoint=$HOSTE_NODE_ADDR \
+    -m training.main \
+    --train-data '/data/cc12m/cc12m-train-{0000..2175}.tar' \
+    --train-num-samples 10968539 \
+    --dataset-type webdataset \
+    --batch-size 320 \
+    --precision amp \
+    --workers 4 \
+    --imagenet-val /data/imagenet/validation/
+```
+
+### SLURM
+
+This is likely the easist solution to utilize. The following script was used to
+train our largest models:
+
+```bash
+#!/bin/bash -x
+#SBATCH --nodes=32
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=24
+#SBATCH --wait-all-nodes=1
+#SBATCH --job-name=open_clip
+
+# load low-level libraries
+ml purge
+eval "$(/path/to/conda/bin/conda shell.bash hook)" # init conda
+conda activate open_clip
+ml use $OTHERSTAGES
+ml GCC/10.3.0
+ml NCCL/2.10.3-1-CUDA-11.3
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export MASTER_PORT=12802
+
+master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_ADDR=$master_addr"i"
+
+cd /p/scratch/ccstdl/gordon2/open_clip
+export PYTHONPATH="$PYTHONPATH:$PWD/src"
+srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
+    --save-frequency 1 \
+    --zeroshot-frequency 1 \
+    --report-to tensorboard \
+    --train-data="/p/scratch/ccstdl/katta1/LAION-400M/laion400m-dat-release/{00000..41455}.tar" \
+    --warmup 2000 \
+    --batch-size=256 \
+    --epochs=32 \
+    --workers=8 \
+    --model ViT-B/32 \
+    --name "ViT-B-32-Vanilla" \
+    --seed 0 \
+    --local-loss \
+    --gather-with-grad
+```
+
+## Loss Curves
 
 When run on a machine with 8 GPUs the command should produce the following training curve for Conceptual Captions:
 
@@ -115,6 +212,11 @@ python src/training/main.py \
 
 ## Trained models
 
+We replicate OpenAI's results on ViT-B/32 with comparable dataset LAION-400M. Trained
+weights may be found in release [v0.2](https://github.com/mlfoundations/open_clip/releases/tag/v0.2-weights).
+
+<img src="docs/laion_clip_zeroshot.png" width="700">
+
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
 
 * [ResNet-50](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing) (32.7% / 27.9%)
@@ -122,19 +224,13 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 
 ## Interface
 
-Instead of providing an interface for `open_clip`, we re-use [OpenAI's](https://github.com/openai/CLIP).
+We offer a simple model interface to instantiate both pre-trained and untrained models.
 
-If you have an open_clip checkpoint saved at the path `open_clip_checkpoint_pth` you can run the following code to store an OpenAI CLIP compatible checkpoint at `clip_checkpoint_pth`
 ```python
-import torch
-open_clip_cp = torch.load(open_clip_checkpoint_pth)
-open_clip_sd = {k[7:]:v for k, v in open_clip_cp['state_dict'].items()}
-torch.save(open_clip_sd, clip_checkpoint_pth)
-```
-now you can use OpenAI's interface
-```python
-import clip # import OpenAI's CLIP
-model = clip.load(clip_checkpoint_pth)
+>>> import open_clip
+>>> open_clip.list_pretrained()
+[('RN50', 'openai'), ('RN101', 'openai'), ('RN50x4', 'openai'), ('RN50x16', 'openai'), ('ViT-B-32', 'openai'), ('ViT-B-32', 'laion400m_v1'), ('ViT-B-16', 'openai'), ('ViT-L-14', 'openai')]
+>>> open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion400m_v1')
 ```
 
 ## Scaling trends
@@ -169,6 +265,10 @@ For more more information on effective robustness, please see:
 - [Recht et al., 2019](https://arxiv.org/abs/1902.10811).
 - [Taori et al., 2020](https://arxiv.org/abs/2007.00644).
 - [Miller et al., 2021](https://arxiv.org/abs/2107.04649).
+
+## Acknowledgments
+
+We gratefully acknowledge the Gauss Centre for Supercomputing e.V. (www.gauss-centre.eu) for funding this part of work by providing computing time through the John von Neumann Institute for Computing (NIC) on the GCS Supercomputer JUWELS Booster at Jülich Supercomputing Centre (JSC).
 
 ## The Team
 

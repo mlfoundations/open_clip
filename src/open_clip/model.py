@@ -1,3 +1,4 @@
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Tuple, Union, Callable
@@ -163,7 +164,6 @@ class ModifiedResNet(nn.Module):
         return x
 
     def forward(self, x):
-        x = x.to(self.conv1.weight.dtype)
         x = self.stem(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -179,8 +179,8 @@ class LayerNorm(nn.LayerNorm):
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        ret = super().forward(x.to(torch.float32))
-        return ret.to(orig_type)
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        return x.to(orig_type)
 
 
 class QuickGELU(nn.Module):
@@ -269,6 +269,9 @@ class VisualTransformer(nn.Module):
 
 
 class TimmModel(nn.Module):
+    """ timm model adapter
+    # FIXME this adapter is a work in progress, may change in ways that break weight compat
+    """
 
     def __init__(
             self,
@@ -285,31 +288,27 @@ class TimmModel(nn.Module):
 
         self.image_size = to_2tuple(image_size)
         self.trunk = timm.create_model(model_name, pretrained=pretrained)
-        self.trunk.reset_classifier(0, global_pool='')
         feat_size = self.trunk.default_cfg.get('pool_size', None)
         feature_ndim = 1 if not feat_size else 2
+        if pool in ('abs_attn', 'rot_attn'):
+            assert feature_ndim == 2
+            # if attn pooling used, remove both classifier and default pool
+            self.trunk.reset_classifier(0, global_pool='')
+        else:
+            # reset global pool if pool config set, otherwise leave as network default
+            reset_kwargs = dict(global_pool=pool) if pool else {}
+            self.trunk.reset_classifier(0, **reset_kwargs)
         prev_chs = self.trunk.num_features
 
         head_layers = OrderedDict()
-
-        if feature_ndim == 2:
-            assert pool, 'pooling layer needed for 2d feature output'
-            if pool == 'abs_attn':
-                assert feature_ndim == 2
-                head_layers['pool'] = AbsAttentionPool2d(prev_chs, feat_size=feat_size, out_features=embed_dim)
-                prev_chs = embed_dim
-            elif pool == 'rot_attn':
-                assert feature_ndim == 2
-                head_layers['pool'] = RotAttentionPool2d(prev_chs, out_features=embed_dim)
-                prev_chs = embed_dim
-            elif pool == 'avg':
-                assert proj, 'projection layer needed if avg pooling used'
-                head_layers['pool'] = nn.AdaptiveAvgPool2d(1)
+        if pool == 'abs_attn':
+            head_layers['pool'] = AbsAttentionPool2d(prev_chs, feat_size=feat_size, out_features=embed_dim)
+            prev_chs = embed_dim
+        elif pool == 'rot_attn':
+            head_layers['pool'] = RotAttentionPool2d(prev_chs, out_features=embed_dim)
+            prev_chs = embed_dim
         else:
-            # NOTE timm transformers will be changed in the future to return unpooled
-            # outputs when head is disabled, this is not he case right now and code be needed
-            # here for token extraction or pooling
-            pass
+            assert proj, 'projection layer needed if other pooling used'
 
         # NOTE attention pool ends with a projection layer, so proj should usually be set to '' if such pooling is used
         if proj == 'linear':
@@ -363,7 +362,7 @@ class CLIP(nn.Module):
 
         self.context_length = text_cfg.context_length
 
-        # OpenAI models are  pretrained w/ QuickGELU but native nn.GELU is both faster and more
+        # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
         # memory efficient in recent PyTorch releases (>= 1.10).
         # NOTE: timm models always use native GELU regardless of quick_gelu flag.
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -395,7 +394,8 @@ class CLIP(nn.Module):
                 width=vision_cfg.width,
                 layers=vision_cfg.layers,
                 heads=vision_heads,
-                output_dim=embed_dim
+                output_dim=embed_dim,
+                act_layer=act_layer,
             )
 
         self.transformer = Transformer(
@@ -443,10 +443,6 @@ class CLIP(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
-
-    @property
-    def dtype(self):
-        return next(self.visual.parameters()).dtype
 
     def encode_image(self, image):
         return self.visual(image)
@@ -504,7 +500,7 @@ def convert_weights_to_fp16(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
-def build_model(state_dict: dict):
+def build_model_from_openai_state_dict(state_dict: dict):
     vit = "visual.proj" in state_dict
 
     if vit:
@@ -552,8 +548,7 @@ def build_model(state_dict: dict):
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
-        if key in state_dict:
-            del state_dict[key]
+        state_dict.pop(key, None)
 
     convert_weights_to_fp16(model)
     model.load_state_dict(state_dict)

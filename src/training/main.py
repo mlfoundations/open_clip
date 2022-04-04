@@ -1,9 +1,7 @@
-import json
 import logging
 import os
 import random
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,20 +10,18 @@ import wandb
 from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
+try:
+    import horovod.torch as hvd
+except ImportError:
+    hvd = None
 
-from clip.model import convert_weights_to_fp16, CLIP
-from clip.openai_clip import _transform, load
+from open_clip import create_model_and_transforms
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
 
 
 def random_seed(seed=42, rank=0):
@@ -90,6 +86,11 @@ def main():
         copy_codebase(args)
 
     assert args.precision in ['amp', 'fp16', 'fp32']
+    if args.precision == 'fp16':
+        logging.warning(
+            'It is recommended to use AMP mixed-precision instead of FP16. '
+            'FP16 support needs further verification and tuning, especially for train.')
+
     if args.horovod:
         logging.info(
             f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
@@ -101,29 +102,13 @@ def main():
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
 
-    # Do not use skip_reset unless you want to use on of the CLIP model
-    if args.openai_pretrained:
-        model, preprocess_train, preprocess_val = load(
-            args.model,
-            device=args.device,
-            jit=False,
-            is_train=True)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if args.precision == "amp" or args.precision == "fp32":
-            model = model.float()
-    else:
-        model_config_file = Path(__file__).parent / f"model_configs/{args.model}.json"
-        print('Loading model from', model_config_file)
-        assert os.path.exists(model_config_file)
-        with open(model_config_file, 'r') as f:
-            model_info = json.load(f)
-        model = CLIP(**model_info)
-        preprocess_train = _transform(model.visual.image_size, is_train=True)
-        preprocess_val = _transform(model.visual.image_size, is_train=False)
-
-        model.to(device=device)
-        if args.precision == "fp16":
-            convert_weights_to_fp16(model)
+    model, preprocess_train, preprocess_val = create_model_and_transforms(
+        args.model,
+        args.pretrained,
+        precision=args.precision,
+        device=device,
+        force_quick_gelu=args.force_quick_gelu,
+    )
 
     if is_master(args):
         logging.info("Model:")
@@ -178,21 +163,23 @@ def main():
     start_epoch = 0
     if args.resume is not None:
         if os.path.isfile(args.resume):
-            if 'cuda' in args.device:
-                # Map model to be loaded to specified single gpu.
-                checkpoint = torch.load(args.resume, map_location=device)
+            checkpoint = torch.load(args.resume, map_location=device)
+            if 'epoch' in checkpoint:
+                # resuming a train checkpoint w/ epoch and optimizer state
+                start_epoch = checkpoint["epoch"]
+                sd = checkpoint["state_dict"]
+                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                    sd = {k[len('module.'):]: v for k, v in sd.items()}
+                model.load_state_dict(sd)
+                if optimizer is not None:
+                    optimizer.load_state_dict(checkpoint["optimizer"])
+                if scaler is not None and 'scaler' in checkpoint:
+                    scaler.load_state_dict(checkpoint['scaler'])
+                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
             else:
-                checkpoint = torch.load(args.resume)
-            start_epoch = checkpoint["epoch"]
-            sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
-            model.load_state_dict(sd)
-            if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer"])
-            logging.info(
-                f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})"
-            )
+                # loading a bare (model only) checkpoint for fine-tune or evaluation
+                model.load_state_dict(checkpoint)
+                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
@@ -235,31 +222,30 @@ def main():
         train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
         completed_epoch = epoch + 1
 
-        if any([v in data for v in ('val', 'imagenet-val', 'imagenet-v2')]):
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.
         if args.save_logs:
+            checkpoint_dict = {
+                "epoch": completed_epoch,
+                "name": args.name,
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }
+            if scaler is not None:
+                checkpoint_dict["scaler"] = scaler.state_dict()
+
             if completed_epoch == args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
             ):
                 torch.save(
-                    {
-                        "epoch": completed_epoch,
-                        "name": args.name,
-                        "state_dict": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                    },
+                    checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
             if args.save_most_recent:
                 torch.save(
-                    {
-                        "epoch": completed_epoch,
-                        "name": args.name,
-                        "state_dict": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                    },
+                    checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
                 )
 
@@ -281,14 +267,6 @@ def copy_codebase(args):
         current_code_path = os.path.dirname(current_code_path)
     copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
     print("Done copying code.")
-    # os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{os.path.join(new_code_path, 'src')}"
-    # main_file = os.path.join(new_code_path, "src", "training", "main.py")
-    # argv = sys.argv
-    # argv.remove('--copy-codebase')
-    # argv.extend(['--name', args.name])
-    # command = [sys.executable] + argv
-    # print("Executing command:", " ".join(command))
-    # subprocess.check_call(command)
     return 1
 
 
