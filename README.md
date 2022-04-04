@@ -169,7 +169,7 @@ srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
     --batch-size=256 \
     --epochs=32 \
     --workers=8 \
-    --model ViT-B/32 \
+    --model ViT-B-32 \
     --name "ViT-B-32-Vanilla" \
     --seed 0 \
     --local-loss \
@@ -202,12 +202,22 @@ python src/training/main.py \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
 
-### Sample evaluation only:
+### Sample evaluationy, from local checkpoint:
 
 ```bash
 python src/training/main.py \
     --val-data="/path/to/validation_data.csv"  \
-    --resume /path/to/checkpoints/epoch_K.pt
+    --model RN101 \
+    --preretrained /path/to/checkpoints/epoch_K.pt
+```
+
+### Sample zero-shot evaluation, from hosted pretrained:
+
+```bash
+python src/training/main.py \
+    --imagenet-val /path/to/imagenet/validation \
+    --model ViT-B-32-quickgelu \
+    --preretrained laion400m_e32
 ```
 
 ## Trained models
@@ -222,15 +232,41 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 * [ResNet-50](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing) (32.7% / 27.9%)
 * [ResNet-101](https://drive.google.com/file/d/1vOorR3pKkuuA_Gv7OgqMtaETNjTmy_3m/view?usp=sharing) (34.8% / 30.0%)
 
-## Interface
+## Pretrained Model Interface
 
 We offer a simple model interface to instantiate both pre-trained and untrained models.
+
+NOTE: Currently all existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
+
+Future trained models will use nn.GELU.
 
 ```python
 >>> import open_clip
 >>> open_clip.list_pretrained()
-[('RN50', 'openai'), ('RN101', 'openai'), ('RN50x4', 'openai'), ('RN50x16', 'openai'), ('ViT-B-32', 'openai'), ('ViT-B-32', 'laion400m_v1'), ('ViT-B-16', 'openai'), ('ViT-L-14', 'openai')]
->>> open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion400m_v1')
+[('RN50', 'openai'),
+ ('RN50', 'yfcc15m'),
+ ('RN50', 'cc12m'),
+ ('RN50-quickgelu', 'openai'),
+ ('RN50-quickgelu', 'yfcc15m'),
+ ('RN50-quickgelu', 'cc12m'),
+ ('RN101', 'openai'),
+ ('RN101', 'yfcc15m'),
+ ('RN101-quickgelu', 'openai'),
+ ('RN101-quickgelu', 'yfcc15m'),
+ ('RN50x4', 'openai'),
+ ('RN50x16', 'openai'),
+ ('ViT-B-32', 'openai'),
+ ('ViT-B-32', 'laion400m_e31'),
+ ('ViT-B-32', 'laion400m_e32'),
+ ('ViT-B-32', 'laion400m_avg'),
+ ('ViT-B-32-quickgelu', 'openai'),
+ ('ViT-B-32-quickgelu', 'laion400m_e31'),
+ ('ViT-B-32-quickgelu', 'laion400m_e32'),
+ ('ViT-B-32-quickgelu', 'laion400m_avg'),
+ ('ViT-B-16', 'openai'),
+ ('ViT-L-14', 'openai')]
+
+>>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
 ```
 
 ## Scaling trends
