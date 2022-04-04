@@ -12,7 +12,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 exec(open('src/open_clip/version.py').read())
 setup(
-    name='open_clip',
+    name='open_clip_torch',
     version=__version__,
     description='OpenCLIP',
     long_description=long_description,
