@@ -174,7 +174,7 @@ srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
 
 When run on a machine with 8 GPUs the command should produce the following training curve for Conceptual Captions:
 
-![CLIP zero shot training curve](/docs/clip_zeroshot.png)
+![CLIP zero shot training curve](https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/clip_zeroshot.png)
 
 More detailed curves for Conceptual Captions are given at [/docs/clip_conceptual_captions.md](/docs/clip_conceptual_captions.md).
 
