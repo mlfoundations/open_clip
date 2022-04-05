@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 import torchvision.datasets as datasets
 import webdataset as wds
+import PIL
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -23,7 +24,6 @@ except ImportError:
     hvd = None
 
 from open_clip import tokenize
-
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t"):
@@ -39,10 +39,18 @@ class CsvDataset(Dataset):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        images = self.transforms(Image.open(str(self.images[idx])))
+        try: 
+            images = self.transforms(
+                Image.open(str(self.images[idx]))
+                )
+        except PIL.UnidentifiedImageError:
+            print("Found unreadable image at {}, generating dummy image.".format(str(self.images[idx])))
+            imarray = np.random.rand(224,224,3) * 255
+            images = self.transforms(
+                Image.fromarray(imarray.astype('uint8')).convert('RGBA')
+                )
         texts = tokenize([str(self.captions[idx])])[0]
         return images, texts
-
 
 @dataclass
 class DataInfo:
