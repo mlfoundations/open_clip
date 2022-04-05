@@ -219,7 +219,7 @@ python src/training/main.py \
 We replicate OpenAI's results on ViT-B/32 with comparable dataset LAION-400M. Trained
 weights may be found in release [v0.2](https://github.com/mlfoundations/open_clip/releases/tag/v0.2-weights).
 
-<img src="docs/laion_clip_zeroshot.png" width="700">
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_clip_zeroshot.png" width="700">
 
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
 
@@ -267,7 +267,7 @@ Future trained models will use nn.GELU.
 
 The plot below shows how zero-shot performance of CLIP models varies as we scale the number of samples used for training. Zero-shot performance increases steadily for both ImageNet and [ImageNetV2](https://arxiv.org/abs/1902.10811), and is far from saturated at ~15M samples.
 
-<img src="docs/scaling.png" width="700">
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/scaling.png" width="700">
 
 ## Why are low-accuracy CLIP models interesting?
 
@@ -279,7 +279,7 @@ and [ImageNetV2](https://arxiv.org/abs/1902.10811) (a reproduction of the ImageN
 Standard training denotes training on the ImageNet train set and the CLIP zero-shot models
 are shown as stars.
 
-![CLIP scatter plot](/docs/effective_robustness.png)
+![CLIP scatter plot](https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/effective_robustness.png)
 
 As observed by [Taori et al., 2020](https://arxiv.org/abs/2007.00644) and [Miller et al., 2021](https://arxiv.org/abs/2107.04649), the in-distribution
 and out-of-distribution accuracies of models trained on ImageNet follow a predictable linear trend (the red line in the above plot). *Effective robustness*
