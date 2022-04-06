@@ -14,7 +14,7 @@ from open_clip import ClipLoss
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 
-from grad_cache import GradCache
+from grad_cache_vl import GradCache
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
