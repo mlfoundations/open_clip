@@ -1,5 +1,7 @@
 # OpenCLIP
 
+[[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). 
 
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
@@ -13,7 +15,37 @@ This codebase is work in progress, and we invite all to contribute in making it 
 
 Note that `src/clip` is a copy of OpenAI's official [repository](https://github.com/openai/CLIP) with minimal changes.
 
-#### Fine-tuning
+## Approach
+
+![CLIP](https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/CLIP.png)
+
+## Usage
+
+```
+pip install open_clip_torch
+```
+
+```python
+import torch
+from PIL import Image
+from open_clip import tokenizer
+import open_clip
+
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
+
+image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
+text = tokenizer.tokenize(["a diagram", "a dog", "a cat"])
+
+with torch.no_grad():
+    image_features = model.encode_image(image)
+    text_features = model.encode_text(text)
+
+    text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+
+print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
+```
+
+## Fine-tuning
 
 This repository is focused on training CLIP models. To fine-tune a *trained* zero-shot model on a downstream classification task such as ImageNet, please see [our other repository: WiSE-FT](https://github.com/mlfoundations/wise-ft). The [WiSE-FT repository](https://github.com/mlfoundations/wise-ft) contains code for our paper on [Robust Fine-tuning of Zero-shot Models](https://arxiv.org/abs/2109.01903), in which we introduce a technique for fine-tuning zero-shot models while preserving robustness under distribution shift.
 
