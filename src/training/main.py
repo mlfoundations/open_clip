@@ -6,16 +6,25 @@ from datetime import datetime
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-import wandb
 from torch import optim
 from torch.cuda.amp import GradScaler
-from torch.utils.tensorboard import SummaryWriter
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
+try:
+    import torch.utils.tensorboard as tensorboard
+except ImportError:
+    tensorboard = None
+
 try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms
+from open_clip import create_model_and_transforms, trace_model
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
@@ -108,7 +117,11 @@ def main():
         precision=args.precision,
         device=device,
         force_quick_gelu=args.force_quick_gelu,
+        jit=args.torchscript,
     )
+
+    if args.trace:
+        model = trace_model(model, batch_size=args.batch_size, device=device)
 
     if is_master(args):
         logging.info("Model:")
@@ -124,10 +137,16 @@ def main():
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device])
+        ddp_args = {}
+        if args.ddp_static_graph:
+            # this doesn't exist in older PyTorch, arg only added if enabled
+            ddp_args['static_graph'] = True
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
     data = get_data(args, (preprocess_train, preprocess_val))
-    assert len(data), 'At least one train or eval dataset must be specified'
+    assert len(data), 'At least one train or eval dataset must be specified.'
+    if args.trace:
+        assert 'train' not in data, 'Cannot train with traced model'
 
     exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
     include = lambda n, p: not exclude(n, p)
@@ -190,9 +209,11 @@ def main():
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
-        writer = SummaryWriter(args.tensorboard_path)
+        assert tensorboard is not None, "Please install tensorboard."
+        writer = tensorboard.SummaryWriter(args.tensorboard_path)
 
     if args.wandb and is_master(args):
+        assert wandb is not None, 'Please install wandb.'
         logging.debug('Starting wandb.')
         args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:

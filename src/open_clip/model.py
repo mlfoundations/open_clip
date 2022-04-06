@@ -1,20 +1,18 @@
-import math
+""" CLIP Model
+
+Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
+"""
+
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Tuple, Union, Callable
+from typing import Tuple, Union, Callable, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-try:
-    import timm
-    from timm.models.layers import Mlp, to_2tuple
-    from timm.models.layers.attention_pool2d import RotAttentionPool2d
-    from timm.models.layers.attention_pool2d import AttentionPool2d as AbsAttentionPool2d
-except ImportError as e:
-    timm = None
+from .timm_model import TimmModel
 
 
 class Bottleneck(nn.Module):
@@ -184,13 +182,13 @@ class LayerNorm(nn.LayerNorm):
 
 
 class QuickGELU(nn.Module):
+    # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
-        # NOTE I do not know why this is the default. Slower than nn.GELU or nn.SiLU and use more GPU memory
         return x * torch.sigmoid(1.702 * x)
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, act_layer: Callable = nn.GELU):
+    def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
@@ -201,30 +199,30 @@ class ResidualAttentionBlock(nn.Module):
             ("c_proj", nn.Linear(d_model * 4, d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
-        self.attn_mask = attn_mask
 
-    def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
-    def forward(self, x: torch.Tensor):
-        x = x + self.attention(self.ln_1(x))
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
 
 class Transformer(nn.Module):
-    def __init__(
-            self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None,
-            act_layer: Callable = nn.GELU):
+    def __init__(self, width: int, layers: int, heads: int, act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(
-            *[ResidualAttentionBlock(width, heads, attn_mask, act_layer=act_layer) for _ in range(layers)])
+        self.resblocks = nn.ModuleList([
+            ResidualAttentionBlock(width, heads, act_layer=act_layer)
+            for _ in range(layers)
+        ])
 
-    def forward(self, x: torch.Tensor):
-        return self.resblocks(x)
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        for r in self.resblocks:
+            x = r(x, attn_mask=attn_mask)
+        return x
 
 
 class VisualTransformer(nn.Module):
@@ -265,63 +263,6 @@ class VisualTransformer(nn.Module):
         if self.proj is not None:
             x = x @ self.proj
 
-        return x
-
-
-class TimmModel(nn.Module):
-    """ timm model adapter
-    # FIXME this adapter is a work in progress, may change in ways that break weight compat
-    """
-
-    def __init__(
-            self,
-            model_name,
-            embed_dim,
-            image_size=224,
-            pool='avg',
-            proj='linear',
-            drop=0.,
-            pretrained=False):
-        super().__init__()
-        if timm is None:
-            raise RuntimeError("Please `pip install timm` to use timm models.")
-
-        self.image_size = to_2tuple(image_size)
-        self.trunk = timm.create_model(model_name, pretrained=pretrained)
-        feat_size = self.trunk.default_cfg.get('pool_size', None)
-        feature_ndim = 1 if not feat_size else 2
-        if pool in ('abs_attn', 'rot_attn'):
-            assert feature_ndim == 2
-            # if attn pooling used, remove both classifier and default pool
-            self.trunk.reset_classifier(0, global_pool='')
-        else:
-            # reset global pool if pool config set, otherwise leave as network default
-            reset_kwargs = dict(global_pool=pool) if pool else {}
-            self.trunk.reset_classifier(0, **reset_kwargs)
-        prev_chs = self.trunk.num_features
-
-        head_layers = OrderedDict()
-        if pool == 'abs_attn':
-            head_layers['pool'] = AbsAttentionPool2d(prev_chs, feat_size=feat_size, out_features=embed_dim)
-            prev_chs = embed_dim
-        elif pool == 'rot_attn':
-            head_layers['pool'] = RotAttentionPool2d(prev_chs, out_features=embed_dim)
-            prev_chs = embed_dim
-        else:
-            assert proj, 'projection layer needed if other pooling used'
-
-        # NOTE attention pool ends with a projection layer, so proj should usually be set to '' if such pooling is used
-        if proj == 'linear':
-            head_layers['drop'] = nn.Dropout(drop)
-            head_layers['proj'] = nn.Linear(prev_chs, embed_dim)
-        elif proj == 'mlp':
-            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=drop)
-
-        self.head = nn.Sequential(head_layers)
-
-    def forward(self, x):
-        x = self.trunk(x)
-        x = self.head(x)
         return x
 
 
@@ -402,7 +343,6 @@ class CLIP(nn.Module):
             width=text_cfg.width,
             layers=text_cfg.layers,
             heads=text_cfg.heads,
-            attn_mask=self.build_attention_mask(),
             act_layer=act_layer,
         )
 
@@ -413,6 +353,7 @@ class CLIP(nn.Module):
 
         self.text_projection = nn.Parameter(torch.empty(text_cfg.width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
 
@@ -452,7 +393,7 @@ class CLIP(nn.Module):
 
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
@@ -553,3 +494,19 @@ def build_model_from_openai_state_dict(state_dict: dict):
     convert_weights_to_fp16(model)
     model.load_state_dict(state_dict)
     return model.eval()
+
+
+def trace_model(model, batch_size=256, device=torch.device('cpu')):
+    model.eval()
+    image_size = model.visual.image_size
+    example_images = torch.ones((batch_size, 3, image_size, image_size), device=device)
+    example_text = torch.zeros((batch_size, model.context_length), dtype=torch.int, device=device)
+    model = torch.jit.trace_module(
+        model,
+        inputs=dict(
+            forward=(example_images, example_text),
+            encode_text=(example_text,),
+            encode_image=(example_images,)
+        ))
+    model.visual.image_size = image_size
+    return model

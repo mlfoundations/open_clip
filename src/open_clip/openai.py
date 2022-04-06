@@ -1,4 +1,8 @@
-# Code ported from https://github.com/openai/CLIP
+""" OpenAI pretrained model functions
+
+Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
+"""
+
 import os
 import warnings
 from typing import Union, List
