@@ -84,6 +84,18 @@ conda create -n open_clip python=3.10
 conda activate open_clip
 ```
 
+### Or with virtualenv
+
+openclip also can be used with virtualenv with these lines:
+```
+python3 -m venv .env
+source .env/bin/activate
+pip install -U pip
+make install
+```
+
+Test can be run with `make install-dev` then `make test`
+
 ### Add directory to pythonpath:
 
 ```bash

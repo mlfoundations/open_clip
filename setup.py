@@ -51,6 +51,7 @@ setup(
         'webdataset >= 0.2.5',
         'ftfy',
         'regex',
+        'tqdm',
     ],
     python_requires='>=3.7',
 )
