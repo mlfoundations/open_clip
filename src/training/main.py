@@ -9,7 +9,12 @@ import torch.backends.cudnn as cudnn
 import wandb
 from torch import optim
 from torch.cuda.amp import GradScaler
-from torch.utils.tensorboard import SummaryWriter
+
+try:
+    import torch.utils.tensorboard as tensorboard
+except ImportError:
+    tensorboard = None
+
 try:
     import horovod.torch as hvd
 except ImportError:
@@ -200,7 +205,8 @@ def main():
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
-        writer = SummaryWriter(args.tensorboard_path)
+        assert tensorboard is not None, "Please install tensorboard."
+        writer = tensorboard.SummaryWriter(args.tensorboard_path)
 
     if args.wandb and is_master(args):
         logging.debug('Starting wandb.')
