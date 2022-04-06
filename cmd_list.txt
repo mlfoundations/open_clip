@@ -16,6 +16,7 @@ python setup.py install
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
 sudo mkdir /cc3m
 sudo mount -o loop /path/to/cc_data.sqf /cc3m
+sudo mount -o loop /mnt/m/datasets/cc3m/cc_data.sqf /cc3m
 cp /cc3m/cc_data/Train_GCC-training_output.csv ~
 cp /cc3m/cc_data/Validation_GCC-1.1.0-Validation_output.csv ~
 sed -i "s/\/cc_data\//\/cc3m\/cc_data\//g" "Train_GCC-training_output.csv"
@@ -28,9 +29,11 @@ python -u src/training/main.py \
     --val-data="~/Validation_GCC-1.1.0-Validation_output.csv"  \
     --csv-img-key filepath \
     --csv-caption-key title \
-    --batch-size=128 \
+    --batch-size=32 \
     --lr=1e-3 \
     --wd=0.1 \
     --epochs=30 \
     --workers=8 \
     --model RN50
+
+python -u src/training/main.py    --save-frequency 10     --report-to tensorboard     --train-data="~/Train_GCC-training_output.csv"      --val-data="~/Validation_GCC-1.1.0-Validation_output.csv"      --csv-img-key filepath     --csv-caption-key title     --batch-size=128   --lr=1e-3     --wd=0.1     --epochs=30     --workers=2     --model RN50  --gc=True  --gpumaxbatch=32  --warmup=0  --val-frequency=10  --no_eval=True

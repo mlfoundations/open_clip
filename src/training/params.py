@@ -227,6 +227,22 @@ def parse_args():
     parser.add_argument(
         "--seed", type=int, default=4242, help="Default random seed."
     )
+    parser.add_argument(
+        "--gc",
+        default=False,
+        help="Use gradient caching",
+    )
+    parser.add_argument(
+        "--gpumaxbatch",
+        type=int,
+        default=32,
+        help="max per-GPU batch size for gradient caching",
+    )
+    parser.add_argument(
+        "--no_eval",
+        default=False,
+        help="Skips evaluation",
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
