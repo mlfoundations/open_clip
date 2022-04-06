@@ -15,7 +15,6 @@ from .distributed import is_master
 from .zero_shot import zero_shot_eval
 
 from grad_cache import GradCache
-from grad_cache.loss import VisLangLoss
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -64,6 +63,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
+
     if args.gc:
         gc = GradCache(
             models=[model , model], 
@@ -84,7 +84,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         if args.gc:
             total_loss = gc([images, texts], vl_model=True, reduction='mean')
-            print("loss is {}".format(total_loss))
+            # print("loss is {}".format(total_loss))
             optimizer.step()
 
         else:
@@ -119,14 +119,13 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
-            logit_scale_scalar = logit_scale.item()
+            # logit_scale_scalar = logit_scale.item()
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f} "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f}"
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -134,7 +133,6 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
             for name, val in log_data.items():

@@ -190,30 +190,11 @@ class GradCache:
             for x in model_inputs:
                 rnd_states.append(RandContext(*self.get_input_tensors(x)))
                 y = self.model_call(model, x)
-                # print(y[0].requires_grad)
                 model_reps.append(self.get_reps(y))
-        # print("model reps 0,0 is {}".format(model_reps[0][0]))
-        # print()
-        # print("length is {}, size is {}, is leaf is {}, requires grad is {}".format(len(model_reps), model_reps[0][0].size(), model_reps[0][0].is_leaf, model_reps[0][0].requires_grad))
-        # print()
-        # print("model reps 0,1 is {}".format(model_reps[0][1]))
-        # print()
-        # print("size is {}, is leaf is {}, requires grad is {}".format(model_reps[0][1].size(), model_reps[0][1].is_leaf, model_reps[0][1].requires_grad))
-        # print()
-        # concatenate all sub-batch representations
-        # print("reps is now {}, states is now {}".format(model_reps, rnd_states))
         if vl:
             v_list = [tup[0] for tup in model_reps]
             l_list = [tup[1] for tup in model_reps]
             s_list = [tup[2] for tup in model_reps]
-            # print("v_list 0 is {}".format(v_list[0]))
-            # print()
-            # print("length is {}, size is {}, is leaf is {}, requires grad is {}".format(len(v_list), v_list[0].size(), v_list[0].is_leaf, v_list[0].requires_grad))
-            # print()
-            # print("l_list 0 is {}".format(l_list[0]))
-            # print()
-            # print("size is {}, is leaf is {}, requires grad is {}".format(l_list[0].size(), l_list[0].is_leaf, l_list[0].requires_grad))
-            # print()
             return torch.cat(v_list, dim=0), torch.cat(l_list, dim=0), s_list[0], rnd_states
         else:
             model_reps = torch.cat(model_reps, dim=0)
@@ -266,22 +247,25 @@ class GradCache:
         # language = torch.vstack(ll)
         # print(*img_ft)
         # print(torch.vstack(img_ft))
+        vision_d = vision.detach().requires_grad_()
+        # print("vision_d requires grad?")
+        # print(vision_d.requires_grad)
+        language_d = language.detach().requires_grad_()
         with autocast() if self.fp16 else nullcontext():
-            loss = self.loss_fn(vision.detach().requires_grad_(), language.detach().requires_grad_(), logit_scale)
-            #.detach().requires_grad(create_graph=True)
+            loss = self.loss_fn(vision_d, language_d, logit_scale)
             #autograd.grad will calculate gradient of one tensor w.r.t. the other
             #detach removed the gradient function itself
-            print("loss is {}, loss grad_fn is {}, vision grad is {}".format(loss, loss.grad_fn, vision.grad))
+            # print("loss is {}, loss grad_fn is {}".format(loss, loss.grad_fn))
 
         if self.fp16:
             self.scaler.scale(loss).backward()
         else:
             loss.backward()
-
-        v_cache = [autograd.grad(loss, v) for v in vision]
-        l_cache = [autograd.grad(loss, l) for l in language]
-        print("v_cach is {}".format(v_cache))
-        return v_cache, l_cache, loss.detach()
+        # print("vision_d grad is now {}".format(vision_d.grad))
+        #v_cache = autograd.grad(loss, vision_d)
+        #l_cache = autograd.grad(loss, language_d)
+        #print("v_cach is {}".format(v_cache))
+        return vision_d, language_d, loss.detach()
 
 
     def forward_backward(
@@ -314,6 +298,50 @@ class GradCache:
 
                 surrogate = torch.dot(reps.flatten(), gradient.flatten())
                 surrogate.backward()
+
+    def forward_backward_vl(
+        self,
+        model: nn.Module,
+        model_inputs,
+        v_cache: List[Tensor],
+        l_cache: List[Tensor],
+        random_states: List[RandContext],
+        no_sync_except_last: bool = False
+        ):
+        """
+        Run the second forward and the backward pass to compute gradient for a model.
+        :param model: Encoder model.
+        :param model_inputs: Chunked input to the encoder model.
+        :param cached_gradients: Chunked gradient cache tensor for each input.
+        :param random_states: Each input's device random state during the first forward.
+        :param no_sync_except_last: If True, under distributed setup, only trigger gradient reduction across processes
+        for the last sub-batch's forward-backward pass.
+        """
+        if no_sync_except_last:
+            sync_contexts = [model.no_sync for _ in range(len(v_cache) - 1)] + [nullcontext]
+        else:
+            sync_contexts = [nullcontext for _ in range(len(v_cache))]
+
+        for x, state, v_cache, l_cache, sync_context in zip(model_inputs, random_states, v_cache, l_cache, sync_contexts):
+            with sync_context():
+                model_reps = []
+                with state:
+                    y = self.model_call(model, x)
+                    # print("y is {} length {}".format(type(y), len(y)))
+                (v_reps, l_reps, s_reps) = self.get_reps(y)
+                # v_list = [tup[0] for tup in model_reps]
+                # v_list = v_reps.flatten()
+                # l_list = [tup[1] for tup in model_reps]
+                # l_list = l_reps.flatten()
+                # print("sizes: v_reps {}, l_reps {}, v_cache {}, l_cache {}".format(v_reps.T.size(), l_reps.size(), v_cache.unsqueeze(dim=0).T.size(), l_cache.size()))
+                surrogate_v = v_reps.T @ v_cache.unsqueeze(dim=0).T
+                surrogate_iv = surrogate_v.mean()
+                surrogate_l = l_reps.T @ l_cache.unsqueeze(dim=0).T
+                surrogate_lv = surrogate_l.mean()
+                surrogate = (surrogate_iv + surrogate_lv) / 2
+                # print("contents: surrogate {}, size: surrogate {}".format(surrogate, surrogate.size()))
+                surrogate.backward()
+        # print("Backprop complete, returning")
 
     def cache_step(
             self,
@@ -360,11 +388,12 @@ class GradCache:
             v_cache, l_cache, loss = self.build_vl_cache(*v_reps, *l_reps, logscl)
             v_cache = [c.split(chunk_size) for c, chunk_size in zip(v_cache, self.chunk_sizes)]
             l_cache = [c.split(chunk_size) for c, chunk_size in zip(l_cache, self.chunk_sizes)]
-
-            #TODO: Fix forward_backward
-            for model, x, model_cache, rnd_states in zip(
-                    self.models, model_inputs, cache, all_rnd_states):
-                self.forward_backward(model, x, model_cache, rnd_states, no_sync_except_last=no_sync_except_last)
+            # print("v_cache is now length {}, contains {}".format(len(v_cache), v_cache))
+            for model, x, v_cache, l_cache, rnd_states in zip(
+                    self.models, model_inputs, v_cache, l_cache, all_rnd_states):
+                # print("model, x, v_cache, l_cache, rnd_states")
+                # print(model, x, v_cache, l_cache, rnd_states)
+                self.forward_backward_vl(model, x, v_cache, l_cache, rnd_states, no_sync_except_last=no_sync_except_last)
         
         else:
             for model, x in zip(self.models, model_inputs):
