@@ -190,7 +190,7 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, act_layer: Callable = nn.GELU):
+    def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
@@ -201,7 +201,6 @@ class ResidualAttentionBlock(nn.Module):
             ("c_proj", nn.Linear(d_model * 4, d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
-        self.attn_mask = attn_mask
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
@@ -213,9 +212,7 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(
-            self, width: int, layers: int, heads: int,
-            act_layer: Callable = nn.GELU):
+    def __init__(self, width: int, layers: int, heads: int, act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
@@ -415,7 +412,6 @@ class CLIP(nn.Module):
 
         self.text_projection = nn.Parameter(torch.empty(text_cfg.width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
