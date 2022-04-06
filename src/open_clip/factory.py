@@ -64,6 +64,7 @@ def create_model(
         device: torch.device = torch.device('cpu'),
         jit: bool = False,
         force_quick_gelu: bool = False,
+        pretrained_image: bool = False,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     pretrained = pretrained.lower()
@@ -84,7 +85,14 @@ def create_model(
         if force_quick_gelu:
             # override for use of QuickGELU on non-OpenAI transformer models
             model_cfg["quick_gelu"] = True
-        
+
+        if pretrained_image:
+            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
+                # pretrained weight loading for timm models set via vision_cfg
+                model_cfg['vision_cfg']['timm_model_pretrained'] = True
+            else:
+                assert False, 'pretrained image towers currently only supported for timm models'
+
         model = CLIP(**model_cfg)
         
         if pretrained:
@@ -120,8 +128,12 @@ def create_model_and_transforms(
         device: torch.device = torch.device('cpu'),
         jit: bool = False,
         force_quick_gelu: bool = False,
+        pretrained_image: bool = False,
 ):
-    model = create_model(model_name, pretrained, precision, device, jit, force_quick_gelu)
+    model = create_model(
+        model_name, pretrained, precision, device, jit,
+        force_quick_gelu=force_quick_gelu,
+        pretrained_image=pretrained_image)
     preprocess_train = image_transform(model.visual.image_size, is_train=True)
     preprocess_val = image_transform(model.visual.image_size, is_train=False)
     return model, preprocess_train, preprocess_val

@@ -1,7 +1,7 @@
 {
     "embed_dim": 1024,
     "vision_cfg": {
-        "timm_model_name": "resnetblur50d",
+        "timm_model_name": "resnetblur50",
         "timm_model_pretrained": false,
         "timm_pool": "abs_attn",
         "timm_proj": "",

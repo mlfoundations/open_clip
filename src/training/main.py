@@ -116,12 +116,19 @@ def main():
         args.pretrained,
         precision=args.precision,
         device=device,
-        force_quick_gelu=args.force_quick_gelu,
         jit=args.torchscript,
+        force_quick_gelu=args.force_quick_gelu,
+        pretrained_image=args.pretrained_image,
     )
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
+
+    if args.lock_image:
+        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        model.lock_image_tower(
+            unlocked_groups=args.lock_image_unlocked_groups,
+            freeze_bn_stats=args.lock_image_freeze_bn_stats)
 
     if is_master(args):
         logging.info("Model:")

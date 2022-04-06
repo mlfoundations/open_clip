@@ -152,6 +152,36 @@ def parse_args():
         help="Name of the vision backbone to use.",
     )
     parser.add_argument(
+        "--pretrained",
+        default='',
+        type=str,
+        help="Use a pretrained CLIP model weights with the specified tag or file path.",
+    )
+    parser.add_argument(
+        "--pretrained-image",
+        default=False,
+        action='store_true',
+        help="Load imagenet pretrained weights for image tower backbone if available.",
+    )
+    parser.add_argument(
+        "--lock-image",
+        default=False,
+        action='store_true',
+        help="Lock full image tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-image-unlocked-groups",
+        type=int,
+        default=0,
+        help="Leave last n image tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-image-freeze-bn-stats",
+        default=False,
+        action='store_true',
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
         "--local-loss",
         default=False,
         action="store_true",
@@ -162,12 +192,6 @@ def parse_args():
         default=False,
         action="store_true",
         help="enable full distributed gradient for feature gather"
-    )
-    parser.add_argument(
-        "--pretrained",
-        default='',
-        type=str,
-        help="Use a pretrained model with the specified tag or file path.",
     )
     parser.add_argument(
         "--force-quick-gelu",
