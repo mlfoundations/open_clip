@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .timm_model import TimmModel
+from .utils import freeze_batch_norm_2d
 
 
 class Bottleneck(nn.Module):
@@ -155,6 +156,13 @@ class ModifiedResNet(nn.Module):
                 if name.endswith("bn3.weight"):
                     nn.init.zeros_(param)
 
+    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
+        for param in self.parameters():
+            param.requires_grad = False
+        if freeze_bn_stats:
+            freeze_batch_norm_2d(self)
+
     def stem(self, x):
         for conv, bn in [(self.conv1, self.bn1), (self.conv2, self.bn2), (self.conv3, self.bn3)]:
             x = self.relu(bn(conv(x)))
@@ -243,6 +251,11 @@ class VisualTransformer(nn.Module):
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+
+    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
+        for param in self.parameters():
+            param.requires_grad = False
 
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
@@ -384,6 +397,10 @@ class CLIP(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
+
+    def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
+        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
     def encode_image(self, image):
         return self.visual(image)
