@@ -6,9 +6,13 @@ from datetime import datetime
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-import wandb
 from torch import optim
 from torch.cuda.amp import GradScaler
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 try:
     import torch.utils.tensorboard as tensorboard
@@ -209,6 +213,7 @@ def main():
         writer = tensorboard.SummaryWriter(args.tensorboard_path)
 
     if args.wandb and is_master(args):
+        assert wandb is not None, 'Please install wandb.'
         logging.debug('Starting wandb.')
         args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:
