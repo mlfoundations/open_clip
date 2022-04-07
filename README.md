@@ -45,7 +45,7 @@ with torch.no_grad():
 print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
 ```
 
-## Fine-tuning
+## Fine-tuning on classification tasks
 
 This repository is focused on training CLIP models. To fine-tune a *trained* zero-shot model on a downstream classification task such as ImageNet, please see [our other repository: WiSE-FT](https://github.com/mlfoundations/wise-ft). The [WiSE-FT repository](https://github.com/mlfoundations/wise-ft) contains code for our paper on [Robust Fine-tuning of Zero-shot Models](https://arxiv.org/abs/2109.01903), in which we introduce a technique for fine-tuning zero-shot models while preserving robustness under distribution shift.
 
