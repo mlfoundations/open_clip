@@ -2,109 +2,131 @@ name: open_clip
 channels:
   - pytorch
   - conda-forge
+  - anaconda
   - defaults
 dependencies:
-  - _libgcc_mutex
-  - absl-py
-  - aiohttp
-  - async-timeout
-  - attrs
-  - blas
-  - blinker
-  - brotlipy
-  - c-ares
-  - ca-certificates
-  - cachetools
-  - certifi
-  - cffi
-  - chardet
-  - click
-  - coverage
-  - cryptography
-  - cython
-  - dataclasses
-  - freetype
-  - ftfy
-  - google-auth
-  - grpcio
-  - idna
-  - idna_ssl
-  - importlib-metadata
-  - intel-openmp
-  - joblib
-  - jpeg
-  - lcms2
-  - ld_impl_linux-64
-  - libblas
-  - libcblas
-  - libffi
-  - libgcc
-  - libgcc-ng
-  - libgfortran-ng
-  - libgfortran4
-  - liblapack
-  - libpng
-  - libprotobuf
-  - libstdcxx-ng
-  - libtiff
-  - libuv
-  - lz4-c
-  - markdown
-  - mkl
-  - mkl-service
-  - mkl_fft
-  - mkl_random
-  - multidict
-  - ncurses
-  - ninja
-  - numpy
-  - numpy-base
-  - oauthlib
-  - olefile
-  - openssl
-  - pandas
-  - pillow
-  - pip
-  - protobuf
-  - pyasn1
-  - pyasn1-modules
-  - pycparser
-  - pyjwt
-  - pyopenssl
-  - pysocks
-  - python=3.7
-  - python-dateutil
-  - python_abi
-  - pytz
-  - readline
-  - regex
-  - requests
-  - requests-oauthlib
-  - rsa
-  - setuptools
-  - six
-  - sqlite
-  - threadpoolctl
-  - tk
-  - tqdm
-  - typing_extensions
-  - urllib3
-  - wcwidth
-  - wheel
-  - werkzeug
-  - xz
-  - yarl
-  - zipp
-  - zlib
-  - zstd
-
+  - _libgcc_mutex=0.1=conda_forge
+  - _openmp_mutex=4.5=1_llvm
+  - absl-py=1.0.0=pyhd8ed1ab_0
+  - aiohttp=3.8.1=py37h540881e_1
+  - aiosignal=1.2.0=pyhd8ed1ab_0
+  - async-timeout=4.0.2=pyhd8ed1ab_0
+  - asynctest=0.13.0=py_0
+  - attrs=21.4.0=pyhd8ed1ab_0
+  - backports=1.0=py_2
+  - backports.functools_lru_cache=1.6.4=pyhd8ed1ab_0
+  - blas=2.17=openblas
+  - blinker=1.4=py_1
+  - brotlipy=0.7.0=py37h540881e_1004
+  - c-ares=1.18.1=h7f98852_0
+  - ca-certificates=2021.10.8=ha878542_0
+  - cachetools=5.0.0=pyhd8ed1ab_0
+  - certifi=2021.10.8=py37h89c1867_2
+  - cffi=1.15.0=py37h036bc23_0
+  - chardet=4.0.0=py37h89c1867_2
+  - charset-normalizer=2.0.12=pyhd8ed1ab_0
+  - click=8.1.2=py37h89c1867_0
+  - colorama=0.4.4=pyh9f0ad1d_0
+  - coverage=6.3.2=py37h540881e_2
+  - cryptography=36.0.0=py37h9ce1e76_0
+  - cython=0.29.28=py37hd23a5d3_2
+  - dataclasses=0.8=pyhc8e2a94_3
+  - freetype=2.10.4=h0708190_1
+  - frozenlist=1.3.0=py37h540881e_1
+  - ftfy=6.1.1=pyhd8ed1ab_0
+  - giflib=5.2.1=h36c2ea0_2
+  - google-auth=2.6.2=pyh6c4a22f_0
+  - grpcio=1.45.0=py37h0327239_0
+  - idna=3.3=pyhd8ed1ab_0
+  - idna_ssl=1.1.0=pyhd8ed1ab_1002
+  - importlib-metadata=4.11.3=py37h89c1867_1
+  - intel-openmp=2022.0.1=h06a4308_3633
+  - jbig=2.1=h7f98852_2003
+  - joblib=1.1.0=pyhd8ed1ab_0
+  - jpeg=9e=h7f98852_0
+  - lcms2=2.12=hddcbb42_0
+  - ld_impl_linux-64=2.36.1=hea4e1c9_2
+  - lerc=3.0=h9c3ff4c_0
+  - libblas=3.8.0=17_openblas
+  - libcblas=3.8.0=17_openblas
+  - libdeflate=1.10=h7f98852_0
+  - libffi=3.4.2=h7f98852_5
+  - libgcc=7.2.0=h69d50b8_2
+  - libgcc-ng=11.2.0=h1d223b6_14
+  - libgfortran-ng=7.5.0=h14aa051_20
+  - libgfortran4=7.5.0=h14aa051_20
+  - liblapack=3.8.0=17_openblas
+  - liblapacke=3.8.0=17_openblas
+  - libnsl=2.0.0=h7f98852_0
+  - libopenblas=0.3.10=pthreads_hb3c22a3_5
+  - libpng=1.6.37=h21135ba_2
+  - libprotobuf=3.20.0=h6239696_0
+  - libstdcxx-ng=11.2.0=he4da1e4_14
+  - libtiff=4.3.0=h542a066_3
+  - libuv=1.43.0=h7f98852_0
+  - libwebp=1.2.2=h3452ae3_0
+  - libwebp-base=1.2.2=h7f98852_1
+  - libxcb=1.13=h7f98852_1004
+  - libzlib=1.2.11=h166bdaf_1014
+  - llvm-openmp=13.0.1=he0ac6c6_1
+  - lz4-c=1.9.3=h9c3ff4c_1
+  - markdown=3.3.6=pyhd8ed1ab_0
+  - mkl=2022.0.1=h8d4b97c_803
+  - mkl-service=2.4.0=py37hc4a68ce_0
+  - mkl_fft=1.3.1=py37h7986584_2
+  - mkl_random=1.2.2=py37h693438c_1
+  - multidict=6.0.2=py37h540881e_1
+  - ncurses=6.3=h9c3ff4c_0
+  - ninja=1.10.2=h4bd325d_1
+  - numpy=1.20.3=py37h038b26d_0
+  - numpy-base=1.18.5=py37h2f8d375_0
+  - oauthlib=3.2.0=pyhd8ed1ab_0
+  - olefile=0.46=pyh9f0ad1d_1
+  - openjpeg=2.4.0=hb52868f_1
+  - openssl=3.0.2=h166bdaf_1
+  - pandas=1.3.5=py37he8f5f7f_0
+  - pillow=9.1.0=py37h44f0d7a_0
+  - pip=22.0.4=pyhd8ed1ab_0
+  - protobuf=3.20.0=py37hd23a5d3_0
+  - pthread-stubs=0.4=h36c2ea0_1001
+  - pyasn1=0.4.8=py_0
+  - pyasn1-modules=0.2.7=py_0
+  - pycparser=2.21=pyhd8ed1ab_0
+  - pyjwt=2.3.0=pyhd8ed1ab_1
+  - pyopenssl=22.0.0=pyhd8ed1ab_0
+  - pysocks=1.7.1=py37h89c1867_5
+  - python=3.7.12=hf930737_100_cpython
+  - python-dateutil=2.8.2=pyhd8ed1ab_0
+  - python_abi=3.7=2_cp37m
+  - pytz=2022.1=pyhd8ed1ab_0
+  - pyu2f=0.1.5=pyhd8ed1ab_0
+  - readline=8.1=h46c0cb4_0
+  - regex=2022.3.15=py37h540881e_1
+  - requests=2.27.1=pyhd8ed1ab_0
+  - requests-oauthlib=1.3.1=pyhd8ed1ab_0
+  - rsa=4.8=pyhd8ed1ab_0
+  - setuptools=59.8.0=py37h89c1867_1
+  - six=1.16.0=pyh6c4a22f_0
+  - sqlite=3.37.1=h4ff8645_0
+  - tbb=2021.5.0=h924138e_1
+  - threadpoolctl=3.1.0=pyh8a188c0_0
+  - tk=8.6.12=h27826a3_0
+  - tomli=2.0.1=pyhd8ed1ab_0
+  - tqdm=4.64.0=pyhd8ed1ab_0
+  - typing-extensions=4.1.1=hd8ed1ab_0
+  - typing_extensions=4.1.1=pyha770c72_0
+  - urllib3=1.26.9=pyhd8ed1ab_0
+  - wcwidth=0.2.5=pyh9f0ad1d_2
+  - werkzeug=2.1.1=pyhd8ed1ab_0
+  - wheel=0.37.1=pyhd8ed1ab_0
+  - xorg-libxau=1.0.9=h7f98852_0
+  - xorg-libxdmcp=1.1.3=h7f98852_0
+  - xz=5.2.5=h516909a_1
+  - yarl=1.7.2=py37h540881e_2
+  - zipp=3.8.0=pyhd8ed1ab_0
+  - zlib=1.2.11=h166bdaf_1014
+  - zstd=1.5.2=ha95c52a_0
   - pip:
-    - scipy
-    - sklearn
-    - scikit-learn
-    - tensorboard
-    - tensorboard-plugin-wit
-    - faiss-gpu
     - ase==3.21.1
     - braceexpand==0.1.7
     - cached-property==1.5.2
@@ -112,8 +134,10 @@ dependencies:
     - cycler==0.10.0
     - decorator==4.4.2
     - docker-pycreds==0.4.0
+    - faiss-gpu==1.7.2
     - gitdb==4.0.7
     - gitpython==3.1.14
+    - google-auth-oauthlib==0.4.6
     - googledrivedownloader==0.4
     - h5py==3.1.0
     - isodate==0.6.0
@@ -135,14 +159,20 @@ dependencies:
     - python-louvain==0.15
     - pyyaml==5.4.1
     - rdflib==5.0.0
+    - scikit-learn==1.0.2
+    - scipy==1.7.3
     - sentry-sdk==1.1.0
     - shortuuid==1.0.1
+    - sklearn==0.0
     - smmap==4.0.0
     - subprocess32==3.5.4
+    - tensorboard==2.8.0
+    - tensorboard-data-server==0.6.1
+    - tensorboard-plugin-wit==1.8.1
+    - torch==1.9.0
     - torch-geometric==1.7.0
     - wandb==0.10.30
+    - webdataset==0.2.5
     - wilds==1.1.0
-    - git+https://github.com/tmbdev/webdataset.git@a4f3ec08551b42f20b20cdc1ba32d12536eabc15#egg=webdataset
-    - git+https://github.com/modestyachts/ImageNetV2_pytorch
     - https://data.pyg.org/whl/torch-1.9.0%2Bcu111/torch_scatter-2.0.9-cp37-cp37m-linux_x86_64.whl
-prefix: /home/gamaga/anaconda3/envs/open_clip
+prefix: /home/penfever/miniconda3/envs/open_clip
