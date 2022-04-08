@@ -13,11 +13,13 @@ As we describe in more detail [below](#why-are-low-accuracy-clip-models-interest
 
 This codebase is work in progress, and we invite all to contribute in making it more acessible and useful. In the future, we plan to add support for TPU training and release larger models. We hope this codebase facilitates and promotes further research in contrastive image-text learning. Please submit an issue or send an email if you have any other requests or suggestions.
 
-Note that `src/clip` is a copy of OpenAI's official [repository](https://github.com/openai/CLIP) with minimal changes.
+Note that portions of `src/open_clip/` modelling and tokenizer code are adaptations of OpenAI's official [repository](https://github.com/openai/CLIP).
 
 ## Approach
 
-![CLIP](https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/CLIP.png)
+| ![CLIP](https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/CLIP.png) |
+|:--:|
+| Image Credit: https://github.com/openai/CLIP |
 
 ## Usage
 
@@ -28,13 +30,12 @@ pip install open_clip_torch
 ```python
 import torch
 from PIL import Image
-from open_clip import tokenizer
 import open_clip
 
 model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
 
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
-text = tokenizer.tokenize(["a diagram", "a dog", "a cat"])
+text = open_clip.tokenize(["a diagram", "a dog", "a cat"])
 
 with torch.no_grad():
     image_features = model.encode_image(image)
@@ -76,7 +77,9 @@ The indices of images in this subset are in [OpenAI's CLIP repository](https://g
 
 ## Training CLIP
 
-### Install dependencies
+### Setup Environment and Install dependencies
+
+#### Conda
 
 ```bash
 # Create a conda environment (heavily recommended)
@@ -84,7 +87,9 @@ conda create -n open_clip python=3.10
 conda activate open_clip
 ```
 
-### Or with virtualenv
+Install conda PyTorch as per https://pytorch.org/get-started/locally/
+
+#### Virtualenv
 
 openclip also can be used with virtualenv with these lines:
 ```
@@ -94,20 +99,23 @@ pip install -U pip
 make install
 ```
 
+Install pip PyTorch as per https://pytorch.org/get-started/locally/
+
 Test can be run with `make install-dev` then `make test`
 
-### Add directory to pythonpath:
+#### Other dependencies
+
+Install open_clip pacakge and remaining dependencies:
 
 ```bash
 cd open_clip
 python setup.py install
 ```
 
-
 ### Sample single-process running code:
 
 ```bash
-nohup python -u src/training/main.py \
+python -m training.main \
     --save-frequency 1 \
     --zeroshot-frequency 1 \
     --report-to tensorboard \
@@ -128,7 +136,7 @@ nohup python -u src/training/main.py \
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
-## Multi-GPU and Beyond
+### Multi-GPU and Beyond
 
 This code has been battle tested up to 1024 A100s and offers a variety of solutions
 for distributed training. We include native support for SLURM clusters.
@@ -139,7 +147,7 @@ the the logit matrix. Using a naïve all-gather scheme, space complexity will be
 `--gather-with-grad` and `--local-loss` are used. This alteration results in one-to-one
 numerical results as the naïve method.
 
-### Single-Node
+#### Single-Node
 
 We make use of `torchrun` to launch distributed jobs. The following launches a
 a job on a node of 4 GPUs:
@@ -156,7 +164,7 @@ torchrun --nproc_per_node 4 -m training.main \
     --imagenet-val /data/imagenet/validation/
 ```
 
-### Multi-Node
+#### Multi-Node
 
 The same script above works, so long as users include information about the number
 of nodes and host node.
@@ -175,7 +183,7 @@ torchrun --nproc_per_node=4 \
     --imagenet-val /data/imagenet/validation/
 ```
 
-### SLURM
+#### SLURM
 
 This is likely the easist solution to utilize. The following script was used to
 train our largest models:
@@ -214,7 +222,16 @@ srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
     --gather-with-grad
 ```
 
-## Loss Curves
+### Resuming from a checkpoint:
+
+```bash
+python -m training.main \
+    --train-data="/path/to/train_data.csv" \
+    --val-data="/path/to/validation_data.csv"  \
+    --resume /path/to/checkpoints/epoch_K.pt
+```
+
+### Loss Curves
 
 When run on a machine with 8 GPUs the command should produce the following training curve for Conceptual Captions:
 
@@ -231,34 +248,27 @@ Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT
 tensorboard --logdir=logs/tensorboard/ --port=7777
 ```
 
-### Sample resuming from a checkpoint:
+## Evaluation / Zero-Shot
+
+### Evaluating local checkpoint:
 
 ```bash
-python src/training/main.py \
-    --train-data="/path/to/train_data.csv" \
-    --val-data="/path/to/validation_data.csv"  \
-    --resume /path/to/checkpoints/epoch_K.pt
-```
-
-### Sample evaluating local checkpoint:
-
-```bash
-python src/training/main.py \
+python -m training.main \
     --val-data="/path/to/validation_data.csv"  \
     --model RN101 \
     --preretrained /path/to/checkpoints/epoch_K.pt
 ```
 
-### Sample evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
+### Evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
 
 ```bash
-python src/training/main.py \
+python -m training.main \
     --imagenet-val /path/to/imagenet/validation \
     --model ViT-B-32-quickgelu \
     --preretrained laion400m_e32
 ```
 
-## Trained models
+## Pretrained models
 
 We replicate OpenAI's results on ViT-B/32 with comparable dataset LAION-400M. Trained
 weights may be found in release [v0.2](https://github.com/mlfoundations/open_clip/releases/tag/v0.2-weights).
@@ -270,7 +280,7 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 * [ResNet-50](https://drive.google.com/file/d/1bbNMrWAq3NxCAteHmbrYgBKpGAA9j9pn/view?usp=sharing) (32.7% / 27.9%)
 * [ResNet-101](https://drive.google.com/file/d/1vOorR3pKkuuA_Gv7OgqMtaETNjTmy_3m/view?usp=sharing) (34.8% / 30.0%)
 
-## Pretrained Model Interface
+### Pretrained Model Interface
 
 We offer a simple model interface to instantiate both pre-trained and untrained models.
 
