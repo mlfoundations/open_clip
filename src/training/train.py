@@ -84,7 +84,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         if args.gc:
             total_loss = gc([images, texts], vl_model=True, reduction='mean')
-            print("loss is {}".format(total_loss))
+            # print("loss is {}".format(total_loss))
             optimizer.step()
 
         else:
@@ -112,7 +112,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if is_master(args) and (i % 10 == 0 or batch_count == num_batches_per_epoch):
+        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples
