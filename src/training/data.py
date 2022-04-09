@@ -15,7 +15,10 @@ import webdataset as wds
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
-
+from functools import partial
+import soundfile as sf
+import librosa
+import io
 
 try:
     import horovod.torch as hvd
@@ -27,20 +30,20 @@ from open_clip import tokenize
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t"):
-        logging.debug(f'Loading csv data from {input_filename}.')
+        logging.debug(f"Loading csv data from {input_filename}.")
         df = pd.read_csv(input_filename, sep=sep)
 
         self.images = df[img_key].tolist()
         self.captions = df[caption_key].tolist()
         self.transforms = transforms
-        logging.debug('Done loading data.')
+        logging.debug("Done loading data.")
 
     def __len__(self):
         return len(self.captions)
 
     def __getitem__(self, idx):
         images = self.transforms(Image.open(str(self.images[idx])))
-        texts = tokenize([str(self.captions[idx])])[0]
+        texts 	= tokenize([str(self.captions[idx])])[0]
         return images, texts
 
 
@@ -55,24 +58,32 @@ def preprocess_txt(text):
 
 
 def get_dataset_size(shards):
-    shards_list = list(braceexpand.braceexpand(shards))
-    dir_path = os.path.dirname(shards)
-    sizes_filename = os.path.join(dir_path, 'sizes.json')
-    len_filename = os.path.join(dir_path, '__len__')
-    if os.path.exists(sizes_filename):
-        sizes = json.load(open(sizes_filename, 'r'))
-        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
-    elif os.path.exists(len_filename):
-        # FIXME this used to be eval(open(...)) but that seemed rather unsafe
-        total_size = ast.literal_eval(open(len_filename, 'r').read())
+    if isinstance(shards, list):
+        size_list = []
+        for s in shards:
+            size_list.append(get_dataset_size(s)[0])
     else:
-        total_size = None  # num samples undefined
-        # some common dataset sizes (at time of authors last download)
-        # cc3m-train: 2905954
-        # cc12m: 10968539
-        # LAION-400m: 407332084
-    num_shards = len(shards_list)
-    return total_size, num_shards
+        shards_list = list(braceexpand.braceexpand(shards))
+        dir_path = os.path.dirname(shards)
+        sizes_filename = os.path.join(dir_path, "sizes.json")
+        len_filename = os.path.join(dir_path, "__len__")
+        if os.path.exists(sizes_filename):
+            sizes = json.load(open(sizes_filename, "r"))
+            total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
+        elif os.path.exists(len_filename):
+            # FIXME this used to be eval(open(...)) but that seemed rather unsafe
+            total_size = ast.literal_eval(open(len_filename, "r").read())
+        else:
+            total_size = None  # num samples undefined
+            # some common dataset sizes (at time of authors last download)
+            # cc3m-train: 2905954
+            # cc12m: 10968539
+            # LAION-400m: 407332084
+        num_shards = len(shards_list)
+    if isinstance(shards, list):
+        return sum(size_list), len(shards)
+    else:
+        return total_size, num_shards
 
 
 def get_imagenet(args, preprocess_fns, split):
@@ -82,6 +93,7 @@ def get_imagenet(args, preprocess_fns, split):
 
     if split == "v2":
         from imagenetv2_pytorch import ImageNetV2Dataset
+
         dataset = ImageNetV2Dataset(location=args.imagenet_v2, transform=preprocess_val)
     else:
         if is_train:
@@ -106,7 +118,7 @@ def get_imagenet(args, preprocess_fns, split):
             np.random.shuffle(arr)
             idxs[m] = arr
 
-        idxs = idxs.astype('int')
+        idxs = idxs.astype("int")
         sampler = SubsetRandomSampler(np.where(idxs)[0])
     else:
         sampler = None
@@ -132,12 +144,12 @@ def count_samples(dataloader):
 
 
 def filter_no_caption(sample):
-    return 'txt' in sample
+    return "txt" in sample
 
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, isssue a warning, and continue."""
-    logging.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
     return True
 
 
@@ -147,7 +159,69 @@ _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
-def get_wds_dataset(args, preprocess_img, is_train):
+def preprocess(
+    sample,
+    audio_ext,
+    text_ext,
+    samplerate,
+    mono,
+    max_len,
+    dtype,
+    res_type,
+):
+    keys = list(sample.keys())
+    for k in keys:
+        if (audio_ext in k) and (audio_ext!=k): # if the key is not extention of audio, something like 'xxxxx.flac'
+            sample[audio_ext] = sample[k]
+            del sample[k]
+
+        if (text_ext in k) and (text_ext!=k): # if the key is not extention of audio, something like 'xxxxx.json'
+            sample[text_ext] = sample[k]
+            del sample[k]
+
+    for key, value in sample.items():
+        if key == audio_ext:
+            audio_data, orig_sr = sf.read(io.BytesIO(value))
+            if samplerate is not None:
+                audio_data = librosa.resample(
+                    audio_data, orig_sr=orig_sr, target_sr=samplerate, res_type=res_type
+                )
+            if len(audio_data) > max_len:  # random clip if too long
+                overflow = len(audio_data) - max_len
+                idx = np.random.randint(0, overflow + 1)
+                if np.random.rand() > 0.5:
+                    audio_data = audio_data[idx : idx + max_len]
+                else:
+                    audio_data = audio_data[
+                        len(audio_data) + 1 - idx - max_len : len(audio_data) + 1 - idx
+                    ]
+            else:  # padding if too short
+                audio_data = np.pad(
+                    audio_data,
+                    (0, max_len - len(audio_data)),
+                    mode="constant",
+                    constant_values=0,
+                )
+            if mono:  # convert to mono
+                audio_data = librosa.to_mono(audio_data)
+
+            sample[audio_ext] = audio_data
+    return sample
+
+
+# def get_wds_dataset(args, preprocess_img, is_train):
+def get_wds_dataset(
+    args,
+    is_train,
+    file_path_type="local",
+    audio_ext="flac",
+    text_ext="json",
+    samplerate=32000,
+    mono=True,
+    max_len=1000000,
+    dtype="float64",
+    res_type="kaiser_best",
+):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
 
@@ -161,7 +235,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
                     'Please specify via `--train-num-samples` if no dataset length info present.')
         else:
             num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
-
+    
     pipeline = [wds.SimpleShardList(input_shards)]
     # at this point we have an iterator over all the shards
     if is_train:
@@ -184,11 +258,19 @@ def get_wds_dataset(args, preprocess_img, is_train):
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
     pipeline.extend([
-        wds.select(filter_no_caption),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png", text="txt"),
-        wds.map_dict(image=preprocess_img, text=preprocess_txt),
-        wds.to_tuple("image", "text"),
+        wds.map(
+            partial(
+                preprocess,
+                audio_ext=audio_ext,
+                text_ext=text_ext,
+                samplerate=samplerate,
+                mono=mono,
+                max_len=max_len,
+                dtype=dtype,
+                res_type=res_type,
+            )
+        ),
+        wds.to_tuple("flac", "json"),
         wds.batched(args.batch_size, partial=not is_train),
     ])
 
@@ -255,25 +337,24 @@ def get_csv_dataset(args, preprocess_fn, is_train):
     dataloader.num_batches = len(dataloader)
 
     return DataInfo(dataloader, sampler)
-
-
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
     elif dataset_type == "auto":
-        ext = data_path.split('.')[-1]
-        if ext in ['csv', 'tsv']:
+        ext = data_path.split(".")[-1]
+        if ext in ["csv", "tsv"]:
             return get_csv_dataset
-        elif ext in ['tar']:
+        elif ext in ["tar"]:
             return get_wds_dataset
         else:
             raise ValueError(
-                f"Tried to figure out dataset type, but failed for extention {ext}.")
+                f"Tried to figure out dataset type, but failed for extention {ext}."
+            )
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
-    
+
 
 def get_data(args, preprocess_fns):
     preprocess_train, preprocess_val = preprocess_fns
@@ -281,11 +362,13 @@ def get_data(args, preprocess_fns):
 
     if args.train_data:
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True)
+            args, preprocess_train, is_train=True
+        )
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-            args, preprocess_val, is_train=False)
+            args, preprocess_val, is_train=False
+        )
 
     if args.imagenet_val is not None:
         data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")
