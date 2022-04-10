@@ -1,0 +1,44 @@
+git clone -b gc-clip https://github.com/penfever/open_clip/
+cd open_clip
+conda env create --file environment.yml 
+
+or
+
+mamba env create --file environment.yml 
+
+conda activate open_clip
+pip install torch==1.9.0+cu111 torchvision torchaudio -f https://download.pytorch.org/whl/cu111/torch_stable.html
+pip install git+https://github.com/modestyachts/ImageNetV2_pytorch
+git clone https://github.com/luyug/GradCache
+cd GradCache
+pip install .
+cd ..
+python setup.py install
+export PYTHONPATH="$PYTHONPATH:$PWD/src"
+sudo mkdir /cc3m
+sudo mount -o loop /path/to/cc_data.sqf /cc3m
+sudo mount -o loop /mnt/m/datasets/cc3m/cc_data.sqf /cc3m
+sudo mount -o loop /mnt/c/cc3m/cc_data.sqf /cc3m
+sudo mount -o loop /media/benfeuer/VSTETC/cc3m/cc_data.sqf /cc3m
+cp /cc3m/cc_data/Train_GCC-training_output.csv ~
+cp /cc3m/cc_data/Validation_GCC-1.1.0-Validation_output.csv ~
+sed -i "s/\/cc_data\//\/cc3m\/cc_data\//g" "Train_GCC-training_output.csv"
+sed -i "s/\/cc_data\//\/cc3m\/cc_data\//g" "Validation_GCC-1.1.0-Validation_output.csv"
+	
+python -u src/training/main.py \
+    --save-frequency 1 \
+    --report-to tensorboard \
+    --train-data="~/Train_GCC-training_output.csv"  \
+    --val-data="~/Validation_GCC-1.1.0-Validation_output.csv"  \
+    --csv-img-key filepath \
+    --csv-caption-key title \
+    --batch-size=32 \
+    --lr=1e-3 \
+    --wd=0.1 \
+    --epochs=30 \
+    --workers=8 \
+    --model RN50
+
+python -u src/training/main.py    --save-frequency 1  --val-frequency=5   --report-to tensorboard     --train-data="~/Train_GCC-training_output.csv"      --val-data="~/Validation_GCC-1.1.0-Validation_output.csv"      --csv-img-key filepath     --csv-caption-key title     --batch-size=64   --lr=1e-3     --wd=0.1     --epochs=30     --workers=8     --model RN50  --gc=True  --gpumaxbatch=16  --warmup=0  --no_eval=True
+
+

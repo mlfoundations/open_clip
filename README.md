@@ -1,3 +1,35 @@
+# OpenCLIP with Gradient Caching
+
+This repo modifies the OpenCLIP repo and adds support for gradient caching. The gradient caching implemententation is adapted from [GradCache](https://github.com/luyug/GradCache).
+
+## Why gradient caching?
+
+Models like CLIP are typically trained with very large batch sizes -- 32,768 is standard. This has been shown to improve rates of loss convergence. 
+
+However, most researchers and even most businesses do not have access to the distributed training setups required for such batch sizes. Gradient caching saves computed gradients in RAM instead of in VRAM, allowing for much larger batch sizes on a single node.
+
+Unlike gradient accumulation, gradient caching is mathematically identical to training with a large batch size. 
+
+## Installation
+
+1. git clone this repo and enter the directory using your favorite terminal
+2. conda env create --file environment.yml
+3. conda activate open_clip
+4. pip install torch==1.9.0+cu111 torchvision torchaudio -f https://download.pytorch.org/whl/cu111/torch_stable.html
+5. pip install git+https://github.com/modestyachts/ImageNetV2_pytorch
+6. python setup.py install
+7. export PYTHONPATH="$PYTHONPATH:$PWD/src"
+
+## Execution
+
+See the OpenCLIP documentation (included below) for detailed instructions on how to train networks.
+
+We introduce three new command line arguments --
+
+--gc=True: If set to True, gradient caching will be enabled. If gc=True, you should also set gpumaxbatch to an appropriate size for your GPU.
+--gpumaxbatch=INT: This is an integer value representing the maximum batch size that your GPU can handle 
+--no_eval=True: Skips the evaluation phase, accelerating training
+
 # OpenCLIP
 
 [[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
