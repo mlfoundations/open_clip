@@ -104,7 +104,7 @@ threadpoolctl==3.1.0
 tomli==2.0.1
 torch==1.9.0+cu111
 torch-geometric==1.7.0
-torch-scatter @ https://data.pyg.org/whl/torch-1.9.0%2Bcu111/torch_scatter-2.0.9-cp37-cp37m-linux_x86_64.whl
+torch-scatter
 torchaudio==0.9.0
 torchvision==0.10.0+cu111
 torchviz==0.0.2
