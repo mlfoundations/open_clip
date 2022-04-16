@@ -4,7 +4,7 @@ open_clip_torch
 absl-py==1.0.0
 aiohttp==3.8.1
 aiosignal==1.2.0
-ase==3.21.1
+ase
 async-timeout==4.0.2
 asynctest==0.13.0
 attrs==21.4.0
@@ -38,7 +38,7 @@ google-auth-oauthlib==0.4.6
 googledrivedownloader==0.4
 graphviz==0.19.1
 grpcio==1.45.0
-h5py==3.1.0
+h5py
 idna==3.3
 idna-ssl==1.1.0
 imagenetv2-pytorch @ git+https://github.com/modestyachts/ImageNetV2_pytorch@9017469c74e454c444bb48d19a4aa43211cc1f3a
@@ -51,14 +51,14 @@ littleutils==0.2.2
 llvmlite==0.36.0
 Markdown==3.3.6
 MarkupSafe==2.0.1
-matplotlib==3.3.4
-mkl-fft==1.3.1
+matplotlib
+mkl-fft
 mkl-random==1.2.2
 mkl-service==2.4.0
 multidict==6.0.2
 networkx==2.5.1
 numba==0.53.1
-numpy==1.20.3
+numpy
 oauthlib==3.2.0
 ogb==1.3.1
 olefile==0.46
