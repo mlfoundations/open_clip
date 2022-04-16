@@ -110,7 +110,6 @@ typing_extensions==4.1.1
 urllib3==1.26.9
 wandb==0.10.30
 wcwidth==0.2.5
-webdataset @ git+https://github.com/tmbdev/webdataset.git@a4f3ec08551b42f20b20cdc1ba32d12536eabc15
 Werkzeug==2.1.1
 wilds==1.1.0
 yarl==1.7.2
