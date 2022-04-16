@@ -88,7 +88,6 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         if args.gc:
             total_loss = gc([images, texts], vl_model=True, reduction='mean')
-            # print("loss is {}".format(total_loss))
             optimizer.step()
 
         else:
@@ -123,7 +122,6 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
-            # logit_scale_scalar = logit_scale.item()
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
@@ -176,16 +174,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
             for i, batch in enumerate(dataloader):
                 # FIXME hacking a solution for large batch sizes to avoid evaluation overloading memory
                 # this will result in less accurate evaluation metrics
-                # print("Batch lenght is {}".format(len(batch[0])))
                 if len(batch[0]) > args.gpumaxbatch:
-                    # print("cropping eval batch size: ")
                     images = batch[0][:args.gpumaxbatch]
                     texts = batch[1][:args.gpumaxbatch]
                 else:
                     images, texts = batch
                 images = images.to(device=device, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
-                # print("images is now {}".format(images.size()))
                 with autocast():
                     image_features, text_features, logit_scale = model(images, texts)
                     # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
