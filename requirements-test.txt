@@ -1,2 +1,4 @@
 pytest-xdist==2.5.0
 pytest==7.0.1
+torch==1.9.0
+open_clip_torch
