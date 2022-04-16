@@ -100,11 +100,11 @@ tensorboard-data-server==0.6.1
 tensorboard-plugin-wit==1.8.1
 threadpoolctl==3.1.0
 tomli==2.0.1
-torch==1.9.0+cu111
+torch
+torchaudio
+torchvision
 torch-geometric==1.7.0
 torch-scatter
-torchaudio==0.9.0
-torchvision==0.10.0+cu111
 torchviz==0.0.2
 tqdm==4.64.0
 typing_extensions==4.1.1
