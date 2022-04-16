@@ -46,6 +46,8 @@ setup(
     packages=find_packages(where='src', exclude=['training']),
     include_package_data=True,
     install_requires=[
+        'torch >= 1.9',
+        'torchvision',
         'webdataset >= 0.2.5',
         'ftfy',
         'regex',
