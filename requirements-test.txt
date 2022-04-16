@@ -1,7 +1,5 @@
 pytest-xdist==2.5.0
 pytest==7.0.1
-pillow==9.1.0
-torch==1.9.0
 open_clip_torch
 absl-py==1.0.0
 aiohttp==3.8.1
@@ -27,7 +25,7 @@ coverage==6.3.2
 cryptography==36.0.0
 cycler==0.10.0
 Cython==0.29.28
-dataclasses==0.8
+dataclasses
 decorator==4.4.2
 docker-pycreds==0.4.0
 faiss-gpu==1.7.2
