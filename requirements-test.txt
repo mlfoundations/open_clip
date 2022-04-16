@@ -104,7 +104,6 @@ torch
 torchaudio
 torchvision
 torch-geometric==1.7.0
-torch-scatter
 torchviz==0.0.2
 tqdm==4.64.0
 typing_extensions==4.1.1
