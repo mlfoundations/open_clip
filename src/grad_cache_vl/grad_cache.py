@@ -228,7 +228,7 @@ class GradCache:
         s_cache: List[Tensor],
         v_rnd_st: List[RandContext],
         l_rnd_st: List[RandContext],
-        no_sync_except_last: bool = False
+        no_sync_except_last: bool
         ):
         """
         Run the second forward and the backward pass to compute gradient for a model.
