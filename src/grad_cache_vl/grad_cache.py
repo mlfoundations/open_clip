@@ -370,5 +370,7 @@ class GradCache:
             for model, x, model_cache, rnd_states in zip(
                     self.models, model_inputs, cache, all_rnd_states):
                 self.forward_backward(model, x, model_cache, rnd_states, no_sync_except_last=no_sync_except_last)
-
-        return loss
+        if vl_model:
+            return loss, s_cache
+        else:
+            return loss

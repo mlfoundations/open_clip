@@ -69,12 +69,21 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     end = time.time()
 
     if args.gc:
-        gc = GradCache(
-            models=[model , model], 
-            chunk_sizes=args.gpumaxbatch, 
-            loss_fn=loss, 
-            scaler=scaler
-        )
+        if args.precision == 'amp':
+            gc = GradCache(
+                models=[model , model], 
+                chunk_sizes=args.gpumaxbatch, 
+                loss_fn=loss,
+                fp16=True,
+                scaler=scaler
+            )
+        else:
+            gc = GradCache(
+                models=[model , model], 
+                chunk_sizes=args.gpumaxbatch, 
+                loss_fn=loss,
+                fp16=False
+            )
 
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
@@ -86,27 +95,25 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
-        if args.gc:
-            total_loss = gc([images, texts], vl_model=True, reduction='mean')
-            optimizer.step()
-
-        else:
-            with autocast():
+        with autocast():
+            if args.gc:
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean')
+            else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-            if scaler is not None:
-                scaler.scale(total_loss).backward()
-                if args.horovod:
-                    optimizer.synchronize()
-                    scaler.unscale_(optimizer)
-                    with optimizer.skip_synchronize():
-                        scaler.step(optimizer)
-                else:
+        if scaler is not None:
+            scaler.scale(total_loss).backward()
+            if args.horovod:
+                optimizer.synchronize()
+                scaler.unscale_(optimizer)
+                with optimizer.skip_synchronize():
                     scaler.step(optimizer)
-                scaler.update()
             else:
-                total_loss.backward()
-                optimizer.step()
+                scaler.step(optimizer)
+            scaler.update()
+        else:
+            total_loss.backward()
+            optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         with torch.no_grad():
@@ -128,6 +135,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f} "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
+                f"Logit Scale: {logit_scale_scalar:.3f}"
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -135,6 +143,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
+                "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
             for name, val in log_data.items():
