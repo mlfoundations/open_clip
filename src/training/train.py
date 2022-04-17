@@ -71,7 +71,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     if args.gc:
         if args.precision == 'amp':
             gc = GradCache(
-                models=[model , model], 
+                models=[model, model], 
                 chunk_sizes=args.gpumaxbatch, 
                 loss_fn=loss,
                 fp16=True,

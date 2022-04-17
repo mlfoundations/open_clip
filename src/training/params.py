@@ -280,11 +280,6 @@ def parse_args():
         default=32,
         help="max per-GPU batch size for gradient caching",
     )
-    parser.add_argument(
-        "--no_eval",
-        default=False,
-        help="Skips evaluation",
-    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
