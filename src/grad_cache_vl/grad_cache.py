@@ -180,58 +180,22 @@ class GradCache:
         :param model_inputs: Model input already broken into chunks.
         :return: A tuple of a) representations and b) recorded random states.
         """
-        if vl:
-            rnd_states_v = []
-            rnd_states_l = []
-            v_reps = []
-            l_reps = []
-            s_rep = None
-            with torch.no_grad():
-                for x in model_inputs:
-                    rnd_states_v.append(RandContext(*self.get_input_tensors(x[0])))
-                    rnd_states_l.append(RandContext(*self.get_input_tensors(x[1])))
-                    y = self.model_call(model, x)
-                    (v_rep, l_rep, s_rep) = self.get_reps(y)
-                    v_reps.append(v_rep)
-                    l_reps.append(l_rep)
-            v_reps = torch.cat(v_reps, dim=0)
-            l_reps = torch.cat(l_reps, dim=0)
-            return v_reps, l_reps, s_rep, [rnd_states_v, rnd_states_l]
-            
-        else:
-            rnd_states = []
-            model_reps = []
-
-            with torch.no_grad():
-                for x in model_inputs:
-                    rnd_states.append(RandContext(*self.get_input_tensors(x)))
-                    y = self.model_call(model, x)
-                    model_reps.append(self.get_reps(y))
-            model_reps = torch.cat(model_reps, dim=0)
-            return None, model_reps, None, rnd_states
-
-    def build_cache(self, vl = False, *reps: Tensor, **loss_kwargs) -> [List[Tensor], Tensor]:
-        """
-        Compute the gradient cache
-        :param reps: Computed representations from all encoder models
-        :param loss_kwargs: Extra keyword arguments to the loss function
-        :return: A tuple of a) gradient cache for each encoder model, and b) loss tensor
-
-        image_features, text_features, logit_scale = model(images, texts)
-        total_loss = loss(image_features, text_features, logit_scale)
-        """
-        reps = [r.detach().requires_grad_() for r in reps]
-        with autocast() if self.fp16 else nullcontext():
-            loss = self.compute_loss(*reps, **loss_kwargs)
-
-        if self.fp16:
-            self.scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-        cache = [r.grad for r in reps]
-
-        return cache, loss.detach()
+        rnd_states_v = []
+        rnd_states_l = []
+        v_reps = []
+        l_reps = []
+        s_rep = None
+        with torch.no_grad():
+            for x in model_inputs:
+                rnd_states_v.append(RandContext(*self.get_input_tensors(x[0])))
+                rnd_states_l.append(RandContext(*self.get_input_tensors(x[1])))
+                y = self.model_call(model, x)
+                (v_rep, l_rep, s_rep) = self.get_reps(y)
+                v_reps.append(v_rep)
+                l_reps.append(l_rep)
+        v_reps = torch.cat(v_reps, dim=0)
+        l_reps = torch.cat(l_reps, dim=0)
+        return v_reps, l_reps, s_rep, [rnd_states_v, rnd_states_l]
 
     def build_vl_cache(self, vision: Tensor, language: Tensor, logit_scale) -> [List[Tensor], Tensor]:
         """
@@ -250,48 +214,9 @@ class GradCache:
             loss = self.loss_fn(vision_d, language_d, logit_scale)
         if self.fp16:
             self.scaler.scale(loss)
-            #TODO: horovod
-            # if args.horovod:
-            #     optimizer.synchronize()
-            #     scaler.unscale_(optimizer)
-            #     with optimizer.skip_synchronize():
-            #         scaler.step(optimizer)
-            # else:
-                # self.scaler.step(self.optimizer)
-                # self.scaler.update()
+        #TODO: horovod
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         return v_cache, l_cache, s_cache, loss.detach()
-
-
-    def forward_backward(
-            self,
-            model: nn.Module,
-            model_inputs,
-            cached_gradients: List[Tensor],
-            random_states: List[RandContext],
-            no_sync_except_last: bool = False
-    ):
-        """
-        Run the second forward and the backward pass to compute gradient for a model.
-        :param model: Encoder model.
-        :param model_inputs: Chunked input to the encoder model.
-        :param cached_gradients: Chunked gradient cache tensor for each input.
-        :param random_states: Each input's device random state during the first forward.
-        :param no_sync_except_last: If True, under distributed setup, only trigger gradient reduction across processes
-        for the last sub-batch's forward-backward pass.
-        """
-        if no_sync_except_last:
-            sync_contexts = [model.no_sync for _ in range(len(model_inputs) - 1)] + [nullcontext]
-        else:
-            sync_contexts = [nullcontext for _ in range(len(model_inputs))]
-
-        for x, state, gradient, sync_context in zip(model_inputs, random_states, cached_gradients, sync_contexts):
-            with sync_context():
-                with state:
-                    y = self.model_call(model, x)
-                reps = self.get_reps(y)
-                surrogate = torch.dot(reps.flatten(), gradient.flatten())
-                surrogate.backward()
 
     def forward_backward_vl(
         self,
@@ -342,46 +267,30 @@ class GradCache:
         :param loss_kwargs: Additional keyword arguments to the loss function.
         :return: The current's loss.
         """
-        all_reps = []
-        all_rnd_states = []
-
+        if not vl_model:
+            raise NotImplementedError
         if no_sync_except_last:
             assert all(map(lambda m: isinstance(m, nn.parallel.DistributedDataParallel), self.models)), \
                 'Some of models are not wrapped in DistributedDataParallel. Make sure you are running DDP with ' \
                 'proper initializations.'
 
         model_inputs = [self.split_inputs(x, chunk_size) for x, chunk_size in zip(model_inputs, self.chunk_sizes)]
-        if vl_model:
-            #limit chunk sizes to a single model
-            self.chunk_sizes = self.chunk_sizes[:1]
-            v_reps = []
-            l_reps = []
-            all_rnd_states_v = []
-            all_rnd_states_l = []
-            for x in model_inputs:
-                model_v, model_l, model_s, rnd_states = self.forward_no_grad(self.models[0], x, vl=True)
-                v_reps.append(model_v)
-                l_reps.append(model_l)
-                all_rnd_states_v.append(rnd_states[0])
-                all_rnd_states_l.append(rnd_states[1])
-            v_cache, l_cache, s_cache, loss = self.build_vl_cache(*v_reps, *l_reps, model_s)
-            v_cache = v_cache.split(self.chunk_sizes[0], dim=0)
-            l_cache = l_cache.split(self.chunk_sizes[0], dim=0)
-            for model, x, v_rnd_st, l_rnd_st in zip(
-                    self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
-                s_reps = self.forward_backward_vl(model, x, loss, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
-            return loss, s_reps
-
-        else:
-            for model, x in zip(self.models, model_inputs):
-                _, model_reps, _, rnd_states = self.forward_no_grad(model, x, vl=False)
-                all_reps.append(model_reps)
-                all_rnd_states.append(rnd_states)
-
-            cache, loss = self.build_cache(*all_reps, **loss_kwargs)
-            cache = [c.split(chunk_size) for c, chunk_size in zip(cache, self.chunk_sizes)]
-
-            for model, x, model_cache, rnd_states in zip(
-                    self.models, model_inputs, cache, all_rnd_states):
-                self.forward_backward(model, x, model_cache, rnd_states, no_sync_except_last=no_sync_except_last)
-            return loss
+        #limit chunk sizes to a single model
+        self.chunk_sizes = self.chunk_sizes[:1]
+        v_reps = []
+        l_reps = []
+        all_rnd_states_v = []
+        all_rnd_states_l = []
+        for x in model_inputs:
+            model_v, model_l, model_s, rnd_states = self.forward_no_grad(self.models[0], x, vl=True)
+            v_reps.append(model_v)
+            l_reps.append(model_l)
+            all_rnd_states_v.append(rnd_states[0])
+            all_rnd_states_l.append(rnd_states[1])
+        v_cache, l_cache, s_cache, loss = self.build_vl_cache(*v_reps, *l_reps, model_s)
+        v_cache = v_cache.split(self.chunk_sizes[0], dim=0)
+        l_cache = l_cache.split(self.chunk_sizes[0], dim=0)
+        for model, x, v_rnd_st, l_rnd_st in zip(
+                self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
+            s_reps = self.forward_backward_vl(model, x, loss, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
+        return loss, s_reps
