@@ -240,6 +240,7 @@ class GradCache:
         for the last sub-batch's forward-backward pass.
         """
         if no_sync_except_last:
+            print("nosync")
             sync_contexts = [model.no_sync for _ in range(len(v_cache) - 1)] + [nullcontext]
         else:
             sync_contexts = [nullcontext for _ in range(len(v_cache))]

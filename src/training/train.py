@@ -96,7 +96,10 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         optimizer.zero_grad()
 
         with autocast():
-            if args.gc:
+            if args.gc and args.distributed:
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean', no_sync_except_last=True)
+                optimizer.step()
+            elif args.gc:
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean')
                 optimizer.step()
             else:
