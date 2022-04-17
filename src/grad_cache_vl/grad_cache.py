@@ -248,6 +248,17 @@ class GradCache:
         language_d = language.requires_grad_()
         with autocast() if self.fp16 else nullcontext():
             loss = self.loss_fn(vision_d, language_d, logit_scale)
+        if self.fp16:
+            self.scaler.scale(loss)
+            #TODO: horovod
+            # if args.horovod:
+            #     optimizer.synchronize()
+            #     scaler.unscale_(optimizer)
+            #     with optimizer.skip_synchronize():
+            #         scaler.step(optimizer)
+            # else:
+                # self.scaler.step(self.optimizer)
+                # self.scaler.update()
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         return v_cache, l_cache, s_cache, loss.detach()
 
@@ -286,6 +297,7 @@ class GradCache:
         self,
         model: nn.Module,
         model_inputs,
+        total_loss,
         v_cache: List[Tensor],
         l_cache: List[Tensor],
         s_cache: List[Tensor],
@@ -313,6 +325,7 @@ class GradCache:
                         y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
                 autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_cache, l_cache, s_cache])
+        return s_reps
 
     def cache_step(
             self,
@@ -356,8 +369,9 @@ class GradCache:
             l_cache = l_cache.split(self.chunk_sizes[0], dim=0)
             for model, x, v_rnd_st, l_rnd_st in zip(
                     self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
-                self.forward_backward_vl(model, x, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
-        
+                s_reps = self.forward_backward_vl(model, x, loss, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
+            return loss, s_reps
+
         else:
             for model, x in zip(self.models, model_inputs):
                 _, model_reps, _, rnd_states = self.forward_no_grad(model, x, vl=False)
@@ -370,7 +384,4 @@ class GradCache:
             for model, x, model_cache, rnd_states in zip(
                     self.models, model_inputs, cache, all_rnd_states):
                 self.forward_backward(model, x, model_cache, rnd_states, no_sync_except_last=no_sync_except_last)
-        if vl_model:
-            return loss, s_cache
-        else:
             return loss

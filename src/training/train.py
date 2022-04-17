@@ -75,7 +75,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 chunk_sizes=args.gpumaxbatch, 
                 loss_fn=loss,
                 fp16=True,
-                scaler=scaler
+                scaler=scaler,
             )
         else:
             gc = GradCache(
@@ -98,22 +98,23 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         with autocast():
             if args.gc:
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean')
+                optimizer.step()
             else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-        if scaler is not None:
-            scaler.scale(total_loss).backward()
-            if args.horovod:
-                optimizer.synchronize()
-                scaler.unscale_(optimizer)
-                with optimizer.skip_synchronize():
-                    scaler.step(optimizer)
-            else:
-                scaler.step(optimizer)
-            scaler.update()
-        else:
-            total_loss.backward()
-            optimizer.step()
+                if scaler is not None:
+                    scaler.scale(total_loss).backward()
+                    if args.horovod:
+                        optimizer.synchronize()
+                        scaler.unscale_(optimizer)
+                        with optimizer.skip_synchronize():
+                            scaler.step(optimizer)
+                    else:
+                        scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    total_loss.backward()
+                    optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         with torch.no_grad():
