@@ -163,7 +163,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
 def evaluate(model, data, epoch, args, tb_writer=None):
     metrics = {}
-    if not is_master(args) or args.no_eval:
+    if not is_master(args):
         return metrics
     device = torch.device(args.device)
     model.eval()
