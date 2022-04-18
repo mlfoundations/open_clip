@@ -211,24 +211,15 @@ class GradCache:
         logit_scale = logit_scale.requires_grad_()
         language_d = language.requires_grad_()
         #TODO: autocast loss breaks gradient caching when amp AND distributed are simultaneously enabled
-        with autocast() if self.fp16 and not no_sync_except_last else nullcontext():
+        with autocast() if self.fp16 else nullcontext():
             loss = self.compute_loss(vision_d, language_d, logit_scale)
         if self.fp16:
-            print(self.scaler.is_enabled())
-            print(self.scaler.get_scale())
-            print("loss before scaling: ")
-            print(loss)
             loss = self.scaler.scale(loss)
-            print("loss after scaling: ")
-            print(loss)
         #TODO: horovod
         vision_d.to(loss.get_device())
         logit_scale.to(loss.get_device())
         language_d.to(loss.get_device())
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
-        # print("In build-vl-cache, v_cache is {}".format(v_cache))
-        # print("loss is on {}, cache is on {}".format(loss.get_device(), v_cache.get_device()))
-        # print("in build-cache, v_cache is size {}, l cachc is size {}".format(v_cache.size(), l_cache.size()))
         return v_cache, l_cache, s_cache, loss.detach()
 
     def forward_backward_vl(
@@ -252,15 +243,8 @@ class GradCache:
         :param no_sync_except_last: If True, under distributed setup, only trigger gradient reduction across processes
         for the last sub-batch's forward-backward pass.
         """
-        # print("In forward backward, v_cache is {}".format(v_cache))
-        if no_sync_except_last:
-            sync_contexts = [model.no_sync for _ in range(len(v_cache) - 1)] + [nullcontext]
-        else:
-            sync_contexts = [nullcontext for _ in range(len(v_cache))]
         for count, (x, v_st, l_st, v_c, l_c) in enumerate(zip(model_inputs, v_rnd_st, l_rnd_st, v_cache, l_cache)):
-            print("count is {}, len vcache is {}".format(count, len(v_cache)))
             if no_sync_except_last and count < len(v_cache) - 1:
-                print("no sync")
                 with model.no_sync():
                     with v_st:
                         with l_st:
@@ -269,7 +253,6 @@ class GradCache:
                 #print('v_reps is on {}'.format(v_reps.get_device()))
                 autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_c, l_c, s_cache])
             else:
-                print("alt state")
                 with v_st:
                     with l_st:
                         y = self.model_call(model, x)
