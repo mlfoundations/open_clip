@@ -69,7 +69,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     end = time.time()
 
     if args.gc:
-        if args.precision == 'amp':
+        if args.precision != 'fp32':
+            if args.distributed:
+                print("The following combination is not yet supported: gradient caching, mixed precision, DDP")
+                print("Please try: gradient caching, fp32, DDP or gradient caching, amp, single GPU")
+                raise NotImplementedError
             gc = GradCache(
                 models=[model, model], 
                 chunk_sizes=args.gpumaxbatch, 
