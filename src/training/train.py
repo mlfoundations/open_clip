@@ -102,10 +102,20 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         with autocast():
             if args.gc and args.distributed:
                 total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean', no_sync_except_last=True)
-                optimizer.step()
+                if scaler is not None:
+                    total_loss = total_loss/scaler.get_scale()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
             elif args.gc:
                 total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean')
-                optimizer.step()
+                if scaler is not None:
+                    total_loss = total_loss/scaler.get_scale()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
             else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
@@ -130,7 +140,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
+        if is_master(args) and (i % 5 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples

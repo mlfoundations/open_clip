@@ -210,7 +210,6 @@ class GradCache:
         vision_d = vision.requires_grad_()
         logit_scale = logit_scale.requires_grad_()
         language_d = language.requires_grad_()
-        #TODO: autocast loss breaks gradient caching when amp AND distributed are simultaneously enabled
         with autocast() if self.fp16 else nullcontext():
             loss = self.compute_loss(vision_d, language_d, logit_scale)
         if self.fp16:
@@ -226,7 +225,6 @@ class GradCache:
         self,
         model: nn.Module,
         model_inputs,
-        total_loss,
         v_cache: List[Tensor],
         l_cache: List[Tensor],
         s_cache: List[Tensor],
@@ -250,14 +248,12 @@ class GradCache:
                         with l_st:
                             y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
-                #print('v_reps is on {}'.format(v_reps.get_device()))
                 autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_c, l_c, s_cache])
             else:
                 with v_st:
                     with l_st:
                         y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
-                #print('v_reps is on {}'.format(v_reps.get_device()))
                 autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_c, l_c, s_cache])
         return s_reps
 
