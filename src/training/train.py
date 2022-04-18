@@ -75,7 +75,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 chunk_sizes=args.gpumaxbatch, 
                 loss_fn=loss,
                 fp16=True,
-                scaler=scaler,
+                scaler=scaler
             )
         else:
             gc = GradCache(
@@ -97,10 +97,10 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         with autocast():
             if args.gc and args.distributed:
-                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean', no_sync_except_last=True)
+                total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean', no_sync_except_last=True)
                 optimizer.step()
             elif args.gc:
-                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, reduction='mean')
+                total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean')
                 optimizer.step()
             else:
                 image_features, text_features, logit_scale = model(images, texts)
@@ -139,7 +139,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f} "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f}"
+                f"Logit Scale: {logit_scale:.3f}"
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -147,7 +147,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "scale":  logit_scale_scalar,
+                "scale":  logit_scale,
                 "lr": optimizer.param_groups[0]["lr"]
             }
             for name, val in log_data.items():

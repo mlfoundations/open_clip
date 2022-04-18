@@ -148,7 +148,7 @@ def main():
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=True, **ddp_args)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
     data = get_data(args, (preprocess_train, preprocess_val))
     assert len(data), 'At least one train or eval dataset must be specified.'
@@ -184,7 +184,6 @@ def main():
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     scaler = GradScaler() if args.precision == "amp" else None
-
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
