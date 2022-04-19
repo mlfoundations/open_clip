@@ -51,7 +51,6 @@ def gather_features(
                 gathered_text_features[rank] = text_features
             all_image_features = torch.cat(gathered_image_features, dim=0)
             all_text_features = torch.cat(gathered_text_features, dim=0)
-
     return all_image_features, all_text_features
 
 

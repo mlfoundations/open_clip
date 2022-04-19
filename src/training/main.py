@@ -184,7 +184,6 @@ def main():
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     scaler = GradScaler() if args.precision == "amp" else None
-
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:

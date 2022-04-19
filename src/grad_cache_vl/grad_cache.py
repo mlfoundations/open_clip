@@ -211,10 +211,10 @@ class GradCache:
         logit_scale = logit_scale.requires_grad_()
         language_d = language.requires_grad_()
         with autocast() if self.fp16 else nullcontext():
-            loss = self.loss_fn(vision_d, language_d, logit_scale)
+            loss = self.compute_loss(vision_d, language_d, logit_scale)
         if self.fp16:
-            self.scaler.scale(loss)
-        #TODO: horovod
+            loss = self.scaler.scale(loss)
+        #TODO: horovod, amp+distributed
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         return v_cache, l_cache, s_cache, loss.detach()
 
@@ -222,7 +222,6 @@ class GradCache:
         self,
         model: nn.Module,
         model_inputs,
-        total_loss,
         v_cache: List[Tensor],
         l_cache: List[Tensor],
         s_cache: List[Tensor],
@@ -293,5 +292,5 @@ class GradCache:
         l_cache = l_cache.split(self.chunk_sizes[0], dim=0)
         for model, x, v_rnd_st, l_rnd_st in zip(
                 self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
-            s_reps = self.forward_backward_vl(model, x, loss, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
-        return loss, s_reps
+            self.forward_backward_vl(model, x, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
+        return loss, s_cache
