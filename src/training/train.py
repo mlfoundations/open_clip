@@ -69,6 +69,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     end = time.time()
 
     if args.gc:
+        if args.horovod:
+            print("horovod is not currently enabled for gradient caching")
+            raise NotImplementedError
         if args.precision != 'fp32':
             if args.distributed:
                 print("The following combination is not yet supported: gradient caching, mixed precision, DDP")
@@ -93,15 +96,15 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
         images, texts = batch
-        images = images.to(device=device, non_blocking=True)
-        texts = texts.to(device=device, non_blocking=True)
+        images = images.to(device=device)
+        texts = texts.to(device=device)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         with autocast():
             if args.gc and args.distributed:
-                total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean', no_sync_except_last=True)
+                total_loss, logit_scale = gc([images, texts], vl_model=True, no_sync_except_last=True)
                 if scaler is not None:
                     total_loss = total_loss/scaler.get_scale()
                     scaler.step(optimizer)
@@ -109,7 +112,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 else:
                     optimizer.step()
             elif args.gc:
-                total_loss, logit_scale = gc([images, texts], vl_model=True, reduction='mean')
+                total_loss, logit_scale = gc([images, texts], vl_model=True)
                 if scaler is not None:
                     total_loss = total_loss/scaler.get_scale()
                     scaler.step(optimizer)
@@ -140,7 +143,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if is_master(args) and (i % 5 == 0 or batch_count == num_batches_per_epoch):
+        if is_master(args) and (i % 20 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples

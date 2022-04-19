@@ -197,7 +197,7 @@ class GradCache:
         l_reps = torch.cat(l_reps, dim=0)
         return v_reps, l_reps, s_rep, [rnd_states_v, rnd_states_l]
 
-    def build_vl_cache(self, vision: Tensor, language: Tensor, logit_scale, no_sync_except_last) -> [List[Tensor], Tensor]:
+    def build_vl_cache(self, vision: Tensor, language: Tensor, logit_scale) -> [List[Tensor], Tensor]:
         """
         Compute the gradient cache
         :param reps: Computed representations from all encoder models
@@ -214,10 +214,7 @@ class GradCache:
             loss = self.compute_loss(vision_d, language_d, logit_scale)
         if self.fp16:
             loss = self.scaler.scale(loss)
-        #TODO: horovod
-        vision_d.to(loss.get_device())
-        logit_scale.to(loss.get_device())
-        language_d.to(loss.get_device())
+        #TODO: horovod, amp+distributed
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         return v_cache, l_cache, s_cache, loss.detach()
 
@@ -230,7 +227,7 @@ class GradCache:
         s_cache: List[Tensor],
         v_rnd_st: List[RandContext],
         l_rnd_st: List[RandContext],
-        no_sync_except_last: bool
+        no_sync_except_last: bool = False
         ):
         """
         Run the second forward and the backward pass to compute gradient for a model.
@@ -241,20 +238,17 @@ class GradCache:
         :param no_sync_except_last: If True, under distributed setup, only trigger gradient reduction across processes
         for the last sub-batch's forward-backward pass.
         """
-        for count, (x, v_st, l_st, v_c, l_c) in enumerate(zip(model_inputs, v_rnd_st, l_rnd_st, v_cache, l_cache)):
-            if no_sync_except_last and count < len(v_cache) - 1:
-                with model.no_sync():
-                    with v_st:
-                        with l_st:
-                            y = self.model_call(model, x)
-                (v_reps, l_reps, s_reps) = self.get_reps(y)
-                autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_c, l_c, s_cache])
-            else:
-                with v_st:
-                    with l_st:
+        if no_sync_except_last:
+            sync_contexts = [model.no_sync for _ in range(len(v_cache) - 1)] + [nullcontext]
+        else:
+            sync_contexts = [nullcontext for _ in range(len(v_cache))]
+        for x, v_state, l_state, v_cache, l_cache, sync_context in zip(model_inputs, v_rnd_st, l_rnd_st, v_cache, l_cache, sync_contexts):
+            with sync_context():
+                with v_state:
+                    with l_state:
                         y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
-                autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_c, l_c, s_cache])
+                autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_cache, l_cache, s_cache])
         return s_reps
 
     def cache_step(
@@ -292,10 +286,10 @@ class GradCache:
             l_reps.append(model_l)
             all_rnd_states_v.append(rnd_states[0])
             all_rnd_states_l.append(rnd_states[1])
-        v_cache, l_cache, s_cache, loss = self.build_vl_cache(*v_reps, *l_reps, model_s, no_sync_except_last)
+        v_cache, l_cache, s_cache, loss = self.build_vl_cache(*v_reps, *l_reps, model_s)
         v_cache = v_cache.split(self.chunk_sizes[0], dim=0)
         l_cache = l_cache.split(self.chunk_sizes[0], dim=0)
-        for x, v_rnd_st, l_rnd_st in zip(
-                model_inputs, all_rnd_states_v, all_rnd_states_l):
-            s_reps = self.forward_backward_vl(self.models[0], x, loss, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
-        return loss, s_reps
+        for model, x, v_rnd_st, l_rnd_st in zip(
+                self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
+            self.forward_backward_vl(model, x, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last)
+        return loss, s_cache
