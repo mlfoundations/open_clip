@@ -104,23 +104,14 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         optimizer.zero_grad()
 
         with autocast():
-            if args.gc and args.distributed:
-                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=True)
+            if args.gc:
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image))
                 if scaler is not None:
                     total_loss = total_loss/scaler.get_scale()
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     optimizer.step()
-            elif args.gc:
-                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True)
-                if scaler is not None:
-                    total_loss = total_loss/scaler.get_scale()
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-
             else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
