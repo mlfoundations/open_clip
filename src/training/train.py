@@ -95,16 +95,17 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
+
         images, texts = batch
-        images = images.to(device=device)
-        texts = texts.to(device=device)
+        images = images.to(device=device, non_blocking=True)
+        texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         with autocast():
             if args.gc and args.distributed:
-                total_loss, logit_scale = gc([images, texts], vl_model=True, no_sync_except_last=True)
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=True)
                 if scaler is not None:
                     total_loss = total_loss/scaler.get_scale()
                     scaler.step(optimizer)
@@ -112,7 +113,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 else:
                     optimizer.step()
             elif args.gc:
-                total_loss, logit_scale = gc([images, texts], vl_model=True)
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True)
                 if scaler is not None:
                     total_loss = total_loss/scaler.get_scale()
                     scaler.step(optimizer)
@@ -144,20 +145,22 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if is_master(args) and (i % 20 == 0 or batch_count == num_batches_per_epoch):
+        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
+            if not args.gc:
+                logit_scale_scalar = logit_scale.item()
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f} "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale:.3f}"
+                f"Logit Scale: {logit_scale_scalar:.3f}"
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -165,7 +168,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "scale":  logit_scale,
+                "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
             for name, val in log_data.items():
@@ -188,6 +191,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         return metrics
     device = torch.device(args.device)
     model.eval()
+
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
     metrics.update(zero_shot_metrics)
 
@@ -212,6 +216,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                     images, texts = batch
                 images = images.to(device=device, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
+                
                 with autocast():
                     image_features, text_features, logit_scale = model(images, texts)
                     # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
