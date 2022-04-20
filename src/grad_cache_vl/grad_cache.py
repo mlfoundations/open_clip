@@ -216,11 +216,7 @@ class GradCache:
         if self.fp16:
             loss = self.scaler.scale(loss)
         #TODO: horovod, amp+distributed
-        if lock_img:
-            (l_cache, s_cache) = autograd.grad(loss, [language_d, logit_scale])
-            v_cache = torch.tensor([torch.tensor([0]) for c in l_cache])
-        else:
-            (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
+        (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         return v_cache, l_cache, s_cache, loss.detach()
 
     def forward_backward_vl(
@@ -254,10 +250,11 @@ class GradCache:
                     with l_state:
                         y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
-                if lock_img:
-                    autograd.backward(tensors=[l_reps, s_reps, v_reps], grad_tensors=[l_cache, s_cache, torch.ones_like(v_reps)])
-                else:
+                if v_reps.requires_grad:
                     autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_cache, l_cache, s_cache])
+                else:
+                    autograd.backward(tensors=[l_reps, s_reps], grad_tensors=[l_cache, s_cache])
+
         return s_reps
 
     def cache_step(
