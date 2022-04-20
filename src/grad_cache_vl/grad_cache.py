@@ -255,7 +255,7 @@ class GradCache:
                         y = self.model_call(model, x)
                 (v_reps, l_reps, s_reps) = self.get_reps(y)
                 if lock_img:
-                    autograd.backward(tensors=[l_reps, s_reps], grad_tensors=[l_cache, s_cache])
+                    autograd.backward(tensors=[l_reps, s_reps, v_reps], grad_tensors=[l_cache, s_cache, torch.ones_like(v_reps)])
                 else:
                     autograd.backward(tensors=[v_reps, l_reps, s_reps], grad_tensors=[v_cache, l_cache, s_cache])
         return s_reps
