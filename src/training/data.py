@@ -78,6 +78,9 @@ def get_dataset_size(shards):
 def get_imagenet(args, preprocess_fns, split):
     assert split in ["train", "val", "v2"]
     is_train = split == "train"
+    batch_size = args.batch_size
+    if not is_train and args.val_batch_size:
+        batch_size = args.val_batch_size
     preprocess_train, preprocess_val = preprocess_fns
 
     if split == "v2":
@@ -113,7 +116,7 @@ def get_imagenet(args, preprocess_fns, split):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         num_workers=args.workers,
         sampler=sampler,
     )
@@ -148,7 +151,12 @@ _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
 def get_wds_dataset(args, preprocess_img, is_train):
-    input_shards = args.train_data if is_train else args.val_data
+    if is_train:
+        input_shards = args.train_data
+        batch_size = args.batch_size
+    else:
+        input_shards = args.val_data
+        batch_size = args.val_batch_size or args.batch_size
     assert input_shards is not None
 
     num_samples, num_shards = get_dataset_size(input_shards)
@@ -189,13 +197,13 @@ def get_wds_dataset(args, preprocess_img, is_train):
         wds.rename(image="jpg;png", text="txt"),
         wds.map_dict(image=preprocess_img, text=preprocess_txt),
         wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train),
+        wds.batched(batch_size, partial=not is_train),
     ])
 
     dataset = wds.DataPipeline(*pipeline)
     if is_train:
         # roll over and repeat a few samples to get same number of full batches on each node
-        global_batch_size = args.batch_size * args.world_size
+        global_batch_size = batch_size * args.world_size
         num_batches = math.ceil(num_samples / global_batch_size)
         num_workers = max(1, args.workers)
         num_worker_batches = math.ceil(num_batches / num_workers)  # per dataloader worker
@@ -204,7 +212,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
         # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
+        num_batches = math.ceil(num_samples / batch_size)
 
     dataloader = wds.WebLoader(dataset, batch_size=None, shuffle=False, num_workers=args.workers)
 
@@ -212,7 +220,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
     # if is_train:
     #     # roll over and repeat a few samples to get same number of full batches on each node
-    #     global_batch_size = args.batch_size * args.world_size
+    #     global_batch_size = batch_size * args.world_size
     #     num_batches = math.ceil(num_samples / global_batch_size)
     #     num_workers = max(1, args.workers)
     #     num_batches = math.ceil(num_batches / num_workers) * num_workers
@@ -220,7 +228,7 @@ def get_wds_dataset(args, preprocess_img, is_train):
     #     dataloader = dataloader.with_epoch(num_batches)
     # else:
     #     # last batches are partial, eval is done on single (master) node
-    #     num_batches = math.ceil(num_samples / args.batch_size)
+    #     num_batches = math.ceil(num_samples / batch_size)
 
     # add meta-data to dataloader instance for convenience
     dataloader.num_batches = num_batches
@@ -230,7 +238,12 @@ def get_wds_dataset(args, preprocess_img, is_train):
 
 
 def get_csv_dataset(args, preprocess_fn, is_train):
-    input_filename = args.train_data if is_train else args.val_data
+    if is_train:
+        input_filename = args.train_data
+        batch_size = args.batch_size
+    else:
+        input_filename = args.val_data
+        batch_size = args.val_batch_size or args.batch_size
     assert input_filename
     dataset = CsvDataset(
         input_filename,
@@ -244,7 +257,7 @@ def get_csv_dataset(args, preprocess_fn, is_train):
 
     dataloader = DataLoader(
         dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=shuffle,
         num_workers=args.workers,
         pin_memory=True,

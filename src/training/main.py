@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import random
@@ -5,9 +6,19 @@ from datetime import datetime
 
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
-from torch import optim
-from torch.cuda.amp import GradScaler
+import torch.nn.functional as F
+
+from open_clip import create_model_and_transforms, trace_model
+from .data import get_data
+from .device import is_master, init_device, world_info_from_env
+from .evaluate import evaluate
+from .logger import setup_logging
+from .loss import LossCfg
+from .optim import OptimCfg
+from .params import parse_args
+from .scheduler import cosine_lr
+from .train import train_one_epoch
+from .train_jig import TrainJig
 
 try:
     import wandb
@@ -24,19 +35,30 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model
-from training.data import get_data
-from training.distributed import is_master, init_distributed_device, world_info_from_env
-from training.logger import setup_logging
-from training.params import parse_args
-from training.scheduler import cosine_lr
-from training.train import train_one_epoch, evaluate
-
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
     random.seed(seed + rank)
+
+
+class CacheWrapper(torch.nn.Module):
+
+    def __init__(self, type: str, base_model: torch.nn.Module):
+        super().__init__()
+        if type == 'text':
+            self.tower = base_model.text
+            self.logit_scale = None
+        else:
+            self.tower = base_model.visual
+            self.logit_scale = base_model.logit_scale
+
+    def forward(self, x):
+        rep = self.tower(x)
+        rep = F.normalize(rep, dim=-1)
+        if self.logit_scale is not None:
+            rep = rep * self.logit_scale.exp()
+        return rep
 
 
 def main():
@@ -72,16 +94,37 @@ def main():
             )
             return -1
 
-    # Set logger
+    # set logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
 
-    # fully initialize distributed device environment
-    device = init_distributed_device(args)
+    # fully initialize device + distributed environment
+    assert args.precision in ['amp', 'fp16', 'fp32']
+    if args.precision == 'fp16':
+        logging.warning(
+            'It is recommended to use AMP mixed-precision instead of FP16. '
+            'FP16 support needs further verification and tuning, especially for train.')
 
+    dev_env = init_device(args)
+    if dev_env.cuda:
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+
+    if dev_env.horovod:
+        logging.info(
+            f'Running in horovod mode with multiple processes / nodes. Device: {dev_env.device}.'
+            f'Process (global: {dev_env.rank}, local {dev_env.local_rank}), total {dev_env.world_size}.')
+    elif dev_env.distributed:
+        logging.info(
+            f'Running in distributed mode with multiple processes. Device: {dev_env.device}.'
+            f'Process (global: {dev_env.rank}, local {dev_env.local_rank}), total {dev_env.world_size}.')
+    else:
+        logging.info(f'Running with a single process. Device {dev_env.device}.')
+
+    # setup logging services
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
-    if is_master(args):
+    if dev_env.is_master():
         args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
         args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
         for dirname in [args.tensorboard_path, args.checkpoint_path]:
@@ -94,35 +137,20 @@ def main():
     if args.copy_codebase:
         copy_codebase(args)
 
-    assert args.precision in ['amp', 'fp16', 'fp32']
-    if args.precision == 'fp16':
-        logging.warning(
-            'It is recommended to use AMP mixed-precision instead of FP16. '
-            'FP16 support needs further verification and tuning, especially for train.')
-
-    if args.horovod:
-        logging.info(
-            f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
-    elif args.distributed:
-        logging.info(
-            f'Running in distributed mode with multiple processes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
-    else:
-        logging.info(f'Running with a single process. Device {args.device}.')
-
+    # create model, load pretrained checkpoints
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
         precision=args.precision,
-        device=device,
+        device=dev_env.device,
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
     )
 
     if args.trace:
-        model = trace_model(model, batch_size=args.batch_size, device=device)
+        assert not args.train_data, 'Cannot train with traced model'
+        model = trace_model(model, batch_size=args.batch_size, device=dev_env.device)
 
     if args.lock_image:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
@@ -130,7 +158,17 @@ def main():
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
 
-    if is_master(args):
+    if args.grad_cache_chunk_size:
+        assert args.batch_size % args.grad_cache_chunk_size == 0,\
+            'Gradient caching batch size must be divisible by chunk size'
+        if args.val_batch_size is None:
+            # set batch size for evaluation to smaller chunk size if not already set
+            args.val_batch_size = args.grad_cache_chunk_size
+        logging.info(
+            f'Enabling gradient caching with chunk_size: {args.grad_cache_chunk_size}, '
+            f'batch_size: {args.batch_size}, val_batch_size: {args.val_batch_size}.')
+
+    if dev_env.is_master():
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
@@ -141,83 +179,46 @@ def main():
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
-    if args.distributed and not args.horovod:
-        if args.use_bn_sync:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-
     data = get_data(args, (preprocess_train, preprocess_val))
     assert len(data), 'At least one train or eval dataset must be specified.'
-    if args.trace:
-        assert 'train' not in data, 'Cannot train with traced model'
 
-    exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-    include = lambda n, p: not exclude(n, p)
+    loss_cfg = LossCfg(
+        type='clip',  # TODO support other CLIP-like image-text losses
+        local_loss=args.local_loss,
+        gather_with_grad=args.gather_with_grad)
 
-    named_parameters = list(model.named_parameters())
-    gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-    rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
+    if 'train' not in data:
+        # evaluate only, specify checkpoint via --checkpoint arg, not --resume arg
+        # TODO update evaluate to use jig / loss cfg
+        evaluate(model, data, 0, args)
+        return
 
-    if args.train_data is None:
-        optimizer = None
-        scheduler = None
-    else:
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
-        total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+    optim_cfg = OptimCfg(
+        type='adamw',   # TODO support other optimizers
+        lr=args.lr,
+        betas=(args.beta1, args.beta2),
+        eps=args.eps,
+    )
 
-        if args.horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
-    scaler = GradScaler() if args.precision == "amp" else None
-
-    # optionally resume from a checkpoint
-    start_epoch = 0
+    train_jig = TrainJig(
+        model=model,
+        dev_env=dev_env,
+        loss_cfg=loss_cfg,
+        optim_cfg=optim_cfg,
+        grad_cache_chunk_size=args.grad_cache_chunk_size,
+    )
     if args.resume is not None:
-        if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location=device)
-            if 'epoch' in checkpoint:
-                # resuming a train checkpoint w/ epoch and optimizer state
-                start_epoch = checkpoint["epoch"]
-                sd = checkpoint["state_dict"]
-                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                    sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
-                if optimizer is not None:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-                if scaler is not None and 'scaler' in checkpoint:
-                    scaler.load_state_dict(checkpoint['scaler'])
-                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
-            else:
-                # loading a bare (model only) checkpoint for fine-tune or evaluation
-                model.load_state_dict(checkpoint)
-                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
-        else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
+        train_jig.resume(args.resume)
 
-    cudnn.benchmark = True
-    cudnn.deterministic = False
+    total_steps = data["train"].dataloader.num_batches * args.epochs
+    scheduler = cosine_lr(train_jig.optimizer, args.lr, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
-    writer = None
+    tb_writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
-        writer = tensorboard.SummaryWriter(args.tensorboard_path)
+        tb_writer = tensorboard.SummaryWriter(args.tensorboard_path)
 
     if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
@@ -237,33 +238,34 @@ def main():
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
-    if 'train' not in data:
-        evaluate(model, data, start_epoch, args, writer)
-        return
-    elif start_epoch == 0 and 'val' in data:
-        evaluate(model, data, 0, args, writer)
-
-    for epoch in range(start_epoch, args.epochs):
-        if is_master(args):
+    for epoch in range(train_jig.epoch, args.epochs):
+        if dev_env.is_master():
             logging.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
+        train_one_epoch(train_jig, data, scheduler, args, tb_writer)
         completed_epoch = epoch + 1
+        assert completed_epoch == train_jig.epoch
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, writer)
+            eval_metrics = evaluate(train_jig.model, data, completed_epoch, args)
+
+            if args.save_logs:
+                for name, val in eval_metrics.items():
+                    if tb_writer is not None:
+                        tb_writer.add_scalar(f"val/{name}", val, epoch)
+
+                with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
+                    f.write(json.dumps(eval_metrics))
+                    f.write("\n")
+
+            if args.wandb:
+                assert wandb is not None, 'Please install wandb.'
+                for name, val in eval_metrics.items():
+                    wandb.log({f"val/{name}": val, 'epoch': epoch})
 
         # Saving checkpoints.
         if args.save_logs:
-            checkpoint_dict = {
-                "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }
-            if scaler is not None:
-                checkpoint_dict["scaler"] = scaler.state_dict()
-
+            checkpoint_dict = train_jig.state_dict(name=args.name)
             if completed_epoch == args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
             ):
