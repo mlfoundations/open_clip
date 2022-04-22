@@ -38,7 +38,7 @@ def train_one_epoch(jig: TrainJig, data, scheduler, args, tb_writer=None):
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if dev_env.is_master and (i % 100 == 0 or batch_count == num_batches_per_epoch):
+        if dev_env.is_master() and (i % 100 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples

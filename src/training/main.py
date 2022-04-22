@@ -164,9 +164,6 @@ def main():
         if args.val_batch_size is None:
             # set batch size for evaluation to smaller chunk size if not already set
             args.val_batch_size = args.grad_cache_chunk_size
-        logging.info(
-            f'Enabling gradient caching with chunk_size: {args.grad_cache_chunk_size}, '
-            f'batch_size: {args.batch_size}, val_batch_size: {args.val_batch_size}.')
 
     if dev_env.is_master():
         logging.info("Model:")
@@ -178,6 +175,10 @@ def main():
                 val = getattr(args, name)
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
+        if args.grad_cache_chunk_size:
+            logging.info(
+                f'Enabling gradient caching with chunk_size: {args.grad_cache_chunk_size}, '
+                f'batch_size: {args.batch_size}, val_batch_size: {args.val_batch_size}.')
 
     data = get_data(args, (preprocess_train, preprocess_val))
     assert len(data), 'At least one train or eval dataset must be specified.'
