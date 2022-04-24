@@ -206,7 +206,15 @@ def get_wds_dataset(args, preprocess_img, is_train):
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
 
-    dataloader = wds.WebLoader(dataset, batch_size=None, shuffle=False, num_workers=args.workers)
+    dataloader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=args.workers,
+        # FIXME detshuffle uses same seed each epoch unless workers are persistent
+        # this seems like a WDS bug, currently waiting for clarification
+        persistent_workers=True,
+    )
 
     # FIXME not clear which approach is better, with_epoch before vs after dataloader?
     # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
