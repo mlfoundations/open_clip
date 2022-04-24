@@ -270,7 +270,7 @@ python -m training.main \
 
 ## Pretrained model details
 
-### LAION-400m - https://laion.ai/laion-400-open-dataset
+### LAION-400M - https://laion.ai/laion-400-open-dataset
 
 We are working on reproducing OpenAI's ViT results with the comparably sized (and open) LAION-400M dataset. Trained
 weights may be found in release [v0.2](https://github.com/mlfoundations/open_clip/releases/tag/v0.2-weights).
@@ -283,8 +283,8 @@ We replicate OpenAI's results on ViT-B/32, reaching a top-1 ImageNet-1k zero-sho
 
 <img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_clip_zeroshot.png" width="700">
 
+__Zero-shot comparison (courtesy of Andreas Fürst)__
 <img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_openai_compare_b32.jpg" width="700">
-Zero-shot comparison courtesy of Andreas Fürst
 
 ViT-B/32 was trained with 128 A100 (40 GB) GPUs for ~36 hours, 4600 GPU-hours. The per-GPU batch size was 256 for a global batch size of 32768. 256 is much lower than it could have been (~320-384) due to being sized initially before moving to 'local' contrastive loss.
 
