@@ -52,6 +52,7 @@ setup(
         'ftfy',
         'regex',
         'tqdm',
+        'pandas',
     ],
     python_requires='>=3.7',
 )

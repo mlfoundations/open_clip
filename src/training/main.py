@@ -180,37 +180,43 @@ def main():
                 f'Enabling gradient caching with chunk_size: {args.grad_cache_chunk_size}, '
                 f'batch_size: {args.batch_size}, val_batch_size: {args.val_batch_size}.')
 
-    data = get_data(args, (preprocess_train, preprocess_val))
-    assert len(data), 'At least one train or eval dataset must be specified.'
+    start_epoch = 0
+    train_jig = None
+    if args.train_data:
+        # train specific setup
+        loss_cfg = LossCfg(
+            type='clip',  # TODO support other CLIP-like image-text losses
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad)
 
-    loss_cfg = LossCfg(
-        type='clip',  # TODO support other CLIP-like image-text losses
-        local_loss=args.local_loss,
-        gather_with_grad=args.gather_with_grad)
+        optim_cfg = OptimCfg(
+            type='adamw',   # TODO support other optimizers
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+        )
+
+        train_jig = TrainJig(
+            model=model,
+            dev_env=dev_env,
+            loss_cfg=loss_cfg,
+            optim_cfg=optim_cfg,
+            grad_cache_chunk_size=args.grad_cache_chunk_size,
+        )
+        if args.resume is not None:
+            train_jig.resume(args.resume)
+        start_epoch = train_jig.epoch  # get_data needs epoch for wds.detshuffle seeding if we are training
+
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch)
+    assert len(data), 'At least one train or eval dataset must be specified.'
 
     if 'train' not in data:
         # evaluate only, specify checkpoint via --checkpoint arg, not --resume arg
-        # TODO update evaluate to use jig / loss cfg
-        evaluate(model, data, 0, args)
+        # TODO possibly update evaluate to use jig / loss cfg?
+        evaluate(model, data, start_epoch, args)
         return
 
-    optim_cfg = OptimCfg(
-        type='adamw',   # TODO support other optimizers
-        lr=args.lr,
-        betas=(args.beta1, args.beta2),
-        eps=args.eps,
-    )
-
-    train_jig = TrainJig(
-        model=model,
-        dev_env=dev_env,
-        loss_cfg=loss_cfg,
-        optim_cfg=optim_cfg,
-        grad_cache_chunk_size=args.grad_cache_chunk_size,
-    )
-    if args.resume is not None:
-        train_jig.resume(args.resume)
-
+    assert train_jig is not None
     total_steps = data["train"].dataloader.num_batches * args.epochs
     scheduler = cosine_lr(train_jig.optimizer, args.lr, args.warmup, total_steps)
 
@@ -239,7 +245,7 @@ def main():
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
-    for epoch in range(train_jig.epoch, args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         if dev_env.is_master():
             logging.info(f'Start epoch {epoch}')
 
