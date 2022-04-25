@@ -6,19 +6,18 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from open_clip import tokenize
+from .utils import unwrap_model
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
 def zero_shot_classifier(model, classnames, templates, args):
+    model = unwrap_model(model)
     with torch.no_grad():
         zeroshot_weights = []
         for classname in tqdm(classnames):
             texts = [template(classname) for template in templates]  # format with class
             texts = tokenize(texts).to(args.device)  # tokenize
-            if args.distributed and not args.horovod:
-                class_embeddings = model.module.encode_text(texts)
-            else:
-                class_embeddings = model.encode_text(texts)
+            class_embeddings = model.encode_text(texts, normalize=True)
             class_embedding = class_embeddings.mean(dim=0)
             class_embedding /= class_embedding.norm()
             zeroshot_weights.append(class_embedding)
@@ -34,6 +33,7 @@ def accuracy(output, target, topk=(1,)):
 
 def run(model, classifier, dataloader, args):
     autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    model = unwrap_model(model)
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
@@ -42,10 +42,7 @@ def run(model, classifier, dataloader, args):
 
             with autocast():
                 # predict
-                if args.distributed and not args.horovod:
-                    image_features = model.module.encode_image(images)
-                else:
-                    image_features = model.encode_image(images)
+                image_features = model.encode_image(images, normalize=True)
                 logits = 100. * image_features @ classifier
 
             # measure accuracy

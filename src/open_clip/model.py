@@ -113,17 +113,17 @@ class CLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
-    def encode_image(self, image, normalize: bool = True):
+    def encode_image(self, image, normalize: bool = False):
         features = self.visual(image)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def encode_text(self, text, normalize: bool = True):
+    def encode_text(self, text, normalize: bool = False):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
     def forward(self, image, text):
-        image_features = self.encode_image(image)
-        text_features = self.encode_text(text)
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
 
         return image_features, text_features, self.logit_scale.exp()
 
