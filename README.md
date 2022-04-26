@@ -7,7 +7,7 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a ViT-B/32 text encoder and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, on ImageNet1k.
+We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a ViT-B/32 text encoder and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, on ImageNet1k. Similarly, we train ViT-B/16 and achieve an accuracy of **67.1%**, comparable to OpenAI's **68.1%**, on ImageNet1k.
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -341,6 +341,8 @@ Future trained models will use nn.GELU.
  ('ViT-B-32-quickgelu', 'laion400m_e32'),
  ('ViT-B-32-quickgelu', 'laion400m_avg'),
  ('ViT-B-16', 'openai'),
+ ('ViT-B-16', 'laion400m_e31'),
+ ('ViT-B-16', 'laion400m_e32'),
  ('ViT-L-14', 'openai')]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
