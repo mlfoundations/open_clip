@@ -149,7 +149,6 @@ def main():
     )
 
     if args.trace:
-        assert not args.train_data, 'Cannot train with traced model'
         model = trace_model(model, batch_size=args.batch_size, device=dev_env.device)
 
     if args.lock_image:
@@ -180,9 +179,10 @@ def main():
                 f'Enabling gradient caching with chunk_size: {args.grad_cache_chunk_size}, '
                 f'batch_size: {args.batch_size}, val_batch_size: {args.val_batch_size}.')
 
+    is_training = args.train_data is not None
     start_epoch = 0
     train_jig = None
-    if args.train_data:
+    if is_training:
         # train specific setup
         loss_cfg = LossCfg(
             type='clip',  # TODO support other CLIP-like image-text losses
@@ -210,13 +210,15 @@ def main():
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch)
     assert len(data), 'At least one train or eval dataset must be specified.'
 
-    if 'train' not in data:
+    if not is_training:
         # evaluate only, specify checkpoint via --checkpoint arg, not --resume arg
         # TODO possibly update evaluate to use jig / loss cfg?
         evaluate(model, data, start_epoch, args)
         return
 
+    assert 'train' in data
     assert train_jig is not None
+    assert not args.trace, "cannot train with traced model, please disable tracing"
     total_steps = data["train"].dataloader.num_batches * args.epochs
     scheduler = cosine_lr(train_jig.optimizer, args.lr, args.warmup, total_steps)
 
