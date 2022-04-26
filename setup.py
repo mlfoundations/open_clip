@@ -48,11 +48,9 @@ setup(
     install_requires=[
         'torch >= 1.9',
         'torchvision',
-        'webdataset >= 0.2.5',
         'ftfy',
         'regex',
         'tqdm',
-        'pandas',
     ],
     python_requires='>=3.7',
 )

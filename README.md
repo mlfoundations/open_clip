@@ -7,7 +7,7 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a ViT-B/32 text encoder and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, on ImageNet1k.
+We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a ViT-B/32 text encoder and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, on ImageNet1k. Similarly, we train ViT-B/16 and achieve an accuracy of **67.1%**, comparable to OpenAI's **68.1%**, on ImageNet1k.
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -40,6 +40,8 @@ text = open_clip.tokenize(["a diagram", "a dog", "a cat"])
 with torch.no_grad():
     image_features = model.encode_image(image)
     text_features = model.encode_text(text)
+    image_features /= image_features.norm(dim=-1, keepdim=True)
+    text_features /= text_features.norm(dim=-1, keepdim=True)
 
     text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
 
@@ -270,7 +272,7 @@ python -m training.main \
 
 ## Pretrained model details
 
-### LAION-400m - https://laion.ai/laion-400-open-dataset
+### LAION-400M - https://laion.ai/laion-400-open-dataset
 
 We are working on reproducing OpenAI's ViT results with the comparably sized (and open) LAION-400M dataset. Trained
 weights may be found in release [v0.2](https://github.com/mlfoundations/open_clip/releases/tag/v0.2-weights).
@@ -283,8 +285,8 @@ We replicate OpenAI's results on ViT-B/32, reaching a top-1 ImageNet-1k zero-sho
 
 <img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_clip_zeroshot.png" width="700">
 
+__Zero-shot comparison (courtesy of Andreas Fürst)__
 <img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_openai_compare_b32.jpg" width="700">
-Zero-shot comparison courtesy of Andreas Fürst
 
 ViT-B/32 was trained with 128 A100 (40 GB) GPUs for ~36 hours, 4600 GPU-hours. The per-GPU batch size was 256 for a global batch size of 32768. 256 is much lower than it could have been (~320-384) due to being sized initially before moving to 'local' contrastive loss.
 
@@ -341,6 +343,8 @@ Future trained models will use nn.GELU.
  ('ViT-B-32-quickgelu', 'laion400m_e32'),
  ('ViT-B-32-quickgelu', 'laion400m_avg'),
  ('ViT-B-16', 'openai'),
+ ('ViT-B-16', 'laion400m_e31'),
+ ('ViT-B-16', 'laion400m_e32'),
  ('ViT-L-14', 'openai')]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
