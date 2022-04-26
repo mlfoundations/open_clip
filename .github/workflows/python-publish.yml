@@ -13,7 +13,7 @@ jobs:
       id: regex-match
       with:
         text: ${{ github.event.head_commit.message }}
-        regex: '^Release ([0-9.]+)'
+        regex: '^Release ([^ ]+)'
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
@@ -26,7 +26,7 @@ jobs:
       if: ${{ steps.regex-match.outputs.match != '' }}
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.regex-match.outputs.group1 }}
+        tag_name: v${{ steps.regex-match.outputs.group1 }}
     - name: Build and publish
       if: ${{ steps.regex-match.outputs.match != '' }}
       env:
