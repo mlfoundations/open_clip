@@ -42,25 +42,6 @@ def random_seed(seed=42, rank=0):
     random.seed(seed + rank)
 
 
-class CacheWrapper(torch.nn.Module):
-
-    def __init__(self, type: str, base_model: torch.nn.Module):
-        super().__init__()
-        if type == 'text':
-            self.tower = base_model.text
-            self.logit_scale = None
-        else:
-            self.tower = base_model.visual
-            self.logit_scale = base_model.logit_scale
-
-    def forward(self, x):
-        rep = self.tower(x)
-        rep = F.normalize(rep, dim=-1)
-        if self.logit_scale is not None:
-            rep = rep * self.logit_scale.exp()
-        return rep
-
-
 def main():
     args = parse_args()
 
