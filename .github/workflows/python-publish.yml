@@ -13,7 +13,7 @@ jobs:
       id: regex-match
       with:
         text: ${{ github.event.head_commit.message }}
-        regex: '^Release ([^ ]+)'
+        regex: '^Release ([0-9.]+)'
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
