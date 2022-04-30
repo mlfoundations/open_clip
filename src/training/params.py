@@ -97,6 +97,15 @@ def parse_args():
         "--batch-size", type=int, default=64, help="Batch size per GPU."
     )
     parser.add_argument(
+        "--val-batch-size", type=int, default=None, help="Batch size for eval only (use batch_size if None)."
+    )
+    parser.add_argument(
+        "--grad-cache-chunk-size",
+        type=int,
+        default=0,
+        help="Enable gradient caching w/ specified chunk size.",
+    )
+    parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
@@ -108,10 +117,10 @@ def parse_args():
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
     )
     parser.add_argument(
-        "--use-bn-sync",
+        "--sync-bn",
         default=False,
         action="store_true",
-        help="Whether to use batch norm sync.")
+        help="Whether to use synchronized batchnorm.")
     parser.add_argument(
         "--skip-scheduler",
         action="store_true",

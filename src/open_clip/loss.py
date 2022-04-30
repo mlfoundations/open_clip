@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.distributed.nn
 from torch import distributed as dist, nn as nn
@@ -78,7 +80,7 @@ class ClipLoss(nn.Module):
         self.prev_num_logits = 0
         self.labels = {}
 
-    def forward(self, image_features, text_features, logit_scale):
+    def forward(self, image_features, text_features, logit_scale: Optional[torch.Tensor] = None):
         device = image_features.device
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
@@ -86,14 +88,21 @@ class ClipLoss(nn.Module):
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
 
             if self.local_loss:
-                logits_per_image = logit_scale * image_features @ all_text_features.T
-                logits_per_text = logit_scale * text_features @ all_image_features.T
+                logits_per_image = image_features @ all_text_features.T
+                logits_per_text = text_features @ all_image_features.T
+                if logit_scale is not None:
+                    logits_per_image.mul_(logit_scale)
+                    logits_per_text.mul_(logit_scale)
             else:
-                logits_per_image = logit_scale * all_image_features @ all_text_features.T
+                logits_per_image = all_image_features @ all_text_features.T
+                if logit_scale is not None:
+                    logits_per_image.mul_(logit_scale)
                 logits_per_text = logits_per_image.T
         else:
-            logits_per_image = logit_scale * image_features @ text_features.T
-            logits_per_text = logit_scale * text_features @ image_features.T
+            logits_per_image = image_features @ text_features.T
+            if logit_scale is not None:
+                logits_per_image.mul_(logit_scale)
+            logits_per_text = logits_per_image.T
 
         # calculated ground-truth and cache if enabled
         num_logits = logits_per_image.shape[0]

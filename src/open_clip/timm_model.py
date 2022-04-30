@@ -36,6 +36,8 @@ class TimmModel(nn.Module):
             raise RuntimeError("Please `pip install timm` to use timm models.")
 
         self.image_size = to_2tuple(image_size)
+        self.output_dim = embed_dim
+
         self.trunk = timm.create_model(model_name, pretrained=pretrained)
         feat_size = self.trunk.default_cfg.get('pool_size', None)
         feature_ndim = 1 if not feat_size else 2
@@ -47,7 +49,7 @@ class TimmModel(nn.Module):
             # reset global pool if pool config set, otherwise leave as network default
             reset_kwargs = dict(global_pool=pool) if pool else {}
             self.trunk.reset_classifier(0, **reset_kwargs)
-        prev_chs = self.trunk.num_features
+        self.width = prev_chs = self.trunk.num_features
 
         head_layers = OrderedDict()
         if pool == 'abs_attn':

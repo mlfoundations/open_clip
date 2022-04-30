@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 
-from .model import CLIP, convert_weights_to_fp16
+from .model import CLIP, convert_weights_to_fp16, convert_state_dict
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
@@ -54,6 +54,8 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
         state_dict = checkpoint
     if next(iter(state_dict.items()))[0].startswith('module'):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
+    if 'positional_embedding' in state_dict:
+        state_dict = convert_state_dict(state_dict)
     return state_dict
 
 
