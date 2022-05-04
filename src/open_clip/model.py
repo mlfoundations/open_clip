@@ -185,7 +185,7 @@ class LayerNorm(nn.LayerNorm):
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        x = F.layer_norm(x.type(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
 
 
@@ -402,17 +402,21 @@ class CLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
+    @property
+    def dtype(self):
+        return self.visual.conv1.weight.dtype
+
     def encode_image(self, image):
-        return self.visual(image)
+        return self.visual(image.type(self.dtype))
 
     def encode_text(self, text):
-        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        x = self.token_embedding(text).type(self.dtype)   # [batch_size, n_ctx, d_model]
 
-        x = x + self.positional_embedding
+        x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
+        x = self.ln_final(x).type(self.dtype)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
