@@ -201,15 +201,16 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
+    def __init__(self, d_model: int, n_head: int, mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
+        mlp_width = int(d_model * mlp_ratio)
         self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("c_fc", nn.Linear(d_model, mlp_width)),
             ("gelu", act_layer()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
+            ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
 
@@ -223,12 +224,12 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, act_layer: Callable = nn.GELU):
+    def __init__(self, width: int, layers: int, heads: int,  mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(width, heads, act_layer=act_layer)
+            ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer)
             for _ in range(layers)
         ])
 
@@ -240,8 +241,8 @@ class Transformer(nn.Module):
 
 class VisualTransformer(nn.Module):
     def __init__(
-            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
-            act_layer: Callable = nn.GELU):
+            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, mlp_ratio: float,
+            output_dim: int, act_layer: Callable = nn.GELU):
         super().__init__()
         self.image_size = image_size
         self.output_dim = output_dim
@@ -252,7 +253,7 @@ class VisualTransformer(nn.Module):
         self.positional_embedding = nn.Parameter(scale * torch.randn((image_size // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        self.transformer = Transformer(width, layers, heads, act_layer=act_layer)
+        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
@@ -288,6 +289,8 @@ class VisualTransformer(nn.Module):
 class CLIPVisionCfg:
     layers: Union[Tuple[int, int, int, int], int] = 12
     width: int = 768
+    head_width: int = 64
+    mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
@@ -298,11 +301,11 @@ class CLIPVisionCfg:
 
 @dataclass
 class CLIPTextCfg:
-    context_length: int
-    vocab_size: int
-    width: int
-    heads: int
-    layers: int
+    context_length: int = 77
+    vocab_size: int = 49408
+    width: int = 512
+    heads: int = 8
+    layers: int = 12
 
 
 class CLIP(nn.Module):
@@ -337,7 +340,7 @@ class CLIP(nn.Module):
             )
             act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
         elif isinstance(vision_cfg.layers, (tuple, list)):
-            vision_heads = vision_cfg.width * 32 // 64
+            vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
             self.visual = ModifiedResNet(
                 layers=vision_cfg.layers,
                 output_dim=embed_dim,
@@ -346,13 +349,14 @@ class CLIP(nn.Module):
                 width=vision_cfg.width
             )
         else:
-            vision_heads = vision_cfg.width // 64
+            vision_heads = vision_cfg.width // vision_cfg.head_width
             self.visual = VisualTransformer(
                 image_size=vision_cfg.image_size,
                 patch_size=vision_cfg.patch_size,
                 width=vision_cfg.width,
                 layers=vision_cfg.layers,
                 heads=vision_heads,
+                mlp_ratio=vision_cfg.mlp_ratio,
                 output_dim=embed_dim,
                 act_layer=act_layer,
             )
