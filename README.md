@@ -116,6 +116,9 @@ cd open_clip
 python setup.py install
 ```
 
+If you want to train models, you will also need to install the packages
+from `requirements-training.txt`.
+
 ### Sample single-process running code:
 
 ```bash
