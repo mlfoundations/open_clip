@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from .timm_model import TimmModel
 from .utils import freeze_batch_norm_2d
@@ -167,6 +168,11 @@ class ModifiedResNet(nn.Module):
         if freeze_bn_stats:
             freeze_batch_norm_2d(self)
 
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        # FIXME support for non-transformer
+        pass
+
     def stem(self, x):
         x = self.relu1(self.bn1(self.conv1(x)))
         x = self.relu2(self.bn2(self.conv2(x)))
@@ -228,6 +234,8 @@ class Transformer(nn.Module):
         super().__init__()
         self.width = width
         self.layers = layers
+        self.grad_checkpointing = False
+
         self.resblocks = nn.ModuleList([
             ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer)
             for _ in range(layers)
@@ -235,7 +243,10 @@ class Transformer(nn.Module):
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
-            x = r(x, attn_mask=attn_mask)
+            if self.grad_checkpointing:
+                x = checkpoint(r, x, attn_mask)
+            else:
+                x = r(x, attn_mask=attn_mask)
         return x
 
 
@@ -262,6 +273,10 @@ class VisualTransformer(nn.Module):
         assert unlocked_groups == 0, 'partial locking not currently supported for this model'
         for param in self.parameters():
             param.requires_grad = False
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
 
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
@@ -410,6 +425,11 @@ class CLIP(nn.Module):
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.visual.set_grad_checkpointing(enable)
+        self.transformer.grad_checkpointing = enable
 
     def encode_image(self, image):
         return self.visual(image)

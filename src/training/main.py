@@ -131,6 +131,9 @@ def main():
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
 
+    if args.grad_checkpointing:
+        model.set_grad_checkpointing()
+
     if is_master(args):
         logging.info("Model:")
         logging.info(f"{str(model)}")
