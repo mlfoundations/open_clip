@@ -49,20 +49,11 @@ class PreTrainedTextEncoder(nn.Module):
     def __init__(
             self, 
             model_name_or_path:str,
-
-            context_length:int = 77,
-            vocab_size:int = 49408,
-            width:int = 512,
-            heads:int = 8,
-            layers:int = 12,
             output_dim:int = 512,
             pooler_type:str=None,
             proj:str=None):
         super().__init__()
 
-        self.context_length = context_length
-        self.vocab_size = vocab_size
-        self.width = width
         self.output_dim = output_dim
 
         if transformers is None:
@@ -74,31 +65,17 @@ class PreTrainedTextEncoder(nn.Module):
         d_model = self.config.hidden_size # TODO: get d_model from config
         # different models can have different names for it
         # ?? do we use separate classes for different archs or handle it with helper funcs  
-        if (d_model == width) and (proj is None): # do we always need a proj?
+        if (d_model == output_dim) and (proj is None): # do we always need a proj?
             self.proj = nn.Identity()
         elif proj == 'linear':
-            self.proj == nn.Linear(d_model, width, bias=False)
+            self.proj == nn.Linear(d_model, output_dim, bias=False)
         elif proj == 'mlp':
             # TODO: add me
             pass
 
-        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
-
-    def build_attention_mask(self):
-        # lazily create causal attention mask, with full attention between the vision tokens
-        # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
-        return mask
-
     def forward(self, x:TensorType) -> TensorType:
-        # TODO: add attention mask?
-        pad = torch.full((x.shape[0], self.context_length), self.config.pad_token_id)
-        pad[:, :x.shape[1]] = x
-        x = pad
-
-        out = self.transformer(input_ids=x, attention_mask=self.attn_mask[:x.shape[0]])
+        attn_mask = (x != self.config.pad_token_id).long()
+        out = self.transformer(input_ids=x, attention_mask=attn_mask)
         pooled_out = self.pooler(out)
 
         return self.proj(pooled_out)
