@@ -323,6 +323,17 @@ Unlike the B/16 run above, this model was a clean run with no dataset shuffling 
 
 ViT-B/16+ was trained with 224 A100 (40 GB) GPUS for ~61 hours, 13620 GPU-hours. Batch size per GPU was 160 for a global batch size of 35840.
 
+### LAION-2B (en) - https://laion.ai/laion-5b-a-new-era-of-open-large-scale-multi-modal-datasets/
+
+A ~2B sample subset of LAION-5B with english captions (https://huggingface.co/datasets/laion/laion2B-en)
+
+#### ViT-B/32
+A ViT-B/32 trained on LAION-2B, reaching a top-1 ImageNet-1k zero-shot accuracy of 65.62%.
+
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion2b_clip_zeroshot_b32.png" width="700">
+
+ViT-B/32 was trained with 112 A100 (40 GB) GPUs. The per-GPU batch size was 416 for a global batch size of 46592. Compute generously provided by [stability.ai](https://stability.ai/).
+
 #### YFCC-15M
 
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
@@ -338,7 +349,7 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 
 We offer a simple model interface to instantiate both pre-trained and untrained models.
 
-NOTE: Currently all existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
+NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
 
 Future trained models will use nn.GELU.
 
@@ -357,22 +368,23 @@ Future trained models will use nn.GELU.
  ('RN101-quickgelu', 'yfcc15m'),
  ('RN50x4', 'openai'),
  ('RN50x16', 'openai'),
+ ('RN50x64', 'openai'),
  ('ViT-B-32', 'openai'),
+ ('ViT-B-32', 'laion2b_e16'),
  ('ViT-B-32', 'laion400m_e31'),
  ('ViT-B-32', 'laion400m_e32'),
- ('ViT-B-32', 'laion400m_avg'),
  ('ViT-B-32-quickgelu', 'openai'),
  ('ViT-B-32-quickgelu', 'laion400m_e31'),
  ('ViT-B-32-quickgelu', 'laion400m_e32'),
- ('ViT-B-32-quickgelu', 'laion400m_avg'),
  ('ViT-B-16', 'openai'),
  ('ViT-B-16', 'laion400m_e31'),
  ('ViT-B-16', 'laion400m_e32'),
  ('ViT-B-16-plus-240', 'laion400m_e31'),
  ('ViT-B-16-plus-240', 'laion400m_e32'),
- ('ViT-L-14', 'openai')]
+ ('ViT-L-14', 'openai'),
+ ('ViT-L-14-336', 'openai')]
 
->>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
+>>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_e16')
 ```
 
 ## Scaling trends
