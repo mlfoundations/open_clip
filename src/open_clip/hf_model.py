@@ -9,7 +9,7 @@ from torch import TensorType
 from traitlets import default
 try:
     import transformers
-    from transformers import AutoModel, AutoTokenizer, AutoConfig
+    from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
 except ImportError as e:
     transformers = None
 
@@ -49,7 +49,8 @@ class PreTrainedTextEncoder(nn.Module):
     def __init__(
             self, 
             model_name_or_path:str,
-            output_dim:int = 512,
+            output_dim:int,
+            config: PretrainedConfig=None,
             pooler_type:str=None,
             proj:str=None):
         super().__init__()
@@ -58,8 +59,12 @@ class PreTrainedTextEncoder(nn.Module):
 
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
-        self.config = AutoConfig.from_pretrained(model_name_or_path)
-        self.transformer = AutoModel.from_pretrained(model_name_or_path)
+        if config is None:
+          self.config = AutoConfig.from_pretrained(model_name_or_path)
+          self.transformer = AutoModel.from_pretrained(model_name_or_path)
+        else:
+          self.config = config
+          self.transformer = AutoModel.from_config(config)
         
         self.pooler = get_pooler(pooler_type)
         d_model = self.config.hidden_size # TODO: get d_model from config
