@@ -13,6 +13,8 @@ try:
 except ImportError as e:
     transformers = None
 
+from timm.models.layers import Mlp
+
 
 # utils
 # TODO: cls, max, mean, last
@@ -75,8 +77,7 @@ class PreTrainedTextEncoder(nn.Module):
         elif proj == 'linear':
             self.proj == nn.Linear(d_model, output_dim, bias=False)
         elif proj == 'mlp':
-            # TODO: add me
-            pass
+            self.proj = Mlp(d_model, (d_model + output_dim)//2, output_dim, bias=False)
 
     def forward(self, x:TensorType) -> TensorType:
         attn_mask = (x != self.config.pad_token_id).long()
