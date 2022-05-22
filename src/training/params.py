@@ -293,6 +293,19 @@ def parse_args():
     parser.add_argument(
         "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
+    # benchmarking flags
+    parser.add_argument(
+        "--synthetic-data",
+        default=False,
+        action="store_true",
+        help="Use synthetic data to perform benchmarking."
+    )
+    parser.add_argument(
+        "--bench-steps",
+        type=int,
+        default=1000,
+        help="The number of steps to simulate during benchmarking."
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
