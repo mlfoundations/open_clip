@@ -3,36 +3,68 @@
 Wraps HuggingFace transformers (https://github.com/huggingface/transformers) models for use as a text tower in CLIP model.
 """
 
+import re
+
 import torch
 import torch.nn as nn
 from torch import TensorType
-from traitlets import default
 try:
     import transformers
     from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
+    from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 except ImportError as e:
     transformers = None
 
 from timm.models.layers import Mlp
 
-
 # utils
-# TODO: cls, max, mean, last
+def _camel2snake(s):
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', s).lower()
+
+# TODO: ?last - for gpt-like models
 _POOLERS = {}
 
 def register_pooler(cls):
-    "Register pooler class"
-    pass
+    "Decorator registering pooler class"
+    _POOLERS[_camel2snake(cls.__name__)] = cls
+    return cls
 
-class DummyPooler(nn.Module):
-    "Fetches first of output hidden state"
 
-    def __init__(self):
+@register_pooler
+class MeanPooler(nn.Module):
+    "Mean pooling"
+
+    def forward(self, x:BaseModelOutput, attention_mask:TensorType):
+        masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)        
+        return masked_output.sum(dim=1) / attention_mask.sum(-1, keepdim=True)
+
+@register_pooler
+class MaxPooler(nn.Module):
+    "Max pooling"
+
+    def forward(self, x:BaseModelOutput, attention_mask:TensorType):
+        masked_output = x.last_hidden_state.masked_fill(attention_mask.unsqueeze(-1), -torch.inf)
+        return masked_output.max(1).values
+
+@register_pooler
+class ClsPooler(nn.Module):
+    "CLS token pooling"
+
+    def __init__(self, use_pooler_output=True):
         super().__init__()
-        pass
-    
-    def forward(self, x):
-        return x.last_hidden_state[:, 0, :]
+        self.cls_token_position = 0
+        self.use_pooler_output = use_pooler_output
+
+    def forward(self, x:BaseModelOutput, attention_mask:TensorType):
+        
+        if (self.use_pooler_output and 
+            isinstance(x, BaseModelOutputWithPooling) and
+            (x.pooler_output is not None)
+            ):
+            return x.pooler_output
+        
+        return x.last_hidden_state[:, self.cls_token_position, :]
+
 
 # arch-to-pooler mapping
 _DEFAULT_POOLER = {}
@@ -40,8 +72,9 @@ _DEFAULT_POOLER = {}
 def get_pooler(pooler_type:str):
     if pooler_type is None:
         # pooler_type = _DEFAULT_POOLER[self.config]
-        pass
-    return DummyPooler()
+        return MeanPooler()
+    else:
+        _POOLERS[pooler_type]()
 
 class PreTrainedTextEncoder(nn.Module):
     """HuggingFace model adapter
@@ -82,7 +115,7 @@ class PreTrainedTextEncoder(nn.Module):
     def forward(self, x:TensorType) -> TensorType:
         attn_mask = (x != self.config.pad_token_id).long()
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
-        pooled_out = self.pooler(out)
+        pooled_out = self.pooler(out, attn_mask)
 
         return self.proj(pooled_out)
 
