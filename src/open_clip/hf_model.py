@@ -108,7 +108,7 @@ class PreTrainedTextEncoder(nn.Module):
         if (d_model == output_dim) and (proj is None): # do we always need a proj?
             self.proj = nn.Identity()
         elif proj == 'linear':
-            self.proj == nn.Linear(d_model, output_dim, bias=False)
+            self.proj = nn.Linear(d_model, output_dim, bias=False)
         elif proj == 'mlp':
             self.proj = Mlp(d_model, (d_model + output_dim)//2, output_dim, bias=False)
 
