@@ -15,7 +15,7 @@ try:
 except ImportError as e:
     transformers = None
 
-from timm.models.layers import Mlp
+from hf_configs import arch_dict
 
 # utils
 def _camel2snake(s):
@@ -65,17 +65,6 @@ class ClsPooler(nn.Module):
         
         return x.last_hidden_state[:, self.cls_token_position, :]
 
-
-# arch-to-pooler mapping
-_DEFAULT_POOLER = {}
-
-def get_pooler(pooler_type:str):
-    if pooler_type is None:
-        # pooler_type = _DEFAULT_POOLER[self.config]
-        return MeanPooler()
-    else:
-        _POOLERS[pooler_type]()
-
 class PreTrainedTextEncoder(nn.Module):
     """HuggingFace model adapter
     
@@ -95,22 +84,29 @@ class PreTrainedTextEncoder(nn.Module):
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
-          self.config = AutoConfig.from_pretrained(model_name_or_path)
-          self.transformer = AutoModel.from_pretrained(model_name_or_path)
+            self.config = AutoConfig.from_pretrained(model_name_or_path)
+            self.transformer = AutoModel.from_pretrained(model_name_or_path)
         else:
-          self.config = config
-          self.transformer = AutoModel.from_config(config)
-        
-        self.pooler = get_pooler(pooler_type)
-        d_model = self.config.hidden_size # TODO: get d_model from config
-        # different models can have different names for it
-        # ?? do we use separate classes for different archs or handle it with helper funcs  
+            self.config = config
+            self.transformer = AutoModel.from_config(config)
+
+        if pooler_type is None: # get default arch pooler
+            self.pooler = _POOLERS[(arch_dict[self.config.model_type]["pooler"])]()
+        else:
+            self.pooler = _POOLERS[pooler_type]()
+
+        d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
         if (d_model == output_dim) and (proj is None): # do we always need a proj?
             self.proj = nn.Identity()
         elif proj == 'linear':
             self.proj = nn.Linear(d_model, output_dim, bias=False)
         elif proj == 'mlp':
-            self.proj = Mlp(d_model, (d_model + output_dim)//2, output_dim, bias=False)
+            hidden_size = (d_model + output_dim)//2
+            self.proj = nn.Sequential(
+                nn.Linear(d_model, hidden_size, bias=False),
+                nn.GELU(),
+                nn.Linear(hidden_size, output_dim, bias=False),
+            )
 
     def forward(self, x:TensorType) -> TensorType:
         attn_mask = (x != self.config.pad_token_id).long()
