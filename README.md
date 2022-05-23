@@ -2,7 +2,7 @@
 
 [[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
 
-Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). 
+Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
@@ -196,7 +196,7 @@ torchrun --nproc_per_node=4 \
 
 #### SLURM
 
-This is likely the easist solution to utilize. The following script was used to
+This is likely the easiest solution to utilize. The following script was used to
 train our largest models:
 
 ```bash
@@ -204,9 +204,11 @@ train our largest models:
 #SBATCH --nodes=32
 #SBATCH --gres=gpu:4
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=6
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=open_clip
+#SBATCH --account=ACCOUNT_NAME
+#SBATCH --partition PARTITION_NAME
 
 eval "$(/path/to/conda/bin/conda shell.bash hook)" # init conda
 conda activate open_clip
@@ -218,7 +220,7 @@ export MASTER_ADDR=$master_addr
 
 cd /shared/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
-srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
+srun --cpu_bind=v --accel-bind=gn python -u src/training/main.py \
     --save-frequency 1 \
     --report-to tensorboard \
     --train-data="/data/LAION-400M/{00000..41455}.tar" \
