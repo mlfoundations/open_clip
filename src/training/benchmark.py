@@ -296,7 +296,7 @@ def main():
 
             optimization_step += 1
             # end for
-        if optimization_step == args.bench_steps:
+        if optimization_step == args.bench_steps + args.bench_warmup:
             break
     t = time.perf_counter()
     if is_master(args):
