@@ -306,6 +306,12 @@ def parse_args():
         default=1000,
         help="The number of steps to simulate during benchmarking."
     )
+    parser.add_argument(
+        "--bench-warmup",
+        type=int,
+        default=10,
+        help="The number of steps to skip before recording time"
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.

@@ -248,49 +248,56 @@ def main():
     if args.distributed and sampler is not None:
         sampler.set_epoch(0)
 
-    t0 = time.perf_counter()
-    for i, batch in enumerate(dataloader):
-        if i == args.bench_steps:
-            break
-        step = i
-        scheduler(step)
+    optimization_step = 0
+    while True:
+        for batch in dataloader:
+            if optimization_step == args.bench_steps + args.bench_warmup:
+                break
+            elif optimization_step == args.bench_warmup:
+                t0 = time.perf_counter()
 
-        if args.synthetic_data:
-            images = torch.randn(args.batch_size, 3, model.visual.image_size,
-                model.visual.image_size, device=device)
-            texts = tokenize("Test sentence")[0]
-            texts = torch.stack([texts] * args.batch_size)
-            texts = texts.to(device=device, non_blocking=True)
-        else:
-            images, texts = batch
-            images = images.to(device=device, non_blocking=True)
-            texts = texts.to(device=device, non_blocking=True)
+            step = optimization_step
+            scheduler(step)
 
-        optimizer.zero_grad()
-
-        with autocast():
-            image_features, text_features, logit_scale = model(images, texts)
-            total_loss = loss(image_features, text_features, logit_scale)
-
-        if scaler is not None:
-            scaler.scale(total_loss).backward()
-            if args.horovod:
-                optimizer.synchronize()
-                scaler.unscale_(optimizer)
-                with optimizer.skip_synchronize():
-                    scaler.step(optimizer)
+            if args.synthetic_data:
+                images = torch.randn(args.batch_size, 3, model.visual.image_size,
+                    model.visual.image_size, device=device)
+                texts = tokenize("Test sentence")[0]
+                texts = torch.stack([texts] * args.batch_size)
+                texts = texts.to(device=device, non_blocking=True)
             else:
-                scaler.step(optimizer)
-            scaler.update()
-        else:
-            total_loss.backward()
-            optimizer.step()
+                images, texts = batch
+                images = images.to(device=device, non_blocking=True)
+                texts = texts.to(device=device, non_blocking=True)
 
-        # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+            optimizer.zero_grad()
 
-        # end for
+            with autocast():
+                image_features, text_features, logit_scale = model(images, texts)
+                total_loss = loss(image_features, text_features, logit_scale)
+
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+                if args.horovod:
+                    optimizer.synchronize()
+                    scaler.unscale_(optimizer)
+                    with optimizer.skip_synchronize():
+                        scaler.step(optimizer)
+                else:
+                    scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                optimizer.step()
+
+            # Note: we clamp to 4.6052 = ln(100), as in the original paper.
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+
+            optimization_step += 1
+            # end for
+        if optimization_step == args.bench_steps:
+            break
     t = time.perf_counter()
     if is_master(args):
         logging.info(f"Benchmarking completed in {t-t0} seconds.")
