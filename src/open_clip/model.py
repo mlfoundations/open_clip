@@ -2,9 +2,10 @@
 
 Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
 """
-
 from collections import OrderedDict
 from dataclasses import dataclass
+import logging
+import math
 from typing import Tuple, Union, Callable, Optional
 
 import numpy as np
@@ -14,7 +15,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 from .timm_model import TimmModel
-from .utils import freeze_batch_norm_2d
+from .utils import freeze_batch_norm_2d, to_2tuple
 
 
 class Bottleneck(nn.Module):
@@ -255,13 +256,15 @@ class VisualTransformer(nn.Module):
             self, image_size: int, patch_size: int, width: int, layers: int, heads: int, mlp_ratio: float,
             output_dim: int, act_layer: Callable = nn.GELU):
         super().__init__()
-        self.image_size = image_size
+        self.image_size = to_2tuple(image_size)
+        self.patch_size = to_2tuple(patch_size)
+        self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
         self.output_dim = output_dim
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn((image_size // patch_size) ** 2 + 1, width))
+        self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         self.ln_pre = LayerNorm(width)
 
         self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
@@ -556,3 +559,36 @@ def trace_model(model, batch_size=256, device=torch.device('cpu')):
         ))
     model.visual.image_size = image_size
     return model
+
+
+def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_dim=1):
+    # Rescale the grid of position embeddings when loading from state_dict
+    old_pos_embed = state_dict.get('visual.positional_embedding', None)
+    if old_pos_embed is None or not hasattr(model.visual, 'grid_size'):
+        return
+    grid_size = to_2tuple(model.visual.grid_size)
+    extra_tokens = 1  # FIXME detect different token configs (ie no class token, or more)
+    new_seq_len = grid_size[0] * grid_size[1] + extra_tokens
+    if new_seq_len == old_pos_embed.shape[0]:
+        return
+
+    if extra_tokens:
+        pos_emb_tok, pos_emb_img = old_pos_embed[:extra_tokens], old_pos_embed[extra_tokens:]
+    else:
+        pos_emb_tok, pos_emb_img = None, old_pos_embed
+    old_grid_size = to_2tuple(int(math.sqrt(len(pos_emb_img))))
+
+    logging.info('Resizing position embedding grid-size from %s to %s', old_grid_size, grid_size)
+    pos_emb_img = pos_emb_img.reshape(1, old_grid_size[0], old_grid_size[1], -1).permute(0, 3, 1, 2)
+    pos_emb_img = F.interpolate(
+        pos_emb_img,
+        size=grid_size,
+        mode=interpolation,
+        align_corners=True,
+    )
+    pos_emb_img = pos_emb_img.permute(0, 2, 3, 1).reshape(1, grid_size[0] * grid_size[1], -1)[0]
+    if pos_emb_tok is not None:
+        new_pos_embed = torch.cat([pos_emb_tok, pos_emb_img], dim=0)
+    else:
+        new_pos_embed = pos_emb_img
+    state_dict['visual.positional_embedding'] = new_pos_embed

@@ -4,7 +4,10 @@ import logging
 import math
 import os
 import random
+import sys
+import time
 from dataclasses import dataclass
+from multiprocessing import Value
 
 import braceexpand
 import numpy as np
@@ -12,11 +15,11 @@ import pandas as pd
 import torch
 import torchvision.datasets as datasets
 import webdataset as wds
-from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset
 from torch.utils.data.distributed import DistributedSampler
-
+from webdataset.filters import _shuffle
+from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
 try:
     import horovod.torch as hvd
@@ -45,10 +48,28 @@ class CsvDataset(Dataset):
         return images, texts
 
 
+class SharedEpoch:
+    def __init__(self, epoch: int = 0):
+        self.shared_epoch = Value('i', epoch)
+
+    def set_value(self, epoch):
+        self.shared_epoch.value = epoch
+
+    def get_value(self):
+        return self.shared_epoch.value
+
+
 @dataclass
 class DataInfo:
     dataloader: DataLoader
-    sampler: DistributedSampler
+    sampler: DistributedSampler = None
+    shared_epoch: SharedEpoch = None
+
+    def set_epoch(self, epoch):
+        if self.shared_epoch is not None:
+            self.shared_epoch.set_value(epoch)
+        if self.sampler is not None and isinstance(self.sampler, DistributedSampler):
+            self.sampler.set_epoch(epoch)
 
 
 def preprocess_txt(text):
@@ -119,7 +140,7 @@ def get_imagenet(args, preprocess_fns, split):
         sampler=sampler,
     )
 
-    return DataInfo(dataloader, sampler)
+    return DataInfo(dataloader=dataloader, sampler=sampler)
 
 
 def count_samples(dataloader):
@@ -184,9 +205,83 @@ _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
+class detshuffle2(wds.PipelineStage):
+    def __init__(
+            self,
+            bufsize=1000,
+            initial=100,
+            seed=0,
+            epoch=-1
+    ):
+        self.bufsize = bufsize
+        self.initial = initial
+        self.seed = seed
+        self.epoch = epoch
+
+    def run(self, src):
+        if isinstance(self.epoch, SharedEpoch):
+            epoch = self.epoch.get_value()
+        else:
+            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
+            # situation as different workers may wrap at different times (or not at all).
+            self.epoch += 1
+            epoch = self.epoch
+        rng = random.Random()
+        rng.seed((self.seed, epoch))
+        print(f'detshuffle epoch: {epoch}, seed: {self.seed}')  # FIXME temporary debug print
+        return _shuffle(src, self.bufsize, self.initial, rng)
+
+
+class ResampledShards2(IterableDataset):
+    """An iterable dataset yielding a list of urls."""
+
+    def __init__(
+        self,
+        urls,
+        nshards=sys.maxsize,
+        worker_seed=None,
+        deterministic=False,
+        epoch=-1,
+    ):
+        """Sample shards from the shard list with replacement.
+
+        :param urls: a list of URLs as a Python list or brace notation string
+        """
+        super().__init__()
+        urls = wds.shardlists.expand_urls(urls)
+        self.urls = urls
+        assert isinstance(self.urls[0], str)
+        self.nshards = nshards
+        self.rng = random.Random()
+        self.worker_seed = (
+            wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
+        )
+        self.deterministic = deterministic
+        self.epoch = epoch
+
+    def __iter__(self):
+        """Return an iterator over the shards."""
+        if isinstance(self.epoch, SharedEpoch):
+            epoch = self.epoch.get_value()
+        else:
+            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
+            # situation as different workers may wrap at different times (or not at all).
+            self.epoch += 1
+            epoch = self.epoch
+        if self.deterministic:
+            seed = (self.worker_seed(), epoch)
+        else:
+            seed = (self.worker_seed(), epoch, os.getpid(), time.time())
+        self.rng.seed(seed)
+        print(f'resampled epoch: {epoch}, seed: {seed}')  # FIXME temporary debug print
+        for _ in range(self.nshards):
+            yield dict(url=self.rng.choice(self.urls))
+
+
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
+    resampled = getattr(args, 'dataset_resampled', False) and is_train
 
     num_samples, num_shards = get_dataset_size(input_shards)
     if not num_samples:
@@ -199,18 +294,26 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
         else:
             num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
 
-    pipeline = [wds.SimpleShardList(input_shards)]
+    shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
+    if resampled:
+        pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
+    else:
+        pipeline = [wds.SimpleShardList(input_shards)]
+
     # at this point we have an iterator over all the shards
     if is_train:
+        if not resampled:
+            pipeline.extend([
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
+                ),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ])
         pipeline.extend([
-            wds.detshuffle(
-                bufsize=_SHARD_SHUFFLE_SIZE,
-                initial=_SHARD_SHUFFLE_INITIAL,
-                seed=args.seed,
-                epoch=epoch - 1,
-            ),
-            wds.split_by_node,
-            wds.split_by_worker,
             # at this point, we have an iterator over the shards assigned to each worker at each node
             tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
             wds.shuffle(
@@ -218,7 +321,6 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
                 initial=_SAMPLE_SHUFFLE_INITIAL,
                 rng=random.Random(args.seed),
             ),
-            #wds.repeatedly,  # FIXME determine if this is beneficial
         ])
     else:
         pipeline.extend([
@@ -238,10 +340,11 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
     dataset = wds.DataPipeline(*pipeline)
     if is_train:
         # roll over and repeat a few samples to get same number of full batches on each node
+        round_fn = math.floor if floor else math.ceil
         global_batch_size = args.batch_size * args.world_size
-        num_batches = math.ceil(num_samples / global_batch_size)
+        num_batches = round_fn(num_samples / global_batch_size)
         num_workers = max(1, args.workers)
-        num_worker_batches = math.ceil(num_batches / num_workers)  # per dataloader worker
+        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
         num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
@@ -254,8 +357,6 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        # FIXME detshuffle uses same seed each epoch unless workers are persistent
-        # this seems like a WDS bug, currently waiting for clarification
         persistent_workers=True,
     )
 
@@ -277,7 +378,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-    return DataInfo(dataloader, None)
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
