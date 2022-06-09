@@ -206,6 +206,12 @@ def parse_args():
         help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
     parser.add_argument(
+        "--debias-sample",
+        default=False,
+        action='store_true',
+        help="Enable debias sampling.",
+    )
+    parser.add_argument(
         "--torchscript",
         default=False,
         action='store_true',

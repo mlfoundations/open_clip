@@ -184,8 +184,11 @@ _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
-    input_shards = args.train_data if is_train else args.val_data
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, filepath=None):
+    if filepath:
+        input_shards = filepath
+    else:
+        input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
 
     num_samples, num_shards = get_dataset_size(input_shards)
@@ -280,8 +283,11 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
     return DataInfo(dataloader, None)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
-    input_filename = args.train_data if is_train else args.val_data
+def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, filepath=None):
+    if filepath:
+        input_filename = filepath
+    else:
+        input_filename = args.train_data if is_train else args.val_data
     assert input_filename
     dataset = CsvDataset(
         input_filename,
@@ -331,8 +337,15 @@ def get_data(args, preprocess_fns, epoch=0):
     data = {}
 
     if args.train_data:
-        data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True, epoch=epoch)
+        train_data_list = args.train_data.split(', ')
+        if len(train_data_list) > 1:
+            data["train"] = []
+            for train_data in train_data_list:
+                data["train"].append(get_dataset_fn(train_data, args.dataset_type)(
+                args, preprocess_train, is_train=True, epoch=epoch, filepath=train_data))
+        else:
+            data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
+                args, preprocess_train, is_train=True, epoch=epoch)
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
