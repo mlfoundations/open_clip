@@ -16,7 +16,7 @@ import torch
 import torchvision.datasets as datasets
 import webdataset as wds
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
@@ -200,6 +200,16 @@ def tarfile_to_samples_nothrow(src, handler=log_and_continue):
     return samples
 
 
+def pytorch_worker_seed():
+    """get dataloader worker seed from pytorch"""
+    worker_info = get_worker_info()
+    if worker_info is not None:
+        # favour the seed already created for pytorch dataloader workers if it exists
+        return worker_info.seed
+    # fallback to wds rank based seed
+    return wds.utils.pytorch_worker_seed()
+
+
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
@@ -229,7 +239,7 @@ class detshuffle2(wds.PipelineStage):
             epoch = self.epoch
         rng = random.Random()
         if self.seed < 0:
-            seed = (wds.utils.pytorch_worker_seed(), epoch)
+            seed = (pytorch_worker_seed(), epoch)
         else:
             seed = (self.seed, epoch)
         rng.seed(seed)
@@ -258,7 +268,7 @@ class ResampledShards2(IterableDataset):
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
-        self.worker_seed = wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
+        self.worker_seed = pytorch_worker_seed if worker_seed is None else worker_seed
         self.deterministic = deterministic
         self.epoch = epoch
 

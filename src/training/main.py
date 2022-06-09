@@ -112,6 +112,7 @@ def main():
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
 
+    random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -121,6 +122,7 @@ def main():
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
     )
+    random_seed(args.seed, args.rank)
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
