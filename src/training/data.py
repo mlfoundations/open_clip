@@ -212,7 +212,7 @@ class detshuffle2(wds.PipelineStage):
             bufsize=1000,
             initial=100,
             seed=0,
-            epoch=-1
+            epoch=-1,
     ):
         self.bufsize = bufsize
         self.initial = initial
@@ -228,8 +228,12 @@ class detshuffle2(wds.PipelineStage):
             self.epoch += 1
             epoch = self.epoch
         rng = random.Random()
-        rng.seed((self.seed, epoch))
-        print(f'detshuffle epoch: {epoch}, seed: {self.seed}')  # FIXME temporary debug print
+        if self.seed < 0:
+            seed = (wds.utils.pytorch_worker_seed(), epoch)
+        else:
+            seed = (self.seed, epoch)
+        rng.seed(seed)
+        print(f'detshuffle epoch: {epoch}, seed: {seed}')  # FIXME temporary debug print
         return _shuffle(src, self.bufsize, self.initial, rng)
 
 
@@ -254,9 +258,7 @@ class ResampledShards2(IterableDataset):
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
-        self.worker_seed = (
-            wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
-        )
+        self.worker_seed = wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
         self.deterministic = deterministic
         self.epoch = epoch
 
@@ -320,7 +322,6 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
             wds.shuffle(
                 bufsize=_SAMPLE_SHUFFLE_SIZE,
                 initial=_SAMPLE_SHUFFLE_INITIAL,
-                rng=random.Random(args.seed),
             ),
         ])
     else:
