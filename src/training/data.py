@@ -90,9 +90,10 @@ def get_dataset_size(shards):
     else:
         total_size = None  # num samples undefined
         # some common dataset sizes (at time of authors last download)
-        # cc3m-train: 2905954
-        # cc12m: 10968539
-        # LAION-400m: 407332084
+        # CC3M (train): 2905954
+        # CC12M: 10968539
+        # LAION-400M: 407332084
+        # LAION-2B (english): 2170337258
     num_shards = len(shards_list)
     return total_size, num_shards
 
@@ -339,6 +340,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
 
     dataset = wds.DataPipeline(*pipeline)
     if is_train:
+        if not resampled:
+            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
         global_batch_size = args.batch_size * args.world_size
