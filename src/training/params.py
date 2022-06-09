@@ -279,7 +279,7 @@ def parse_args():
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
     )
     parser.add_argument(
-        "--seed", type=int, default=4242, help="Default random seed."
+        "--seed", type=int, default=0, help="Default random seed."
     )
     args = parser.parse_args()
 
