@@ -97,6 +97,9 @@ def parse_args():
         "--batch-size", type=int, default=64, help="Batch size per GPU."
     )
     parser.add_argument(
+        "--batch-size-train", type=int, default=64, help="Batch size per GPU per sub-iteration. (decoupled grad accu)"
+    )
+    parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
@@ -186,6 +189,12 @@ def parse_args():
         default=False,
         action='store_true',
         help="Enable gradient checkpointing.",
+    )
+    parser.add_argument(
+        "--decoupled-grad-accu",
+        default=False,
+        action='store_true',
+        help="Enable decoupled gradient accumulation.",
     )
     parser.add_argument(
         "--local-loss",
