@@ -282,11 +282,8 @@ class ResampledShards2(IterableDataset):
             self.epoch += 1
             epoch = self.epoch
         if self.deterministic:
-            seed = self.worker_seed() + epoch
-        else:
-            seed = (self.worker_seed(), epoch, os.getpid(), time.time())
-        self.rng.seed(seed)
-        print(f'resampled epoch: {epoch}, seed: {seed}')  # FIXME temporary debug print
+            # reset seed w/ epoch if deterministic, worker seed should be deterministic due to arg.seed
+            self.rng.seed(self.worker_seed() + epoch)
         for _ in range(self.nshards):
             yield dict(url=self.rng.choice(self.urls))
 
