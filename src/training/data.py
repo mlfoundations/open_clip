@@ -239,9 +239,9 @@ class detshuffle2(wds.PipelineStage):
             epoch = self.epoch
         rng = random.Random()
         if self.seed < 0:
-            seed = (pytorch_worker_seed(), epoch)
+            seed = pytorch_worker_seed() + epoch
         else:
-            seed = (self.seed, epoch)
+            seed = self.seed + epoch
         rng.seed(seed)
         print(f'detshuffle epoch: {epoch}, seed: {seed}')  # FIXME temporary debug print
         return _shuffle(src, self.bufsize, self.initial, rng)
@@ -282,7 +282,7 @@ class ResampledShards2(IterableDataset):
             self.epoch += 1
             epoch = self.epoch
         if self.deterministic:
-            seed = (self.worker_seed(), epoch)
+            seed = self.worker_seed() + epoch
         else:
             seed = (self.worker_seed(), epoch, os.getpid(), time.time())
         self.rng.seed(seed)
