@@ -243,7 +243,6 @@ class detshuffle2(wds.PipelineStage):
         else:
             seed = self.seed + epoch
         rng.seed(seed)
-        print(f'detshuffle epoch: {epoch}, seed: {seed}')  # FIXME temporary debug print
         return _shuffle(src, self.bufsize, self.initial, rng)
 
 
