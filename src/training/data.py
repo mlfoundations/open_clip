@@ -45,6 +45,70 @@ class CsvDataset(Dataset):
         return images, texts
 
 
+class DebiasDataLoader:
+    def __init__(self, args, preprocess_train, epoch):
+
+        train_data_list = args.train_data.split(', ')
+        data_train = []
+        for train_data in train_data_list:
+            data_train.append(get_dataset_fn(train_data, args.dataset_type)(
+            args, preprocess_train, is_train=True, epoch=epoch, filepath=train_data))
+        
+        self.args = args
+        self.num_datasets = len(data_train)
+        self.dataloaders = [dataset.dataloader for dataset in data_train]
+        self.dataiters = [iter(dataloader) for dataloader in self.dataloaders]
+        self.samplers = [dataset.sampler for dataset in data_train]
+
+        self.num_batches = sum([dataloader.num_batches for dataloader in self.dataloaders])
+        self.num_samples = sum([dataloader.num_samples for dataloader in self.dataloaders])
+
+        # calculate sample weights according to num_samples of multiple datasets
+        self.sample_weights = np.array([float(dataloader.num_samples) / self.num_samples for dataloader in self.dataloaders])
+
+        self.count = 0
+        self.current_epoch = 0
+        # initialize each sampler
+        if self.args.distributed and self.samplers is not None:
+            for sampler in self.samplers:
+                sampler.set_epoch(0)
+        
+    def __len__(self):
+        return self.num_batches
+
+    def __iter__(self):
+        while True:
+
+            if self.count == self.num_batches:
+                self.current_epoch += 1
+                self.count = 0
+                if self.args.distributed and self.samplers is not None:
+                    for sampler in self.samplers:
+                        sampler.set_epoch(self.current_epoch)
+                return # end each epoch
+
+            # set random seed for sampling from the same dataset.
+            stable_random_seed = int(self.count + self.num_batches * self.current_epoch)
+            np.random.seed(stable_random_seed)
+
+            # sample a dataset according to sample_weights
+            iter_index = np.random.choice(range(self.num_datasets), p=self.sample_weights)
+
+            # generate training image-text pairs from the sampled dataset.
+            try:
+                data_iter = self.dataiters[iter_index]
+                batch = next(data_iter)
+            except StopIteration:
+                # refresh dataiter if dataloader is used up.
+                self.dataiters[iter_index] = iter(self.dataloaders[iter_index])
+                data_iter = self.dataiters[iter_index]
+                batch = next(data_iter)
+
+            self.count += 1
+
+            yield batch
+
+
 @dataclass
 class DataInfo:
     dataloader: DataLoader
@@ -337,12 +401,9 @@ def get_data(args, preprocess_fns, epoch=0):
     data = {}
 
     if args.train_data:
-        train_data_list = args.train_data.split(', ')
-        if len(train_data_list) > 1:
-            data["train"] = []
-            for train_data in train_data_list:
-                data["train"].append(get_dataset_fn(train_data, args.dataset_type)(
-                args, preprocess_train, is_train=True, epoch=epoch, filepath=train_data))
+        if args.debias_sample:
+            dataloader = DebiasDataLoader(args, preprocess_train, epoch)
+            data['train'] = DataInfo(dataloader, None)
         else:
             data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
                 args, preprocess_train, is_train=True, epoch=epoch)

@@ -29,7 +29,7 @@ from training.distributed import is_master, init_distributed_device, world_info_
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
-from training.train import train_one_epoch, evaluate, train_one_epoch_debias_sample
+from training.train import train_one_epoch, evaluate
 
 
 def random_seed(seed=42, rank=0):
@@ -214,10 +214,7 @@ def main():
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
-        if isinstance(data["train"], list):
-            total_steps = sum([dataset.dataloader.num_batches * args.epochs for dataset in data["train"]])
-        else:
-            total_steps = data["train"].dataloader.num_batches * args.epochs
+        total_steps = data["train"].dataloader.num_batches * args.epochs
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
@@ -253,10 +250,7 @@ def main():
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        if args.debias_sample:
-            train_one_epoch_debias_sample(model, data, epoch, optimizer, scaler, scheduler, args, writer)
-        else:
-            train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
+        train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
