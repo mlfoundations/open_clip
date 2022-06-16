@@ -182,6 +182,12 @@ def parse_args():
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
+        "--grad-checkpointing",
+        default=False,
+        action='store_true',
+        help="Enable gradient checkpointing.",
+    )
+    parser.add_argument(
         "--local-loss",
         default=False,
         action="store_true",
