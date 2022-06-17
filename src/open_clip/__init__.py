@@ -1,5 +1,5 @@
 from .factory import list_models, create_model, create_model_and_transforms, add_model_config
-from .loss import ClipLoss
+from .loss import ClipLoss, DGAClipLoss
 from .model import CLIP, CLIPTextCfg, CLIPVisionCfg, convert_weights_to_fp16, trace_model
 from .openai import load_openai_model, list_openai_models
 from .pretrained import list_pretrained, list_pretrained_tag_models, list_pretrained_model_tags,\

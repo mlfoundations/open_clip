@@ -5,6 +5,7 @@ import os
 import time
 from contextlib import suppress
 
+import random
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -14,7 +15,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import ClipLoss
+from open_clip import ClipLoss, DGAClipLoss
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 
@@ -37,6 +38,14 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+
 def unwrap_model(model):
     if hasattr(model, 'module'):
         return model.module
@@ -48,20 +57,30 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     device = torch.device(args.device)
     autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
 
-    model.train()
-    loss = ClipLoss(
-        local_loss=args.local_loss,
-        gather_with_grad=args.gather_with_grad,
-        cache_labels=True,
-        rank=args.rank,
-        world_size=args.world_size,
-        use_horovod=args.horovod)
-
     dataloader, sampler = data['train'].dataloader, data['train'].sampler
     if args.distributed and sampler is not None:
         sampler.set_epoch(epoch)
     num_batches_per_epoch = dataloader.num_batches
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
+
+    model.train()
+    if args.decoupled_grad_accu:
+        loss = DGAClipLoss(
+            args=args,
+            device=device,
+            rank=args.rank,
+            epoch=epoch,
+            num_batches_per_epoch=num_batches_per_epoch,
+            autocast=autocast
+        )
+    else:
+        loss = ClipLoss(
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod)
 
     loss_m = AverageMeter()
     batch_time_m = AverageMeter()
@@ -79,11 +98,16 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         optimizer.zero_grad()
 
         with autocast():
-            image_features, text_features, logit_scale = model(images, texts)
-            total_loss = loss(image_features, text_features, logit_scale)
+            if args.decoupled_grad_accu:
+                # model inference and loss backward are done in the __call__ function of DGAClipLoss
+                total_loss, logit_scale = loss(model, scaler, images, texts)
+            else:
+                image_features, text_features, logit_scale = model(images, texts)
+                total_loss = loss(image_features, text_features, logit_scale)
 
         if scaler is not None:
-            scaler.scale(total_loss).backward()
+            if not args.decoupled_grad_accu:
+                scaler.scale(total_loss).backward()
             if args.horovod:
                 optimizer.synchronize()
                 scaler.unscale_(optimizer)
