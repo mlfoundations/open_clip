@@ -29,7 +29,7 @@ from training.distributed import is_master, init_distributed_device, world_info_
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
-from training.train import train_one_epoch, evaluate, train_one_epoch_dga
+from training.train import train_one_epoch, evaluate
 
 
 def random_seed(seed=42, rank=0):
@@ -250,10 +250,7 @@ def main():
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        if args.decoupled_grad_accu:
-            train_one_epoch_dga(model, data, epoch, optimizer, scaler, scheduler, args, writer)
-        else:
-            train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
+        train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):

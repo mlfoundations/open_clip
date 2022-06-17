@@ -1,3 +1,7 @@
+import time
+import random
+import numpy as np
+
 import torch
 import torch.distributed.nn
 from torch import distributed as dist, nn as nn
@@ -112,3 +116,130 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_text, labels)
             ) / 2
         return total_loss
+
+
+class DGAClipLoss:
+
+    def __init__(self, args, device, rank, epoch, num_batches_per_epoch, autocast):
+        self.device = device
+        self.rank = rank
+        self.autocast = autocast
+        self.epoch = epoch
+        self.num_batches_per_epoch = num_batches_per_epoch
+
+        self.batch_size = args.batch_size
+        self.batch_size_train = args.batch_size_train
+
+    def setup_seed(self, seed):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.backends.cudnn.deterministic = True 
+
+    def __call__(self, model, scaler, images, texts):
+        # generate and setup random seed, thus forwarding a sample twice will produce the same embedding
+        stable_random_seed = int(time.time() * 1000 % 1000000)
+        self.setup_seed(stable_random_seed + self.rank)
+
+        # first time forward without grad 
+        with torch.no_grad():
+            model.requires_grad_(False)  # for avoiding DDP bug
+            image_embeddings_local, text_embeddings_local = [], []
+
+            for _idx_l in range(0, self.batch_size, self.batch_size_train):
+                _images = images[_idx_l: _idx_l + self.batch_size_train]
+                _texts = texts[_idx_l: _idx_l + self.batch_size_train]
+
+                with self.autocast():
+                    _image_embeddings, _text_embeddings, logit_scale = model(_images, _texts)
+
+                image_embeddings_local.append(_image_embeddings)
+                text_embeddings_local.append(_text_embeddings)
+            
+            # (i, d), (t, d)
+            image_embeddings_local = torch.cat(image_embeddings_local, dim = 0)
+            text_embeddings_local = torch.cat(text_embeddings_local, dim = 0)
+            
+            logit_scale_sqrt = torch.sqrt(logit_scale)
+
+            # (i, d)
+            image_embeddings_global = torch.cat(torch.distributed.nn.all_gather(image_embeddings_local), dim=0)
+            # (t, d)
+            text_embeddings_global = torch.cat(torch.distributed.nn.all_gather(text_embeddings_local), dim=0)
+    
+            s_i2t_nm = image_embeddings_global @ text_embeddings_local.T
+            s_i2t_mn = image_embeddings_local @ text_embeddings_global.T
+
+            # (i, t'), (i', t)
+            s_i2t_nm *= logit_scale
+            s_i2t_mn *= logit_scale
+            
+            # (i), (t)
+            targets_i2t = torch.arange(self.batch_size * self.rank, self.batch_size * (self.rank + 1), device=self.device)
+            targets_t2i = torch.arange(self.batch_size * self.rank, self.batch_size * (self.rank + 1), device=self.device)
+
+            total_loss = 0.5 * (F.cross_entropy(s_i2t_mn, targets_i2t) + F.cross_entropy(s_i2t_nm.T, targets_t2i)).cpu()
+            
+            # (i'), (t')
+            s_i2t_esum_local = torch.sum(torch.exp(s_i2t_mn), dim = 1)
+            s_t2i_esum_local = torch.sum(torch.exp(s_i2t_nm.T), dim = 1)
+            
+            # (i), (t)
+            s_i2t_esum = torch.cat(torch.distributed.nn.all_gather(s_i2t_esum_local), dim=0).unsqueeze(dim = 1)
+            s_t2i_esum = torch.cat(torch.distributed.nn.all_gather(s_t2i_esum_local), dim=0).unsqueeze(dim = 1)
+
+            p_i2t_mn = torch.exp(s_i2t_mn) / s_i2t_esum[self.batch_size * self.rank: self.batch_size * (self.rank + 1), :]
+            p_t2i_nm = torch.exp(s_i2t_mn.T) / s_t2i_esum
+            left_I = (p_i2t_mn + p_t2i_nm.T) @ text_embeddings_global - text_embeddings_local * 2
+            
+            p_i2t_nm = torch.exp(s_i2t_nm) / s_i2t_esum
+            p_t2i_mn = torch.exp(s_i2t_nm.T) / s_t2i_esum[self.batch_size * self.rank: self.batch_size * (self.rank + 1), :]
+            left_T = (p_i2t_nm.T + p_t2i_mn) @ image_embeddings_global - image_embeddings_local * 2
+            
+            # (i, d) = (1) * ((i, t) @ (t, d))
+            left_I *= logit_scale_sqrt
+            left_T *= logit_scale_sqrt
+
+            model.requires_grad_(True)  # # for avoiding DDP bug
+        
+        self.setup_seed(stable_random_seed + self.rank)
+
+        # second time forward with grad
+        for _idx_l in range(0, self.batch_size, self.batch_size_train):
+
+            _images = images[_idx_l: _idx_l + self.batch_size_train]
+            _texts = texts[_idx_l: _idx_l + self.batch_size_train]
+
+            with self.autocast():
+                # (i', d), (t', d)
+                _image_embeddings, _text_embeddings, logit_scale = model(_images, _texts)
+
+            # (i', d), (t', d)
+            _left_I = left_I[_idx_l: _idx_l + self.batch_size_train]
+            _left_T = left_T[_idx_l: _idx_l + self.batch_size_train]
+            
+            logit_scale_sqrt = torch.sqrt(logit_scale)
+
+            # (i')
+            loss_temp_i = _left_I * _image_embeddings
+            loss_temp_t = _left_T * _text_embeddings
+
+            loss_temp = (loss_temp_i + loss_temp_t).sum() / 2 / self.batch_size
+            loss_temp = loss_temp * logit_scale_sqrt
+            
+            # backward each sub-iteration
+            if scaler is not None:
+                scaler.scale(loss_temp).backward()
+            else:
+                loss_temp.backward()
+
+        self.total_loss = total_loss
+
+        return self, logit_scale
+    
+    def backward(self, grad):
+        pass
+
+    def item(self):
+        return self.total_loss.item()
