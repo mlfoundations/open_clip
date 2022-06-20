@@ -40,18 +40,16 @@ class CsvDataset(Dataset):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        try: 
-            images = self.transforms(
-                Image.open(str(self.images[idx]))
-                )
-        except PIL.UnidentifiedImageError:
-            print("Found unreadable image at {}, generating dummy image.".format(str(self.images[idx])))
+        try:
+            images = self.transforms(Image.open(str(self.images[idx])))
+            texts = tokenize([str(self.captions[idx])])[0]
+        except:
+            logging.debug("Missing or unreadable image at {}, generating dummy image and caption.".format(str(self.images[idx])))
             imarray = np.random.rand(224,224,3) * 255
             images = self.transforms(
                 Image.fromarray(imarray.astype('uint8')).convert('RGBA')
                 )
-        texts = tokenize([str(self.captions[idx])])[0]
-        return images, texts
+            texts = tokenize(["**dummy*image**"])[0]
 
 @dataclass
 class DataInfo:
@@ -286,7 +284,6 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0):
     dataloader.num_samples = num_samples
 
     return DataInfo(dataloader, None)
-
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
     input_filename = args.train_data if is_train else args.val_data
