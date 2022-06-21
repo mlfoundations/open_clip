@@ -1,0 +1,17 @@
+{
+    "embed_dim": 768,
+    "vision_cfg": {
+        "timm_model_name": "resmlp_big_24_224_in22ft1k",
+        "timm_model_pretrained": true,
+        "timm_pool": "",
+        "timm_proj": "linear",
+        "image_size": 224
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 768,
+        "heads": 8,
+        "layers": 12
+    }
+}
