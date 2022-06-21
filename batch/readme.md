@@ -1,71 +1,34 @@
 # Basic sbatch template
 
-This can be modified as needed, depending on your needs.
+You can find example templates in the batch directory. These can be modified according to the particular needs of your run.
 
-```bash
-#!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=4
-#SBATCH --time=47:59:00
-#SBATCH --mem=64GB
-#SBATCH --gpus-per-node=4
-#SBATCH --wait-all-nodes=1
-#SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_laion400m_2node_b256_sing
-#SBATCH --mail-type=BEGIN,END
-#SBATCH --mail-user=bf996@nyu.edu
+You will need to sync this repo to your scratch directory prior to first run. All batch scripts expect to be run from the open_clip directory.
 
-module purge;
-
-#debug flags
-echo $SLURM_JOB_NAME
-
-#env vars
-export PATH=./penv/bin:/home/USER/.local/bin:$PATH;
-export MASTER_PORT=$(shuf -i 10000-65500 -n 1)
-export WORLD_SIZE=$(($SLURM_NNODES * $SLURM_NTASKS_PER_NODE))
-echo "WORLD_SIZE="$WORLD_SIZE
-export MASTER_ADDR="$(hostname -s).hpc.nyu.edu"
-echo "MASTER_ADDR="$MASTER_ADDR
-
-#run command
-srun --cpu_bind=v --accel-bind=v \
-    /bin/bash src/script/run-singularity.bash \
-    /bin/bash -c \
-    'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py \
-    --save-frequency 1 \
-    --report-to tensorboard \
-    --dataset-type webdataset \
-    --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" \
-    --train-num-samples 400000000 \
-    --imagenet-val "/imagenet/val/" \
-    --warmup 10000 \
-    --batch-size=256 \
-    --wd=0.1 \
-    --epochs=2 \
-    --workers=4 \
-    --model=timm-tf_efficientnetv2_xl_in21ft1k \
-    --pretrained-image \
-    --lock-image \
-    --seed 0 \
-    --local-loss \
-    --gather-with-grad'
-```
+Please be sure to replace any PATH variables as appropriate for your particular environment.
 
 ## GPUs
 
 ### AMD
 
+AMD Notes:
+
+16GB VRAM is available on the AMD cards.
+
+16 GPUs can be accessed using 2 nodes, 8 GPUs per node.
+
 ```bash
 #SLURM
-#SBATCH --gres=gpu:mi50:1
+#SBATCH --gres=gpu:mi50:*
 
 #SRUN
 /bin/bash src/script/run-singularity-rocm.bash \
 ```
 
 ### NVIDIA
+
+VRAM may be anywhere from 16GB to 40GB, depending on which cards you request or are assigned.
+
+16 GPUs can be accessed using 4 nodes, 4 GPUs per node.
 
 ```bash
 #SLURM
@@ -86,16 +49,6 @@ srun --cpu_bind=v --accel-bind=v \
 --train-num-samples 10968539 \
 ```
 
-### YFCC15M
-
-```bash
-# SINGULARITY
-$(for sqf in /vast/work/public/ml-datasets/yfcc15m/data/*.sqf; do echo "--overlay $sqf:ro"; done) \
-# OPENCLIP
---train-data="PATH/TO/yfcc-small-metadata.csv" \
---csv-separator "," \
-```
-
 ### LAION400M
 
 ```bash
@@ -106,11 +59,25 @@ $(for sqf in /vast/work/public/ml-datasets/yfcc15m/data/*.sqf; do echo "--overla
 --train-num-samples 400000000 \
 ```
 
+### YFCC15M
+
+```bash
+# SLURM
+#SBATCH --mem=128GB
+
+# run-singularity.bash
+$(for sqf in /vast/work/public/ml-datasets/yfcc15m/data/*.sqf; do echo "--overlay $sqf:ro"; done) \
+
+# OPENCLIP
+--train-data="PATH/TO/yfcc-small-metadata.csv" \
+--csv-separator "," \
+```
+
 ## Datasets (Validation)
 
 ### ImageNet Validation
 
-You will need to request access from HPC to use ImageNet
+You will need to request access from NYU HPC before you can use ImageNet
 
 ```bash
 # SINGULARITY
@@ -118,4 +85,12 @@ You will need to request access from HPC to use ImageNet
 
 # OPENCLIP
 --imagenet-val "/imagenet/val/" \
+```
+
+### Imagenet V2 Validation
+
+ImageNet V2 should download and install automatically the first time your script calls it. Be sure to provide it with a path with write access.
+
+```bash
+--imagenet-v2 "INSTALL_PATH" \
 ```

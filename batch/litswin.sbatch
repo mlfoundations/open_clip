@@ -1,15 +1,13 @@
 #!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
+#SBATCH --output=out_%A_%j.log
+#SBATCH --nodes=4
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
-#SBATCH --gres=gpu:mi50:1
+#SBATCH --gres=gpu:4
 #SBATCH --wait-all-nodes=1
-#SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_laion400m_1node_b256_sing_rocm
-#SBATCH --mail-type=BEGIN,END
-#SBATCH --mail-user=bf996@nyu.edu
+#SBATCH --job-name=lit_swin_laion400m_4node_b512.sbatch
 
 module purge;
 
@@ -23,7 +21,6 @@ export WORLD_SIZE=$(($SLURM_NNODES * $SLURM_NTASKS_PER_NODE))
 echo "WORLD_SIZE="$WORLD_SIZE
 export MASTER_ADDR="$(hostname -s).hpc.nyu.edu"
 echo "MASTER_ADDR="$MASTER_ADDR
-export PYTHONPATH="$PYTHONPATH:$PWD/src"
 
 #run command
 srun --cpu_bind=v --accel-bind=v \
@@ -31,19 +28,21 @@ srun --cpu_bind=v --accel-bind=v \
     /bin/bash -c \
     'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py \
     --save-frequency 1 \
-    --report-to tensorboard \
+    --report-to wandb \
     --dataset-type webdataset \
     --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" \
     --train-num-samples 400000000 \
     --imagenet-val "/imagenet/val/" \
-    --warmup 10000 \
-    --batch-size=256 \
+    --zeroshot-frequency=1 \
+    --warmup 2000 \
+    --batch-size=512 \
     --wd=0.1 \
     --epochs=2 \
     --workers=4 \
-    --model=timm-tf_efficientnetv2_xl_in21ft1k \
+    --model=timm-swin_base_patch4_window7_224 \
     --pretrained-image \
     --lock-image \
     --seed 0 \
+    --resume "logs/2022_06_17-20_27_19-model_timm-swin_base_patch4_window7_224-lr_0.0005-b_512-j_4-p_amp/checkpoints/epoch_2.pt" \
     --local-loss \
     --gather-with-grad'

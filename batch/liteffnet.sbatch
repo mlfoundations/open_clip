@@ -1,15 +1,13 @@
 #!/bin/bash -x
 #SBATCH --output=logs/out_%A_%j.log
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
 #SBATCH --gpus-per-node=4
 #SBATCH --wait-all-nodes=1
-#SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_laion400m_2node_b256_sing
-#SBATCH --mail-type=BEGIN,END
-#SBATCH --mail-user=bf996@nyu.edu
+#SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_cc12m_1node_b256
 
 module purge;
 
@@ -30,12 +28,14 @@ srun --cpu_bind=v --accel-bind=v \
     /bin/bash -c \
     'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py \
     --save-frequency 1 \
-    --report-to tensorboard \
+    --report-to wandb \
     --dataset-type webdataset \
-    --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" \
-    --train-num-samples 400000000 \
+    --train-data "/vast/work/public/ml-datasets/cc12m/{00000..01243}.tar" \
+    --train-num-samples 10968539 \
     --imagenet-val "/imagenet/val/" \
-    --warmup 10000 \
+    --imagenet-v2 "imagenetv2-mff-val" \
+    --zeroshot-frequency=1 \
+    --warmup 2000 \
     --batch-size=256 \
     --wd=0.1 \
     --epochs=2 \
@@ -43,6 +43,7 @@ srun --cpu_bind=v --accel-bind=v \
     --model=timm-tf_efficientnetv2_xl_in21ft1k \
     --pretrained-image \
     --lock-image \
+    --resume "logs/2022_06_20-14_24_17-model_timm-tf_efficientnetv2_xl_in21ft1k-lr_0.0005-b_256-j_4-p_amp/checkpoints/epoch_2.pt" \
     --seed 0 \
     --local-loss \
     --gather-with-grad'
