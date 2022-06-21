@@ -1,11 +1,11 @@
 #!/bin/bash -x
 #SBATCH --output=out_%A_%j.log
-#SBATCH --nodes=4
-#SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=4
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=2
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
-#SBATCH --gres=gpu:mi50:4
+#SBATCH --gres=gpu:mi50:8
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=lit_regnetx_320_laion400m_4node_b256
 
@@ -37,13 +37,13 @@ srun --cpu_bind=v --accel-bind=v \
     --warmup 2000 \
     --batch-size=256 \
     --wd=0.1 \
-    --epochs=2 \
-    --workers=4 \
-    --model=timm-tf_efficientnetv2_xl_in21ft1k \
+    --epochs=4 \
+    --workers=2 \
+    --model=timm-regnetx_320 \
     --pretrained-image \
     --lock-image \
     --seed 0 \
-    --resume "/logs/2022_06_17-23_06_30-model_timm-regnetx_320-lr_0.0005-b_256-j_4-p_amp/checkpoints/epoch_2.pt" \
+    --resume "logs/2022_06_17-23_06_30-model_timm-regnetx_320-lr_0.0005-b_256-j_4-p_amp/checkpoints/epoch_2.pt" \
     --local-loss \
     --gather-with-grad'
 
