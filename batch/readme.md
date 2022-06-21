@@ -1,4 +1,34 @@
-# Basic sbatch template
+# OpenCLIP Batch Jobs
+
+This brief readme gives an overview on how to run training jobs using OpenCLIP in NYU's HPC environment.
+
+## Clone the Repo
+
+Navigate to your working directory, eg, scratch/<USERNAME>
+
+git clone https://github.com/NYU-DICE-Lab/open_clip
+
+## Overlays
+
+You will need to generate ext3 images use as overlays. Please follow the procedure described by [HPC](https://sites.google.com/nyu.edu/nyu-hpc/hpc-systems/greene/software/singularity-with-miniconda).
+
+For NVIDIA CUDA, use this version of PyTorch in your image: pip3 install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu113
+
+If you do not name your image openclip_env_cuda.ext3, you will need to modify run-singularity.bash accordingly.
+
+For AMD ROCM, use this version of PyTorch in your image: pip3 install torch torchvision --extra-index-url https://download.pytorch.org/whl/rocm4.5.2
+
+If you do not name your image openclip_env_rocm.ext3, you will need to modify run-singularity-rocm.bash accordingly.
+
+and don't forget:
+
+```
+pip install -r requirements-training.txt
+```
+
+## Basic sbatch template
+
+You now have everything you need to run a job.
 
 You can find example templates in the batch directory. These can be modified according to the particular needs of your run.
 

@@ -33,7 +33,6 @@ srun --cpu_bind=v --accel-bind=v \
     --train-data "/vast/work/public/ml-datasets/cc12m/{00000..01243}.tar" \
     --train-num-samples 10968539 \
     --imagenet-val "/imagenet/val/" \
-    --imagenet-v2 "imagenetv2-mff-val" \
     --zeroshot-frequency=1 \
     --warmup 2000 \
     --batch-size=256 \
