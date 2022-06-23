@@ -56,8 +56,6 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         rank=args.rank,
         world_size=args.world_size,
         use_horovod=args.horovod)
-    logging.debug("Data train is {}".format(data['train']))
-    logging.debug("Dataloader is {}".format(data['train'].dataloader.length))
     dataloader, sampler = data['train'].dataloader, data['train'].sampler
     if args.distributed and sampler is not None:
         sampler.set_epoch(epoch)
@@ -94,34 +92,24 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             )
 
     for i, batch in enumerate(dataloader):
-        logging.debug("Successfully loaded batch {}, size {}".format(i, len(batch)))
         step = num_batches_per_epoch * epoch + i
         scheduler(step)
 
         images, texts = batch
-        images = images.to(device=device, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
-
+        images = images.to(device=device, non_blocking=True)
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         with autocast():
             if args.gc:
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image))
+                #FIXME
                 if scaler is not None:
-                    total_loss = total_loss/scaler.get_scale()
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
+                    scaler.scale(total_loss).backward()
             else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-                if torch.any(torch.isnan(total_loss)):
-                    logging.info("NaN loss on iteration {}".format(i))
-                    logging.info("FEATURES: ")
-                    logging.info(image_features)
-                    logging.info(text_features)
                 if scaler is not None:
                     scaler.scale(total_loss).backward()
                     if args.horovod:
@@ -150,8 +138,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
-            if torch.any(torch.isnan(loss_m)):
-                logging.info("NaN loss on iteration {}".format(i))
+            if np.isnan(loss_m.val):
+                logging.info("NaN loss in logging function on iteration {}".format(i))
                 logging.info("FEATURES: ")
                 logging.info(image_features)
                 logging.info(text_features)
