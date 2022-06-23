@@ -5,7 +5,6 @@ from datetime import datetime
 
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
 from torch import optim
 from torch.cuda.amp import GradScaler
 
@@ -77,6 +76,8 @@ def main():
     setup_logging(args.log_path, args.log_level)
 
     # fully initialize distributed device environment
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
     device = init_distributed_device(args)
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
@@ -130,6 +131,9 @@ def main():
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
 
+    if args.grad_checkpointing:
+        model.set_grad_checkpointing()
+
     if is_master(args):
         logging.info("Model:")
         logging.info(f"{str(model)}")
@@ -150,22 +154,19 @@ def main():
             ddp_args['static_graph'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
-    data = get_data(args, (preprocess_train, preprocess_val))
-    assert len(data), 'At least one train or eval dataset must be specified.'
-    if args.trace:
-        assert 'train' not in data, 'Cannot train with traced model'
+    # create optimizer and scaler
+    optimizer = None
+    scaler = None
+    if args.train_data:
+        assert not args.trace, 'Cannot train with traced model'
 
-    exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-    include = lambda n, p: not exclude(n, p)
+        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+        include = lambda n, p: not exclude(n, p)
 
-    named_parameters = list(model.named_parameters())
-    gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-    rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
+        named_parameters = list(model.named_parameters())
+        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
+        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
-    if args.train_data is None:
-        optimizer = None
-        scheduler = None
-    else:
         optimizer = optim.AdamW(
             [
                 {"params": gain_or_bias_params, "weight_decay": 0.},
@@ -175,15 +176,13 @@ def main():
             betas=(args.beta1, args.beta2),
             eps=args.eps,
         )
-        total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
-
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-    scaler = GradScaler() if args.precision == "amp" else None
+        scaler = GradScaler() if args.precision == "amp" else None
+
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
@@ -208,8 +207,15 @@ def main():
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    cudnn.benchmark = True
-    cudnn.deterministic = False
+    # initialize datasets
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch)
+    assert len(data), 'At least one train or eval dataset must be specified.'
+
+    # create scheduler if train
+    scheduler = None
+    if 'train' in data and optimizer is not None:
+        total_steps = data["train"].dataloader.num_batches * args.epochs
+        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
@@ -239,8 +245,6 @@ def main():
     if 'train' not in data:
         evaluate(model, data, start_epoch, args, writer)
         return
-    elif start_epoch == 0 and 'val' in data:
-        evaluate(model, data, 0, args, writer)
 
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):

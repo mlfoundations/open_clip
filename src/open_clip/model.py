@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from .timm_model import TimmModel
 from .utils import freeze_batch_norm_2d
@@ -25,16 +26,18 @@ class Bottleneck(nn.Module):
         # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
         self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
+        self.relu1 = nn.ReLU(inplace=True)
 
         self.conv2 = nn.Conv2d(planes, planes, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
+        self.relu2 = nn.ReLU(inplace=True)
 
         self.avgpool = nn.AvgPool2d(stride) if stride > 1 else nn.Identity()
 
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, 1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.relu3 = nn.ReLU(inplace=True)
 
-        self.relu = nn.ReLU(inplace=True)
         self.downsample = None
         self.stride = stride
 
@@ -49,8 +52,8 @@ class Bottleneck(nn.Module):
     def forward(self, x: torch.Tensor):
         identity = x
 
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.relu(self.bn2(self.conv2(out)))
+        out = self.relu1(self.bn1(self.conv1(x)))
+        out = self.relu2(self.bn2(self.conv2(out)))
         out = self.avgpool(out)
         out = self.bn3(self.conv3(out))
 
@@ -58,7 +61,7 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+        out = self.relu3(out)
         return out
 
 
@@ -115,12 +118,14 @@ class ModifiedResNet(nn.Module):
         # the 3-layer stem
         self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(width // 2)
+        self.relu1 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(width // 2, width // 2, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(width // 2)
+        self.relu2 = nn.ReLU(inplace=True)
         self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(width)
+        self.relu3 = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(2)
-        self.relu = nn.ReLU(inplace=True)
 
         # residual layers
         self._inplanes = width  # this is a *mutable* variable used during construction
@@ -163,9 +168,15 @@ class ModifiedResNet(nn.Module):
         if freeze_bn_stats:
             freeze_batch_norm_2d(self)
 
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        # FIXME support for non-transformer
+        pass
+
     def stem(self, x):
-        for conv, bn in [(self.conv1, self.bn1), (self.conv2, self.bn2), (self.conv3, self.bn3)]:
-            x = self.relu(bn(conv(x)))
+        x = self.relu1(self.bn1(self.conv1(x)))
+        x = self.relu2(self.bn2(self.conv2(x)))
+        x = self.relu3(self.bn3(self.conv3(x)))
         x = self.avgpool(x)
         return x
 
@@ -196,15 +207,16 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
+    def __init__(self, d_model: int, n_head: int, mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
+        mlp_width = int(d_model * mlp_ratio)
         self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
+            ("c_fc", nn.Linear(d_model, mlp_width)),
             ("gelu", act_layer()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
+            ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
         self.ln_2 = LayerNorm(d_model)
 
@@ -218,25 +230,30 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, act_layer: Callable = nn.GELU):
+    def __init__(self, width: int, layers: int, heads: int,  mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
+        self.grad_checkpointing = False
+
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(width, heads, act_layer=act_layer)
+            ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer)
             for _ in range(layers)
         ])
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
-            x = r(x, attn_mask=attn_mask)
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                x = checkpoint(r, x, attn_mask)
+            else:
+                x = r(x, attn_mask=attn_mask)
         return x
 
 
 class VisualTransformer(nn.Module):
     def __init__(
-            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
-            act_layer: Callable = nn.GELU):
+            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, mlp_ratio: float,
+            output_dim: int, act_layer: Callable = nn.GELU):
         super().__init__()
         self.image_size = image_size
         self.output_dim = output_dim
@@ -247,7 +264,7 @@ class VisualTransformer(nn.Module):
         self.positional_embedding = nn.Parameter(scale * torch.randn((image_size // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        self.transformer = Transformer(width, layers, heads, act_layer=act_layer)
+        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
@@ -256,6 +273,10 @@ class VisualTransformer(nn.Module):
         assert unlocked_groups == 0, 'partial locking not currently supported for this model'
         for param in self.parameters():
             param.requires_grad = False
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
 
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
@@ -283,6 +304,8 @@ class VisualTransformer(nn.Module):
 class CLIPVisionCfg:
     layers: Union[Tuple[int, int, int, int], int] = 12
     width: int = 768
+    head_width: int = 64
+    mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
@@ -293,11 +316,11 @@ class CLIPVisionCfg:
 
 @dataclass
 class CLIPTextCfg:
-    context_length: int
-    vocab_size: int
-    width: int
-    heads: int
-    layers: int
+    context_length: int = 77
+    vocab_size: int = 49408
+    width: int = 512
+    heads: int = 8
+    layers: int = 12
 
 
 class CLIP(nn.Module):
@@ -332,7 +355,7 @@ class CLIP(nn.Module):
             )
             act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
         elif isinstance(vision_cfg.layers, (tuple, list)):
-            vision_heads = vision_cfg.width * 32 // 64
+            vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
             self.visual = ModifiedResNet(
                 layers=vision_cfg.layers,
                 output_dim=embed_dim,
@@ -341,13 +364,14 @@ class CLIP(nn.Module):
                 width=vision_cfg.width
             )
         else:
-            vision_heads = vision_cfg.width // 64
+            vision_heads = vision_cfg.width // vision_cfg.head_width
             self.visual = VisualTransformer(
                 image_size=vision_cfg.image_size,
                 patch_size=vision_cfg.patch_size,
                 width=vision_cfg.width,
                 layers=vision_cfg.layers,
                 heads=vision_heads,
+                mlp_ratio=vision_cfg.mlp_ratio,
                 output_dim=embed_dim,
                 act_layer=act_layer,
             )
@@ -401,6 +425,11 @@ class CLIP(nn.Module):
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.visual.set_grad_checkpointing(enable)
+        self.transformer.grad_checkpointing = enable
 
     def encode_image(self, image):
         return self.visual(image)
