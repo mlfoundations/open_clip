@@ -115,6 +115,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             else:
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
+                if torch.any(torch.isnan(total_loss)):
+                    logging.info("NaN loss on iteration {}".format(i))
+                    logging.info("FEATURES: ")
+                    logging.info(image_features)
+                    logging.info(text_features)
                 if scaler is not None:
                     scaler.scale(total_loss).backward()
                     if args.horovod:
