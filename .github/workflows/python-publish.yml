@@ -26,7 +26,7 @@ jobs:
       if: ${{ steps.regex-match.outputs.match != '' }}
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.regex-match.outputs.group1 }}
+        tag_name: v${{ steps.regex-match.outputs.group1 }}
     - name: Build and publish
       if: ${{ steps.regex-match.outputs.match != '' }}
       env:

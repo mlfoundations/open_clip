@@ -2,6 +2,7 @@ import torch
 import torch.distributed.nn
 from torch import distributed as dist, nn as nn
 from torch.nn import functional as F
+import logging
 
 try:
     import horovod.torch as hvd
@@ -83,7 +84,13 @@ class ClipLoss(nn.Module):
             all_image_features, all_text_features = gather_features(
                 image_features, text_features,
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
-
+            #FIXME: band-aid handling of nans
+            if torch.any(torch.isnan(all_image_features)):
+                logging.warning("found NaN in images, replacing with a small number")
+                all_image_features = torch.nan_to_num(all_image_features, nan=1e-10)
+            if torch.any(torch.isnan(all_text_features)):
+                logging.warning("found NaN in texts, replacing with a small number")
+                all_text_features = torch.nan_to_num(all_text_features, nan=1e-10)
             if self.local_loss:
                 logits_per_image = logit_scale * image_features @ all_text_features.T
                 logits_per_text = logit_scale * text_features @ all_image_features.T
@@ -91,6 +98,13 @@ class ClipLoss(nn.Module):
                 logits_per_image = logit_scale * all_image_features @ all_text_features.T
                 logits_per_text = logits_per_image.T
         else:
+            #FIXME: band-aid handling of nans
+            if torch.any(torch.isnan(image_features)):
+                logging.warning("found NaN in images, replacing with a small number")
+                image_features = torch.nan_to_num(image_features, nan=1e-10)
+            if torch.any(torch.isnan(text_features)):
+                logging.warning("found NaN in texts, replacing with a small number")
+                text_features = torch.nan_to_num(text_features, nan=1e-10)
             logits_per_image = logit_scale * image_features @ text_features.T
             logits_per_text = logit_scale * text_features @ image_features.T
 
@@ -109,4 +123,6 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
             ) / 2
+        if torch.any(torch.isnan(total_loss)):
+            logging.warning("Leaving clip_loss, NaN loss detected: {}".format(total_loss))
         return total_loss

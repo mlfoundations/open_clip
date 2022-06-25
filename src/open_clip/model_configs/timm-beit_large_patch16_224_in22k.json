@@ -1,16 +1,16 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 768,
     "vision_cfg": {
-        "timm_model_name": "vit_large_patch16_384",
+        "timm_model_name": "beit_large_patch16_224_in22k",
         "timm_model_pretrained": true,
         "timm_pool": "",
         "timm_proj": "linear",
-        "image_size": 384
+        "image_size": 224
     },
     "text_cfg": {
         "context_length": 77,
         "vocab_size": 49408,
-        "width": 512,
+        "width": 768,
         "heads": 8,
         "layers": 12
     }

@@ -78,8 +78,8 @@ def create_model(
         pretrained_image: bool = False,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-    pretrained = pretrained.lower()
-    if pretrained == 'openai':
+
+    if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
