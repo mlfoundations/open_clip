@@ -13,6 +13,8 @@ from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
 from coca_pytorch.coca_pytorch import CoCa
+from vit_pytorch import ViT
+from vit_pytorch.extractor import Extractor
 
 import timm
 from torch import einsum, nn
@@ -78,13 +80,41 @@ def create_model(
         pretrained_image: bool = False,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
         if precision == "amp" or precision == "fp32":
             model = model.float()
+    elif model_name == "coca":
+        # enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
+
+        # enc.head = torch.nn.Sequential(
+        #     View((-1, 64, 2048)),
+        # )
+        enc = ViT(
+            image_size = 256,
+            patch_size = 32,
+            num_classes = 1000,
+            dim = 1024,
+            depth = 6,
+            heads = 16,
+            mlp_dim = 2048
+        )
+        enc = Extractor(enc, return_embeddings_only = True)
+        # import CoCa and instantiate it
+        model = CoCa(
+            dim = 512,                     # model dimension
+            img_encoder = enc,             # vision transformer - image encoder, returning image embeddings as (batch, seq, dim)
+            image_dim = 1024,              # image embedding dimension, if not the same as model dimensions
+            num_tokens = 49408,            # number of text tokens
+            unimodal_depth = 6,            # depth of the unimodal transformer
+            multimodal_depth = 6,          # depth of the multimodal transformer
+            dim_head = 64,                 # dimension per attention head
+            heads = 8,                     # number of attention heads
+            caption_loss_weight = 1.,      # weight on the autoregressive caption loss
+            contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
+        )
     else:
         if model_name in _MODEL_CONFIGS:
             logging.info(f'Loading {model_name} model config.')
@@ -106,52 +136,30 @@ def create_model(
 
         model = CLIP(**model_cfg)
         
-        if pretrained:
-            checkpoint_path = ''
-            url = get_pretrained_url(model_name, pretrained)
-            if url:
-                checkpoint_path = download_pretrained(url)
-            elif os.path.exists(pretrained):
-                checkpoint_path = pretrained
+    if pretrained:
+        checkpoint_path = ''
+        url = get_pretrained_url(model_name, pretrained)
+        if url:
+            checkpoint_path = download_pretrained(url)
+        elif os.path.exists(pretrained):
+            checkpoint_path = pretrained
 
-            if checkpoint_path:
-                logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-                model.load_state_dict(load_state_dict(checkpoint_path))
-            else:
-                logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-                raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+        if checkpoint_path:
+            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
+            model.load_state_dict(load_state_dict(checkpoint_path))
+        else:
+            logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+            raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
 
-        model.to(device=device)
-        if precision == "fp16":
-            assert device.type != 'cpu'
-            convert_weights_to_fp16(model)
+    model.to(device=device)
+    if precision == "fp16":
+        assert device.type != 'cpu'
+        convert_weights_to_fp16(model)
 
-        if jit:
-            model = torch.jit.script(model)
+    if jit:
+        model = torch.jit.script(model)
 
     return model
-
-def create_coca():
-    enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
-
-    enc.head = torch.nn.Sequential(
-        View((-1, 64, 2048)),
-    )
-
-    # import CoCa and instantiate it
-    coca = CoCa(
-        dim = 512,                     # model dimension
-        img_encoder = enc,             # vision transformer - image encoder, returning image embeddings as (batch, seq, dim)
-        image_dim = 2048,              # image embedding dimension, if not the same as model dimensions
-        num_tokens = 20000,            # number of text tokens
-        unimodal_depth = 6,            # depth of the unimodal transformer
-        multimodal_depth = 6,          # depth of the multimodal transformer
-        dim_head = 64,                 # dimension per attention head
-        heads = 8,                     # number of attention heads
-        caption_loss_weight = 1.,      # weight on the autoregressive caption loss
-        contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
-    )
-    return coca
 
 def create_model_and_transforms(
         model_name: str,
@@ -162,16 +170,18 @@ def create_model_and_transforms(
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
 ):
+    model = create_model(
+    model_name, pretrained, precision, device, jit,
+    force_quick_gelu=force_quick_gelu,
+    pretrained_image=pretrained_image
+    )
+    #FIXME hardcoded size
     if model_name == "coca":
-        model = create_coca()
+        preprocess_train = image_transform(256, is_train=True)
+        preprocess_val = image_transform(256, is_train=False)
     else:
-        model = create_model(
-        model_name, pretrained, precision, device, jit,
-        force_quick_gelu=force_quick_gelu,
-        pretrained_image=pretrained_image
-        )
-    preprocess_train = image_transform(model.visual.image_size, is_train=True)
-    preprocess_val = image_transform(model.visual.image_size, is_train=False)
+        preprocess_train = image_transform(model.visual.image_size, is_train=True)
+        preprocess_val = image_transform(model.visual.image_size, is_train=False)
     return model, preprocess_train, preprocess_val
 
 def list_models():

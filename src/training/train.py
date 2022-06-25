@@ -104,29 +104,33 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         with autocast():
             if args.gc:
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image))
-                #FIXME
-                if scaler is not None:
-                    scaler.scale(total_loss).backward()
-            else:
+            elif args.model == "coca":
+                total_loss = model(
+                    text = texts,
+                    images = images,
+                    return_loss = True  # set this to True to get the full caption + contrastive loss
+                )
+            else:                    
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-                if scaler is not None:
-                    scaler.scale(total_loss).backward()
-                    if args.horovod:
-                        optimizer.synchronize()
-                        scaler.unscale_(optimizer)
-                        with optimizer.skip_synchronize():
-                            scaler.step(optimizer)
-                    else:
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+                if args.horovod:
+                    optimizer.synchronize()
+                    scaler.unscale_(optimizer)
+                    with optimizer.skip_synchronize():
                         scaler.step(optimizer)
-                    scaler.update()
                 else:
-                    total_loss.backward()
-                    optimizer.step()
+                    scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        if args.model != "coca":
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -143,6 +147,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 logging.info("FEATURES: ")
                 logging.info(image_features)
                 logging.info(text_features)
+            if args.model == "coca":
+                logit_scale = torch.tensor([1.0])
             if not args.gc:
                 logit_scale_scalar = logit_scale.item()
             logging.info(
