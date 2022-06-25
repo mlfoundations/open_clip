@@ -12,11 +12,22 @@ from .model import CLIP, convert_weights_to_fp16
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
+from coca_pytorch.coca_pytorch import CoCa
 
+import timm
+from torch import einsum, nn
+from einops import rearrange, repeat
 
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
 
+class View(nn.Module):
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+
+    def forward(self, x):
+        return x.view(*self.shape)
 
 def _natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
@@ -120,6 +131,27 @@ def create_model(
 
     return model
 
+def create_coca():
+    enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
+
+    enc.head = torch.nn.Sequential(
+        View((-1, 64, 2048)),
+    )
+
+    # import CoCa and instantiate it
+    coca = CoCa(
+        dim = 512,                     # model dimension
+        img_encoder = enc,             # vision transformer - image encoder, returning image embeddings as (batch, seq, dim)
+        image_dim = 2048,              # image embedding dimension, if not the same as model dimensions
+        num_tokens = 20000,            # number of text tokens
+        unimodal_depth = 6,            # depth of the unimodal transformer
+        multimodal_depth = 6,          # depth of the multimodal transformer
+        dim_head = 64,                 # dimension per attention head
+        heads = 8,                     # number of attention heads
+        caption_loss_weight = 1.,      # weight on the autoregressive caption loss
+        contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
+    )
+    return coca
 
 def create_model_and_transforms(
         model_name: str,
@@ -130,14 +162,17 @@ def create_model_and_transforms(
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
 ):
-    model = create_model(
+    if model_name == "coca":
+        model = create_coca()
+    else:
+        model = create_model(
         model_name, pretrained, precision, device, jit,
         force_quick_gelu=force_quick_gelu,
-        pretrained_image=pretrained_image)
+        pretrained_image=pretrained_image
+        )
     preprocess_train = image_transform(model.visual.image_size, is_train=True)
     preprocess_val = image_transform(model.visual.image_size, is_train=False)
     return model, preprocess_train, preprocess_val
-
 
 def list_models():
     """ enumerate available model architectures based on config files """
