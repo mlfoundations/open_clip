@@ -12,11 +12,19 @@ from .model import CLIP, convert_weights_to_fp16
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
-from coca_pytorch.coca_pytorch import CoCa
-from vit_pytorch import ViT
-from vit_pytorch.extractor import Extractor
 
-import timm
+try:
+    from coca_pytorch.coca_pytorch import CoCa
+    from vit_pytorch import ViT
+    from vit_pytorch.extractor import Extractor
+except:
+    logging.debug("coca and vit from lucidrains are not installed")
+
+try:
+    import timm
+except ImportError:
+    logging.debug("timm is not installed")
+
 from torch import einsum, nn
 from einops import rearrange, repeat
 
