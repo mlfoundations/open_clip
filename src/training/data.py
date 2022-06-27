@@ -127,6 +127,21 @@ def get_imagenet(args, preprocess_fns, split):
 
     return DataInfo(dataloader, sampler)
 
+def get_inat(args, preprocess_fns, split):
+    assert split in ["2017", "2018", "2019", "2021"]
+    preprocess_train, preprocess_val = preprocess_fns
+
+    if split == "2021":
+        sampler = None
+
+        dataloader = dataset.ImageFolder(
+            dataset,
+            transform=preprocess_val
+        )
+    else:
+        print("{} not implemented".format(split))
+
+    return DataInfo(dataloader, sampler)
 
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
@@ -348,5 +363,8 @@ def get_data(args, preprocess_fns, epoch=0):
 
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+
+    if args.inat2021 is not None:
+        data["inat2021"] = get_inat(args, preprocess_fns, "2021")
 
     return data
