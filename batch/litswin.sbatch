@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
-#SBATCH --gres=gpu:4
+#SBATCH --gpus-per-node=4
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=lit_swin_laion400m_4node_b512.sbatch
 
@@ -14,8 +14,10 @@ module purge;
 #debug flags
 echo $SLURM_JOB_NAME
 
+# COMMENTS
+# Resume point 2022_06_17-06_05_36 was trained on 50m LAION samples for the first 2 epochs
+
 #env vars
-export PATH=./penv/bin:/home/bf996/.local/bin:$PATH;
 export MASTER_PORT=$(shuf -i 10000-65500 -n 1)
 export WORLD_SIZE=$(($SLURM_NNODES * $SLURM_NTASKS_PER_NODE))
 echo "WORLD_SIZE="$WORLD_SIZE
@@ -24,7 +26,7 @@ echo "MASTER_ADDR="$MASTER_ADDR
 
 #run command
 srun --cpu_bind=v --accel-bind=v \
-    /bin/bash src/script/run-singularity-rocm.bash \
+    /bin/bash src/script/run-singularity.bash \
     /bin/bash -c \
     'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py \
     --save-frequency 1 \
@@ -37,12 +39,12 @@ srun --cpu_bind=v --accel-bind=v \
     --warmup 2000 \
     --batch-size=512 \
     --wd=0.1 \
-    --epochs=2 \
+    --epochs=32 \
     --workers=4 \
     --model=timm-swin_base_patch4_window7_224 \
     --pretrained-image \
     --lock-image \
     --seed 0 \
-    --resume "logs/2022_06_17-20_27_19-model_timm-swin_base_patch4_window7_224-lr_0.0005-b_512-j_4-p_amp/checkpoints/epoch_2.pt" \
+    --resume "logs/2022_06_23-03_24_44-model_timm-swin_base_patch4_window7_224-lr_0.0005-b_768-j_4-p_amp/checkpoints/epoch_4.pt" \
     --local-loss \
     --gather-with-grad'

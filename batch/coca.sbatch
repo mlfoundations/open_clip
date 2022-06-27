@@ -1,22 +1,18 @@
 #!/bin/bash -x
 #SBATCH --output=out_%A_%j.log
-#SBATCH --nodes=4
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=128GB
 #SBATCH --gres=gpu:mi50:8
 #SBATCH --wait-all-nodes=1
-#SBATCH --job-name=lit_regnetx_320_laion400m_4node_b256
-#SBATCH --dependency=after:21356315
+#SBATCH --job-name=coca
 
 module purge;
 
 #debug flags
 echo $SLURM_JOB_NAME
-
-# COMMENTS
-# resume point 2022_06_17-23_06_30 was trained on 350m LAION samples for the first 2 epochs
 
 #env vars
 export MASTER_PORT=$(shuf -i 10000-65500 -n 1)
@@ -33,20 +29,15 @@ srun --cpu_bind=v --accel-bind=v \
     --save-frequency 1 \
     --report-to wandb \
     --dataset-type webdataset \
-    --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" \
-    --train-num-samples 400000000 \
+    --train-data "/vast/work/public/ml-datasets/laion400m/{00000..10000}.tar" \
+    --train-num-samples 50000000 \
     --imagenet-val "/imagenet/val/" \
     --zeroshot-frequency=1 \
     --warmup 2000 \
-    --batch-size=384 \
+    --batch-size=256 \
     --wd=0.1 \
     --epochs=32 \
     --workers=4 \
-    --model=timm-regnetx_320 \
-    --pretrained-image \
-    --lock-image \
-    --seed 0 \
-    --resume "logs/2022_06_22-23_51_41-model_timm-regnetx_320-lr_0.0005-b_384-j_4-p_amp/checkpoints/epoch_3.pt" \
+    --model=coca \
     --local-loss \
     --gather-with-grad'
-

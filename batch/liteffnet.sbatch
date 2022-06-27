@@ -1,11 +1,11 @@
 #!/bin/bash -x
 #SBATCH --output=logs/out_%A_%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_cc12m_1node_b256
 
@@ -15,7 +15,6 @@ module purge;
 echo $SLURM_JOB_NAME
 
 #env vars
-export PATH=./penv/bin:/home/bf996/.local/bin:$PATH;
 export MASTER_PORT=$(shuf -i 10000-65500 -n 1)
 export WORLD_SIZE=$(($SLURM_NNODES * $SLURM_NTASKS_PER_NODE))
 echo "WORLD_SIZE="$WORLD_SIZE
