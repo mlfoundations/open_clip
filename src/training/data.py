@@ -132,11 +132,15 @@ def get_inat(args, preprocess_fns, split):
     preprocess_train, preprocess_val = preprocess_fns
 
     if split == "2021":
+        data_path = args.inat2021
+        preprocess_fn = preprocess_val
+        dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
         sampler = None
-
-        dataloader = dataset.ImageFolder(
-            dataset,
-            transform=preprocess_val
+        dataloader = torch.utils.data.DataLoader(
+        dataset,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            sampler=sampler,
         )
     else:
         print("{} not implemented".format(split))

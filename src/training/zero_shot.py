@@ -70,8 +70,8 @@ def zero_shot_eval(model, data, epoch, args):
         logging.info('Using classifier')
         results = {}
         top1, top5 = run(model, classifier, data['inat2021'].dataloader, args)
-            results['inat2021-top1'] = top1
-            results['inat2021-top5'] = top5
+        results['inat2021-top1'] = top1
+        results['inat2021-top5'] = top5
 
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}

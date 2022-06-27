@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import torch
+from torch import nn
 
 from .model import CLIP, convert_weights_to_fp16
 from .openai import load_openai_model
@@ -24,9 +25,6 @@ try:
     import timm
 except ImportError:
     logging.debug("timm is not installed")
-
-from torch import einsum, nn
-from einops import rearrange, repeat
 
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
@@ -87,14 +85,7 @@ def create_model(
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
 ):
-    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-    if pretrained.lower() == 'openai':
-        logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if precision == "amp" or precision == "fp32":
-            model = model.float()
-    elif model_name == "coca":
+    if model_name == "coca":
         # enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
 
         # enc.head = torch.nn.Sequential(
@@ -123,6 +114,71 @@ def create_model(
             caption_loss_weight = 1.,      # weight on the autoregressive caption loss
             contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
         )
+
+        return model
+    
+        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+
+    if pretrained.lower() == 'openai':
+        logging.info(f'Loading pretrained {model_name} from OpenAI.')
+        model = load_openai_model(model_name, device=device, jit=jit)
+        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+    else:
+        if model_name in _MODEL_CONFIGS:
+            logging.info(f'Loading {model_name} model config.')
+            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
+        else:
+            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
+            raise RuntimeError(f'Model config for {model_name} not found.')
+
+        if force_quick_gelu:
+            # override for use of QuickGELU on non-OpenAI transformer models
+            model_cfg["quick_gelu"] = True
+
+        if pretrained_image:
+            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
+                # pretrained weight loading for timm models set via vision_cfg
+                model_cfg['vision_cfg']['timm_model_pretrained'] = True
+            else:
+                assert False, 'pretrained image towers currently only supported for timm models'
+
+        model = CLIP(**model_cfg)
+        
+        if pretrained:
+            checkpoint_path = ''
+            url = get_pretrained_url(model_name, pretrained)
+            if url:
+                checkpoint_path = download_pretrained(url)
+            elif os.path.exists(pretrained):
+                checkpoint_path = pretrained
+
+            if checkpoint_path:
+                logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
+                model.load_state_dict(load_state_dict(checkpoint_path))
+            else:
+                logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+                raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+
+        model.to(device=device)
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+
+        if jit:
+            model = torch.jit.script(model)
+
+    return model
+    
+    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+    if pretrained.lower() == 'openai':
+        logging.info(f'Loading pretrained {model_name} from OpenAI.')
+        model = load_openai_model(model_name, device=device, jit=jit)
+        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        model = CLIP(**model_cfg)
     else:
         if model_name in _MODEL_CONFIGS:
             logging.info(f'Loading {model_name} model config.')
