@@ -63,7 +63,7 @@ def run(model, classifier, dataloader, args):
 def zero_shot_eval(model, data, epoch, args):
 
     if 'inat2021' in data:
-        logging.info("Starting zero-shot inat.")
+        logging.info("Starting zero-shot inat2021.")
         logging.info('Building zero-shot classifier')
         classifier = zero_shot_classifier(model, inat_classnames, inat_template, args)
 
@@ -72,6 +72,8 @@ def zero_shot_eval(model, data, epoch, args):
         top1, top5 = run(model, classifier, data['inat2021'].dataloader, args)
         results['inat2021-top1'] = top1
         results['inat2021-top5'] = top5
+
+        logging.info('Finished zero-shot inat2021. Top1 was {}, top5 was {}'.format(top1, top5))
 
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}

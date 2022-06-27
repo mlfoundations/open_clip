@@ -47,7 +47,6 @@ class GradCache:
         :param scaler: A GradScaler object for automatic mixed precision training.
         """
         self.models = models
-
         if isinstance(chunk_sizes, int):
             self.chunk_sizes = [chunk_sizes for _ in range(len(models))]
         else:
@@ -211,13 +210,20 @@ class GradCache:
         vision_d = vision.requires_grad_()
         logit_scale = logit_scale.requires_grad_()
         language_d = language.requires_grad_()
-        with autocast() if self.fp16 else nullcontext():
+        with autocast():
+        #with autocast() if self.fp16 else nullcontext():
             loss = self.compute_loss(vision_d, language_d, logit_scale)
-        if self.fp16:
-            loss = self.scaler.scale(loss)
+            if self.scaler is not None:
+                old_loss = loss
+                #logging.debug("scaling, unscaled loss is {}".format(loss))
+                loss = self.scaler.scale(loss)
+                #logging.debug("scaled loss is {}".format(loss))
         #TODO: horovod, amp+distributed
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
-        return v_cache, l_cache, s_cache, loss.detach()
+        if self.scaler is not None:
+            return v_cache, l_cache, s_cache, old_loss.clone().detach()
+        else:
+            return v_cache, l_cache, s_cache, loss.detach()
 
     def forward_backward_vl(
         self,
@@ -299,4 +305,6 @@ class GradCache:
         for model, x, v_rnd_st, l_rnd_st in zip(
                 self.models, model_inputs, all_rnd_states_v, all_rnd_states_l):
             self.forward_backward_vl(model, x, v_cache, l_cache, s_cache, v_rnd_st, l_rnd_st, no_sync_except_last=no_sync_except_last, lock_img=lock_img)
+        # logging.debug("types: vcache, {} lcache {} scache {} loss {}".format(type(v_cache), type(l_cache), type(s_cache), type(loss)))
+        # logging.debug("requires grad: vcache, {} lcache {} scache {} loss {}".format(v_cache[0].requires_grad, l_cache[0].requires_grad, s_cache.requires_grad, loss.requires_grad))
         return loss, s_cache
