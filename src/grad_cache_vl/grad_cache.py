@@ -221,7 +221,7 @@ class GradCache:
         #TODO: horovod, amp+distributed
         (v_cache, l_cache, s_cache) = autograd.grad(loss, [vision_d, language_d, logit_scale])
         if self.scaler is not None:
-            return v_cache, l_cache, s_cache, old_loss.clone().detach()
+            return v_cache, l_cache, logit_scale.clone().detach(), old_loss.clone().detach()
         else:
             return v_cache, l_cache, s_cache, loss.detach()
 
