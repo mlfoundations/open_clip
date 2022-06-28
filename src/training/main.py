@@ -253,7 +253,7 @@ def main():
         train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'inat2021')):
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.
