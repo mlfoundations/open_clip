@@ -1,5 +1,5 @@
 #!/bin/bash -x
-#SBATCH --output=out_%A_%j.log
+#SBATCH --output=logs/out_%A_%j.log
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=4
@@ -7,8 +7,8 @@
 #SBATCH --mem=128GB
 #SBATCH --gres=gpu:mi50:8
 #SBATCH --wait-all-nodes=1
-#SBATCH --job-name=lit_regnetx_320_laion400m_4node_b256
-#SBATCH --dependency=after:21356315
+#SBATCH --job-name=lit_regnetx_320_laion400m_4node_b384
+#SBATCH --dependency=after:21593845
 
 module purge;
 
@@ -46,7 +46,7 @@ srun --cpu_bind=v --accel-bind=v \
     --pretrained-image \
     --lock-image \
     --seed 0 \
-    --resume "logs/2022_06_22-23_51_41-model_timm-regnetx_320-lr_0.0005-b_384-j_4-p_amp/checkpoints/epoch_3.pt" \
+    --resume "/scratch/bf996/open_clip/logs/2022_06_26-05_54_37-model_timm-regnetx_320-lr_0.0005-b_384-j_4-p_amp/checkpoints/epoch_4.pt" \
     --local-loss \
     --gather-with-grad'
 

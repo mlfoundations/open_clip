@@ -33,6 +33,7 @@ share/python-wheels/
 *.egg
 *.code-workspace
 *.pyc
+
 MANIFEST
 
 # PyInstaller

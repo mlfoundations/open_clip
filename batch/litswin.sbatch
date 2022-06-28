@@ -1,5 +1,5 @@
 #!/bin/bash -x
-#SBATCH --output=out_%A_%j.log
+#SBATCH --output=logs/out_%A_%j.log
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
