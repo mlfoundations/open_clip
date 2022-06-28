@@ -210,8 +210,8 @@ class GradCache:
         vision_d = vision.requires_grad_()
         logit_scale = logit_scale.requires_grad_()
         language_d = language.requires_grad_()
+        autocast = torch.cuda.amp.autocast if self.fp16 else nullcontext
         with autocast():
-        #with autocast() if self.fp16 else nullcontext():
             loss = self.compute_loss(vision_d, language_d, logit_scale)
             if self.scaler is not None:
                 old_loss = loss

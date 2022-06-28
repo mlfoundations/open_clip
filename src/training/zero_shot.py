@@ -39,7 +39,9 @@ def run(model, classifier, dataloader, args):
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(args.device)
             target = target.to(args.device)
-
+            #FIXME: handle larger batch sizes gracefully with gradient caching
+            images = images[:args.gpumaxbatch]
+            target = target[:args.gpumaxbatch]
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
