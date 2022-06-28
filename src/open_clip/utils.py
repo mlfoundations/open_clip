@@ -1,3 +1,6 @@
+from itertools import repeat
+import collections.abc
+
 from torch import nn as nn
 from torchvision.ops.misc import FrozenBatchNorm2d
 
@@ -39,3 +42,19 @@ def freeze_batch_norm_2d(module, module_match={}, name=''):
             if new_child is not child:
                 res.add_module(child_name, new_child)
     return res
+
+
+# From PyTorch internals
+def _ntuple(n):
+    def parse(x):
+        if isinstance(x, collections.abc.Iterable):
+            return x
+        return tuple(repeat(x, n))
+    return parse
+
+
+to_1tuple = _ntuple(1)
+to_2tuple = _ntuple(2)
+to_3tuple = _ntuple(3)
+to_4tuple = _ntuple(4)
+to_ntuple = lambda n, x: _ntuple(n)(x)
