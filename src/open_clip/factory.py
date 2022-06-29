@@ -126,7 +126,7 @@ def create_model(
             convert_weights_to_fp16(model)
         model.to(device=device)
         return model
-    elif model_name == "coca":
+    if model_name == "coca":
         enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
         enc = nn.Sequential(*list(enc.children())[:-1])
         model = CoCa(
@@ -149,6 +149,7 @@ def create_model(
         model.to(device=device)
         return model
     
+    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit)
@@ -198,60 +199,6 @@ def create_model(
 
         if jit:
             model = torch.jit.script(model)
-
-    return model
-    
-    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-    if pretrained.lower() == 'openai':
-        logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if precision == "amp" or precision == "fp32":
-            model = model.float()
-        model = CLIP(**model_cfg)
-    else:
-        if model_name in _MODEL_CONFIGS:
-            logging.info(f'Loading {model_name} model config.')
-            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
-        else:
-            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
-            raise RuntimeError(f'Model config for {model_name} not found.')
-
-        if force_quick_gelu:
-            # override for use of QuickGELU on non-OpenAI transformer models
-            model_cfg["quick_gelu"] = True
-
-        if pretrained_image:
-            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
-                # pretrained weight loading for timm models set via vision_cfg
-                model_cfg['vision_cfg']['timm_model_pretrained'] = True
-            else:
-                assert False, 'pretrained image towers currently only supported for timm models'
-
-        model = CLIP(**model_cfg)
-        
-    if pretrained:
-        checkpoint_path = ''
-        url = get_pretrained_url(model_name, pretrained)
-        if url:
-            checkpoint_path = download_pretrained(url)
-        elif os.path.exists(pretrained):
-            checkpoint_path = pretrained
-
-        if checkpoint_path:
-            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-            model.load_state_dict(load_state_dict(checkpoint_path))
-        else:
-            logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-            raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-
-    model.to(device=device)
-    if precision == "fp16":
-        assert device.type != 'cpu'
-        convert_weights_to_fp16(model)
-
-    if jit:
-        model = torch.jit.script(model)
 
     return model
 
