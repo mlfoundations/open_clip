@@ -86,9 +86,8 @@ def create_model(
         pretrained_image: bool = False,
 ):
     if model_name == "coca":
-        # enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
         enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
-        enc = nn.Sequential(*list(model.children())[:-1])
+        enc = nn.Sequential(*list(enc.children())[:-1])
         # enc.head = torch.nn.Sequential(
         #     View((-1, 64, 2048)),
         # )
@@ -247,8 +246,8 @@ def create_model_and_transforms(
     )
     #FIXME hardcoded size
     if model_name == "coca":
-        preprocess_train = image_transform(256, is_train=True)
-        preprocess_val = image_transform(256, is_train=False)
+        preprocess_train = image_transform(224, is_train=True)
+        preprocess_val = image_transform(224, is_train=False)
     else:
         preprocess_train = image_transform(model.visual.image_size, is_train=True)
         preprocess_val = image_transform(model.visual.image_size, is_train=False)
