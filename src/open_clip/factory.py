@@ -16,10 +16,10 @@ from .transform import image_transform
 
 try:
     from coca_pytorch.coca_pytorch import CoCa
-    from vit_pytorch import ViT
-    from vit_pytorch.extractor import Extractor
+    # from vit_pytorch import ViT
+    # from vit_pytorch.extractor import Extractor
 except:
-    logging.debug("coca and vit from lucidrains are not installed")
+    logging.debug("coca-pytorch is not installed")
 
 try:
     import timm
@@ -87,20 +87,21 @@ def create_model(
 ):
     if model_name == "coca":
         # enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
-
+        enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
+        enc = nn.Sequential(*list(model.children())[:-1])
         # enc.head = torch.nn.Sequential(
         #     View((-1, 64, 2048)),
         # )
-        enc = ViT(
-            image_size = 256,
-            patch_size = 32,
-            num_classes = 1000,
-            dim = 1024,
-            depth = 6,
-            heads = 16,
-            mlp_dim = 2048
-        )
-        enc = Extractor(enc, return_embeddings_only = True)
+        # enc = ViT(
+        #     image_size = 256,
+        #     patch_size = 32,
+        #     num_classes = 1000,
+        #     dim = 1024,
+        #     depth = 6,
+        #     heads = 16,
+        #     mlp_dim = 2048
+        # )
+        # enc = Extractor(enc, return_embeddings_only = True)
         # import CoCa and instantiate it
         model = CoCa(
             dim = 512,                     # model dimension
@@ -114,7 +115,12 @@ def create_model(
             caption_loss_weight = 1.,      # weight on the autoregressive caption loss
             contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
         )
-
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+        model.to(device=device)
         return model
     
         model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
