@@ -21,12 +21,13 @@ try:
 except:
     logging.debug("coca-pytorch is not installed")
 
-try:
-    from x_clip import CLIP as XCLIP
+#try:
+from x_clip import CLIP as XCLIP
     # from vit_pytorch import ViT
     # from vit_pytorch.extractor import Extractor
-except:
-    logging.debug("xclip is not installed")
+#except:
+ #   print("xclip is not installed")
+  #  logging.debug("xclip is not installed")
 
 try:
     import timm

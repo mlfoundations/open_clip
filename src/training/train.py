@@ -110,12 +110,20 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                     scaler.update()
                 else:
                     optimizer.step()
-            elif args.model == "coca":
-                total_loss = model(
-                    text = texts,
-                    images = images,
-                    return_loss = True  # set this to True to get the full caption + contrastive loss
-                )
+            elif args.model in ["coca", "xclip"]:
+                if args.model == "xclip":
+                    total_loss = model(
+                        texts,
+                        images,
+                        freeze_image_encoder = args.lock_image,
+                        return_loss = True  # set this to True to get the full caption + contrastive loss
+                    )                
+                else:
+                    total_loss = model(
+                        text = texts,
+                        images = images,
+                        return_loss = True  # set this to True to get the full caption + contrastive loss
+                    )
             else:                    
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
@@ -134,7 +142,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                     optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        if args.model != "coca":
+        if args.model not in ["coca", "xclip"]:
             with torch.no_grad():
                 unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
@@ -154,7 +162,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 logging.info("FEATURES: ")
                 logging.info(image_features)
                 logging.info(text_features)
-            if args.model == "coca":
+            if args.model in ["coca", "xclip"]:
                 logit_scale = torch.tensor([1.0])
             if not args.gc:
                 logit_scale_scalar = logit_scale.item()
