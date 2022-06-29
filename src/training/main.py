@@ -120,6 +120,11 @@ def main():
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
+        filip=args.filip,
+        dcl=args.dcl,
+        elp=args.elp,
+        vssl=args.vssl,
+        mlm=args.mlm
     )
 
     if args.trace:

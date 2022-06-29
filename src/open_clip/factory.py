@@ -22,6 +22,13 @@ except:
     logging.debug("coca-pytorch is not installed")
 
 try:
+    from x_clip import XCLIP
+    # from vit_pytorch import ViT
+    # from vit_pytorch.extractor import Extractor
+except:
+    logging.debug("xclip is not installed")
+
+try:
     import timm
 except ImportError:
     logging.debug("timm is not installed")
@@ -84,24 +91,44 @@ def create_model(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
+        filip: bool = False,
+        dcl: bool = False,
+        elp: bool = False,
+        vssl: bool = False,
+        mlm: bool = False
 ):
-    if model_name == "coca":
+    if any(mlm, vssl, elp, dcl):
+        model = XCLIP(
+            dim_text = 512,
+            dim_image = 512,
+            dim_latent = 512,
+            num_text_tokens = 49408,
+            text_enc_depth = 6,
+            text_seq_len = 224,
+            text_heads = 8,
+            visual_enc_depth = 6,
+            visual_image_size = 224,
+            visual_patch_size = 28,
+            visual_heads = 8,
+            use_all_token_embeds = filip,           # whether to use fine-grained contrastive learning (FILIP)
+            decoupled_contrastive_learning = dcl,  # use decoupled contrastive learning (DCL) objective function, removing positive pairs from the denominator of the InfoNCE loss (CLOOB + DCL)
+            extra_latent_projection = elp,         # whether to use separate projections for text-to-image vs image-to-text comparisons (CLOOB)
+            use_visual_ssl = vssl,                  # whether to do self supervised learning on iages
+            use_mlm = mlm,                        # use masked language learning (MLM) on text (DeCLIP)
+            #TODO: input correct vals here
+            text_ssl_loss_weight = 0.05,            # weight for text MLM loss
+            image_ssl_loss_weight = 0.05            # weight for image self-supervised learning loss
+        )
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+        model.to(device=device)
+        return model
+    elif model_name == "coca":
         enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
         enc = nn.Sequential(*list(enc.children())[:-1])
-        # enc.head = torch.nn.Sequential(
-        #     View((-1, 64, 2048)),
-        # )
-        # enc = ViT(
-        #     image_size = 256,
-        #     patch_size = 32,
-        #     num_classes = 1000,
-        #     dim = 1024,
-        #     depth = 6,
-        #     heads = 16,
-        #     mlp_dim = 2048
-        # )
-        # enc = Extractor(enc, return_embeddings_only = True)
-        # import CoCa and instantiate it
         model = CoCa(
             dim = 512,                     # model dimension
             img_encoder = enc,             # vision transformer - image encoder, returning image embeddings as (batch, seq, dim)
@@ -122,8 +149,6 @@ def create_model(
         model.to(device=device)
         return model
     
-        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit)
