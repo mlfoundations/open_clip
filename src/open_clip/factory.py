@@ -22,7 +22,7 @@ except:
     logging.debug("coca-pytorch is not installed")
 
 try:
-    from x_clip import XCLIP
+    from x_clip import CLIP as XCLIP
     # from vit_pytorch import ViT
     # from vit_pytorch.extractor import Extractor
 except:
@@ -97,7 +97,7 @@ def create_model(
         vssl: bool = False,
         mlm: bool = False
 ):
-    if any(mlm, vssl, elp, dcl):
+    if model_name == "xclip" or any(filip, mlm, vssl, elp, dcl):
         model = XCLIP(
             dim_text = 512,
             dim_image = 512,
@@ -210,14 +210,19 @@ def create_model_and_transforms(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
+        filip: bool = False,
+        dcl: bool = False,
+        elp: bool = False,
+        vssl: bool = False,
+        mlm: bool = False
 ):
     model = create_model(
     model_name, pretrained, precision, device, jit,
     force_quick_gelu=force_quick_gelu,
-    pretrained_image=pretrained_image
+    pretrained_image=pretrained_image, filip=filip, dcl=dcl, elp=elp, vssl=vssl, mlm=mlm
     )
     #FIXME hardcoded size
-    if model_name == "coca":
+    if model_name == "coca" or model_name == "xclip":
         preprocess_train = image_transform(224, is_train=True)
         preprocess_val = image_transform(224, is_train=False)
     else:
