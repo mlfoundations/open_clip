@@ -105,11 +105,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         with autocast():
             if args.gc:
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image), scaler=scaler)
-                if scaler is not None:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
+
             elif args.model in ["coca", "xclip"]:
                 if args.model == "xclip":
                     total_loss = model(
@@ -127,7 +123,12 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             else:                    
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-                if scaler is not None:
+            
+            if scaler is not None:
+                if args.gc:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
                     scaler.scale(total_loss).backward()
                     if args.horovod:
                         optimizer.synchronize()
@@ -137,9 +138,10 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                     else:
                         scaler.step(optimizer)
                     scaler.update()
-                else:
+            else:
+                if not args.gc:
                     total_loss.backward()
-                    optimizer.step()
+                optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         if args.model not in ["coca", "xclip"]:
