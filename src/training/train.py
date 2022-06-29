@@ -104,6 +104,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         with autocast():
             if args.gc:
+                if args.model in ["coca", "xclip"]:
+                    raise("gradient caching not supported yet for this model, sorry!")
                 total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image), scaler=scaler)
 
             elif args.model in ["coca", "xclip"]:
