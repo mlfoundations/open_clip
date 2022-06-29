@@ -127,10 +127,13 @@ def main():
         mlm=args.mlm
     )
 
+    if any([args.filip, args.mlm, args.vssl, args.elp, args.dcl]):
+        args.model = "xclip"
+
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
-    if args.lock_image:
+    if args.lock_image and not args.model == "xclip":
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
