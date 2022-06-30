@@ -55,8 +55,17 @@ def run(model, classifier, dataloader, args):
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
-                    image_features = model.module.encode_image(images)
+                    if args.model_name in ["coca", "xclip"]:
+                        texts = torch.random.rand(len(images), 5)
+                        image_features = model.module(texts, images, return_encodings=True)
+                        image_features = image_features[1]
+                    else:
+                        image_features = model.module.encode_image(images)
                 else:
+                    if args.model_name in ["coca", "xclip"]:
+                        texts = torch.random.rand(len(images), 5)
+                        image_features = model(texts, images, return_encodings=True)
+                        image_features = image_features[1]
                     image_features = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
                 logits = 100. * image_features @ classifier
