@@ -67,7 +67,8 @@ def run(model, classifier, dataloader, args):
                         texts = torch.randint(100, (len(images), 5)).to(args.device)
                         image_features = model(texts, images, return_encodings=True)
                         image_features = image_features[1]
-                    image_features = model.encode_image(images)
+                    else:
+                        image_features = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
                 logits = 100. * image_features @ classifier
 
