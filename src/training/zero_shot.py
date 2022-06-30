@@ -16,9 +16,19 @@ def zero_shot_classifier(model, classnames, templates, args):
             texts = [template(classname) for template in templates]  # format with class
             texts = tokenize(texts).to(args.device)  # tokenize
             if args.distributed and not args.horovod:
-                class_embeddings = model.module.encode_text(texts)
+                if args.model_name in ["coca", "xclip"]:
+                    images = torch.random.rand(len(texts), 3, model.image_size, model.image_size)
+                    class_embeddings = model.module(texts, images, return_encodings=True)
+                    class_embeddings = class_embeddings[0]
+                else:
+                    class_embeddings = model.module.encode_text(texts)
             else:
-                class_embeddings = model.encode_text(texts)
+                if args.model_name in ["coca", "xclip"]:
+                    images = torch.random.rand(len(texts), 3, model.image_size, model.image_size)
+                    class_embeddings = model(texts, images, return_encodings=True)
+                    class_embeddings = class_embeddings[0]     
+                else:
+                    class_embeddings = model.encode_text(texts)
             class_embedding = F.normalize(class_embeddings, dim=-1).mean(dim=0)
             class_embedding /= class_embedding.norm()
             zeroshot_weights.append(class_embedding)
