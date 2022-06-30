@@ -64,7 +64,7 @@ def run(model, classifier, dataloader, args):
                         image_features = model.module.encode_image(images)
                 else:
                     if args.model in ["coca", "xclip"]:
-                        texts = torch.rand(len(images), 5).to(args.device)
+                        texts = torch.randint(100, (len(images), 5)).to(args.device)
                         image_features = model(texts, images, return_encodings=True)
                         image_features = image_features[1]
                     image_features = model.encode_image(images)
