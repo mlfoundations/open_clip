@@ -1,11 +1,11 @@
 #!/bin/bash -x
 #SBATCH --output=logs/out_%A_%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
 #SBATCH --mem=64GB
-#SBATCH --gres=gpu:mi50:8
+#SBATCH --gres=gpu:mi50:4
 #SBATCH --job-name=coca
 
 module purge;

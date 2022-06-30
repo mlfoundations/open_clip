@@ -9,6 +9,7 @@
 #SBATCH --gres=gpu:mi50:8
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=lit_tf_efficientnetv2_xl_in21ft1k_cc12m_1node_b256
+#SBATCH --dependency=after:21651329
 
 module purge;
 
@@ -46,7 +47,7 @@ srun --cpu_bind=v --accel-bind=v \
     --model=timm-tf_efficientnetv2_xl_in21ft1k \
     --pretrained-image \
     --lock-image \
-    --resume "logs/2022_06_20-14_24_17-model_timm-tf_efficientnetv2_xl_in21ft1k-lr_0.0005-b_256-j_4-p_amp/checkpoints/epoch_2.pt" \
+    --resume "/scratch/bf996/open_clip/logs/2022_06_28-06_07_17-model_timm-tf_efficientnetv2_xl_in21ft1k-lr_0.0005-b_256-j_4-p_amp/checkpoints/epoch_3.pt" \
     --seed 0 \
     --local-loss \
     --gather-with-grad'
