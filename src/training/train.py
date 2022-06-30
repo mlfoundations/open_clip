@@ -88,7 +88,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 models=[model , model], 
                 chunk_sizes=args.gpumaxbatch, 
                 loss_fn=loss,
-                fp16=False
+                fp16=False,
+                scaler=scaler
             )
 
     for i, batch in enumerate(dataloader):
@@ -103,7 +104,12 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         with autocast():
             if args.gc:
-                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image))
+                total_loss, logit_scale_scalar = gc([images, texts], vl_model=True, no_sync_except_last=args.distributed, lock_img=(args.lock_image_freeze_bn_stats or args.lock_image), scaler=scaler)
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
             elif args.model == "coca":
                 total_loss = model(
                     text = texts,
@@ -113,19 +119,19 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             else:                    
                 image_features, text_features, logit_scale = model(images, texts)
                 total_loss = loss(image_features, text_features, logit_scale)
-            if scaler is not None:
-                scaler.scale(total_loss).backward()
-                if args.horovod:
-                    optimizer.synchronize()
-                    scaler.unscale_(optimizer)
-                    with optimizer.skip_synchronize():
+                if scaler is not None:
+                    scaler.scale(total_loss).backward()
+                    if args.horovod:
+                        optimizer.synchronize()
+                        scaler.unscale_(optimizer)
+                        with optimizer.skip_synchronize():
+                            scaler.step(optimizer)
+                    else:
                         scaler.step(optimizer)
+                    scaler.update()
                 else:
-                    scaler.step(optimizer)
-                scaler.update()
-            else:
-                total_loss.backward()
-                optimizer.step()
+                    total_loss.backward()
+                    optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         if args.model != "coca":
@@ -135,7 +141,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
-        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
+        STEP_COUNT = 10 if args.debug else 100
+        if is_master(args) and (i % STEP_COUNT == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples

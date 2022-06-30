@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from open_clip import tokenize
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
-
+from .inat_zeroshot_data import inat_classnames, inat_template
 
 def zero_shot_classifier(model, classnames, templates, args):
     with torch.no_grad():
@@ -39,7 +39,9 @@ def run(model, classifier, dataloader, args):
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(args.device)
             target = target.to(args.device)
-
+            #FIXME: handle larger batch sizes gracefully with gradient caching
+            images = images[:args.gpumaxbatch]
+            target = target[:args.gpumaxbatch]
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
@@ -61,6 +63,20 @@ def run(model, classifier, dataloader, args):
 
 
 def zero_shot_eval(model, data, epoch, args):
+
+    if 'inat2021' in data:
+        logging.info("Starting zero-shot inat2021.")
+        logging.info('Building zero-shot classifier')
+        classifier = zero_shot_classifier(model, inat_classnames, inat_template, args)
+
+        logging.info('Using classifier')
+        results = {}
+        top1, top5 = run(model, classifier, data['inat2021'].dataloader, args)
+        results['inat2021-top1'] = top1
+        results['inat2021-top5'] = top5
+
+        logging.info('Finished zero-shot inat2021. Top1 was {}, top5 was {}'.format(top1, top5))
+
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
     if args.zeroshot_frequency == 0:

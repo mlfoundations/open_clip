@@ -7,18 +7,24 @@ from copy import deepcopy
 from pathlib import Path
 
 import torch
+from torch import nn
 
 from .model import CLIP, convert_weights_to_fp16
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
-from coca_pytorch.coca_pytorch import CoCa
-from vit_pytorch import ViT
-from vit_pytorch.extractor import Extractor
 
-import timm
-from torch import einsum, nn
-from einops import rearrange, repeat
+try:
+    from coca_pytorch.coca_pytorch import CoCa
+    # from vit_pytorch import ViT
+    # from vit_pytorch.extractor import Extractor
+except:
+    logging.debug("coca-pytorch is not installed")
+
+try:
+    import timm
+except ImportError:
+    logging.debug("timm is not installed")
 
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
@@ -79,29 +85,22 @@ def create_model(
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
 ):
-    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-    if pretrained.lower() == 'openai':
-        logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if precision == "amp" or precision == "fp32":
-            model = model.float()
-    elif model_name == "coca":
-        # enc = timm.create_model('lambda_resnet26rpt_256', pretrained=True)
-
+    if model_name == "coca":
+        enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
+        enc = nn.Sequential(*list(enc.children())[:-1])
         # enc.head = torch.nn.Sequential(
         #     View((-1, 64, 2048)),
         # )
-        enc = ViT(
-            image_size = 256,
-            patch_size = 32,
-            num_classes = 1000,
-            dim = 1024,
-            depth = 6,
-            heads = 16,
-            mlp_dim = 2048
-        )
-        enc = Extractor(enc, return_embeddings_only = True)
+        # enc = ViT(
+        #     image_size = 256,
+        #     patch_size = 32,
+        #     num_classes = 1000,
+        #     dim = 1024,
+        #     depth = 6,
+        #     heads = 16,
+        #     mlp_dim = 2048
+        # )
+        # enc = Extractor(enc, return_embeddings_only = True)
         # import CoCa and instantiate it
         model = CoCa(
             dim = 512,                     # model dimension
@@ -115,6 +114,76 @@ def create_model(
             caption_loss_weight = 1.,      # weight on the autoregressive caption loss
             contrastive_loss_weight = 1.,  # weight on the contrastive loss between image and text CLS embeddings
         )
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+        model.to(device=device)
+        return model
+    
+        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+
+    if pretrained.lower() == 'openai':
+        logging.info(f'Loading pretrained {model_name} from OpenAI.')
+        model = load_openai_model(model_name, device=device, jit=jit)
+        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+    else:
+        if model_name in _MODEL_CONFIGS:
+            logging.info(f'Loading {model_name} model config.')
+            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
+        else:
+            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
+            raise RuntimeError(f'Model config for {model_name} not found.')
+
+        if force_quick_gelu:
+            # override for use of QuickGELU on non-OpenAI transformer models
+            model_cfg["quick_gelu"] = True
+
+        if pretrained_image:
+            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
+                # pretrained weight loading for timm models set via vision_cfg
+                model_cfg['vision_cfg']['timm_model_pretrained'] = True
+            else:
+                assert False, 'pretrained image towers currently only supported for timm models'
+
+        model = CLIP(**model_cfg)
+        
+        if pretrained:
+            checkpoint_path = ''
+            url = get_pretrained_url(model_name, pretrained)
+            if url:
+                checkpoint_path = download_pretrained(url)
+            elif os.path.exists(pretrained):
+                checkpoint_path = pretrained
+
+            if checkpoint_path:
+                logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
+                model.load_state_dict(load_state_dict(checkpoint_path))
+            else:
+                logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+                raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+
+        model.to(device=device)
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+
+        if jit:
+            model = torch.jit.script(model)
+
+    return model
+    
+    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+    if pretrained.lower() == 'openai':
+        logging.info(f'Loading pretrained {model_name} from OpenAI.')
+        model = load_openai_model(model_name, device=device, jit=jit)
+        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        model = CLIP(**model_cfg)
     else:
         if model_name in _MODEL_CONFIGS:
             logging.info(f'Loading {model_name} model config.')
@@ -177,8 +246,8 @@ def create_model_and_transforms(
     )
     #FIXME hardcoded size
     if model_name == "coca":
-        preprocess_train = image_transform(256, is_train=True)
-        preprocess_val = image_transform(256, is_train=False)
+        preprocess_train = image_transform(224, is_train=True)
+        preprocess_val = image_transform(224, is_train=False)
     else:
         preprocess_train = image_transform(model.visual.image_size, is_train=True)
         preprocess_val = image_transform(model.visual.image_size, is_train=False)

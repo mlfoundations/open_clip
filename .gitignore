@@ -32,6 +32,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 *.code-workspace
+*.pyc
+
 MANIFEST
 
 # PyInstaller

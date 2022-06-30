@@ -73,6 +73,12 @@ def parse_args():
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
+        "--inat2021",
+        type=str,
+        default=None,
+        help="Path to inat 2021 (validation or test folder) for conducting zero shot evaluation.",
+    )
+    parser.add_argument(
         "--logs",
         type=str,
         default="./logs/",

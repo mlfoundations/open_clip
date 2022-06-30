@@ -152,7 +152,11 @@ def main():
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+        if args.model == "coca":
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=True, **ddp_args)
+        else:
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+
 
     # create optimizer and scaler
     optimizer = None
@@ -253,7 +257,7 @@ def main():
         train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'inat2021')):
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.

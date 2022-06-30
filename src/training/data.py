@@ -127,6 +127,25 @@ def get_imagenet(args, preprocess_fns, split):
 
     return DataInfo(dataloader, sampler)
 
+def get_inat(args, preprocess_fns, split):
+    assert split in ["2017", "2018", "2019", "2021"]
+    preprocess_train, preprocess_val = preprocess_fns
+
+    if split == "2021":
+        data_path = args.inat2021
+        preprocess_fn = preprocess_val
+        dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
+        sampler = None
+        dataloader = torch.utils.data.DataLoader(
+        dataset,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            sampler=sampler,
+        )
+    else:
+        print("{} not implemented".format(split))
+
+    return DataInfo(dataloader, sampler)
 
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
@@ -348,5 +367,8 @@ def get_data(args, preprocess_fns, epoch=0):
 
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+
+    if args.inat2021 is not None:
+        data["inat2021"] = get_inat(args, preprocess_fns, "2021")
 
     return data
