@@ -26,7 +26,7 @@ def zero_shot_classifier(model, classnames, templates, args):
                 if args.model in ["coca", "xclip"]:
                     images = torch.rand(len(texts), 3, model.image_size, model.image_size).to(args.device)
                     class_embeddings = model(texts, images, return_encodings=True)
-                    class_embeddings = class_embeddings[0]     
+                    class_embeddings = class_embeddings[0][:, -1, :]     
                 else:
                     class_embeddings = model.encode_text(texts)
             class_embedding = F.normalize(class_embeddings, dim=-1).mean(dim=0)
@@ -59,14 +59,14 @@ def run(model, classifier, dataloader, args):
                     if args.model in ["coca", "xclip"]:
                         texts = torch.rand(len(images), 5).to(args.device)
                         image_features = model.module(texts, images, return_encodings=True)
-                        image_features = image_features[1]
+                        image_features = image_features[1][:, -1, :]
                     else:
                         image_features = model.module.encode_image(images)
                 else:
                     if args.model in ["coca", "xclip"]:
                         texts = torch.randint(100, (len(images), 5)).to(args.device)
                         image_features = model(texts, images, return_encodings=True)
-                        image_features = image_features[1]
+                        image_features = image_features[1][:, -1, :]
                     else:
                         image_features = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
