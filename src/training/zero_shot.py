@@ -50,8 +50,9 @@ def run(model, classifier, dataloader, args):
             images = images.to(args.device)
             target = target.to(args.device)
             #FIXME: handle larger batch sizes gracefully with gradient caching
-            images = images[:args.gpumaxbatch]
-            target = target[:args.gpumaxbatch]
+            if args.gc:
+                images = images[:min(args.gpumaxbatch, len(images)-1)]
+                target = target[:min(args.gpumaxbatch, len(images)-1)]
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
