@@ -1,8 +1,14 @@
 import torch
-import torch.distributed.nn
-from torch import distributed as dist, nn as nn
+import torch.nn as nn
 from torch.nn import functional as F
 import logging
+
+try:
+    import torch.distributed.nn
+    from torch import distributed as dist
+    has_distributed = True
+except ImportError:
+    has_distributed = False
 
 try:
     import horovod.torch as hvd
@@ -19,6 +25,7 @@ def gather_features(
         world_size=1,
         use_horovod=False
 ):
+    assert has_distributed, 'torch.distributed did not import correctly, please use a PyTorch version with support.'
     if use_horovod:
         assert hvd is not None, 'Please install horovod'
         if gather_with_grad:

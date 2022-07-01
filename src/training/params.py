@@ -43,6 +43,12 @@ def parse_args():
         help="Which type of dataset to process."
     )
     parser.add_argument(
+        "--dataset-resampled",
+        default=False,
+        action="store_true",
+        help="Whether to use sampling with replacement for webdataset shard selection."
+    )
+    parser.add_argument(
         "--csv-separator",
         type=str,
         default="\t",
@@ -97,7 +103,7 @@ def parse_args():
         help="Optional identifier for the experiment when storing logs. Otherwise use current time.",
     )
     parser.add_argument(
-        "--workers", type=int, default=1, help="Number of workers per GPU."
+        "--workers", type=int, default=1, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
         "--batch-size", type=int, default=64, help="Batch size per GPU."
@@ -279,7 +285,7 @@ def parse_args():
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
     )
     parser.add_argument(
-        "--seed", type=int, default=4242, help="Default random seed."
+        "--seed", type=int, default=0, help="Default random seed."
     )
     parser.add_argument(
         "--gc",

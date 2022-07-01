@@ -5,11 +5,12 @@ import pathlib
 import re
 from copy import deepcopy
 from pathlib import Path
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
 
-from .model import CLIP, convert_weights_to_fp16
+from .model import CLIP, convert_weights_to_fp16, resize_pos_embed
 from .openai import load_openai_model
 from .pretrained import get_pretrained_url, download_pretrained
 from .transform import image_transform
@@ -74,6 +75,13 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
     if next(iter(state_dict.items()))[0].startswith('module'):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
     return state_dict
+
+
+def load_checkpoint(model, checkpoint_path, strict=True):
+    state_dict = load_state_dict(checkpoint_path)
+    resize_pos_embed(state_dict, model)
+    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+    return incompatible_keys
 
 
 def create_model(
@@ -161,7 +169,7 @@ def create_model(
 
             if checkpoint_path:
                 logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-                model.load_state_dict(load_state_dict(checkpoint_path))
+                load_checkpoint(model, checkpoint_path)
             else:
                 logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
                 raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
@@ -238,11 +246,13 @@ def create_model_and_transforms(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
+        mean: Optional[Tuple[float, ...]] = None,
+        std: Optional[Tuple[float, ...]] = None,
 ):
     model = create_model(
-    model_name, pretrained, precision, device, jit,
-    force_quick_gelu=force_quick_gelu,
-    pretrained_image=pretrained_image
+        model_name, pretrained, precision, device, jit,
+        force_quick_gelu=force_quick_gelu,
+        pretrained_image=pretrained_image
     )
     #FIXME hardcoded size
     if model_name == "coca":

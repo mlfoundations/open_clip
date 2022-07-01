@@ -56,9 +56,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         rank=args.rank,
         world_size=args.world_size,
         use_horovod=args.horovod)
-    dataloader, sampler = data['train'].dataloader, data['train'].sampler
-    if args.distributed and sampler is not None:
-        sampler.set_epoch(epoch)
+
+    data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
+    dataloader = data['train'].dataloader
     num_batches_per_epoch = dataloader.num_batches
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
