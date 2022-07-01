@@ -70,6 +70,19 @@ VRAM may be anywhere from 16GB to 40GB, depending on which cards you request or 
 
 ## Datasets (Train)
 
+### CC3M
+
+```bash
+# SINGULARITY
+--overlay /vast/work/public/ml-datasets/conceptual-captions/cc_data.sqf:ro
+
+#OPENCLIP
+--train-data="~/Train_GCC-training_output.csv"      
+--val-data="~/Validation_GCC-1.1.0-Validation_output.csv"   
+--csv-img-key filepath     
+--csv-caption-key title
+```
+
 ### CC12M
 
 ```bash
