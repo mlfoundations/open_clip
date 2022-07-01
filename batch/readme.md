@@ -124,3 +124,11 @@ ImageNet V2 should download and install automatically the first time your script
 ```bash
 --imagenet-v2 "INSTALL_PATH" \
 ```
+
+## Arguments to OpenCLIP
+
+The easiest way to get a sense of the arguments OpenCLIP accepts is to read the arg parser.
+
+```
+src/training/params.py
+```
