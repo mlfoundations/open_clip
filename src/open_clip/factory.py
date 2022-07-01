@@ -243,7 +243,10 @@ def create_model_and_transforms(
     pretrained_image=pretrained_image, filip=filip, dcl=dcl, elp=elp, vssl=vssl, mlm=mlm
     )
     #FIXME hardcoded size
-    if model_name == "coca" or model_name == "xclip" or any([filip, mlm, vssl, elp, dcl]):
+    if model_name == "coca":
+        preprocess_train = image_transform(224, is_train=True)
+        preprocess_val = image_transform(224, is_train=False)
+    elif model_name == "xclip" or any([filip, mlm, vssl, elp, dcl]):
         preprocess_train = image_transform(model.image_size, is_train=True)
         preprocess_val = image_transform(model.image_size, is_train=False)
     else:
