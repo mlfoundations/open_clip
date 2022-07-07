@@ -3,6 +3,7 @@ wandb/
 models/
 features/
 results/
+yfcc-subsets/
 cmd.txt
 
 # Byte-compiled / optimized / DLL files
