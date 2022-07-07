@@ -268,7 +268,7 @@ tensorboard --logdir=logs/tensorboard/ --port=7777
 python -m training.main \
     --val-data="/path/to/validation_data.csv"  \
     --model RN101 \
-    --preretrained /path/to/checkpoints/epoch_K.pt
+    --pretrained /path/to/checkpoints/epoch_K.pt
 ```
 
 ### Evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
@@ -277,7 +277,7 @@ python -m training.main \
 python -m training.main \
     --imagenet-val /path/to/imagenet/validation \
     --model ViT-B-32-quickgelu \
-    --preretrained laion400m_e32
+    --pretrained laion400m_e32
 ```
 
 ## Pretrained model details
