@@ -11,6 +11,7 @@ We further this with a replication study on a dataset of comparable size to Open
   * ViT-B/32 and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
   * ViT-B/16 and achieve an accuracy of **67.1%**, comparable to OpenAI's **68.3%** (as measured here, 68.6% in paper)
   * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) and achieve an accuracy of **69.2%**
+  * ViT-L/14 and achieve an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -289,7 +290,7 @@ weights may be found in release [v0.2](https://github.com/mlfoundations/open_cli
 
 The LAION400M weights have been trained on the JUWELS supercomputer (see acknowledgements section below).
 
-#### ViT-B/32
+#### ViT-B/32 224x224
 
 We replicate OpenAI's results on ViT-B/32, reaching a top-1 ImageNet-1k zero-shot accuracy of 62.96%.
 
@@ -300,7 +301,7 @@ __Zero-shot comparison (courtesy of Andreas Fürst)__
 
 ViT-B/32 was trained with 128 A100 (40 GB) GPUs for ~36 hours, 4600 GPU-hours. The per-GPU batch size was 256 for a global batch size of 32768. 256 is much lower than it could have been (~320-384) due to being sized initially before moving to 'local' contrastive loss.
 
-#### ViT-B/16
+#### ViT-B/16 224x224
 
 The B/16 LAION400M training reached a top-1 ImageNet-1k zero-shot validation score of 67.07.
 
@@ -325,11 +326,19 @@ Unlike the B/16 run above, this model was a clean run with no dataset shuffling 
 
 ViT-B/16+ was trained with 224 A100 (40 GB) GPUS for ~61 hours, 13620 GPU-hours. Batch size per GPU was 160 for a global batch size of 35840.
 
+#### ViT-L/14 224x224
+
+The L/14 LAION-400M training reached a top-1 ImageNet-1k zero-shot validation score of 72.77.
+
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_clip_zeroshot_l14.png" width="700">
+
+ViT-L/14 was trained with 400 A100 (40 GB) GPUS for ~127 hours, 50800 GPU-hours. Batch size per GPU was 96 for a global batch size of 38400. Grad checkpointing was enabled.
+
 ### LAION-2B (en) - https://laion.ai/laion-5b-a-new-era-of-open-large-scale-multi-modal-datasets/
 
 A ~2B sample subset of LAION-5B with english captions (https://huggingface.co/datasets/laion/laion2B-en)
 
-#### ViT-B/32
+#### ViT-B/32 224x224
 A ViT-B/32 trained on LAION-2B, reaching a top-1 ImageNet-1k zero-shot accuracy of 65.62%.
 
 <img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion2b_clip_zeroshot_b32.png" width="700">

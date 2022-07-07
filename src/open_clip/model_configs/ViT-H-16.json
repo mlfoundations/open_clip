@@ -12,6 +12,6 @@
         "vocab_size": 49408,
         "width": 1024,
         "heads": 16,
-        "layers": 12
+        "layers": 24
     }
 }
