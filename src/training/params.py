@@ -85,6 +85,12 @@ def parse_args():
         help="Path to inat 2021 (validation or test folder) for conducting zero shot evaluation.",
     )
     parser.add_argument(
+        "--stanfordcars",
+        type=str,
+        default=None,
+        help="Path to stanford cars (validation or test folder) for conducting zero shot evaluation.",
+    )
+    parser.add_argument(
         "--logs",
         type=str,
         default="./logs/",

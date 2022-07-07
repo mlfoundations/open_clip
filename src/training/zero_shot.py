@@ -7,7 +7,12 @@ from tqdm import tqdm
 
 from open_clip import tokenize
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
-from .inat_zeroshot_data import inat_classnames, inat_template
+try:
+    from .inat_zeroshot_data import inat_classnames, inat_template
+    from .cars_zeroshot_data import cars_classnames, cars_template
+except Exception as e:
+    print(e)
+
 
 def zero_shot_classifier(model, classnames, templates, args):
     with torch.no_grad():
@@ -97,6 +102,19 @@ def zero_shot_eval(model, data, epoch, args):
         results['inat2021-top5'] = top5
 
         logging.info('Finished zero-shot inat2021. Top1 was {}, top5 was {}'.format(top1, top5))
+
+    if 'stanfordcars' in data:
+        logging.info("Starting zero-shot stanfordcars.")
+        logging.info('Building zero-shot classifier')
+        classifier = zero_shot_classifier(model, cars_classnames, cars_template, args)
+
+        logging.info('Using classifier')
+        results = {}
+        top1, top5 = run(model, classifier, data['stanfordcars'].dataloader, args)
+        results['stanfordcars-top1'] = top1
+        results['stanfordcars-top5'] = top5
+
+        logging.info('Finished zero-shot stanfordcars. Top1 was {}, top5 was {}'.format(top1, top5))
 
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}

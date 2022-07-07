@@ -32,26 +32,15 @@ class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t"):
         logging.debug(f'Loading csv data from {input_filename}')
         df = pd.read_csv(input_filename, sep=sep)
-
         self.images = df[img_key].tolist()
         self.captions = df[caption_key].tolist()
-        # print("captions: ")
-        # logging.debug("{}".format(self.captions[:10]))
-        # print("images: ")
-        # logging.debug("{}".format(self.images[:10]))
         self.transforms = transforms
-        # try:
-        #     f = self.transforms(Image.open(str(self.images[0])))
-        #     logging.debug("image loaded")
-        # except Exception as e:
-        #     logging.debug(e)
         logging.debug('Done loading data')
 
     def __len__(self):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        # logging.debug("index is {}".format(str(self.images[idx])))
         try:
             images = self.transforms(Image.open(str(self.images[idx])))
             texts = tokenize([str(self.captions[idx])])[0]
@@ -178,6 +167,22 @@ def get_inat(args, preprocess_fns, split):
         )
     else:
         print("{} not implemented".format(split))
+
+    return DataInfo(dataloader, sampler)
+
+def get_stanfordcars(args, preprocess_fns):
+    preprocess_train, preprocess_val = preprocess_fns
+
+    data_path = args.stanfordcars
+    preprocess_fn = preprocess_val
+    dataset = datasets.StanfordCars(root: str = data_path, split: str = 'test', transform: Optional[Callable] = preprocess_fn, target_transform: Optional[Callable] = None, download: bool = True)
+    sampler = None
+    dataloader = torch.utils.data.DataLoader(
+    dataset,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        sampler=sampler,
+    )
 
     return DataInfo(dataloader, sampler)
 
@@ -508,5 +513,8 @@ def get_data(args, preprocess_fns, epoch=0):
 
     if args.inat2021 is not None:
         data["inat2021"] = get_inat(args, preprocess_fns, "2021")
+
+    if args.stanfordcars is not None:
+        data["stanfordcars"] = get_stanfordcars(args, preprocess_fns)
 
     return data

@@ -12,4 +12,5 @@ braceexpand
 tensorboard
 timm
 wandb
+scipy
 git+https://github.com/modestyachts/ImageNetV2_pytorch
