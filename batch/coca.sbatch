@@ -1,12 +1,14 @@
 #!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
+#SBATCH --output=logs/SLURM/out_%A_%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=4
-#SBATCH --time=47:59:00
+#SBATCH --time=99:59:00
 #SBATCH --mem=64GB
-#SBATCH --gres=gpu:mi50:8
+#SBATCH --gres=gpu:mi50:2
 #SBATCH --job-name=coca
+#SBATCH --mail-type=BEGIN,END
+#SBATCH --mail-user=bf996@nyu.edu
 
 module purge;
 
@@ -25,17 +27,4 @@ echo "MASTER_ADDR="$MASTER_ADDR
 srun --cpu_bind=v --accel-bind=v \
     /bin/bash src/script/run-singularity-rocm.bash \
     /bin/bash -c \
-    'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py \
-    --save-frequency 1 \
-    --report-to wandb \
-    --dataset-type webdataset \
-    --train-data "/vast/work/public/ml-datasets/laion400m/{00000..10000}.tar" \
-    --train-num-samples 50000000 \
-    --warmup 2000 \
-    --batch-size=256 \
-    --wd=0.1 \
-    --epochs=32 \
-    --workers=4 \
-    --model=coca \
-    --local-loss \
-    --gather-with-grad'
+    'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py --save-frequency 1 --report-to wandb --dataset-type webdataset --train-data "/vast/work/public/ml-datasets/laion400m/{00000..10000}.tar" --train-num-samples 50000000 --warmup 2000 --batch-size=128 --wd=0.1 --epochs=32 --workers=4 --model=coca --local-loss --gather-with-grad'

@@ -298,6 +298,41 @@ def parse_args():
         default=32,
         help="max per-GPU batch size for gradient caching",
     )
+    parser.add_argument(
+        "--filip",
+        default=False,
+        help="whether to use fine-grained contrastive learning (FILIP)",
+    )
+    parser.add_argument(
+        "--dcl",
+        default=False,
+        help="use decoupled contrastive learning (DCL) objective function, removing positive pairs from the denominator of the InfoNCE loss (CLOOB + DCL)",
+    )
+    parser.add_argument(
+        "--elp",
+        default=False,
+        help="whether to use separate projections for text-to-image vs image-to-text comparisons (CLOOB)",
+    )
+    parser.add_argument(
+        "--vssl",
+        default=False,
+        help="whether to do self supervised learning on iages",
+    )
+    parser.add_argument(
+        "--mlm",
+        default=False,
+        help="use masked language learning (MLM) on text (DeCLIP)",
+    )
+    parser.add_argument(
+        "--text_ssl_loss_weight",
+        type=float, default=.05,
+        help="use masked language learning (MLM) on text (DeCLIP)",
+    )
+    parser.add_argument(
+        "--image_ssl_loss_weight",
+        type=float, default=.05,
+        help="use masked language learning (MLM) on text (DeCLIP)",
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.

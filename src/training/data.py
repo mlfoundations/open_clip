@@ -30,28 +30,41 @@ from open_clip import tokenize
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t"):
-        logging.debug(f'Loading csv data from {input_filename}.')
+        logging.debug(f'Loading csv data from {input_filename}')
         df = pd.read_csv(input_filename, sep=sep)
 
         self.images = df[img_key].tolist()
         self.captions = df[caption_key].tolist()
+        # print("captions: ")
+        # logging.debug("{}".format(self.captions[:10]))
+        # print("images: ")
+        # logging.debug("{}".format(self.images[:10]))
         self.transforms = transforms
-        logging.debug('Done loading data.')
+        # try:
+        #     f = self.transforms(Image.open(str(self.images[0])))
+        #     logging.debug("image loaded")
+        # except Exception as e:
+        #     logging.debug(e)
+        logging.debug('Done loading data')
 
     def __len__(self):
         return len(self.captions)
 
     def __getitem__(self, idx):
+        # logging.debug("index is {}".format(str(self.images[idx])))
         try:
             images = self.transforms(Image.open(str(self.images[idx])))
             texts = tokenize([str(self.captions[idx])])[0]
-        except:
+            logging.debug("texts is {}".format(texts))
+        except Exception as e:
             logging.debug("Missing or unreadable image at {}, generating dummy image and caption.".format(str(self.images[idx])))
+            logging.debug("error message {}".format(e))
             imarray = np.random.rand(224,224,3) * 255
             images = self.transforms(
                 Image.fromarray(imarray.astype('uint8')).convert('RGBA')
                 )
             texts = tokenize(["**dummy*image**"])[0]
+        return images, texts
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
@@ -105,7 +118,7 @@ def get_dataset_size(shards):
 
 def get_imagenet(args, preprocess_fns, split):
     assert split in ["train", "val", "v2"]
-    is_train = split == "train"
+    is_train = (split == "train")
     preprocess_train, preprocess_val = preprocess_fns
 
     if split == "v2":
@@ -414,6 +427,18 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
+def my_collate(batch):
+    logging.debug("batch contents: {}".format(batch))
+    len_batch = len(batch) # original batch length
+    # logging.debug("Before filter, batch length is {}".format(len_batch))
+    batch = list(filter (lambda x:x is not None, batch)) # filter out all the Nones
+    # logging.debug("After filter, batch length is {}".format(len(batch)))
+    if len_batch > len(batch): # if there are samples missing just use existing members, doesn't work if you reject every sample in a batch
+        diff = len_batch - len(batch)
+        for i in range(diff):
+            batch = batch + batch[:diff]
+    return torch.utils.data.dataloader.default_collate(batch)
+
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
@@ -426,7 +451,6 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
-
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -435,10 +459,14 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
+        collate_fn=my_collate
     )
     dataloader.num_samples = num_samples
     dataloader.num_batches = len(dataloader)
-
+#    try:
+    # logging.debug("{}".format(next(iter(dataloader))))
+#    except Exception as e:
+#        logging.debug("could not load from dataloader: {}".format(e))
     return DataInfo(dataloader, sampler)
 
 

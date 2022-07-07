@@ -121,13 +121,21 @@ def main():
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
+        filip=args.filip,
+        dcl=args.dcl,
+        elp=args.elp,
+        vssl=args.vssl,
+        mlm=args.mlm
     )
     random_seed(args.seed, args.rank)
+
+    if any([args.filip, args.mlm, args.vssl, args.elp, args.dcl]):
+        args.model = "xclip"
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
-    if args.lock_image:
+    if args.lock_image and not args.model == "xclip":
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
@@ -154,7 +162,7 @@ def main():
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
-        if args.model == "coca":
+        if args.model in ["coca", "xclip"]:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=True, **ddp_args)
         else:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)

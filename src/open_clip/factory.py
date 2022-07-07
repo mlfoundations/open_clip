@@ -23,6 +23,13 @@ except:
     logging.debug("coca-pytorch is not installed")
 
 try:
+    from x_clip import CLIP as XCLIP
+    # from vit_pytorch import ViT
+    # from vit_pytorch.extractor import Extractor
+except:
+    logging.debug("xclip is not installed")
+
+try:
     import timm
 except ImportError:
     logging.debug("timm is not installed")
@@ -92,24 +99,65 @@ def create_model(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
+        filip: bool = False,
+        dcl: bool = False,
+        elp: bool = False,
+        vssl: bool = False,
+        mlm: bool = False
 ):
+    if model_name == "xclip" or any([filip, mlm, vssl, elp, dcl]):
+        enc = timm.create_model(model_name, pretrained=True).cuda() if pretrained_image else None
+        if enc:
+            enc = nn.Sequential(*list(enc.children())[:-1])
+        model = XCLIP(
+            image_encoder = enc,
+            dim_image = 512,           # must be set as the same dimensions as the vision transformer above
+            dim_text = 512,
+            dim_latent = 512,
+            num_text_tokens = 49408,
+            text_enc_depth = 6,
+            text_seq_len = 256,
+            text_heads = 8,
+            use_all_token_embeds = filip,           # whether to use fine-grained contrastive learning (FILIP)
+            decoupled_contrastive_learning = dcl,  # use decoupled contrastive learning (DCL) objective function, removing positive pairs from the denominator of the InfoNCE loss (CLOOB + DCL)
+            extra_latent_projection = elp,         # whether to use separate projections for text-to-image vs image-to-text comparisons (CLOOB)
+            use_visual_ssl = vssl,                  # whether to do self supervised learning on iages
+            use_mlm = mlm,                        # use masked language learning (MLM) on text (DeCLIP)
+            #TODO: input correct vals here
+            text_ssl_loss_weight = 0.05,            # weight for text MLM loss
+            image_ssl_loss_weight = 0.05            # weight for image self-supervised learning loss
+        )
+        # model = XCLIP(
+        #     dim_text = 512,
+        #     dim_image = 512,
+        #     dim_latent = 512,
+        #     num_text_tokens = 49408,
+        #     text_enc_depth = 6,
+        #     text_seq_len = 224,
+        #     text_heads = 8,
+        #     visual_enc_depth = 6,
+        #     visual_image_size = 224,
+        #     visual_patch_size = 28,
+        #     visual_heads = 8,
+        #     use_all_token_embeds = filip,           # whether to use fine-grained contrastive learning (FILIP)
+        #     decoupled_contrastive_learning = dcl,  # use decoupled contrastive learning (DCL) objective function, removing positive pairs from the denominator of the InfoNCE loss (CLOOB + DCL)
+        #     extra_latent_projection = elp,         # whether to use separate projections for text-to-image vs image-to-text comparisons (CLOOB)
+        #     use_visual_ssl = vssl,                  # whether to do self supervised learning on iages
+        #     use_mlm = mlm,                        # use masked language learning (MLM) on text (DeCLIP)
+        #     #TODO: input correct vals here
+        #     text_ssl_loss_weight = 0.05,            # weight for text MLM loss
+        #     image_ssl_loss_weight = 0.05            # weight for image self-supervised learning loss
+        # )
+        if precision == "amp" or precision == "fp32":
+            model = model.float()
+        if precision == "fp16":
+            assert device.type != 'cpu'
+            convert_weights_to_fp16(model)
+        model.to(device=device)
+        return model
     if model_name == "coca":
         enc = timm.create_model('vit_large_patch32_224_in21k', pretrained=True).cuda()
         enc = nn.Sequential(*list(enc.children())[:-1])
-        # enc.head = torch.nn.Sequential(
-        #     View((-1, 64, 2048)),
-        # )
-        # enc = ViT(
-        #     image_size = 256,
-        #     patch_size = 32,
-        #     num_classes = 1000,
-        #     dim = 1024,
-        #     depth = 6,
-        #     heads = 16,
-        #     mlp_dim = 2048
-        # )
-        # enc = Extractor(enc, return_embeddings_only = True)
-        # import CoCa and instantiate it
         model = CoCa(
             dim = 512,                     # model dimension
             img_encoder = enc,             # vision transformer - image encoder, returning image embeddings as (batch, seq, dim)
@@ -130,8 +178,7 @@ def create_model(
         model.to(device=device)
         return model
     
-        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-
+    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit)
@@ -183,60 +230,6 @@ def create_model(
             model = torch.jit.script(model)
 
     return model
-    
-    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-    if pretrained.lower() == 'openai':
-        logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if precision == "amp" or precision == "fp32":
-            model = model.float()
-        model = CLIP(**model_cfg)
-    else:
-        if model_name in _MODEL_CONFIGS:
-            logging.info(f'Loading {model_name} model config.')
-            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
-        else:
-            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
-            raise RuntimeError(f'Model config for {model_name} not found.')
-
-        if force_quick_gelu:
-            # override for use of QuickGELU on non-OpenAI transformer models
-            model_cfg["quick_gelu"] = True
-
-        if pretrained_image:
-            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
-                # pretrained weight loading for timm models set via vision_cfg
-                model_cfg['vision_cfg']['timm_model_pretrained'] = True
-            else:
-                assert False, 'pretrained image towers currently only supported for timm models'
-
-        model = CLIP(**model_cfg)
-        
-    if pretrained:
-        checkpoint_path = ''
-        url = get_pretrained_url(model_name, pretrained)
-        if url:
-            checkpoint_path = download_pretrained(url)
-        elif os.path.exists(pretrained):
-            checkpoint_path = pretrained
-
-        if checkpoint_path:
-            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-            model.load_state_dict(load_state_dict(checkpoint_path))
-        else:
-            logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-            raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-
-    model.to(device=device)
-    if precision == "fp16":
-        assert device.type != 'cpu'
-        convert_weights_to_fp16(model)
-
-    if jit:
-        model = torch.jit.script(model)
-
-    return model
 
 def create_model_and_transforms(
         model_name: str,
@@ -253,11 +246,24 @@ def create_model_and_transforms(
         model_name, pretrained, precision, device, jit,
         force_quick_gelu=force_quick_gelu,
         pretrained_image=pretrained_image
+        filip: bool = False,
+        dcl: bool = False,
+        elp: bool = False,
+        vssl: bool = False,
+        mlm: bool = False
+):
+    model = create_model(
+    model_name, pretrained, precision, device, jit,
+    force_quick_gelu=force_quick_gelu,
+    pretrained_image=pretrained_image, filip=filip, dcl=dcl, elp=elp, vssl=vssl, mlm=mlm
     )
     #FIXME hardcoded size
     if model_name == "coca":
         preprocess_train = image_transform(224, is_train=True)
         preprocess_val = image_transform(224, is_train=False)
+    elif model_name == "xclip" or any([filip, mlm, vssl, elp, dcl]):
+        preprocess_train = image_transform(model.image_size, is_train=True)
+        preprocess_val = image_transform(model.image_size, is_train=False)
     else:
         preprocess_train = image_transform(model.visual.image_size, is_train=True)
         preprocess_val = image_transform(model.visual.image_size, is_train=False)
