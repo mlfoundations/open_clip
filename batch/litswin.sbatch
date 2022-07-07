@@ -1,13 +1,15 @@
 #!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
+#SBATCH --output=logs/SLURM/out_%A_%j.log
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --time=47:59:00
-#SBATCH --mem=64GB
-#SBATCH --gpus-per-node=4
-#SBATCH --wait-all-nodes=1
+#SBATCH --mem=128GB
+#SBATCH --gres=gpu:4
+#bzatch --wait-all-nodes=1
 #SBATCH --job-name=lit_swin_laion400m_4node_b512.sbatch
+#SBATCH --mail-type=BEGIN,END
+#SBATCH --mail-user=bf996@nyu.edu
 
 module purge;
 
@@ -28,4 +30,4 @@ echo "MASTER_ADDR="$MASTER_ADDR
 srun --cpu_bind=v --accel-bind=v \
     /bin/bash src/script/run-singularity.bash \
     /bin/bash -c \
-    'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py --save-frequency 1 --report-to wandb --dataset-type webdataset --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" --train-num-samples 400000000 --imagenet-val "/imagenet/val/" --zeroshot-frequency=1 --warmup 2000 --batch-size=512 --wd=0.1 --epochs=32 --workers=4 --model=timm-swin_base_patch4_window7_224 --pretrained-image --lock-image --seed 0 --resume "logs/2022_06_23-03_24_44-model_timm-swin_base_patch4_window7_224-lr_0.0005-b_768-j_4-p_amp/checkpoints/epoch_4.pt" --local-loss --gather-with-grad'
+    'export PYTHONPATH="$PYTHONPATH:$PWD/src"; python src/training/main.py --save-frequency 1 --report-to wandb --dataset-type webdataset --train-data "/vast/work/public/ml-datasets/laion400m/{00000..41400}.tar" --train-num-samples 400000000 --imagenet-val "/imagenet/val/" --zeroshot-frequency=1 --warmup 2000 --batch-size=256 --wd=0.1 --epochs=32 --workers=4 --model=timm-swin_base_patch4_window7_224 --pretrained-image --lock-image --seed 0 --resume "/scratch/bf996/open_clip/logs/swin-ep5/checkpoints/epoch_5.pt" --local-loss --gather-with-grad'

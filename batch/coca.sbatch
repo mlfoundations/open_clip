@@ -1,5 +1,5 @@
 #!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
+#SBATCH --output=logs/SLURM/out_%A_%j.log
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=4
@@ -7,6 +7,8 @@
 #SBATCH --mem=64GB
 #SBATCH --gres=gpu:mi50:2
 #SBATCH --job-name=coca
+#SBATCH --mail-type=BEGIN,END
+#SBATCH --mail-user=bf996@nyu.edu
 
 module purge;
 

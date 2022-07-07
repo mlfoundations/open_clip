@@ -1,5 +1,5 @@
 #!/bin/bash -x
-#SBATCH --output=logs/out_%A_%j.log
+#SBATCH --output=logs/SLURM/out_%A_%j.log
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=4
@@ -9,6 +9,8 @@
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=lit_regnetx_320_laion400m_4node_b384
 #SBATCH --dependency=after:21593845
+#SBATCH --mail-type=BEGIN,END
+#SBATCH --mail-user=bf996@nyu.edu
 
 module purge;
 
