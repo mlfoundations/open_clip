@@ -245,13 +245,13 @@ def create_model_and_transforms(
     model = create_model(
         model_name, pretrained, precision, device, jit,
         force_quick_gelu=force_quick_gelu,
-        pretrained_image=pretrained_image
+        pretrained_image=pretrained_image,
         filip: bool = False,
         dcl: bool = False,
         elp: bool = False,
         vssl: bool = False,
         mlm: bool = False
-):
+    ):
     model = create_model(
     model_name, pretrained, precision, device, jit,
     force_quick_gelu=force_quick_gelu,
