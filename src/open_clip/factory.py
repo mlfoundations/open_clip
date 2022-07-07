@@ -239,19 +239,12 @@ def create_model_and_transforms(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
-        mean: Optional[Tuple[float, ...]] = None,
-        std: Optional[Tuple[float, ...]] = None,
-):
-    model = create_model(
-        model_name, pretrained, precision, device, jit,
-        force_quick_gelu=force_quick_gelu,
-        pretrained_image=pretrained_image,
         filip: bool = False,
         dcl: bool = False,
         elp: bool = False,
         vssl: bool = False,
         mlm: bool = False
-    ):
+):
     model = create_model(
     model_name, pretrained, precision, device, jit,
     force_quick_gelu=force_quick_gelu,
