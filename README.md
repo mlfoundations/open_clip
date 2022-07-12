@@ -431,7 +431,7 @@ For more information on effective robustness, please see:
 - [Taori et al., 2020](https://arxiv.org/abs/2007.00644).
 - [Miller et al., 2021](https://arxiv.org/abs/2107.04649).
 
-To know more about the factors that contribute CLIP's robustness refer to [Fang et al., 2022](https://arxiv.org/abs/2205.01397).
+To know more about the factors that contribute to CLIP's robustness refer to [Fang et al., 2022](https://arxiv.org/abs/2205.01397).
 
 ## Acknowledgments
 
