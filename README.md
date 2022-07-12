@@ -423,13 +423,15 @@ quantifies robustness as accuracy beyond this baseline, i.e., how far a model li
 Even though the CLIP models trained with
 this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
 trend of improved effective robustness (the purple line). Therefore, we can study what makes
-CLIP robust without requiring industrial-scale compute.
+CLIP robust without requiring industrial-scale compute. 
 
-For more more information on effective robustness, please see:
+For more information on effective robustness, please see:
 
 - [Recht et al., 2019](https://arxiv.org/abs/1902.10811).
 - [Taori et al., 2020](https://arxiv.org/abs/2007.00644).
 - [Miller et al., 2021](https://arxiv.org/abs/2107.04649).
+
+To know more about the factors that contribute CLIP's robustness refer to [Fang et al., 2022](https://arxiv.org/abs/2205.01397).
 
 ## Acknowledgments
 
