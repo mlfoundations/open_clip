@@ -246,9 +246,6 @@ def parse_args():
         help="Notes if logging with wandb"
     )
     parser.add_argument(
-        "--C", type=float, default=3.16, help="inverse regularizer for logistic reg."
-    )
-    parser.add_argument(
         "--debug",
         default=False,
         action="store_true",
