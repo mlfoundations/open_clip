@@ -142,6 +142,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
+            samples_second_m.reset()
     # end for
 
 
