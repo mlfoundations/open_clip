@@ -116,7 +116,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
-                f"Samples/Second: {samples_second_m.avg:#g}"
+                f"Samples/Second: {samples_second_m.avg:#g} "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f} "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
