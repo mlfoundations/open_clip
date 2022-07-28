@@ -115,7 +115,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f} "
+                f"Batch (t): {batch_time_m.avg:.3f}, {args.batch_size*args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f}"
             )
@@ -125,6 +125,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
+                "samples_per_scond": args.batch_size*args.world_size / batch_time_m.val,
                 "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
