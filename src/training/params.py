@@ -278,6 +278,9 @@ def parse_args():
     parser.add_argument(
         "--seed", type=int, default=0, help="Default random seed."
     )
+    parser.add_argument(
+        "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
