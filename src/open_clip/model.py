@@ -196,8 +196,13 @@ class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
 
     def forward(self, x: torch.Tensor):
-        orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        orig_type, eps = x.dtype, self.eps
+
+        if orig_type == torch.float16:
+            # higher epsilon for layernorms in fp16, from @Veldrovive
+            eps = max(eps, 1e-3)
+
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, eps)
         return x.to(orig_type)
 
 
