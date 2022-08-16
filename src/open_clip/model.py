@@ -324,6 +324,7 @@ class CLIPTextCfg:
     width: int = 512
     heads: int = 8
     layers: int = 12
+    ln_post_emb: bool = False
 
 
 class CLIP(nn.Module):
@@ -389,6 +390,7 @@ class CLIP(nn.Module):
         self.vocab_size = text_cfg.vocab_size
         self.token_embedding = nn.Embedding(text_cfg.vocab_size, text_cfg.width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, text_cfg.width))
+        self.ln_post_emb = LayerNorm(text_cfg.width) if text_cfg.ln_post_emb else None
         self.ln_final = LayerNorm(text_cfg.width)
 
         self.text_projection = nn.Parameter(torch.empty(text_cfg.width, embed_dim))
@@ -439,8 +441,11 @@ class CLIP(nn.Module):
 
     def encode_text(self, text):
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
-
         x = x + self.positional_embedding
+
+        if self.ln_post_emb is not None:
+            x = self.ln_post_emb(x)
+
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
