@@ -195,14 +195,17 @@ class ModifiedResNet(nn.Module):
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
 
-    def forward(self, x: torch.Tensor):
-        orig_type, eps = x.dtype, self.eps
+    def forward(self, x: torch.Tensor, stable: bool = False):
+        if stable:
+            # from https://arxiv.org/abs/2105.13290
+            # alleviates overflows for the last layernorm in pre-norm transformers, during calculation of variance
+            x = x / x.amax(dim=-1, keepdim=True).detach()
 
+        orig_type, eps = x.dtype, self.eps
         if orig_type == torch.float16:
             # higher epsilon for layernorms in fp16, from @Veldrovive
             eps = max(eps, 1e-3)
-
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, eps)
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
 
 
@@ -300,7 +303,7 @@ class VisualTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        x = self.ln_post(x[:, 0, :])
+        x = self.ln_post(x[:, 0, :], stable=True)
 
         if self.proj is not None:
             x = x @ self.proj
@@ -454,7 +457,7 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
+        x = self.ln_final(x, stable=True)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
