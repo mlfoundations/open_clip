@@ -332,7 +332,7 @@ class CLIPTextCfg:
     width: int = 512
     heads: int = 8
     layers: int = 12
-    ln_post_emb: bool = False
+    ln_post_emb: bool = True
 
 
 class CLIP(nn.Module):
