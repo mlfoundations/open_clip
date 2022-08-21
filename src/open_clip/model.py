@@ -191,6 +191,11 @@ class ModifiedResNet(nn.Module):
 
         return x
 
+def shrink_grad(x: torch.Tensor, *, fraction: float):
+    """ proposed by https://arxiv.org/abs/2105.13290, used successfully in GLM 130B from Tsinghua """
+    if fraction == 1.:
+        return x
+    return x * fraction + x.detach() * (1 - fraction)
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -231,7 +236,7 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int,  mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
+    def __init__(self, width: int, layers: int, heads: int, mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
         self.width = width
         self.layers = layers
@@ -254,7 +259,7 @@ class Transformer(nn.Module):
 class VisualTransformer(nn.Module):
     def __init__(
             self, image_size: int, patch_size: int, width: int, layers: int, heads: int, mlp_ratio: float,
-            output_dim: int, act_layer: Callable = nn.GELU):
+            output_dim: int, shrink_grad_fraction: float, act_layer: Callable = nn.GELU):
         super().__init__()
         self.image_size = to_2tuple(image_size)
         self.patch_size = to_2tuple(patch_size)
@@ -266,6 +271,8 @@ class VisualTransformer(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         self.ln_pre = LayerNorm(width)
+
+        self.shrink_grad_fraction = shrink_grad_fraction
 
         self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
 
@@ -289,6 +296,9 @@ class VisualTransformer(nn.Module):
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
+
+        x = shrink_grad(x, fraction = self.shrink_grad_fraction)
+
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -315,6 +325,7 @@ class CLIPVisionCfg:
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
+    shrink_grad_fraction = 1.  # recommended to be set at 0.1
 
 
 @dataclass
@@ -324,6 +335,7 @@ class CLIPTextCfg:
     width: int = 512
     heads: int = 8
     layers: int = 12
+    shrink_grad_fraction = 1. # recommended to be set at 0.1
 
 
 class CLIP(nn.Module):
@@ -373,6 +385,7 @@ class CLIP(nn.Module):
                 patch_size=vision_cfg.patch_size,
                 width=vision_cfg.width,
                 layers=vision_cfg.layers,
+                shrink_grad_fraction=vision_cfg.shrink_grad_fraction,
                 heads=vision_heads,
                 mlp_ratio=vision_cfg.mlp_ratio,
                 output_dim=embed_dim,
@@ -389,6 +402,7 @@ class CLIP(nn.Module):
         self.vocab_size = text_cfg.vocab_size
         self.token_embedding = nn.Embedding(text_cfg.vocab_size, text_cfg.width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, text_cfg.width))
+        self.text_shrink_grad_fraction = text_cfg.shrink_grad_fraction
         self.ln_final = LayerNorm(text_cfg.width)
 
         self.text_projection = nn.Parameter(torch.empty(text_cfg.width, embed_dim))
@@ -441,6 +455,9 @@ class CLIP(nn.Module):
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding
+
+        x = shrink_grad(x, fraction = self.text_shrink_grad_fraction)
+
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
