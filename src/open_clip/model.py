@@ -297,7 +297,7 @@ class VisualTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
-        x = shrink_grad(x, fraction = self.shrink_grad_fraction)
+        x = shrink_grad(x, fraction=self.shrink_grad_fraction)
 
         x = self.ln_pre(x)
 
@@ -456,7 +456,7 @@ class CLIP(nn.Module):
 
         x = x + self.positional_embedding
 
-        x = shrink_grad(x, fraction = self.text_shrink_grad_fraction)
+        x = shrink_grad(x, fraction=self.text_shrink_grad_fraction)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
