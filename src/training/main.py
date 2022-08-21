@@ -189,7 +189,7 @@ def main():
     start_epoch = 0
     if args.resume is not None:
         if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location=device)
+            checkpoint = torch.load(args.resume, map_location='cpu')
             if 'epoch' in checkpoint:
                 # resuming a train checkpoint w/ epoch and optimizer state
                 start_epoch = checkpoint["epoch"]
@@ -206,6 +206,7 @@ def main():
                 # loading a bare (model only) checkpoint for fine-tune or evaluation
                 model.load_state_dict(checkpoint)
                 logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            model.to(device)
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
