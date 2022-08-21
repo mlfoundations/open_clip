@@ -333,7 +333,7 @@ class CLIPVisionCfg:
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
-    shrink_grad_fraction = 1.  # recommended to be set at 0.1
+    shrink_grad_fraction = 0.1  # recommended to be set at 0.1
 
 
 @dataclass
