@@ -206,7 +206,6 @@ def main():
                 # loading a bare (model only) checkpoint for fine-tune or evaluation
                 model.load_state_dict(checkpoint)
                 logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
-            model.to(device)
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
