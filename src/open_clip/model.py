@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+import wandb
 
 from .timm_model import TimmModel
 from .utils import freeze_batch_norm_2d, to_2tuple
@@ -207,6 +208,18 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
+def log_features(x, name, log):
+    if not log:
+        return
+    with torch.no_grad():
+        features = x.permute(1, 0, 2) # reshape to batch dim at 0
+        features = features.view(features.size(0), -1) # concat all patch features
+        wandb.log({f'feature_norms/{name}': features.pow(2).sum(-1).pow(0.5).mean()})
+        wandb.log({f'feature_max/{name}': features.abs().max(-1)[0].mean()})
+        wandb.log({f'feature_gt_6/{name}': (features.abs() > 6.0).sum(-1).float().mean().item() })
+        wandb.log({f'feature_global_max/{name}': features.abs().max().item() })
+
+
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, d_model: int, n_head: int, mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
         super().__init__()
@@ -227,6 +240,7 @@ class ResidualAttentionBlock(nn.Module):
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
         x = x + self.mlp(self.ln_2(x))
+        log_features(x, self.module_name + '_post_mlp', self.log_features)
         return x
 
 

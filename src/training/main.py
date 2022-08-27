@@ -2,6 +2,7 @@ import logging
 import os
 import random
 from datetime import datetime
+from statistics import mode
 
 import numpy as np
 import torch
@@ -229,7 +230,8 @@ def main():
     if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
         logging.debug('Starting wandb.')
-        args.train_sz = data["train"].dataloader.num_samples
+        if "train" in data:
+            args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:
             args.val_sz = data["val"].dataloader.num_samples
         # you will have to configure this for your project!
@@ -243,6 +245,11 @@ def main():
             wandb.watch(model, log='all')
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
+
+
+    model.apply(lambda m: setattr(m, 'log_features', args.log_features and args.rank == 0))
+    for n, m in model.named_modules():
+        setattr(m, 'module_name', n)
 
     if 'train' not in data:
         evaluate(model, data, start_epoch, args, writer)

@@ -138,6 +138,8 @@ def get_imagenet(args, preprocess_fns, split):
         dataset,
         batch_size=args.batch_size,
         num_workers=args.workers,
+        shuffle=True,
+        pin_memory=True,
         sampler=sampler,
     )
 

@@ -71,8 +71,11 @@ def zero_shot_eval(model, data, epoch, args):
     logging.info('Starting zero-shot imagenet.')
 
     logging.info('Building zero-shot classifier')
+    
+    model.apply(lambda m: setattr(m, 'log_features', False))
     classifier = zero_shot_classifier(model, imagenet_classnames, openai_imagenet_template, args)
-
+    model.apply(lambda m: setattr(m, 'log_features', args.log_features and args.rank == 0))
+    
     logging.info('Using classifier')
     results = {}
     if 'imagenet-val' in data:

@@ -281,6 +281,12 @@ def parse_args():
     parser.add_argument(
         "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
     )
+    parser.add_argument(
+        "--log-features",
+        default=False,
+        action="store_true",
+        help="Turn on logging of feature norms to wandb."
+    )
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
