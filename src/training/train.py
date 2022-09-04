@@ -3,7 +3,6 @@ import logging
 import math
 import os
 import time
-from contextlib import suppress
 
 import numpy as np
 import torch
@@ -17,6 +16,7 @@ except ImportError:
 from open_clip import ClipLoss
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
+from .precision import get_autocast
 
 
 class AverageMeter(object):
@@ -46,7 +46,7 @@ def unwrap_model(model):
 
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
-    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    autocast = get_autocast(args.precision)
 
     model.train()
     loss = ClipLoss(
@@ -160,7 +160,9 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
     metrics.update(zero_shot_metrics)
 
-    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    autocast = get_autocast(args.precision)
+
+    
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
         num_samples = 0
