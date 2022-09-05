@@ -1,11 +1,11 @@
 import logging
-from contextlib import suppress
 
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
 from open_clip import tokenize
+from .precision import get_autocast
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
@@ -33,7 +33,7 @@ def accuracy(output, target, topk=(1,)):
 
 
 def run(model, classifier, dataloader, args):
-    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    autocast = get_autocast(args.precision)
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):

@@ -41,6 +41,11 @@ def random_seed(seed=42, rank=0):
 def main():
     args = parse_args()
 
+    # This enables tf32 on Ampere GPUs which is only 8% slower than
+    # float16 and almost as accurate as float32
+    # This was a default in pytorch until 1.12
+    torch.backends.cuda.matmul.allow_tf32 = True
+
     # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
     args.model = args.model.replace('/', '-')
 
