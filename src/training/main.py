@@ -100,7 +100,7 @@ def main():
     if args.copy_codebase:
         copy_codebase(args)
 
-    assert args.precision in ['amp', 'fp16', 'fp32']
+    assert args.precision in ['amp', 'amp_bfloat16', 'fp16', 'fp32']
     if args.precision == 'fp16':
         logging.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
