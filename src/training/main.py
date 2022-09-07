@@ -240,6 +240,7 @@ def main():
         # you will have to configure this for your project!
         wandb.init(
             project="open-clip",
+            name=args.name,
             notes=args.wandb_notes,
             tags=[],
             config=vars(args),
