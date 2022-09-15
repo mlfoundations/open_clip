@@ -47,7 +47,7 @@ model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
 text = open_clip.tokenize(["a diagram", "a dog", "a cat"])
 
-with torch.no_grad():
+with torch.no_grad(), torch.cuda.amp.autocast():
     image_features = model.encode_image(image)
     text_features = model.encode_text(text)
     image_features /= image_features.norm(dim=-1, keepdim=True)
