@@ -9,9 +9,10 @@ from typing import Optional, Tuple
 
 import torch
 
+from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, convert_weights_to_fp16, resize_pos_embed
 from .openai import load_openai_model
-from .pretrained import get_pretrained_url, download_pretrained
+from .pretrained import get_pretrained_cfg, download_pretrained
 from .transform import image_transform
 
 
@@ -102,12 +103,13 @@ def create_model(
                 assert False, 'pretrained image towers currently only supported for timm models'
 
         model = CLIP(**model_cfg)
-        
+
+        pretrained_cfg = {}
         if pretrained:
             checkpoint_path = ''
-            url = get_pretrained_url(model_name, pretrained)
-            if url:
-                checkpoint_path = download_pretrained(url)
+            pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
+            if pretrained_cfg:
+                checkpoint_path = download_pretrained(pretrained_cfg)
             elif os.path.exists(pretrained):
                 checkpoint_path = pretrained
 
@@ -123,6 +125,10 @@ def create_model(
             assert device.type != 'cpu'
             convert_weights_to_fp16(model)
 
+        # set image / mean metadata from pretrained_cfg if available, or use default
+        model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
+        model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
+
         if jit:
             model = torch.jit.script(model)
 
@@ -137,15 +143,19 @@ def create_model_and_transforms(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
-        mean: Optional[Tuple[float, ...]] = None,
-        std: Optional[Tuple[float, ...]] = None,
+        image_mean: Optional[Tuple[float, ...]] = None,
+        image_std: Optional[Tuple[float, ...]] = None,
 ):
     model = create_model(
         model_name, pretrained, precision, device, jit,
         force_quick_gelu=force_quick_gelu,
         pretrained_image=pretrained_image)
-    preprocess_train = image_transform(model.visual.image_size, is_train=True, mean=mean, std=std)
-    preprocess_val = image_transform(model.visual.image_size, is_train=False, mean=mean, std=std)
+
+    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+    image_std = image_std or getattr(model.visual, 'image_std', None)
+    preprocess_train = image_transform(model.visual.image_size, is_train=True, mean=image_mean, std=image_std)
+    preprocess_val = image_transform(model.visual.image_size, is_train=False, mean=image_mean, std=image_std)
+
     return model, preprocess_train, preprocess_val
 
 

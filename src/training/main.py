@@ -41,10 +41,13 @@ def random_seed(seed=42, rank=0):
 def main():
     args = parse_args()
 
-    # This enables tf32 on Ampere GPUs which is only 8% slower than
-    # float16 and almost as accurate as float32
-    # This was a default in pytorch until 1.12
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if torch.cuda.is_available():
+        # This enables tf32 on Ampere GPUs which is only 8% slower than
+        # float16 and almost as accurate as float32
+        # This was a default in pytorch until 1.12
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
 
     # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
     args.model = args.model.replace('/', '-')
@@ -81,8 +84,6 @@ def main():
     setup_logging(args.log_path, args.log_level)
 
     # fully initialize distributed device environment
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
     device = init_distributed_device(args)
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
@@ -126,6 +127,8 @@ def main():
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
+        image_mean=args.image_mean,
+        image_std=args.image_std,
     )
     random_seed(args.seed, args.rank)
 

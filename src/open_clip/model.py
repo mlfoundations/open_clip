@@ -27,17 +27,17 @@ class Bottleneck(nn.Module):
         # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
         self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.relu1 = nn.ReLU(inplace=True)
+        self.act1 = nn.ReLU(inplace=True)
 
         self.conv2 = nn.Conv2d(planes, planes, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.relu2 = nn.ReLU(inplace=True)
+        self.act2 = nn.ReLU(inplace=True)
 
         self.avgpool = nn.AvgPool2d(stride) if stride > 1 else nn.Identity()
 
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, 1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
-        self.relu3 = nn.ReLU(inplace=True)
+        self.act3 = nn.ReLU(inplace=True)
 
         self.downsample = None
         self.stride = stride
@@ -53,8 +53,8 @@ class Bottleneck(nn.Module):
     def forward(self, x: torch.Tensor):
         identity = x
 
-        out = self.relu1(self.bn1(self.conv1(x)))
-        out = self.relu2(self.bn2(self.conv2(out)))
+        out = self.act1(self.bn1(self.conv1(x)))
+        out = self.act2(self.bn2(self.conv2(out)))
         out = self.avgpool(out)
         out = self.bn3(self.conv3(out))
 
@@ -62,7 +62,7 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu3(out)
+        out = self.act3(out)
         return out
 
 
@@ -119,13 +119,13 @@ class ModifiedResNet(nn.Module):
         # the 3-layer stem
         self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(width // 2)
-        self.relu1 = nn.ReLU(inplace=True)
+        self.act1 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(width // 2, width // 2, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(width // 2)
-        self.relu2 = nn.ReLU(inplace=True)
+        self.act2 = nn.ReLU(inplace=True)
         self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(width)
-        self.relu3 = nn.ReLU(inplace=True)
+        self.act3 = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(2)
 
         # residual layers
@@ -175,9 +175,9 @@ class ModifiedResNet(nn.Module):
         pass
 
     def stem(self, x):
-        x = self.relu1(self.bn1(self.conv1(x)))
-        x = self.relu2(self.bn2(self.conv2(x)))
-        x = self.relu3(self.bn3(self.conv3(x)))
+        x = self.act1(self.bn1(self.conv1(x)))
+        x = self.act2(self.bn2(self.conv2(x)))
+        x = self.act3(self.bn3(self.conv3(x)))
         x = self.avgpool(x)
         return x
 
@@ -207,25 +207,126 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
+class Attention(nn.Module):
+    def __init__(
+            self,
+            dim,
+            num_heads=8,
+            qkv_bias=True,
+            scaled_cosine=False,
+            scale_heads=False,
+            logit_scale_max=math.log(1. / 0.01),
+            attn_drop=0.,
+            proj_drop=0.
+    ):
+        super().__init__()
+        self.scaled_cosine = scaled_cosine
+        self.scale_heads = scale_heads
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.logit_scale_max = logit_scale_max
+
+        # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
+        self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
+        if qkv_bias:
+            self.in_proj_bias = nn.Parameter(torch.zeros(dim * 3))
+        else:
+            self.in_proj_bias = None
+
+        if self.scaled_cosine:
+            self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((num_heads, 1, 1))))
+        else:
+            self.logit_scale = None
+        self.attn_drop = nn.Dropout(attn_drop)
+        if self.scale_heads:
+            self.head_scale = nn.Parameter(torch.ones((num_heads, 1, 1)))
+        else:
+            self.head_scale = None
+        self.out_proj = nn.Linear(dim, dim)
+        self.out_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
+        L, N, C = x.shape
+        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+        k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+        v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+
+        if self.logit_scale is not None:
+            attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))
+            logit_scale = torch.clamp(self.logit_scale, max=self.logit_scale_max).exp()
+            attn = attn.view(N, self.num_heads, L, L) * logit_scale
+            attn = attn.view(-1, L, L)
+        else:
+            q = q * self.scale
+            attn = torch.bmm(q, k.transpose(-1, -2))
+
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                new_attn_mask = torch.zeros_like(attn_mask, dtype=q.dtype)
+                new_attn_mask.masked_fill_(attn_mask, float("-inf"))
+                attn_mask = new_attn_mask
+            attn += attn_mask
+
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = torch.bmm(attn, v)
+        if self.head_scale is not None:
+            x = x.view(N, self.num_heads, L, C) * self.head_scale
+            x = x.view(-1, L, C)
+        x = x.transpose(0, 1).reshape(L, N, C)
+        x = self.out_proj(x)
+        x = self.out_drop(x)
+        return x
+
+
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
+    def __init__(
+            self,
+            d_model: int,
+            n_head: int,
+            mlp_ratio: float = 4.0,
+            act_layer: Callable = nn.GELU,
+            scale_cosine_attn: bool = False,
+            scale_heads: bool = False,
+            scale_attn: bool = False,
+            scale_fc: bool = False,
+    ):
         super().__init__()
 
-        self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
+        if scale_cosine_attn or scale_heads:
+            self.attn = Attention(
+               d_model, n_head,
+               scaled_cosine=scale_cosine_attn,
+               scale_heads=scale_heads,
+            )
+            self.use_torch_attn = False
+        else:
+            self.attn = nn.MultiheadAttention(d_model, n_head)
+            self.use_torch_attn = True
+        self.ln_attn = LayerNorm(d_model) if scale_attn else nn.Identity()
+
+        self.ln_2 = LayerNorm(d_model)
         mlp_width = int(d_model * mlp_ratio)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, mlp_width)),
+            ('ln', LayerNorm(mlp_width) if scale_fc else nn.Identity()),
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
-        self.ln_2 = LayerNorm(d_model)
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+        if self.use_torch_attn:
+            return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+        else:
+            return self.attn(x, attn_mask=attn_mask)
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
+        x = x + self.ln_attn(self.attention(self.ln_1(x), attn_mask=attn_mask))
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -253,8 +354,16 @@ class Transformer(nn.Module):
 
 class VisualTransformer(nn.Module):
     def __init__(
-            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, mlp_ratio: float,
-            output_dim: int, act_layer: Callable = nn.GELU):
+            self,
+            image_size: int,
+            patch_size: int,
+            width: int,
+            layers: int,
+            heads: int,
+            mlp_ratio: float,
+            output_dim: int,
+            act_layer: Callable = nn.GELU
+    ):
         super().__init__()
         self.image_size = to_2tuple(image_size)
         self.patch_size = to_2tuple(patch_size)
@@ -475,7 +584,7 @@ def convert_weights_to_fp16(model: nn.Module):
             if l.bias is not None:
                 l.bias.data = l.bias.data.half()
 
-        if isinstance(l, nn.MultiheadAttention):
+        if isinstance(l, (nn.MultiheadAttention, Attention)):
             for attr in [*[f"{s}_proj_weight" for s in ["in", "q", "k", "v"]], "in_proj_bias", "bias_k", "bias_v"]:
                 tensor = getattr(l, attr)
                 if tensor is not None:
