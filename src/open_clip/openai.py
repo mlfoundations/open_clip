@@ -10,7 +10,7 @@ from typing import Union, List
 import torch
 
 from .model import build_model_from_openai_state_dict
-from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained
+from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained_from_url
 
 __all__ = ["list_openai_models", "load_openai_model"]
 
@@ -44,7 +44,7 @@ def load_openai_model(
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
     if get_pretrained_url(name, 'openai'):
-        model_path = download_pretrained(get_pretrained_url(name, 'openai'))
+        model_path = download_pretrained_from_url(get_pretrained_url(name, 'openai'))
     elif os.path.isfile(name):
         model_path = name
     else:
