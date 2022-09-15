@@ -290,8 +290,8 @@ def download_pretrained(
         # use 'open_clip_pytorch_model.bin' default, there must be a trailing slash 'org/model_name/'.
         model_id, filename = os.path.split(download_hf_hub)
         if filename:
-            target = download_pretrained_from_hf(model_id, filename)
+            target = download_pretrained_from_hf(model_id, filename=filename, cache_dir=cache_dir)
         else:
-            target = download_pretrained_from_hf(model_id)
+            target = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
 
     return target
