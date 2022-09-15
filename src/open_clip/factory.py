@@ -74,12 +74,13 @@ def create_model(
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
+        cache_dir: Optional[str] = None,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
 
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit)
+        model = load_openai_model(model_name, device=device, jit=jit, cache_dir=cache_dir)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
         if precision == "amp" or precision == "fp32":
             model = model.float()
@@ -109,7 +110,7 @@ def create_model(
             checkpoint_path = ''
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
             if pretrained_cfg:
-                checkpoint_path = download_pretrained(pretrained_cfg)
+                checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
             elif os.path.exists(pretrained):
                 checkpoint_path = pretrained
 
@@ -145,11 +146,13 @@ def create_model_and_transforms(
         pretrained_image: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
+        cache_dir: Optional[str] = None,
 ):
     model = create_model(
         model_name, pretrained, precision, device, jit,
         force_quick_gelu=force_quick_gelu,
-        pretrained_image=pretrained_image)
+        pretrained_image=pretrained_image,
+        cache_dir=cache_dir)
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
     image_std = image_std or getattr(model.visual, 'image_std', None)
