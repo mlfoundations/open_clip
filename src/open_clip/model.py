@@ -298,16 +298,14 @@ class ResidualAttentionBlock(nn.Module):
         super().__init__()
 
         self.ln_1 = LayerNorm(d_model)
-        if scale_cosine_attn or scale_heads:
-            self.attn = Attention(
-               d_model, n_head,
-               scaled_cosine=scale_cosine_attn,
-               scale_heads=scale_heads,
-            )
-            self.use_torch_attn = False
-        else:
-            self.attn = nn.MultiheadAttention(d_model, n_head)
-            self.use_torch_attn = True
+        # FIXME torchscript issues need to be resolved for custom attention
+        # if scale_cosine_attn or scale_heads:
+        #     self.attn = Attention(
+        #        d_model, n_head,
+        #        scaled_cosine=scale_cosine_attn,
+        #        scale_heads=scale_heads,
+        #     )
+        self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_attn = LayerNorm(d_model) if scale_attn else nn.Identity()
 
         self.ln_2 = LayerNorm(d_model)
@@ -320,10 +318,12 @@ class ResidualAttentionBlock(nn.Module):
         ]))
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        if self.use_torch_attn:
-            return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
-        else:
-            return self.attn(x, attn_mask=attn_mask)
+        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+        # FIXME torchscript issues need resolving for custom attention option to work
+        # if self.use_torch_attn:
+        #     return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+        # else:
+        #     return self.attn(x, attn_mask=attn_mask)
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         x = x + self.ln_attn(self.attention(self.ln_1(x), attn_mask=attn_mask))
