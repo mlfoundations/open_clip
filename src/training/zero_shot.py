@@ -56,13 +56,15 @@ def run(model, classifier, dataloader, args):
             top1 += acc1
             top5 += acc5
             n += images.size(0)
-
+    if args.distributed_evaluation:
+        n = torch.Tensor([n]).to(args.device)
+        torch.distributed.all_reduce(n)
+        n = n.item()
+        top = torch.Tensor([top1, top5]).to(args.device)
+        torch.distributed.all_reduce(top)
+        top1, top5 = top.tolist()
     top1 = (top1 / n)
     top5 = (top5 / n)
-    if args.distributed_evaluation:
-        top = torch.Tensor([top1, top5]).to(args.device)
-        torch.distributed.all_reduce(top, op=torch.distributed.ReduceOp.AVG)
-        top1, top5 = top.tolist()
     return top1, top5
 
 
