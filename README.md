@@ -66,6 +66,7 @@ This repository is focused on training CLIP models. To fine-tune a *trained* zer
 
 ## Data
 
+To download datasets as webdataset, we recommend [img2dataset](https://github.com/rom1504/img2dataset)
 
 ### Conceptual Captions
 
