@@ -362,9 +362,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
         if args.distributed_evaluation:
-            num_batches = math.ceil(num_samples / (args.batch_size * args.world_size))
-        else:
-            num_batches = math.ceil(num_samples / args.batch_size)
+            num_samples = num_samples // args.world_size
+        num_batches = math.ceil(num_samples / args.batch_size)
 
     dataloader = wds.WebLoader(
         dataset,

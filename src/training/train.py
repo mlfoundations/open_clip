@@ -199,25 +199,39 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 num_samples += batch_size
                 if (i % 100) == 0:
                     if args.distributed_evaluation:
-                        cumulative_loss_all_reduced = cumulative_loss.clone()
-                        torch.distributed.all_reduce(cumulative_loss_all_reduced, op=torch.distributed.ReduceOp.AVG)
+                        total_num_samples = torch.Tensor([num_samples]).to(device)
+                        torch.distributed.all_reduce(total_num_samples)
+                        total_num_samples = total_num_samples.item()
+
+                        total_cumulative_loss = cumulative_loss.clone()
+                        torch.distributed.all_reduce(total_cumulative_loss)
+
+                        loss = total_cumulative_loss / total_num_samples
                     else:
-                        cumulative_loss_all_reduced = cumulative_loss
+                        loss = cumulative_loss / num_samples
                     if is_master(args):
                         logging.info(
                             f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                            f"Loss: {cumulative_loss_all_reduced / num_samples:.6f}\t")
+                            f"Loss: {loss:.6f}\t")
             val_metrics = get_metrics(
                 image_features=torch.cat(all_image_features),
                 text_features=torch.cat(all_text_features),
                 logit_scale=logit_scale.cpu(),
                 args=args,
             )
-            loss = cumulative_loss / num_samples
             if args.distributed_evaluation:
-                torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.AVG)
+                total_num_samples = torch.Tensor([num_samples]).to(device)
+                torch.distributed.all_reduce(total_num_samples)
+                total_num_samples = int(total_num_samples.item())
+
+                total_cumulative_loss = cumulative_loss.clone()
+                torch.distributed.all_reduce(total_cumulative_loss)
+
+                loss = total_cumulative_loss / total_num_samples
+            else:
+                loss = cumulative_loss / num_samples
             metrics.update(
-                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
+                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": total_num_samples if args.distributed_evaluation else num_samples}
             )
 
     if not metrics:
@@ -249,13 +263,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 def get_metrics(image_features, text_features, logit_scale, args):
     metrics = {}
     if args.distributed_evaluation:
-        image_features = all_gather(image_features.to(args.device)).cpu()
-        text_features = all_gather(text_features.to(args.device)).cpu()
+        image_features = varsize_tensor_all_gather(image_features.to(args.device)).cpu()
+        text_features = varsize_tensor_all_gather(text_features.to(args.device)).cpu()
+
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
     logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
-
     for name, logit in logits.items():
         ranking = torch.argsort(logit, descending=True)
         preds = torch.where(ranking == ground_truth)[1]
@@ -267,7 +281,34 @@ def get_metrics(image_features, text_features, logit_scale, args):
 
     return metrics
 
-def all_gather(tensor):
+def varsize_tensor_all_gather(tensor: torch.Tensor):
+    # https://discuss.pytorch.org/t/how-to-concatenate-different-size-tensors-from-distributed-processes/44819/4
+    # thanks to @mranzinger
+    device = tensor.device
+    size_tens = torch.tensor([tensor.shape[0]], dtype=torch.int64, device=device)
+    size_tens = tensor_all_gather(size_tens).cpu()
+    max_size = size_tens.max()
+
+    padded = torch.empty(max_size, *tensor.shape[1:],
+                         dtype=tensor.dtype,
+                         device=device)
+    padded[:tensor.shape[0]] = tensor
+
+    ag = tensor_all_gather(padded)
+
+    slices = []
+    for i, sz in enumerate(size_tens):
+        start_idx = i * max_size
+        end_idx = start_idx + sz.item()
+
+        if end_idx > start_idx:
+            slices.append(ag[start_idx:end_idx])
+
+    ret = torch.cat(slices, dim=0)
+
+    return ret.to(tensor)
+
+def tensor_all_gather(tensor):
     world_size = torch.distributed.get_world_size()
     tensor_list = [torch.ones_like(tensor) for _ in range(world_size)]
     torch.distributed.all_gather(tensor_list, tensor)
