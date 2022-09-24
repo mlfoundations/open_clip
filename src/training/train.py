@@ -207,13 +207,11 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                         logging.info(
                             f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                             f"Loss: {cumulative_loss_all_reduced / num_samples:.6f}\t")
-            if args.distributed_evaluation:
-                image_features = all_gather(torch.cat(all_image_features))
-                text_features = all_gather(torch.cat(all_text_features))
             val_metrics = get_metrics(
-                image_features=image_features,
-                text_features=text_features,
+                image_features=torch.cat(all_image_features),
+                text_features=torch.cat(all_text_features),
                 logit_scale=logit_scale.cpu(),
+                args=args,
             )
             loss = cumulative_loss / num_samples
             if args.distributed_evaluation:
@@ -248,11 +246,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     return metrics
 
 
-def get_metrics(image_features, text_features, logit_scale):
+def get_metrics(image_features, text_features, logit_scale, args):
     metrics = {}
+    if args.distributed_evaluation:
+        image_features = all_gather(image_features.to(args.device)).cpu()
+        text_features = all_gather(text_features.to(args.device)).cpu()
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
-    
     logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
 
@@ -270,5 +270,5 @@ def get_metrics(image_features, text_features, logit_scale):
 def all_gather(tensor):
     world_size = torch.distributed.get_world_size()
     tensor_list = [torch.ones_like(tensor) for _ in range(world_size)]
-    torch.distributed.all_gather(tensor_list, tensor, async_op=False)
+    torch.distributed.all_gather(tensor_list, tensor)
     return torch.cat(tensor_list, dim=0)
