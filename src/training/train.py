@@ -152,7 +152,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
 def evaluate(model, data, epoch, args, tb_writer=None):
     metrics = {}
-    if not is_master(args):
+    if not is_master(args) and not args.distributed_evaluation:
         return metrics
     device = torch.device(args.device)
     model.eval()
@@ -197,17 +197,27 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
-                if is_master(args) and (i % 100) == 0:
-                    logging.info(
-                        f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Loss: {cumulative_loss / num_samples:.6f}\t")
-
+                if (i % 100) == 0:
+                    if args.distributed_evaluation:
+                        cumulative_loss_all_reduced = cumulative_loss.clone()
+                        torch.distributed.all_reduce(cumulative_loss_all_reduced, op=torch.distributed.ReduceOp.AVG)
+                    else:
+                        cumulative_loss_all_reduced = cumulative_loss
+                    if is_master(args):
+                        logging.info(
+                            f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
+                            f"Loss: {cumulative_loss_all_reduced / num_samples:.6f}\t")
+            if args.distributed_evaluation:
+                image_features = all_gather(torch.cat(all_image_features))
+                text_features = all_gather(torch.cat(all_text_features))
             val_metrics = get_metrics(
-                image_features=torch.cat(all_image_features),
-                text_features=torch.cat(all_text_features),
+                image_features=image_features,
+                text_features=text_features,
                 logit_scale=logit_scale.cpu(),
             )
             loss = cumulative_loss / num_samples
+            if args.distributed_evaluation:
+                torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.AVG)
             metrics.update(
                 {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
@@ -215,12 +225,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     if not metrics:
         return metrics
 
-    logging.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
+    if is_master(args):
+        logging.info(
+            f"Eval Epoch: {epoch} "
+            + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
+        )
 
-    if args.save_logs:
+    if args.save_logs and is_master(args):
         for name, val in metrics.items():
             if tb_writer is not None:
                 tb_writer.add_scalar(f"val/{name}", val, epoch)
@@ -229,7 +240,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
             f.write(json.dumps(metrics))
             f.write("\n")
 
-    if args.wandb:
+    if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
         for name, val in metrics.items():
             wandb.log({f"val/{name}": val, 'epoch': epoch})
@@ -241,7 +252,7 @@ def get_metrics(image_features, text_features, logit_scale):
     metrics = {}
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
-
+    
     logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
 
@@ -255,3 +266,9 @@ def get_metrics(image_features, text_features, logit_scale):
             metrics[f"{name}_R@{k}"] = np.mean(preds < k)
 
     return metrics
+
+def all_gather(tensor):
+    world_size = torch.distributed.get_world_size()
+    tensor_list = [torch.ones_like(tensor) for _ in range(world_size)]
+    torch.distributed.all_gather(tensor_list, tensor, async_op=False)
+    return torch.cat(tensor_list, dim=0)

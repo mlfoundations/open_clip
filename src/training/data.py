@@ -132,7 +132,7 @@ def get_imagenet(args, preprocess_fns, split):
         idxs = idxs.astype('int')
         sampler = SubsetRandomSampler(np.where(idxs)[0])
     else:
-        sampler = None
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset) if args.distributed_evaluation else None
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -331,6 +331,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
             ),
         ])
     else:
+        if args.distributed_evaluation:
+            pipeline.append(wds.split_by_node)
         pipeline.extend([
             wds.split_by_worker,
             # at this point, we have an iterator over the shards assigned to each worker
@@ -359,8 +361,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
         num_samples = num_batches * global_batch_size
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
-        # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
+        if args.distributed_evaluation:
+            num_batches = math.ceil(num_samples / (args.batch_size * args.world_size))
+        else:
+            num_batches = math.ceil(num_samples / args.batch_size)
 
     dataloader = wds.WebLoader(
         dataset,
@@ -401,7 +405,11 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
         caption_key=args.csv_caption_key,
         sep=args.csv_separator)
     num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    if is_train:
+        sampler = DistributedSampler(dataset) if args.distributed else None
+    else:
+        sampler = DistributedSampler(dataset) if args.distributed_evaluation else None
+    
     shuffle = is_train and sampler is None
 
     dataloader = DataLoader(

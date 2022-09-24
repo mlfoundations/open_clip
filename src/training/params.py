@@ -79,6 +79,13 @@ def parse_args():
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
+        "--distributed-evaluation",
+        action="store_true",
+        default=False,
+        help="Do evaluation in a distributed way.",
+    )
+
+    parser.add_argument(
         "--logs",
         type=str,
         default="./logs/",
