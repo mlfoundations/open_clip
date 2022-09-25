@@ -56,6 +56,7 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
         state_dict = checkpoint
     if next(iter(state_dict.items()))[0].startswith('module'):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
+    # detect old format and make compatible with new format
     if 'positional_embedding' in state_dict:
         state_dict = convert_state_dict(state_dict)
     return state_dict
