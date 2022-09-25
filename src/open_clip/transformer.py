@@ -5,6 +5,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .utils import to_2tuple
+
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -61,21 +63,29 @@ class Transformer(nn.Module):
 
 class VisualTransformer(nn.Module):
     def __init__(
-            self, image_size: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int,
-            act_layer: Callable = nn.GELU):
+            self,
+            image_size: int,
+            patch_size: int,
+            width: int,
+            layers: int,
+            heads: int,
+            mlp_ratio: float,
+            output_dim: int,
+            act_layer: Callable = nn.GELU
+    ):
         super().__init__()
-        self.image_size = image_size
-        self.width = width
+        self.image_size = to_2tuple(image_size)
+        self.patch_size = to_2tuple(patch_size)
+        self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
         self.output_dim = output_dim
-
-        self.scale = scale = width ** -0.5
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
+        scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn((image_size // patch_size) ** 2 + 1, width))
+        self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        self.transformer = Transformer(width, layers, heads, act_layer=act_layer)
+        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
@@ -85,25 +95,9 @@ class VisualTransformer(nn.Module):
         for param in self.parameters():
             param.requires_grad = False
 
-    def init_parameters(self):
-        # FIXME OpenAI CLIP did not define an init for the VisualTransformer
-        # TODO experiment if default PyTorch init, below, or alternate init is best.
-
-        # nn.init.normal_(self.class_embedding, std=self.scale)
-        # nn.init.normal_(self.positional_embedding, std=self.scale)
-        #
-        # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        # attn_std = self.transformer.width ** -0.5
-        # fc_std = (2 * self.transformer.width) ** -0.5
-        # for block in self.transformer.resblocks:
-        #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-        #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-        #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-        #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        #
-        # if self.text_projection is not None:
-        #     nn.init.normal_(self.text_projection, std=self.scale)
-        pass
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
 
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
