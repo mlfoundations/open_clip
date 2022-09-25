@@ -95,6 +95,26 @@ class VisualTransformer(nn.Module):
         for param in self.parameters():
             param.requires_grad = False
 
+    def init_parameters(self):
+         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
+         # TODO experiment if default PyTorch init, below, or alternate init is best.
+
+         # nn.init.normal_(self.class_embedding, std=self.scale)
+         # nn.init.normal_(self.positional_embedding, std=self.scale)
+         #
+         # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+         # attn_std = self.transformer.width ** -0.5
+         # fc_std = (2 * self.transformer.width) ** -0.5
+         # for block in self.transformer.resblocks:
+         #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+         #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+         #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+         #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+         #
+         # if self.text_projection is not None:
+         #     nn.init.normal_(self.text_projection, std=self.scale)
+         pass
+
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
