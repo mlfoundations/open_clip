@@ -16,16 +16,18 @@ class Bottleneck(nn.Module):
         # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
         self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
+        self.act1 = nn.ReLU(inplace=True)
 
         self.conv2 = nn.Conv2d(planes, planes, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
+        self.act2 = nn.ReLU(inplace=True)
 
         self.avgpool = nn.AvgPool2d(stride) if stride > 1 else nn.Identity()
 
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, 1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.act3 = nn.ReLU(inplace=True)
 
-        self.relu = nn.ReLU(inplace=True)
         self.downsample = None
         self.stride = stride
 
@@ -40,8 +42,8 @@ class Bottleneck(nn.Module):
     def forward(self, x: torch.Tensor):
         identity = x
 
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.relu(self.bn2(self.conv2(out)))
+        out = self.act1(self.bn1(self.conv1(x)))
+        out = self.act2(self.bn2(self.conv2(out)))
         out = self.avgpool(out)
         out = self.bn3(self.conv3(out))
 
@@ -49,7 +51,7 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+        out = self.act3(out)
         return out
 
 
@@ -106,12 +108,14 @@ class ModifiedResNet(nn.Module):
         # the 3-layer stem
         self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(width // 2)
+        self.act1 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(width // 2, width // 2, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(width // 2)
+        self.act2 = nn.ReLU(inplace=True)
         self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(width)
+        self.act3 = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(2)
-        self.relu = nn.ReLU(inplace=True)
 
         # residual layers
         self._inplanes = width  # this is a *mutable* variable used during construction
@@ -121,7 +125,6 @@ class ModifiedResNet(nn.Module):
         self.layer4 = self._make_layer(width * 8, layers[3], stride=2)
 
         embed_dim = width * 32  # the ResNet feature dimension
-        self.width = embed_dim
         self.attnpool = AttentionPool2d(image_size // 32, embed_dim, heads, output_dim)
 
         self.init_parameters()
@@ -155,9 +158,15 @@ class ModifiedResNet(nn.Module):
         if freeze_bn_stats:
             freeze_batch_norm_2d(self)
 
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        # FIXME support for non-transformer
+        pass
+
     def stem(self, x):
-        for conv, bn in [(self.conv1, self.bn1), (self.conv2, self.bn2), (self.conv3, self.bn3)]:
-            x = self.relu(bn(conv(x)))
+        x = self.act1(self.bn1(self.conv1(x)))
+        x = self.act2(self.bn2(self.conv2(x)))
+        x = self.act3(self.bn3(self.conv3(x)))
         x = self.avgpool(x)
         return x
 
