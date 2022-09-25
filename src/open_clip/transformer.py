@@ -192,7 +192,6 @@ class VisualTransformer(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         self.ln_pre = LayerNorm(width)
-        print(act_layer)
         self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
 
         self.ln_post = LayerNorm(width)
