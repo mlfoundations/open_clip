@@ -2,15 +2,22 @@
 
 [[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
 
-Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). 
+Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's. Using [LAION-400M](https://arxiv.org/abs/2111.02114), we train CLIP with a
-  * ViT-B/32 and achieve an accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
-  * ViT-B/16 and achieve an accuracy of **67.1%**, comparable to OpenAI's **68.3%** (as measured here, 68.6% in paper)
-  * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) and achieve an accuracy of **69.2%**
+We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset.
+
+We have trained:
+  * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
+  * ViT-B/32 on LAION-2B with a accuracy of **66.6%**.
+  * ViT-B/16 on LAION-400M achieving an accuracy of **67.1%**, lower than OpenAI's **68.3%** (as measured here, 68.6% in paper)
+  * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) on LAION-400M achieving an accuracy of **69.2%**
+  * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
+  * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
+  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The best in1k zero-shot for released, open-source weights thus far.
+  * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced schedule, same samples seen as 400M models.
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -40,7 +47,7 @@ model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
 text = open_clip.tokenize(["a diagram", "a dog", "a cat"])
 
-with torch.no_grad():
+with torch.no_grad(), torch.cuda.amp.autocast():
     image_features = model.encode_image(image)
     text_features = model.encode_text(text)
     image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -195,7 +202,7 @@ torchrun --nproc_per_node=4 \
 
 #### SLURM
 
-This is likely the easist solution to utilize. The following script was used to
+This is likely the easiest solution to utilize. The following script was used to
 train our largest models:
 
 ```bash
@@ -203,9 +210,11 @@ train our largest models:
 #SBATCH --nodes=32
 #SBATCH --gres=gpu:4
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=6
 #SBATCH --wait-all-nodes=1
 #SBATCH --job-name=open_clip
+#SBATCH --account=ACCOUNT_NAME
+#SBATCH --partition PARTITION_NAME
 
 eval "$(/path/to/conda/bin/conda shell.bash hook)" # init conda
 conda activate open_clip
@@ -217,7 +226,7 @@ export MASTER_ADDR=$master_addr
 
 cd /shared/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
-srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
+srun --cpu_bind=v --accel-bind=gn python -u src/training/main.py \
     --save-frequency 1 \
     --report-to tensorboard \
     --train-data="/data/LAION-400M/{00000..41455}.tar" \
@@ -266,7 +275,7 @@ tensorboard --logdir=logs/tensorboard/ --port=7777
 python -m training.main \
     --val-data="/path/to/validation_data.csv"  \
     --model RN101 \
-    --preretrained /path/to/checkpoints/epoch_K.pt
+    --pretrained /path/to/checkpoints/epoch_K.pt
 ```
 
 ### Evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
@@ -275,7 +284,7 @@ python -m training.main \
 python -m training.main \
     --imagenet-val /path/to/imagenet/validation \
     --model ViT-B-32-quickgelu \
-    --preretrained laion400m_e32
+    --pretrained laion400m_e32
 ```
 
 ## Pretrained model details
@@ -287,7 +296,7 @@ weights may be found in release [v0.2](https://github.com/mlfoundations/open_cli
 
 The LAION400M weights have been trained on the JUWELS supercomputer (see acknowledgements section below).
 
-#### ViT-B/32
+#### ViT-B/32 224x224
 
 We replicate OpenAI's results on ViT-B/32, reaching a top-1 ImageNet-1k zero-shot accuracy of 62.96%.
 
@@ -298,7 +307,7 @@ __Zero-shot comparison (courtesy of Andreas Fürst)__
 
 ViT-B/32 was trained with 128 A100 (40 GB) GPUs for ~36 hours, 4600 GPU-hours. The per-GPU batch size was 256 for a global batch size of 32768. 256 is much lower than it could have been (~320-384) due to being sized initially before moving to 'local' contrastive loss.
 
-#### ViT-B/16
+#### ViT-B/16 224x224
 
 The B/16 LAION400M training reached a top-1 ImageNet-1k zero-shot validation score of 67.07.
 
@@ -323,6 +332,43 @@ Unlike the B/16 run above, this model was a clean run with no dataset shuffling 
 
 ViT-B/16+ was trained with 224 A100 (40 GB) GPUS for ~61 hours, 13620 GPU-hours. Batch size per GPU was 160 for a global batch size of 35840.
 
+#### ViT-L/14 224x224
+
+The L/14 LAION-400M training reached a top-1 ImageNet-1k zero-shot validation score of 72.77.
+
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion_clip_zeroshot_l14.png" width="700">
+
+ViT-L/14 was trained with 400 A100 (40 GB) GPUS for ~127 hours, 50800 GPU-hours. Batch size per GPU was 96 for a global batch size of 38400. Grad checkpointing was enabled.
+
+### LAION-2B (en) - https://laion.ai/laion-5b-a-new-era-of-open-large-scale-multi-modal-datasets/
+
+A ~2B sample subset of LAION-5B with english captions (https://huggingface.co/datasets/laion/laion2B-en)
+
+#### ViT-B/32 224x224
+A ViT-B/32 trained on LAION-2B, reaching a top-1 ImageNet-1k zero-shot accuracy of 65.62%.
+
+<img src="https://raw.githubusercontent.com/mlfoundations/open_clip/main/docs/laion2b_clip_zeroshot_b32.png" width="700">
+
+ViT-B/32 was trained with 112 A100 (40 GB) GPUs. The per-GPU batch size was 416 for a global batch size of 46592. Compute generously provided by [stability.ai](https://stability.ai/).
+
+A second iteration of B/32 was trained on stability.ai cluster with a larger global batch size and learning rate, hitting 66.6% top-1. See https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K
+
+#### ViT-L/14 224x224
+
+A ViT-L/14 with a 75.3% top-1 ImageNet-1k zero-shot was trained on JUWELS Booster. See model details here https://huggingface.co/laion/CLIP-ViT-L-14-laion2B-s32B-b82K
+
+These weights use a different dataset mean and std than others. Instead of using the OpenAI mean & std, inception style normalization `[-1, 1]` is used via a mean and std of `[0.5, 0.5, 0.5]`. This is handled automatically if using `open_clip.create_model_and_transforms` from pretrained weights.
+
+#### ViT-H/14 224x224
+
+A ViT-H/14 with a 78.0% top-1 ImageNet-1k zero-shot was trained on JUWELS Booster. See model details here https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+
+#### ViT-g/14 224x224
+
+A ViT-H/14 with a 76.6% top-1 ImageNet-1k zero-shot was trained on JUWELS Booster. See model details here https://huggingface.co/laion/CLIP-ViT-g-14-laion2B-s12B-b42K
+
+This model was trained with a shorted schedule than other LAION-2B models with 12B samples seen instead of 32+B. It matches LAION-400M training in samples seen. Many zero-shot results are lower as a result, but despite this it performs very well in some OOD zero-shot and retrieval tasks.
+
 #### YFCC-15M
 
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
@@ -338,7 +384,7 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 
 We offer a simple model interface to instantiate both pre-trained and untrained models.
 
-NOTE: Currently all existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
+NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
 
 Future trained models will use nn.GELU.
 
@@ -357,22 +403,29 @@ Future trained models will use nn.GELU.
  ('RN101-quickgelu', 'yfcc15m'),
  ('RN50x4', 'openai'),
  ('RN50x16', 'openai'),
+ ('RN50x64', 'openai'),
  ('ViT-B-32', 'openai'),
  ('ViT-B-32', 'laion400m_e31'),
  ('ViT-B-32', 'laion400m_e32'),
- ('ViT-B-32', 'laion400m_avg'),
+ ('ViT-B-32', 'laion2b_e16'),
+ ('ViT-B-32', 'laion2b_s34b_b79k'),
  ('ViT-B-32-quickgelu', 'openai'),
  ('ViT-B-32-quickgelu', 'laion400m_e31'),
  ('ViT-B-32-quickgelu', 'laion400m_e32'),
- ('ViT-B-32-quickgelu', 'laion400m_avg'),
  ('ViT-B-16', 'openai'),
  ('ViT-B-16', 'laion400m_e31'),
  ('ViT-B-16', 'laion400m_e32'),
  ('ViT-B-16-plus-240', 'laion400m_e31'),
  ('ViT-B-16-plus-240', 'laion400m_e32'),
- ('ViT-L-14', 'openai')]
+ ('ViT-L-14', 'openai'),
+ ('ViT-L-14', 'laion400m_e31'),
+ ('ViT-L-14', 'laion400m_e32'),
+ ('ViT-L-14', 'laion2b_s32b_b82k'),
+ ('ViT-L-14-336', 'openai'),
+ ('ViT-H-14', 'laion2b_s32b_b79k'),
+ ('ViT-g-14', 'laion2b_s12b_b42k')]
 
->>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
+>>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
 
 ## Scaling trends
@@ -400,13 +453,15 @@ quantifies robustness as accuracy beyond this baseline, i.e., how far a model li
 Even though the CLIP models trained with
 this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
 trend of improved effective robustness (the purple line). Therefore, we can study what makes
-CLIP robust without requiring industrial-scale compute.
+CLIP robust without requiring industrial-scale compute. 
 
-For more more information on effective robustness, please see:
+For more information on effective robustness, please see:
 
 - [Recht et al., 2019](https://arxiv.org/abs/1902.10811).
 - [Taori et al., 2020](https://arxiv.org/abs/2007.00644).
 - [Miller et al., 2021](https://arxiv.org/abs/2107.04649).
+
+To know more about the factors that contribute to CLIP's robustness refer to [Fang et al., 2022](https://arxiv.org/abs/2205.01397).
 
 ## Acknowledgments
 

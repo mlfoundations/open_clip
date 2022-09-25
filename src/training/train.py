@@ -3,7 +3,6 @@ import logging
 import math
 import os
 import time
-from contextlib import suppress
 
 import numpy as np
 import torch
@@ -17,6 +16,7 @@ except ImportError:
 from open_clip import ClipLoss
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
+from .precision import get_autocast
 
 
 class AverageMeter(object):
@@ -46,7 +46,7 @@ def unwrap_model(model):
 
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
-    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    autocast = get_autocast(args.precision)
 
     model.train()
     loss = ClipLoss(
@@ -57,9 +57,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         world_size=args.world_size,
         use_horovod=args.horovod)
 
-    dataloader, sampler = data['train'].dataloader, data['train'].sampler
-    if args.distributed and sampler is not None:
-        sampler.set_epoch(epoch)
+    data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
+    dataloader = data['train'].dataloader
     num_batches_per_epoch = dataloader.num_batches
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
@@ -87,13 +86,20 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             if args.horovod:
                 optimizer.synchronize()
                 scaler.unscale_(optimizer)
+                if args.norm_gradient_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
                 with optimizer.skip_synchronize():
                     scaler.step(optimizer)
             else:
+                if args.norm_gradient_clip is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
                 scaler.step(optimizer)
             scaler.update()
         else:
             total_loss.backward()
+            if args.norm_gradient_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
             optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
@@ -116,7 +122,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f} "
+                f"Batch (t): {batch_time_m.avg:.3f}, {args.batch_size*args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f}"
             )
@@ -126,6 +132,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
+                "samples_per_scond": args.batch_size*args.world_size / batch_time_m.val,
                 "scale":  logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
@@ -153,7 +160,9 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
     metrics.update(zero_shot_metrics)
 
-    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+    autocast = get_autocast(args.precision)
+
+    
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
         num_samples = 0

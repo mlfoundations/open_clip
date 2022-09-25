@@ -43,6 +43,12 @@ def parse_args():
         help="Which type of dataset to process."
     )
     parser.add_argument(
+        "--dataset-resampled",
+        default=False,
+        action="store_true",
+        help="Whether to use sampling with replacement for webdataset shard selection."
+    )
+    parser.add_argument(
         "--csv-separator",
         type=str,
         default="\t",
@@ -91,7 +97,7 @@ def parse_args():
         help="Optional identifier for the experiment when storing logs. Otherwise use current time.",
     )
     parser.add_argument(
-        "--workers", type=int, default=1, help="Number of workers per GPU."
+        "--workers", type=int, default=1, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
         "--batch-size", type=int, default=64, help="Batch size per GPU."
@@ -141,7 +147,7 @@ def parse_args():
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "fp16", "fp32"],
+        choices=["amp", "amp_bfloat16", "fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -181,6 +187,12 @@ def parse_args():
         action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
+    parser.add_argument(
+        '--image-mean', type=float, nargs='+', default=None, metavar='MEAN',
+        help='Override default image mean value of dataset')
+    parser.add_argument(
+        '--image-std', type=float, nargs='+', default=None, metavar='STD',
+        help='Override default image std deviation of of dataset')
     parser.add_argument(
         "--grad-checkpointing",
         default=False,
@@ -240,9 +252,6 @@ def parse_args():
         help="Notes if logging with wandb"
     )
     parser.add_argument(
-        "--C", type=float, default=3.16, help="inverse regularizer for logistic reg."
-    )
-    parser.add_argument(
         "--debug",
         default=False,
         action="store_true",
@@ -273,7 +282,10 @@ def parse_args():
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
     )
     parser.add_argument(
-        "--seed", type=int, default=4242, help="Default random seed."
+        "--seed", type=int, default=0, help="Default random seed."
+    )
+    parser.add_argument(
+        "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
     )
     args = parser.parse_args()
 

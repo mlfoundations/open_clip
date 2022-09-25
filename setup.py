@@ -51,6 +51,7 @@ setup(
         'ftfy',
         'regex',
         'tqdm',
+        'huggingface_hub',
     ],
     python_requires='>=3.7',
 )

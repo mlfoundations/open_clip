@@ -3,3 +3,4 @@ torchvision
 regex
 ftfy
 tqdm
+huggingface_hub
