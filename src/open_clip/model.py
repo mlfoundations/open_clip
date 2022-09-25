@@ -162,6 +162,7 @@ def convert_weights_to_fp16(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
+# used to maintain checkpoint compatibility
 def convert_state_dict(state_dict: dict):
     if 'text_projection' in state_dict:
         # old format state_dict, move text tower -> .text
