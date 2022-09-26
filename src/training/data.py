@@ -154,8 +154,8 @@ def count_samples(dataloader):
     return n_elements, n_batches
 
 
-def filter_no_caption(sample):
-    return 'txt' in sample
+def filter_no_caption_or_no_image(sample):
+    return ('txt' in sample) and ('png' in sample or 'jpg' in sample)
 
 
 def log_and_continue(exn):
@@ -337,7 +337,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False):
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
     pipeline.extend([
-        wds.select(filter_no_caption),
+        wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png", text="txt"),
         wds.map_dict(image=preprocess_img, text=preprocess_txt),
