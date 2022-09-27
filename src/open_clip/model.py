@@ -352,6 +352,13 @@ class Transformer(nn.Module):
         return x
 
 
+class Precomputed(nn.Module):
+    def __init__(self,image_size=1):
+        super().__init__()
+        self.image_size=image_size
+    def forward(self, x: torch.Tensor):
+        return x
+    
 class VisualTransformer(nn.Module):
     def __init__(
             self,
@@ -424,6 +431,7 @@ class CLIPVisionCfg:
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
+    precomputed: bool = False
 
 
 @dataclass
@@ -475,6 +483,8 @@ class CLIP(nn.Module):
                 image_size=vision_cfg.image_size,
                 width=vision_cfg.width
             )
+        elif vision_cfg.precomputed:
+            self.visual = Precomputed()
         else:
             vision_heads = vision_cfg.width // vision_cfg.head_width
             self.visual = VisualTransformer(
@@ -487,7 +497,7 @@ class CLIP(nn.Module):
                 output_dim=embed_dim,
                 act_layer=act_layer,
             )
-
+            
         self.transformer = Transformer(
             width=text_cfg.width,
             layers=text_cfg.layers,

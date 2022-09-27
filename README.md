@@ -154,6 +154,10 @@ python -m training.main \
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
+### Pre-computed Embeddedings
+
+Pre-computed Embeddedings are in both the model and the dataset.  You must set the model to precomputed. Adjust the dimension accordingly. The data input is a pickled pandas dataframe containing both the embeddings and the caption. The CSV parameters are used for the column names.
+
 ### Multi-GPU and Beyond
 
 This code has been battle tested up to 1024 A100s and offers a variety of solutions

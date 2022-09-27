@@ -47,6 +47,24 @@ class CsvDataset(Dataset):
         texts = tokenize([str(self.captions[idx])])[0]
         return images, texts
 
+class PrecomputedDataset(Dataset):
+    def __init__(self, input_filename, transforms, emb_key, caption_key):
+        logging.debug(f'Loading pickle data from {input_filename}.')
+        df = pd.read_pickle(input_filename)
+
+        self.embeddings = df[emb_key].tolist()
+        self.captions = df[caption_key].tolist()
+        self.transforms = transforms
+        logging.debug('Done loading data.')
+
+    def __len__(self):
+        return len(self.captions)
+
+    def __getitem__(self, idx):
+        embeddings = self.embeddings[idx].astype("float32")
+        texts = tokenize([str(self.captions[idx])])[0]
+        return embeddings, texts
+
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
@@ -418,6 +436,32 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0):
 
     return DataInfo(dataloader, sampler)
 
+def get_precomputed_dataset(args, preprocess_fn, is_train, epoch=0):
+    input_filename = args.train_data if is_train else args.val_data
+    assert input_filename
+    dataset = PrecomputedDataset(
+        input_filename,
+        preprocess_fn,
+        emb_key=args.csv_img_key,
+        caption_key=args.csv_caption_key)
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
 
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
@@ -430,6 +474,8 @@ def get_dataset_fn(data_path, dataset_type):
             return get_csv_dataset
         elif ext in ['tar']:
             return get_wds_dataset
+        elif ext in ['pkl']:
+            return get_precomputed_dataset
         else:
             raise ValueError(
                 f"Tried to figure out dataset type, but failed for extention {ext}.")
