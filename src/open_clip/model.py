@@ -15,7 +15,7 @@ from torch.utils.checkpoint import checkpoint
 
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
-from .transformer import QuickGELU, VisualTransformer, TextTransformer
+from .transformer import QuickGELU, Attention, VisionTransformer, TextTransformer
 from .utils import to_2tuple
 
 
@@ -42,6 +42,77 @@ class CLIPTextCfg:
     layers: int = 12
 
 
+def _build_vision_tower(
+        embed_dim: int,
+        vision_cfg: CLIPVisionCfg,
+        quick_gelu: bool = False,
+):
+    if isinstance(vision_cfg, dict):
+        vision_cfg = CLIPVisionCfg(**vision_cfg)
+
+    # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
+    # memory efficient in recent PyTorch releases (>= 1.10).
+    # NOTE: timm models always use native GELU regardless of quick_gelu flag.
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+
+    if vision_cfg.timm_model_name:
+        visual = TimmModel(
+            vision_cfg.timm_model_name,
+            pretrained=vision_cfg.timm_model_pretrained,
+            pool=vision_cfg.timm_pool,
+            proj=vision_cfg.timm_proj,
+            embed_dim=embed_dim,
+            image_size=vision_cfg.image_size
+        )
+        act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
+    elif isinstance(vision_cfg.layers, (tuple, list)):
+        vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
+        visual = ModifiedResNet(
+            layers=vision_cfg.layers,
+            output_dim=embed_dim,
+            heads=vision_heads,
+            image_size=vision_cfg.image_size,
+            width=vision_cfg.width
+        )
+    else:
+        vision_heads = vision_cfg.width // vision_cfg.head_width
+        visual = VisionTransformer(
+            image_size=vision_cfg.image_size,
+            patch_size=vision_cfg.patch_size,
+            width=vision_cfg.width,
+            layers=vision_cfg.layers,
+            heads=vision_heads,
+            mlp_ratio=vision_cfg.mlp_ratio,
+            output_dim=embed_dim,
+            act_layer=act_layer,
+        )
+
+    return visual
+
+
+def _build_text_tower(
+        embed_dim: int,
+        text_cfg: CLIPTextCfg,
+        quick_gelu: bool = False,
+):
+    if isinstance(text_cfg, dict):
+        text_cfg = CLIPTextCfg(**text_cfg)
+
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+
+    text = TextTransformer(
+        context_length=text_cfg.context_length,
+        vocab_size=text_cfg.vocab_size,
+        width=text_cfg.width,
+        heads=text_cfg.heads,
+        layers=text_cfg.layers,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+    )
+
+    return text
+
+
 class CLIP(nn.Module):
     def __init__(
             self,
@@ -51,69 +122,19 @@ class CLIP(nn.Module):
             quick_gelu: bool = False,
     ):
         super().__init__()
-        if isinstance(vision_cfg, dict):
-            vision_cfg = CLIPVisionCfg(**vision_cfg)
-        if isinstance(text_cfg, dict):
-            text_cfg = CLIPTextCfg(**text_cfg)
 
-        # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
-        # memory efficient in recent PyTorch releases (>= 1.10).
-        # NOTE: timm models always use native GELU regardless of quick_gelu flag.
-        act_layer = QuickGELU if quick_gelu else nn.GELU
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu)
 
-        if vision_cfg.timm_model_name:
-            self.visual = TimmModel(
-                vision_cfg.timm_model_name,
-                pretrained=vision_cfg.timm_model_pretrained,
-                pool=vision_cfg.timm_pool,
-                proj=vision_cfg.timm_proj,
-                embed_dim=embed_dim,
-                image_size=vision_cfg.image_size
-            )
-            act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
-        elif isinstance(vision_cfg.layers, (tuple, list)):
-            vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
-            self.visual = ModifiedResNet(
-                layers=vision_cfg.layers,
-                output_dim=embed_dim,
-                heads=vision_heads,
-                image_size=vision_cfg.image_size,
-                width=vision_cfg.width
-            )
-        else:
-            vision_heads = vision_cfg.width // vision_cfg.head_width
-            self.visual = VisualTransformer(
-                image_size=vision_cfg.image_size,
-                patch_size=vision_cfg.patch_size,
-                width=vision_cfg.width,
-                layers=vision_cfg.layers,
-                heads=vision_heads,
-                mlp_ratio=vision_cfg.mlp_ratio,
-                output_dim=embed_dim,
-                act_layer=act_layer,
-            )
-
-        self.text = TextTransformer(
-             context_length=text_cfg.context_length,
-             vocab_size=text_cfg.vocab_size,
-             width=text_cfg.width,
-             heads=text_cfg.heads,
-             layers=text_cfg.layers,
-             output_dim=embed_dim,
-             act_layer=act_layer,
-         )
+        text = _build_text_tower(embed_dim, text_cfg, quick_gelu)
+        self.transformer = text.transformer
+        self.vocab_size = text.vocab_size
+        self.token_embedding = text.token_embedding
+        self.positional_embedding = text.positional_embedding
+        self.ln_final = text.ln_final
+        self.text_projection = text.text_projection
+        self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-
-        self.init_parameters()
-
-    def init_parameters(self, init_image: bool = True, init_text: bool = True):
-        if init_image:
-            if hasattr(self.visual, 'init_parameters'):
-                self.visual.init_parameters()
-        if init_text:
-            self.text.init_parameters()
-        nn.init.constant_(self.logit_scale, np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
@@ -123,6 +144,51 @@ class CLIP(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
+
+    def encode_image(self, image, normalize: bool = False):
+        features = self.visual(image)
+        return F.normalize(features, dim=-1) if normalize else features
+
+    def encode_text(self, text, normalize: bool = False):
+        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x)  # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        return F.normalize(x, dim=-1) if normalize else x
+
+    def forward(self, image, text):
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        return image_features, text_features, self.logit_scale.exp()
+
+
+class CustomTextCLIP(nn.Module):
+    def __init__(
+            self,
+            embed_dim: int,
+            vision_cfg: CLIPVisionCfg,
+            text_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
+    ):
+        super().__init__()
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu)
+        self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
+        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.visual.set_grad_checkpointing(enable)
+        self.text.set_grad_checkpointing(enable)
 
     def encode_image(self, image, normalize: bool = False):
         features = self.visual(image)
@@ -163,7 +229,7 @@ def convert_weights_to_fp16(model: nn.Module):
 
 
 # used to maintain checkpoint compatibility
-def convert_state_dict(state_dict: dict):
+def convert_to_custom_text_state_dict(state_dict: dict):
     if 'text_projection' in state_dict:
         # old format state_dict, move text tower -> .text
         new_state_dict = {}
@@ -232,7 +298,7 @@ def build_model_from_openai_state_dict(state_dict: dict):
         state_dict.pop(key, None)
 
     convert_weights_to_fp16(model)
-    state_dict = convert_state_dict(state_dict)
+    state_dict = convert_to_custom_text_state_dict(state_dict)
     model.load_state_dict(state_dict)
     return model.eval()
 

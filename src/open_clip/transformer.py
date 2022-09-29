@@ -5,6 +5,7 @@ from typing import Callable, Optional
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
 
@@ -107,6 +108,36 @@ class ResidualAttentionBlock(nn.Module):
             n_head: int,
             mlp_ratio: float = 4.0,
             act_layer: Callable = nn.GELU,
+    ):
+        super().__init__()
+
+        self.ln_1 = LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, n_head)
+
+        self.ln_2 = LayerNorm(d_model)
+        mlp_width = int(d_model * mlp_ratio)
+        self.mlp = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(d_model, mlp_width)),
+            ("gelu", act_layer()),
+            ("c_proj", nn.Linear(mlp_width, d_model))
+        ]))
+
+    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+
+class CustomResidualAttentionBlock(nn.Module):
+    def __init__(
+            self,
+            d_model: int,
+            n_head: int,
+            mlp_ratio: float = 4.0,
+            act_layer: Callable = nn.GELU,
             scale_cosine_attn: bool = False,
             scale_heads: bool = False,
             scale_attn: bool = False,
@@ -115,14 +146,11 @@ class ResidualAttentionBlock(nn.Module):
         super().__init__()
 
         self.ln_1 = LayerNorm(d_model)
-        # FIXME torchscript issues need to be resolved for custom attention
-        # if scale_cosine_attn or scale_heads:
-        #     self.attn = Attention(
-        #        d_model, n_head,
-        #        scaled_cosine=scale_cosine_attn,
-        #        scale_heads=scale_heads,
-        #     )
-        self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.attn = Attention(
+           d_model, n_head,
+           scaled_cosine=scale_cosine_attn,
+           scale_heads=scale_heads,
+        )
         self.ln_attn = LayerNorm(d_model) if scale_attn else nn.Identity()
 
         self.ln_2 = LayerNorm(d_model)
@@ -134,16 +162,8 @@ class ResidualAttentionBlock(nn.Module):
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
 
-    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
-        # FIXME torchscript issues need resolving for custom attention option to work
-        # if self.use_torch_attn:
-        #     return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
-        # else:
-        #     return self.attn(x, attn_mask=attn_mask)
-
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ln_attn(self.attention(self.ln_1(x), attn_mask=attn_mask))
+        x = x + self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask))
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -169,7 +189,7 @@ class Transformer(nn.Module):
         return x
 
 
-class VisualTransformer(nn.Module):
+class VisionTransformer(nn.Module):
     def __init__(
             self,
             image_size: int,
@@ -196,6 +216,8 @@ class VisualTransformer(nn.Module):
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+
+        self.init_parameters()
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         assert unlocked_groups == 0, 'partial locking not currently supported for this model'
@@ -280,6 +302,8 @@ class TextTransformer(nn.Module):
 
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
+        self.init_parameters()
+
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
@@ -295,6 +319,10 @@ class TextTransformer(nn.Module):
 
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
