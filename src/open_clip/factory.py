@@ -5,14 +5,14 @@ import pathlib
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_fp16, convert_to_custom_text_state_dict, resize_pos_embed
 from .openai import load_openai_model
-from .pretrained import get_pretrained_cfg, download_pretrained
+from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained
 from .transform import image_transform
 
 
@@ -48,6 +48,19 @@ def _rescan_model_configs():
 _rescan_model_configs()  # initial populate of model config registry
 
 
+def list_models():
+    """ enumerate available model architectures based on config files """
+    return list(_MODEL_CONFIGS.keys())
+
+
+def add_model_config(path):
+    """ add model config path or file and update registry """
+    if not isinstance(path, Path):
+        path = Path(path)
+    _MODEL_CONFIG_PATHS.append(path)
+    _rescan_model_configs()
+
+
 def load_state_dict(checkpoint_path: str, map_location='cpu'):
     checkpoint = torch.load(checkpoint_path, map_location=map_location)
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
@@ -71,21 +84,23 @@ def load_checkpoint(model, checkpoint_path, strict=True):
 
 def create_model(
         model_name: str,
-        pretrained: str = '',
+        pretrained: Optional[str] = None,
         precision: str = 'fp32',
-        device: torch.device = torch.device('cpu'),
+        device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
         cache_dir: Optional[str] = None,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+    if isinstance(device, str):
+        device = torch.device(device)
 
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(model_name, device=device, jit=jit, cache_dir=cache_dir)
         # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if precision == "amp" or precision == "fp32":
+        if 'amp' in precision or precision == "fp32":
             model = model.float()
     else:
         if model_name in _MODEL_CONFIGS:
@@ -141,9 +156,9 @@ def create_model(
 
 def create_model_and_transforms(
         model_name: str,
-        pretrained: str = '',
+        pretrained: Optional[str] = None,
         precision: str = 'fp32',
-        device: torch.device = torch.device('cpu'),
+        device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
         force_quick_gelu: bool = False,
         pretrained_image: bool = False,
@@ -152,27 +167,71 @@ def create_model_and_transforms(
         cache_dir: Optional[str] = None,
 ):
     model = create_model(
-        model_name, pretrained, precision, device, jit,
+        model_name,
+        pretrained,
+        precision=precision,
+        device=device,
+        jit=jit,
         force_quick_gelu=force_quick_gelu,
         pretrained_image=pretrained_image,
-        cache_dir=cache_dir)
+        cache_dir=cache_dir,
+    )
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
     image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(model.visual.image_size, is_train=True, mean=image_mean, std=image_std)
-    preprocess_val = image_transform(model.visual.image_size, is_train=False, mean=image_mean, std=image_std)
+    preprocess_train = image_transform(
+        model.visual.image_size,
+        is_train=True,
+        mean=image_mean,
+        std=image_std
+    )
+    preprocess_val = image_transform(
+        model.visual.image_size,
+        is_train=False,
+        mean=image_mean,
+        std=image_std
+    )
 
     return model, preprocess_train, preprocess_val
 
 
-def list_models():
-    """ enumerate available model architectures based on config files """
-    return list(_MODEL_CONFIGS.keys())
+def create_model_from_pretrained(
+        model_name: str,
+        pretrained: str,
+        precision: str = 'fp32',
+        device: Union[str, torch.device] = 'cpu',
+        jit: bool = False,
+        force_quick_gelu: bool = False,
+        return_transform: bool = True,
+        image_mean: Optional[Tuple[float, ...]] = None,
+        image_std: Optional[Tuple[float, ...]] = None,
+        cache_dir: Optional[str] = None,
+):
+    if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
+        raise RuntimeError(
+            f'{pretrained} is not a valid pretrained cfg or checkpoint for {model_name}.'
+            f' Use open_clip.list_pretrained() to find one.')
 
+    model = create_model(
+        model_name,
+        pretrained,
+        precision=precision,
+        device=device,
+        jit=jit,
+        force_quick_gelu=force_quick_gelu,
+        cache_dir=cache_dir,
+    )
 
-def add_model_config(path):
-    """ add model config path or file and update registry """
-    if not isinstance(path, Path):
-        path = Path(path)
-    _MODEL_CONFIG_PATHS.append(path)
-    _rescan_model_configs()
+    if not return_transform:
+        return model
+
+    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+    image_std = image_std or getattr(model.visual, 'image_std', None)
+    preprocess = image_transform(
+        model.visual.image_size,
+        is_train=False,
+        mean=image_mean,
+        std=image_std
+    )
+
+    return model, preprocess
