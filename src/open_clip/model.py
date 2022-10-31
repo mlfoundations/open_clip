@@ -298,7 +298,6 @@ def build_model_from_openai_state_dict(state_dict: dict):
         state_dict.pop(key, None)
 
     convert_weights_to_fp16(model)
-    state_dict = convert_to_custom_text_state_dict(state_dict)
     model.load_state_dict(state_dict)
     return model.eval()
 
