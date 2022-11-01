@@ -10,12 +10,12 @@ from torch.utils.checkpoint import checkpoint
 from .utils import to_2tuple
 
 
-class LayerNorm(nn.LayerNorm):
-    """Subclass torch's LayerNorm to handle fp16."""
+class LayerNormFp32(nn.LayerNorm):
+    """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        x = F.layer_norm(x.to(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
 
 
@@ -108,13 +108,14 @@ class ResidualAttentionBlock(nn.Module):
             n_head: int,
             mlp_ratio: float = 4.0,
             act_layer: Callable = nn.GELU,
+            norm_layer: Callable = nn.LayerNorm,
     ):
         super().__init__()
 
-        self.ln_1 = LayerNorm(d_model)
+        self.ln_1 = norm_layer(d_model)
         self.attn = nn.MultiheadAttention(d_model, n_head)
 
-        self.ln_2 = LayerNorm(d_model)
+        self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, mlp_width)),
@@ -123,6 +124,7 @@ class ResidualAttentionBlock(nn.Module):
         ]))
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        attn_mask = attn_mask.to(x.dtype) if attn_mask is not None else None
         return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
@@ -138,6 +140,7 @@ class CustomResidualAttentionBlock(nn.Module):
             n_head: int,
             mlp_ratio: float = 4.0,
             act_layer: Callable = nn.GELU,
+            norm_layer: Callable = nn.LayerNorm,
             scale_cosine_attn: bool = False,
             scale_heads: bool = False,
             scale_attn: bool = False,
@@ -145,19 +148,19 @@ class CustomResidualAttentionBlock(nn.Module):
     ):
         super().__init__()
 
-        self.ln_1 = LayerNorm(d_model)
+        self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
            d_model, n_head,
            scaled_cosine=scale_cosine_attn,
            scale_heads=scale_heads,
         )
-        self.ln_attn = LayerNorm(d_model) if scale_attn else nn.Identity()
+        self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
 
-        self.ln_2 = LayerNorm(d_model)
+        self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, mlp_width)),
-            ('ln', LayerNorm(mlp_width) if scale_fc else nn.Identity()),
+            ('ln', norm_layer(mlp_width) if scale_fc else nn.Identity()),
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
@@ -169,16 +172,27 @@ class CustomResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int,  mlp_ratio: float = 4.0, act_layer: Callable = nn.GELU):
+    def __init__(
+            self,
+            width: int,
+            layers: int,
+            heads: int,
+            mlp_ratio: float = 4.0,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = nn.LayerNorm,
+    ):
         super().__init__()
         self.width = width
         self.layers = layers
         self.grad_checkpointing = False
 
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer)
+            ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer, norm_layer=norm_layer)
             for _ in range(layers)
         ])
+
+    def get_cast_dtype(self) -> torch.dtype:
+        return self.resblocks[0].mlp.c_fc.weight.dtype
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
@@ -199,7 +213,8 @@ class VisionTransformer(nn.Module):
             heads: int,
             mlp_ratio: float,
             output_dim: int,
-            act_layer: Callable = nn.GELU
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = nn.LayerNorm,
     ):
         super().__init__()
         self.image_size = to_2tuple(image_size)
@@ -211,10 +226,10 @@ class VisionTransformer(nn.Module):
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
-        self.ln_pre = LayerNorm(width)
-        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer)
+        self.ln_pre = norm_layer(width)
+        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer, norm_layer=norm_layer)
 
-        self.ln_post = LayerNorm(width)
+        self.ln_post = norm_layer(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         self.init_parameters()
@@ -281,9 +296,9 @@ class TextTransformer(nn.Module):
             layers: int = 12,
             output_dim: int = 512,
             act_layer: Callable = nn.GELU,
+            norm_layer: Callable = nn.LayerNorm,
     ):
         super().__init__()
-
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -296,8 +311,9 @@ class TextTransformer(nn.Module):
             layers=layers,
             heads=heads,
             act_layer=act_layer,
+            norm_layer=norm_layer,
         )
-        self.ln_final = LayerNorm(width)
+        self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
@@ -333,9 +349,11 @@ class TextTransformer(nn.Module):
         return mask
 
     def forward(self, text):
-        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        cast_dtype = self.transformer.get_cast_dtype()
 
-        x = x + self.positional_embedding
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD

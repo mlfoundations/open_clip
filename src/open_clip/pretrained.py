@@ -168,7 +168,7 @@ def list_pretrained(as_str: bool = False):
     return [':'.join([k, t]) if as_str else (k, t) for k in _PRETRAINED.keys() for t in _PRETRAINED[k].keys()]
 
 
-def list_pretrained_tag_models(tag: str):
+def list_pretrained_models_by_tag(tag: str):
     """ return all models having the specified pretrain tag """
     models = []
     for k in _PRETRAINED.keys():
@@ -177,7 +177,7 @@ def list_pretrained_tag_models(tag: str):
     return models
 
 
-def list_pretrained_model_tags(model: str):
+def list_pretrained_tags_by_model(model: str):
     """ return all pretrain tags for the specified model architecture """
     tags = []
     if model in _PRETRAINED:

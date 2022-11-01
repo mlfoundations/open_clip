@@ -5,7 +5,7 @@ Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (
 from dataclasses import dataclass
 import logging
 import math
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -15,7 +15,7 @@ from torch.utils.checkpoint import checkpoint
 
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
-from .transformer import QuickGELU, Attention, VisionTransformer, TextTransformer
+from .transformer import LayerNormFp32, QuickGELU, Attention, VisionTransformer, TextTransformer
 from .utils import to_2tuple
 
 
@@ -42,10 +42,20 @@ class CLIPTextCfg:
     layers: int = 12
 
 
+def get_cast_dtype(precision: str):
+    cast_dtype = None
+    if precision == 'bf16':
+        cast_dtype = torch.bfloat16
+    elif precision == 'fp16':
+        cast_dtype = torch.float16
+    return cast_dtype
+
+
 def _build_vision_tower(
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None
 ):
     if isinstance(vision_cfg, dict):
         vision_cfg = CLIPVisionCfg(**vision_cfg)
@@ -76,6 +86,7 @@ def _build_vision_tower(
         )
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
+        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else nn.LayerNorm
         visual = VisionTransformer(
             image_size=vision_cfg.image_size,
             patch_size=vision_cfg.patch_size,
@@ -85,6 +96,7 @@ def _build_vision_tower(
             mlp_ratio=vision_cfg.mlp_ratio,
             output_dim=embed_dim,
             act_layer=act_layer,
+            norm_layer=norm_layer,
         )
 
     return visual
@@ -94,11 +106,13 @@ def _build_text_tower(
         embed_dim: int,
         text_cfg: CLIPTextCfg,
         quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
 ):
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else nn.LayerNorm
 
     text = TextTransformer(
         context_length=text_cfg.context_length,
@@ -108,6 +122,7 @@ def _build_text_tower(
         layers=text_cfg.layers,
         output_dim=embed_dim,
         act_layer=act_layer,
+        norm_layer=norm_layer,
     )
 
     return text
@@ -120,12 +135,12 @@ class CLIP(nn.Module):
             vision_cfg: CLIPVisionCfg,
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
-        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu)
-
-        text = _build_text_tower(embed_dim, text_cfg, quick_gelu)
+        text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.transformer = text.transformer
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
@@ -150,13 +165,15 @@ class CLIP(nn.Module):
         return F.normalize(features, dim=-1) if normalize else features
 
     def encode_text(self, text, normalize: bool = False):
-        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        cast_dtype = self.transformer.get_cast_dtype()
 
-        x = x + self.positional_embedding
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)  # x.shape = [batch_size, n_ctx, transformer.width]
+        x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
@@ -175,10 +192,11 @@ class CustomTextCLIP(nn.Module):
             vision_cfg: CLIPVisionCfg,
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
-        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu)
-        self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu)
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
+        self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
@@ -204,28 +222,31 @@ class CustomTextCLIP(nn.Module):
         return image_features, text_features, self.logit_scale.exp()
 
 
-def convert_weights_to_fp16(model: nn.Module):
-    """Convert applicable model parameters to fp16"""
+def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
+    """Convert applicable model parameters to low-precision (bf16 or fp16)"""
 
-    def _convert_weights_to_fp16(l):
+    def _convert_weights(l):
         if isinstance(l, (nn.Conv1d, nn.Conv2d, nn.Linear)):
-            l.weight.data = l.weight.data.half()
+            l.weight.data = l.weight.data.to(dtype)
             if l.bias is not None:
-                l.bias.data = l.bias.data.half()
+                l.bias.data = l.bias.data.to(dtype)
 
         if isinstance(l, (nn.MultiheadAttention, Attention)):
             for attr in [*[f"{s}_proj_weight" for s in ["in", "q", "k", "v"]], "in_proj_bias", "bias_k", "bias_v"]:
                 tensor = getattr(l, attr)
                 if tensor is not None:
-                    tensor.data = tensor.data.half()
+                    tensor.data = tensor.data.to(dtype)
 
         for name in ["text_projection", "proj"]:
             if hasattr(l, name):
                 attr = getattr(l, name)
                 if attr is not None:
-                    attr.data = attr.data.half()
+                    attr.data = attr.data.to(dtype)
 
-    model.apply(_convert_weights_to_fp16)
+    model.apply(_convert_weights)
+
+
+convert_weights_to_fp16 = convert_weights_to_lp  # backwards compat
 
 
 # used to maintain checkpoint compatibility
@@ -247,7 +268,11 @@ def convert_to_custom_text_state_dict(state_dict: dict):
     return state_dict
 
 
-def build_model_from_openai_state_dict(state_dict: dict):
+def build_model_from_openai_state_dict(
+        state_dict: dict,
+        quick_gelu=True,
+        cast_dtype=torch.float16,
+):
     vit = "visual.proj" in state_dict
 
     if vit:
@@ -291,13 +316,14 @@ def build_model_from_openai_state_dict(state_dict: dict):
         embed_dim,
         vision_cfg=vision_cfg,
         text_cfg=text_cfg,
-        quick_gelu=True,  # OpenAI models were trained with QuickGELU
+        quick_gelu=quick_gelu,  # OpenAI models were trained with QuickGELU
+        cast_dtype=cast_dtype,
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
         state_dict.pop(key, None)
 
-    convert_weights_to_fp16(model)
+    convert_weights_to_fp16(model)  # OpenAI state dicts are partially converted to float16
     model.load_state_dict(state_dict)
     return model.eval()
 

@@ -10,9 +10,10 @@ from typing import Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
-from .model import CLIP, CustomTextCLIP, convert_weights_to_fp16, convert_to_custom_text_state_dict, resize_pos_embed
+from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+    resize_pos_embed, get_cast_dtype
 from .openai import load_openai_model
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained
+from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
 from .transform import image_transform
 
 
@@ -89,6 +90,7 @@ def create_model(
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
         force_quick_gelu: bool = False,
+        force_custom_text: bool = False,
         pretrained_image: bool = False,
         cache_dir: Optional[str] = None,
 ):
@@ -98,10 +100,13 @@ def create_model(
 
     if pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
-        model = load_openai_model(model_name, device=device, jit=jit, cache_dir=cache_dir)
-        # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
-        if 'amp' in precision or precision == "fp32":
-            model = model.float()
+        model = load_openai_model(
+            model_name,
+            precision=precision,
+            device=device,
+            jit=jit,
+            cache_dir=cache_dir,
+        )
     else:
         if model_name in _MODEL_CONFIGS:
             logging.info(f'Loading {model_name} model config.')
@@ -121,7 +126,13 @@ def create_model(
             else:
                 assert False, 'pretrained image towers currently only supported for timm models'
 
-        model = CLIP(**model_cfg)
+        cast_dtype = get_cast_dtype(precision)
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text
+
+        if custom_text:
+            model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+        else:
+            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_cfg = {}
         if pretrained:
@@ -136,13 +147,15 @@ def create_model(
                 logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
                 load_checkpoint(model, checkpoint_path)
             else:
-                logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
-                raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
+                error_str = (
+                    f'Pretrained weights ({pretrained}) not found for model {model_name}.'
+                    f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
+                logging.warning(error_str)
+                raise RuntimeError(error_str)
 
         model.to(device=device)
-        if precision == "fp16":
-            assert device.type != 'cpu'
-            convert_weights_to_fp16(model)
+        if precision in ("fp16", "bf16"):
+            convert_weights_to_lp(model, dtype=torch.bfloat16 if precision == 'bf16' else torch.float16)
 
         # set image / mean metadata from pretrained_cfg if available, or use default
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
@@ -161,6 +174,7 @@ def create_model_and_transforms(
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
         force_quick_gelu: bool = False,
+        force_custom_text: bool = False,
         pretrained_image: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
@@ -173,6 +187,7 @@ def create_model_and_transforms(
         device=device,
         jit=jit,
         force_quick_gelu=force_quick_gelu,
+        force_custom_text=force_custom_text,
         pretrained_image=pretrained_image,
         cache_dir=cache_dir,
     )
@@ -202,6 +217,7 @@ def create_model_from_pretrained(
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
         force_quick_gelu: bool = False,
+        force_custom_text: bool = False,
         return_transform: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
@@ -219,6 +235,7 @@ def create_model_from_pretrained(
         device=device,
         jit=jit,
         force_quick_gelu=force_quick_gelu,
+        force_custom_text=force_custom_text,
         cache_dir=cache_dir,
     )
 

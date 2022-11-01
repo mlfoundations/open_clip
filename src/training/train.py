@@ -13,7 +13,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import ClipLoss
+from open_clip import ClipLoss, get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -47,6 +47,7 @@ def unwrap_model(model):
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     model.train()
     loss = ClipLoss(
@@ -71,7 +72,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         scheduler(step)
 
         images, texts = batch
-        images = images.to(device=device, non_blocking=True)
+        images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -161,8 +162,8 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
-    
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
         num_samples = 0
@@ -175,7 +176,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
                 images, texts = batch
-                images = images.to(device=device, non_blocking=True)
+                images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
