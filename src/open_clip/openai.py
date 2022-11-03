@@ -10,7 +10,7 @@ from typing import Union, List
 import torch
 
 from .model import build_model_from_openai_state_dict
-from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained
+from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained_from_url
 
 __all__ = ["list_openai_models", "load_openai_model"]
 
@@ -24,6 +24,7 @@ def load_openai_model(
         name: str,
         device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
         jit=True,
+        cache_dir=None,
 ):
     """Load a CLIP model
 
@@ -35,6 +36,8 @@ def load_openai_model(
         The device to put the loaded model
     jit : bool
         Whether to load the optimized JIT model (default) or more hackable non-JIT model.
+    cache_dir : Optional[str]
+        The directory to cache the downloaded model weights
 
     Returns
     -------
@@ -44,7 +47,7 @@ def load_openai_model(
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
     if get_pretrained_url(name, 'openai'):
-        model_path = download_pretrained(get_pretrained_url(name, 'openai'))
+        model_path = download_pretrained_from_url(get_pretrained_url(name, 'openai'), cache_dir=cache_dir)
     elif os.path.isfile(name):
         model_path = name
     else:

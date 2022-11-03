@@ -41,6 +41,14 @@ def random_seed(seed=42, rank=0):
 def main():
     args = parse_args()
 
+    if torch.cuda.is_available():
+        # This enables tf32 on Ampere GPUs which is only 8% slower than
+        # float16 and almost as accurate as float32
+        # This was a default in pytorch until 1.12
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+
     # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
     args.model = args.model.replace('/', '-')
 
@@ -76,8 +84,6 @@ def main():
     setup_logging(args.log_path, args.log_level)
 
     # fully initialize distributed device environment
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
     device = init_distributed_device(args)
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
@@ -95,7 +101,7 @@ def main():
     if args.copy_codebase:
         copy_codebase(args)
 
-    assert args.precision in ['amp', 'fp16', 'fp32']
+    assert args.precision in ['amp', 'amp_bfloat16', 'fp16', 'fp32']
     if args.precision == 'fp16':
         logging.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
@@ -121,6 +127,8 @@ def main():
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
+        image_mean=args.image_mean,
+        image_std=args.image_std,
     )
     random_seed(args.seed, args.rank)
 
@@ -159,7 +167,8 @@ def main():
     # create optimizer and scaler
     optimizer = None
     scaler = None
-    if args.train_data:
+
+    if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
         exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
@@ -189,7 +198,7 @@ def main():
     start_epoch = 0
     if args.resume is not None:
         if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location=device)
+            checkpoint = torch.load(args.resume, map_location='cpu')
             if 'epoch' in checkpoint:
                 # resuming a train checkpoint w/ epoch and optimizer state
                 start_epoch = checkpoint["epoch"]
@@ -235,6 +244,7 @@ def main():
         # you will have to configure this for your project!
         wandb.init(
             project="open-clip",
+            name=args.name,
             notes=args.wandb_notes,
             tags=[],
             config=vars(args),

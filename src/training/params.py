@@ -38,7 +38,7 @@ def parse_args():
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "auto"],
+        choices=["webdataset", "csv", "synthetic", "auto"],
         default="auto",
         help="Which type of dataset to process."
     )
@@ -147,7 +147,7 @@ def parse_args():
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "fp16", "fp32"],
+        choices=["amp", "amp_bfloat16", "fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -187,6 +187,12 @@ def parse_args():
         action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
+    parser.add_argument(
+        '--image-mean', type=float, nargs='+', default=None, metavar='MEAN',
+        help='Override default image mean value of dataset')
+    parser.add_argument(
+        '--image-std', type=float, nargs='+', default=None, metavar='STD',
+        help='Override default image std deviation of of dataset')
     parser.add_argument(
         "--grad-checkpointing",
         default=False,
@@ -246,9 +252,6 @@ def parse_args():
         help="Notes if logging with wandb"
     )
     parser.add_argument(
-        "--C", type=float, default=3.16, help="inverse regularizer for logistic reg."
-    )
-    parser.add_argument(
         "--debug",
         default=False,
         action="store_true",
@@ -280,6 +283,9 @@ def parse_args():
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Default random seed."
+    )
+    parser.add_argument(
+        "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
     )
     args = parser.parse_args()
 
