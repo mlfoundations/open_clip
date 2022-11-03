@@ -25,6 +25,16 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
+class LayerScale(nn.Module):
+    def __init__(self, dim, init_values=1e-5, inplace=False):
+        super().__init__()
+        self.inplace = inplace
+        self.gamma = nn.Parameter(init_values * torch.ones(dim))
+
+    def forward(self, x):
+        return x.mul_(self.gamma) if self.inplace else x * self.gamma
+
+
 class Attention(nn.Module):
     def __init__(
             self,
@@ -107,6 +117,7 @@ class ResidualAttentionBlock(nn.Module):
             d_model: int,
             n_head: int,
             mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = nn.LayerNorm,
     ):
@@ -114,6 +125,7 @@ class ResidualAttentionBlock(nn.Module):
 
         self.ln_1 = norm_layer(d_model)
         self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -122,14 +134,15 @@ class ResidualAttentionBlock(nn.Module):
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
+        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         attn_mask = attn_mask.to(x.dtype) if attn_mask is not None else None
         return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
-        x = x + self.mlp(self.ln_2(x))
+        x = x + self.ls_1(self.attention(self.ln_1(x), attn_mask=attn_mask))
+        x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
 
@@ -139,6 +152,7 @@ class CustomResidualAttentionBlock(nn.Module):
             d_model: int,
             n_head: int,
             mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = nn.LayerNorm,
             scale_cosine_attn: bool = False,
@@ -155,6 +169,7 @@ class CustomResidualAttentionBlock(nn.Module):
            scale_heads=scale_heads,
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
+        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -164,10 +179,11 @@ class CustomResidualAttentionBlock(nn.Module):
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
+        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask))
-        x = x + self.mlp(self.ln_2(x))
+        x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
+        x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
 
@@ -178,6 +194,7 @@ class Transformer(nn.Module):
             layers: int,
             heads: int,
             mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = nn.LayerNorm,
     ):
@@ -187,7 +204,8 @@ class Transformer(nn.Module):
         self.grad_checkpointing = False
 
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(width, heads, mlp_ratio, act_layer=act_layer, norm_layer=norm_layer)
+            ResidualAttentionBlock(
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
             for _ in range(layers)
         ])
 
@@ -212,7 +230,8 @@ class VisionTransformer(nn.Module):
             layers: int,
             heads: int,
             mlp_ratio: float,
-            output_dim: int,
+            ls_init_value: float = None,
+            output_dim: int = 512,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = nn.LayerNorm,
     ):
@@ -227,7 +246,15 @@ class VisionTransformer(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         self.ln_pre = norm_layer(width)
-        self.transformer = Transformer(width, layers, heads, mlp_ratio, act_layer=act_layer, norm_layer=norm_layer)
+        self.transformer = Transformer(
+            width,
+            layers,
+            heads,
+            mlp_ratio,
+            ls_init_value=ls_init_value,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
 
         self.ln_post = norm_layer(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
@@ -294,6 +321,7 @@ class TextTransformer(nn.Module):
             width: int = 512,
             heads: int = 8,
             layers: int = 12,
+            ls_init_value: float = None,
             output_dim: int = 512,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = nn.LayerNorm,
@@ -310,6 +338,7 @@ class TextTransformer(nn.Module):
             width=width,
             layers=layers,
             heads=heads,
+            ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )

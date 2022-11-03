@@ -62,6 +62,13 @@ def add_model_config(path):
     _rescan_model_configs()
 
 
+def get_model_config(model_name):
+    if model_name in _MODEL_CONFIGS:
+        return deepcopy(_MODEL_CONFIGS[model_name])
+    else:
+        return None
+
+
 def load_state_dict(checkpoint_path: str, map_location='cpu'):
     checkpoint = torch.load(checkpoint_path, map_location=map_location)
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
@@ -98,7 +105,7 @@ def create_model(
     if isinstance(device, str):
         device = torch.device(device)
 
-    if pretrained.lower() == 'openai':
+    if pretrained and pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
         model = load_openai_model(
             model_name,
@@ -108,9 +115,9 @@ def create_model(
             cache_dir=cache_dir,
         )
     else:
-        if model_name in _MODEL_CONFIGS:
-            logging.info(f'Loading {model_name} model config.')
-            model_cfg = deepcopy(_MODEL_CONFIGS[model_name])
+        model_cfg = get_model_config(model_name)
+        if model_cfg is not None:
+            logging.info(f'Loaded {model_name} model config.')
         else:
             logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
             raise RuntimeError(f'Model config for {model_name} not found.')

@@ -29,6 +29,7 @@ class TimmModel(nn.Module):
             image_size=224,
             pool='avg',
             proj='linear',
+            proj_bias=False,
             drop=0.,
             pretrained=False):
         super().__init__()
@@ -62,9 +63,9 @@ class TimmModel(nn.Module):
         # NOTE attention pool ends with a projection layer, so proj should usually be set to '' if such pooling is used
         if proj == 'linear':
             head_layers['drop'] = nn.Dropout(drop)
-            head_layers['proj'] = nn.Linear(prev_chs, embed_dim)
+            head_layers['proj'] = nn.Linear(prev_chs, embed_dim, bias=proj_bias)
         elif proj == 'mlp':
-            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=drop)
+            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=drop, bias=(True, proj_bias))
 
         self.head = nn.Sequential(head_layers)
 

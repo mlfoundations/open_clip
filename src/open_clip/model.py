@@ -27,10 +27,12 @@ class CLIPVisionCfg:
     mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
+    ls_init_value: Optional[float] = None  # layer scale initial value
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
+    timm_proj_bias: bool = False  # enable bias final projection
 
 
 @dataclass
@@ -40,6 +42,7 @@ class CLIPTextCfg:
     width: int = 512
     heads: int = 8
     layers: int = 12
+    ls_init_value: Optional[float] = None  # layer scale initial value
 
 
 def get_cast_dtype(precision: str):
@@ -71,6 +74,7 @@ def _build_vision_tower(
             pretrained=vision_cfg.timm_model_pretrained,
             pool=vision_cfg.timm_pool,
             proj=vision_cfg.timm_proj,
+            proj_bias=vision_cfg.timm_proj_bias,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size
         )
@@ -94,6 +98,7 @@ def _build_vision_tower(
             layers=vision_cfg.layers,
             heads=vision_heads,
             mlp_ratio=vision_cfg.mlp_ratio,
+            ls_init_value=vision_cfg.ls_init_value,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
@@ -120,6 +125,7 @@ def _build_text_tower(
         width=text_cfg.width,
         heads=text_cfg.heads,
         layers=text_cfg.layers,
+        ls_init_value=text_cfg.ls_init_value,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
@@ -176,7 +182,6 @@ class CLIP(nn.Module):
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
-
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(self, image, text):
