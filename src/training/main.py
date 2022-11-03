@@ -253,8 +253,6 @@ def main():
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
-    torch.save(model.state_dict(), f'{args.model}-openai.pt')
-
     if 'train' not in data:
         evaluate(model, data, start_epoch, args, writer)
         return
