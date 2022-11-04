@@ -147,7 +147,7 @@ def parse_args():
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bfloat16", "fp16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -218,6 +218,12 @@ def parse_args():
         help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
     parser.add_argument(
+        "--force-custom-text",
+        default=False,
+        action='store_true',
+        help="Force use of CustomTextCLIP model (separate text-tower).",
+    )
+    parser.add_argument(
         "--torchscript",
         default=False,
         action='store_true',
@@ -285,7 +291,7 @@ def parse_args():
         "--seed", type=int, default=0, help="Default random seed."
     )
     parser.add_argument(
-        "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
+        "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
     args = parser.parse_args()
 
