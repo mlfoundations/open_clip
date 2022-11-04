@@ -14,6 +14,7 @@ parser.add_argument('--model', metavar='NAME', default='',
 parser.add_argument('--results-file', default='', type=str, metavar='FILENAME',
                     help='Output csv file for results')
 
+
 def profile_fvcore(
         model,
         image_input_size=(3, 224, 224),
@@ -25,7 +26,6 @@ def profile_fvcore(
     if force_cpu:
         model = model.to('cpu')
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
-    print(device, dtype)
     example_image_input = torch.ones((batch_size,) + image_input_size, device=device, dtype=dtype)
     example_text_input = torch.ones((batch_size,) + text_input_size, device=device, dtype=torch.int64)
     fca = FlopCountAnalysis(model, (example_image_input, example_text_input))
@@ -84,7 +84,10 @@ def profile_model(model_name):
     if torch.cuda.is_available():
         model = model.cuda()
 
-    image_input_size = (3,) + model.visual.image_size
+    if isinstance(model.visual.image_size, (tuple, list)):
+        image_input_size = (3,) + tuple(model.visual.image_size[-2:])
+    else:
+        image_input_size = (3, model.visual.image_size, model.visual.image_size)
     text_input_size = (77,)
 
     results = {}
@@ -142,6 +145,7 @@ def main():
         results.append(row)
 
     df = pd.DataFrame(results, columns=results[0].keys())
+    df = df.sort_values('gmacs')
     print(df)
     if args.results_file:
         df.to_csv(args.results_file, index=False)
