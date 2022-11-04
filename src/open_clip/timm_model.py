@@ -2,8 +2,10 @@
 
 Wraps timm (https://github.com/rwightman/pytorch-image-models) models for use as a vision tower in CLIP model.
 """
+import logging
 from collections import OrderedDict
 
+import torch
 import torch.nn as nn
 
 try:
@@ -100,6 +102,13 @@ class TimmModel(nn.Module):
                 gmodules = group_modules(self.trunk, matcher, reverse=True)
                 gmodules = {k for k, v in gmodules.items() if v <= max_layer_id}
                 freeze_batch_norm_2d(self.trunk, gmodules)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        try:
+            self.trunk.set_grad_checkpointing(enable)
+        except Exception as e:
+            logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
 
     def forward(self, x):
         x = self.trunk(x)

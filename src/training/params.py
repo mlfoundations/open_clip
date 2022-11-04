@@ -291,7 +291,7 @@ def parse_args():
         "--seed", type=int, default=0, help="Default random seed."
     )
     parser.add_argument(
-        "--norm_gradient_clip", type=float, default=None, help="Gradient clip."
+        "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
     args = parser.parse_args()
 
