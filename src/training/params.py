@@ -10,7 +10,7 @@ def get_default_params(model_name):
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.999, "eps": 1.0e-8}
 
 
-def parse_args():
+def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--train-data",
@@ -293,7 +293,7 @@ def parse_args():
     parser.add_argument(
         "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.
     default_params = get_default_params(args.model)

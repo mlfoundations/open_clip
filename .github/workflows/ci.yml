@@ -27,6 +27,7 @@ jobs:
         source .env/bin/activate
         make install
         make install-dev
+        make install-training
     - name: Unit tests
       run: |
         source .env/bin/activate

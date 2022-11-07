@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import random
 from datetime import datetime
 
@@ -38,8 +39,8 @@ def random_seed(seed=42, rank=0):
     random.seed(seed + rank)
 
 
-def main():
-    args = parse_args()
+def main(args):
+    args = parse_args(args)
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -314,4 +315,4 @@ def copy_codebase(args):
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
