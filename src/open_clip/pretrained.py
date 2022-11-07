@@ -214,6 +214,8 @@ def download_pretrained_from_url(
 
     if 'openaipublic' in url:
         expected_sha256 = url.split("/")[-2]
+    elif 'mlfoundations' in url:
+        expected_sha256 = os.path.splitext(filename)[0].split("-")[-1]
     else:
         expected_sha256 = ''
 
@@ -224,7 +226,7 @@ def download_pretrained_from_url(
 
     if os.path.isfile(download_target):
         if expected_sha256:
-            if hashlib.sha256(open(download_target, "rb").read()).hexdigest() == expected_sha256:
+            if hashlib.sha256(open(download_target, "rb").read()).hexdigest().startswith(expected_sha256):
                 return download_target
             else:
                 warnings.warn(f"{download_target} exists, but the SHA256 checksum does not match; re-downloading the file")
@@ -232,7 +234,7 @@ def download_pretrained_from_url(
             return download_target
 
     with urllib.request.urlopen(url) as source, open(download_target, "wb") as output:
-        with tqdm(total=int(source.info().get("Content-Length")), ncols=80, unit='iB', unit_scale=True) as loop:
+        with tqdm(total=int(source.headers.get("Content-Length")), ncols=80, unit='iB', unit_scale=True) as loop:
             while True:
                 buffer = source.read(8192)
                 if not buffer:
@@ -241,7 +243,7 @@ def download_pretrained_from_url(
                 output.write(buffer)
                 loop.update(len(buffer))
 
-    if expected_sha256 and hashlib.sha256(open(download_target, "rb").read()).hexdigest() != expected_sha256:
+    if expected_sha256 and not hashlib.sha256(open(download_target, "rb").read()).hexdigest().startswith(expected_sha256):
         raise RuntimeError(f"Model has been downloaded but the SHA256 checksum does not not match")
 
     return download_target
