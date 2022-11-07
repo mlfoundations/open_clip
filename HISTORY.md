@@ -1,3 +1,9 @@
+## 2.3.1
+
+* Implement grad checkpointing for hf model.
+* custom_text: True if hf_model_name is set
+* Disable hf tokenizer parallelism 
+
 ## 2.3.0
 
 * Generalizable Text Transformer with HuggingFace Models (@iejMac)
