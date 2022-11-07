@@ -4,3 +4,4 @@ regex
 ftfy
 tqdm
 huggingface_hub
+transformers
