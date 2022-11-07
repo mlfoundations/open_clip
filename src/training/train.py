@@ -13,7 +13,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import ClipLoss
+from open_clip import ClipLoss, get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -47,6 +47,7 @@ def unwrap_model(model):
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     model.train()
     loss = ClipLoss(
@@ -68,10 +69,12 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     end = time.time()
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
-        scheduler(step)
+        
+        if not args.skip_scheduler:
+            scheduler(step)
 
         images, texts = batch
-        images = images.to(device=device, non_blocking=True)
+        images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -86,20 +89,20 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             if args.horovod:
                 optimizer.synchronize()
                 scaler.unscale_(optimizer)
-                if args.norm_gradient_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
+                if args.grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
                 with optimizer.skip_synchronize():
                     scaler.step(optimizer)
             else:
-                if args.norm_gradient_clip is not None:
+                if args.grad_clip_norm is not None:
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
                 scaler.step(optimizer)
             scaler.update()
         else:
             total_loss.backward()
-            if args.norm_gradient_clip is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.norm_gradient_clip, norm_type=2.0)
+            if args.grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
             optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
@@ -161,8 +164,8 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
-    
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
         num_samples = 0
@@ -175,7 +178,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
                 images, texts = batch
-                images = images.to(device=device, non_blocking=True)
+                images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():

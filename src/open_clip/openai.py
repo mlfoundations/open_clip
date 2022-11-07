@@ -5,26 +5,27 @@ Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (
 
 import os
 import warnings
-from typing import Union, List
+from typing import List, Optional, Union
 
 import torch
 
-from .model import build_model_from_openai_state_dict
-from .pretrained import get_pretrained_url, list_pretrained_tag_models, download_pretrained_from_url
+from .model import build_model_from_openai_state_dict, convert_weights_to_lp, get_cast_dtype
+from .pretrained import get_pretrained_url, list_pretrained_models_by_tag, download_pretrained_from_url
 
 __all__ = ["list_openai_models", "load_openai_model"]
 
 
 def list_openai_models() -> List[str]:
     """Returns the names of available CLIP models"""
-    return list_pretrained_tag_models('openai')
+    return list_pretrained_models_by_tag('openai')
 
 
 def load_openai_model(
         name: str,
-        device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
-        jit=True,
-        cache_dir=None,
+        precision: Optional[str] = None,
+        device: Optional[Union[str, torch.device]] = None,
+        jit: bool = True,
+        cache_dir: Optional[str] = None,
 ):
     """Load a CLIP model
 
@@ -32,6 +33,8 @@ def load_openai_model(
     ----------
     name : str
         A model name listed by `clip.available_models()`, or the path to a model checkpoint containing the state_dict
+    precision: str
+        Model precision, if None defaults to 'fp32' if device == 'cpu' else 'fp16'.
     device : Union[str, torch.device]
         The device to put the loaded model
     jit : bool
@@ -46,6 +49,11 @@ def load_openai_model(
     preprocess : Callable[[PIL.Image], torch.Tensor]
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if precision is None:
+        precision = 'fp32' if device == 'cpu' else 'fp16'
+
     if get_pretrained_url(name, 'openai'):
         model_path = download_pretrained_from_url(get_pretrained_url(name, 'openai'), cache_dir=cache_dir)
     elif os.path.isfile(name):
@@ -65,14 +73,21 @@ def load_openai_model(
         state_dict = torch.load(model_path, map_location="cpu")
 
     if not jit:
+        # Build a non-jit model from the OpenAI jitted model state dict
+        cast_dtype = get_cast_dtype(precision)
         try:
-            model = build_model_from_openai_state_dict(state_dict or model.state_dict()).to(device)
+            model = build_model_from_openai_state_dict(state_dict or model.state_dict(), cast_dtype=cast_dtype)
         except KeyError:
             sd = {k[7:]: v for k, v in state_dict["state_dict"].items()}
-            model = build_model_from_openai_state_dict(sd).to(device)
+            model = build_model_from_openai_state_dict(sd, cast_dtype=cast_dtype)
 
-        if str(device) == "cpu":
+        # model from OpenAI state dict is in manually cast fp16 mode, must be converted for AMP/fp32/bf16 use
+        model = model.to(device)
+        if precision.startswith('amp') or precision == 'fp32':
             model.float()
+        elif precision == 'bf16':
+            convert_weights_to_lp(model, dtype=torch.bfloat16)
+
         return model
 
     # patch the device names
@@ -97,8 +112,8 @@ def load_openai_model(
     patch_device(model.encode_image)
     patch_device(model.encode_text)
 
-    # patch dtype to float32 on CPU
-    if str(device) == "cpu":
+    # patch dtype to float32 (typically for CPU)
+    if precision == 'fp32':
         float_holder = torch.jit.trace(lambda: torch.ones([]).float(), example_inputs=[])
         float_input = list(float_holder.graph.findNode("aten::to").inputs())[1]
         float_node = float_input.node()
