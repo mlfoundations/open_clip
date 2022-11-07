@@ -428,12 +428,14 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None)
 
 class SyntheticDataset(Dataset):
 
-    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100):
+    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer_name=None):
         self.transform = transform
         self.image_size = image_size
         self.caption = caption
         self.image = Image.new('RGB', image_size)
         self.dataset_size = dataset_size
+
+        self.preprocess_txt = get_text_processor(tokenizer_name)
 
     def __len__(self):
         return self.dataset_size
@@ -441,13 +443,13 @@ class SyntheticDataset(Dataset):
     def __getitem__(self, idx):
         if self.transform is not None:
             image = self.transform(self.image)
-        return image, preprocess_txt(self.caption)
+        return image, self.preprocess_txt(self.caption)
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0):
+def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None):
     image_size = preprocess_fn.transforms[0].size
     dataset = SyntheticDataset(
-        transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples)
+        transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer_name=tokenizer_name)
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
