@@ -218,7 +218,6 @@ class CustomTextCLIP(nn.Module):
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
-    # TODO: should I add this to the regular CLIP class?
     def lock_text_tower(self, unlocked_layers:int=0, freeze_layer_norm:bool=True):
         self.text.lock(unlocked_layers, freeze_layer_norm)
 
