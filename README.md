@@ -271,7 +271,7 @@ python -m training.main \
          --lr 5e-4 \
          --precision amp \
          --workers 6 \
-         --model "test-roberta" \
+         --model "roberta-ViT-B-32" \
          --hf-tokenizer-name "roberta-base" \
          --lock-text-unlocked-layers 10 \
          --name "10_unfrozen" \
