@@ -1,3 +1,7 @@
+## 2.3.0
+
+* Generalizable Text Transformer with HuggingFace Models (@iejMac)
+
 ## 2.2.0
 
 * Support for custom text tower
