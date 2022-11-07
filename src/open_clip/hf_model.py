@@ -27,31 +27,28 @@ def _camel2snake(s):
 _POOLERS = {}
 
 def register_pooler(cls):
-    "Decorator registering pooler class"
+    """Decorator registering pooler class"""
     _POOLERS[_camel2snake(cls.__name__)] = cls
     return cls
 
 
 @register_pooler
 class MeanPooler(nn.Module):
-    "Mean pooling"
-
+    """Mean pooling"""
     def forward(self, x:BaseModelOutput, attention_mask:TensorType):
         masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)        
         return masked_output.sum(dim=1) / attention_mask.sum(-1, keepdim=True)
 
 @register_pooler
 class MaxPooler(nn.Module):
-    "Max pooling"
-
+    """Max pooling"""
     def forward(self, x:BaseModelOutput, attention_mask:TensorType):
         masked_output = x.last_hidden_state.masked_fill(attention_mask.unsqueeze(-1), -torch.inf)
         return masked_output.max(1).values
 
 @register_pooler
 class ClsPooler(nn.Module):
-    "CLS token pooling"
-
+    """CLS token pooling"""
     def __init__(self, use_pooler_output=True):
         super().__init__()
         self.cls_token_position = 0
@@ -68,10 +65,7 @@ class ClsPooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 class PreTrainedTextEncoder(nn.Module):
-    """HuggingFace model adapter
-    
-    # TODO: add dockstring here
-    """
+    """HuggingFace model adapter"""
     def __init__(
             self, 
             model_name_or_path:str,
