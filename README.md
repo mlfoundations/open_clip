@@ -118,6 +118,9 @@ Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
 Test can be run with `make install-dev` then `make test`
 
+`python -m pytest -x -s -v tests -k "training"` to run a specific test
+
+
 #### Other dependencies
 
 Install open_clip pacakge and remaining dependencies:
