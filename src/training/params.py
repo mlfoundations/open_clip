@@ -293,6 +293,33 @@ def parse_args():
     parser.add_argument(
         "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
+    # args for huggingface models support
+    parser.add_argument(
+        '--hf-model-name', type=str, default=None, help='Pretrained text encoder name from HuggingFace hub'
+    )
+    parser.add_argument(
+        '--hf-tokenizer-name', type=str, default=None, help='Pretrained tokenizer name HuggingFace hub'
+    )
+    parser.add_argument(
+        "--lock-text",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-text-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n image tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-text-freeze-layer-norm",
+        default=False,
+        action='store_true',
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+
+
     args = parser.parse_args()
 
     # If some params are not passed, we use the default values based on model name.
@@ -300,5 +327,8 @@ def parse_args():
     for name, val in default_params.items():
         if getattr(args, name) is None:
             setattr(args, name, val)
+
+    if getattr(args, 'hf_tokenizer_name') is None:
+        setattr(args, 'hf_tokenizer_name', args.hf_model_name)
 
     return args

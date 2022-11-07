@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+from .hf_model import PreTrainedTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
 from .transformer import LayerNormFp32, QuickGELU, Attention, VisionTransformer, TextTransformer
@@ -43,6 +44,9 @@ class CLIPTextCfg:
     heads: int = 8
     layers: int = 12
     ls_init_value: Optional[float] = None  # layer scale initial value
+    hf_model_name: str = None
+    proj: str = 'mlp'
+    pooler_type: str = 'mean_pooler'
 
 
 def get_cast_dtype(precision: str):
@@ -116,21 +120,28 @@ def _build_text_tower(
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
 
-    act_layer = QuickGELU if quick_gelu else nn.GELU
-    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else nn.LayerNorm
+    if text_cfg.hf_model_name:
+        text = PreTrainedTextEncoder(
+            text_cfg.hf_model_name,
+            output_dim=embed_dim,
+            proj=text_cfg.proj,
+            pooler_type=text_cfg.pooler_type,
+       )
+    else:
+        act_layer = QuickGELU if quick_gelu else nn.GELU
+        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else nn.LayerNorm
 
-    text = TextTransformer(
-        context_length=text_cfg.context_length,
-        vocab_size=text_cfg.vocab_size,
-        width=text_cfg.width,
-        heads=text_cfg.heads,
-        layers=text_cfg.layers,
-        ls_init_value=text_cfg.ls_init_value,
-        output_dim=embed_dim,
-        act_layer=act_layer,
-        norm_layer=norm_layer,
-    )
-
+        text = TextTransformer(
+            context_length=text_cfg.context_length,
+            vocab_size=text_cfg.vocab_size,
+            width=text_cfg.width,
+            heads=text_cfg.heads,
+            layers=text_cfg.layers,
+            ls_init_value=text_cfg.ls_init_value,
+            output_dim=embed_dim,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
     return text
 
 
@@ -207,6 +218,9 @@ class CustomTextCLIP(nn.Module):
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+    # TODO: should I add this to the regular CLIP class?
+    def lock_text_tower(self, unlocked_layers:int=0, freeze_layer_norm:bool=True):
+        self.text.lock(unlocked_layers, freeze_layer_norm)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):

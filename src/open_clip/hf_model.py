@@ -11,11 +11,12 @@ from torch import TensorType
 try:
     import transformers
     from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
-    from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
+    from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions
 except ImportError as e:
     transformers = None
+    class BaseModelOutput: pass
 
-from hf_configs import arch_dict
+from .hf_configs import arch_dict
 
 # utils
 def _camel2snake(s):
@@ -58,7 +59,7 @@ class ClsPooler(nn.Module):
     def forward(self, x:BaseModelOutput, attention_mask:TensorType):
         
         if (self.use_pooler_output and 
-            isinstance(x, BaseModelOutputWithPooling) and
+            isinstance(x, (BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions)) and
             (x.pooler_output is not None)
             ):
             return x.pooler_output
@@ -81,11 +82,14 @@ class PreTrainedTextEncoder(nn.Module):
 
         self.output_dim = output_dim
 
+        # TODO: find better way to get this information
+        uses_transformer_pooler = (pooler_type == "cls_pooler")
+
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
             self.config = AutoConfig.from_pretrained(model_name_or_path)
-            self.transformer = AutoModel.from_pretrained(model_name_or_path)
+            self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
@@ -116,7 +120,16 @@ class PreTrainedTextEncoder(nn.Module):
         return self.proj(pooled_out)
 
     def lock(self, unlocked_layers:int=0, freeze_layer_norm:bool=True):
-        # TODO: add support for partial freezing
-        for n, p in self.transformer.named_parameters():
-            if True: #mb optional LayerNorm params etc.
-                p.requires_grad = False
+        if not unlocked_layers: # full freezing
+             for n, p in self.transformer.named_parameters():
+                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+             return
+
+        n_layers = len(self.transformer.encoder.layer) - unlocked_layers - 1 # -1 for embeddings
+        modules = [self.transformer.embeddings, self.transformer.encoder.layer[:n_layers]]
+        for module in modules:
+            for n, p in module.named_parameters():
+                p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+
+    def init_parameters(self):
+        pass
