@@ -255,6 +255,29 @@ python -m training.main \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
 
+### Training with pre-trained language models as text encoder:
+
+If you wish to use different language models as the text encoder for CLIP you can do so by using one of the huggingface model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
+```bash
+python -m training.main \
+         --train-data="pipe:aws s3 cp s3://s-mas/cc3m/{00000..00329}.tar -" \
+         --train-num-samples 3000000 \
+         --val-data="pipe:aws s3 cp s3://s-mas/cc3m/{00330..00331}.tar -" \
+         --val-num-samples 10000 \
+         --dataset-type webdataset \
+         --batch-size 256 \
+         --warmup 2000 \
+         --epochs 10 \
+         --lr 5e-4 \
+         --precision amp \
+         --workers 6 \
+         --model "test-roberta" \
+         --hf-tokenizer-name "roberta-base" \
+         --lock-text-unlocked-layers 10 \
+         --name "10_unfrozen" \
+         --report-to "tensorboard" \
+```
+
 ### Loss Curves
 
 When run on a machine with 8 GPUs the command should produce the following training curve for Conceptual Captions:
