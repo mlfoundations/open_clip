@@ -1,8 +1,10 @@
+import pytest
+
 import torch
 from open_clip.hf_model import _POOLERS, PreTrainedTextEncoder
 from transformers import AutoConfig
 from transformers.modeling_outputs import BaseModelOutput
-#test poolers
+# test poolers
 def test_poolers():
     bs, sl, d = 2, 10, 5
     h = torch.arange(sl).repeat(bs).reshape(bs, sl)[..., None] * torch.linspace(0.2, 1., d)
@@ -14,11 +16,10 @@ def test_poolers():
         res = pooler(x, mask)
         assert res.shape == (bs, d), f"{name} returned wrong shape"
 
-#test PreTrainedTextENcoder
-def test_pretrained_text_encoder():
+# test PreTrainedTextEncoder
+@pytest.mark.parametrize("model_id", ["arampacha/roberta-tiny", "roberta-base"])
+def test_pretrained_text_encoder(model_id):
     bs, sl, d = 2, 10, 64
-    #TODO: run test for all supported archs here
-    model_id = "arampacha/roberta-tiny"
     cfg = AutoConfig.from_pretrained(model_id)
     model = PreTrainedTextEncoder(model_id, d, proj='linear')
 
