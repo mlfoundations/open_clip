@@ -15,6 +15,7 @@ try:
 except ImportError as e:
     transformers = None
     class BaseModelOutput: pass
+    class PretrainedConfig: pass
 
 from .hf_configs import arch_dict
 
