@@ -12,6 +12,10 @@ import ftfy
 import regex as re
 import torch
 
+# https://stackoverflow.com/q/62691279
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 @lru_cache()
 def default_bpe():
