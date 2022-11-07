@@ -66,6 +66,7 @@ This repository is focused on training CLIP models. To fine-tune a *trained* zer
 
 ## Data
 
+To download datasets as webdataset, we recommend [img2dataset](https://github.com/rom1504/img2dataset)
 
 ### Conceptual Captions
 
@@ -163,6 +164,10 @@ the the logit matrix. Using a naïve all-gather scheme, space complexity will be
 `O(n^2)`. Instead, complexity may become effectively linear if the flags
 `--gather-with-grad` and `--local-loss` are used. This alteration results in one-to-one
 numerical results as the naïve method.
+
+#### Epochs
+
+For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with --dataset-resampled to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
 
 #### Single-Node
 
@@ -384,7 +389,7 @@ Below are checkpoints of models trained on YFCC-15M, along with their zero-shot 
 
 We offer a simple model interface to instantiate both pre-trained and untrained models.
 
-NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient that native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
+NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient than native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
 
 Future trained models will use nn.GELU.
 

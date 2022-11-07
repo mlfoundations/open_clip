@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from open_clip import tokenize
+from open_clip import tokenize, get_cast_dtype
 from .precision import get_autocast
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
@@ -34,10 +34,13 @@ def accuracy(output, target, topk=(1,)):
 
 def run(model, classifier, dataloader, args):
     autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(args.device)
+            if cast_dtype is not None:
+                images = images.to(dtype=cast_dtype)
             target = target.to(args.device)
 
             with autocast():
