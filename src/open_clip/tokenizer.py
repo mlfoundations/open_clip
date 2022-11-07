@@ -184,11 +184,17 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.Lo
 class HFTokenizer:
     "HuggingFace tokenizer wrapper"
     def __init__(self, tokenizer_name:str, squeeze=False):
-        from transformers import AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.tokenizer = None
+        self.tokenizer_name = tokenizer_name
         self.squeeze = squeeze
 
     def __call__(self, texts:Union[str, List[str]], context_length:int=77) -> torch.Tensor:
+        from transformers import AutoTokenizer
+        # Tokenizer is created lazily because huggingface tokenizers are not fork safe
+        # and prefer being created in each process
+        if self.tokenizer is None:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if isinstance(texts, str):
