@@ -141,6 +141,10 @@ def main(args):
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
+    if args.lock_text:
+        model.lock_text_tower(
+            unlocked_layers=args.lock_text_unlocked_layers,
+            freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
     if args.grad_checkpointing:
         model.set_grad_checkpointing()
