@@ -134,7 +134,7 @@ def create_model(
                 assert False, 'pretrained image towers currently only supported for timm models'
 
         cast_dtype = get_cast_dtype(precision)
-        custom_text = model_cfg.pop('custom_text', False) or force_custom_text
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or model_cfg['text_cfg']['hf_model_name']
 
         if custom_text:
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
