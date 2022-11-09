@@ -31,7 +31,7 @@ from open_clip.tokenizer import HFTokenizer
 
 
 class CsvDataset(Dataset):
-    def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer_name=None):
+    def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
         logging.debug(f'Loading csv data from {input_filename}.')
         df = pd.read_csv(input_filename, sep=sep)
 
@@ -40,7 +40,7 @@ class CsvDataset(Dataset):
         self.transforms = transforms
         logging.debug('Done loading data.')
 
-        self.tokenize = HFTokenizer(tokenizer_name) if tokenizer_name else tokenize
+        self.tokenize = tokenizer if tokenizer is not None else tokenize
 
     def __len__(self):
         return len(self.captions)
@@ -79,8 +79,8 @@ def preprocess_txt(text):
     return tokenize([str(text)])[0]
 
 
-def get_text_processor(tokenizer_name:str=None):
-    return preprocess_txt if tokenizer_name is None else HFTokenizer(tokenizer_name, True)
+def get_text_processor(tokenizer:HFTokenizer=None):
+    return preprocess_txt if tokenizer is None else lambda text: tokenizer(text)[0] 
 
 
 def get_dataset_size(shards):
@@ -294,7 +294,7 @@ class ResampledShards2(IterableDataset):
             yield dict(url=self.rng.choice(self.urls))
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer_name=None):
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
@@ -347,7 +347,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png", text="txt"),
-        wds.map_dict(image=preprocess_img, text=get_text_processor(tokenizer_name)),
+        wds.map_dict(image=preprocess_img, text=get_text_processor(tokenizer)),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train),
     ])
@@ -398,7 +398,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None):
+def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
     dataset = CsvDataset(
@@ -407,7 +407,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None)
         img_key=args.csv_img_key,
         caption_key=args.csv_caption_key,
         sep=args.csv_separator,
-		tokenizer_name=tokenizer_name)
+		tokenizer=tokenizer)
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -428,14 +428,14 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None)
 
 class SyntheticDataset(Dataset):
 
-    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer_name=None):
+    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer=None):
         self.transform = transform
         self.image_size = image_size
         self.caption = caption
         self.image = Image.new('RGB', image_size)
         self.dataset_size = dataset_size
 
-        self.preprocess_txt = get_text_processor(tokenizer_name)
+        self.preprocess_txt = get_text_processor(tokenizer)
 
     def __len__(self):
         return self.dataset_size
@@ -446,10 +446,10 @@ class SyntheticDataset(Dataset):
         return image, self.preprocess_txt(self.caption)
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer_name=None):
+def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     image_size = preprocess_fn.transforms[0].size
     dataset = SyntheticDataset(
-        transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer_name=tokenizer_name)
+        transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -488,17 +488,17 @@ def get_dataset_fn(data_path, dataset_type):
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
     
 
-def get_data(args, preprocess_fns, epoch=0):
+def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True, epoch=epoch, tokenizer_name=args.hf_tokenizer_name)
+            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-            args, preprocess_val, is_train=False, tokenizer_name=args.hf_tokenizer_name)
+            args, preprocess_val, is_train=False, tokenizer=tokenizer)
 
     if args.imagenet_val is not None:
         data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")

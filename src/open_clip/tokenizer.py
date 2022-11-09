@@ -187,11 +187,10 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.Lo
 
 class HFTokenizer:
     "HuggingFace tokenizer wrapper"
-    def __init__(self, tokenizer_name:str, squeeze=False):
+    def __init__(self, tokenizer_name:str):
         from transformers import AutoTokenizer
         self.tokenizer_name = tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.squeeze = squeeze
 
     def __call__(self, texts:Union[str, List[str]], context_length:int=77) -> torch.Tensor:
         # same cleaning as for default tokenizer, except lowercasing
@@ -200,6 +199,4 @@ class HFTokenizer:
             texts = [texts]
         texts = [whitespace_clean(basic_clean(text)) for text in texts]
         input_ids = self.tokenizer(texts, return_tensors='pt', max_length=context_length, padding='max_length', truncation=True).input_ids
-        if self.squeeze:
-            return input_ids[0]
         return input_ids

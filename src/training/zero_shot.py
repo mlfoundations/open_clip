@@ -11,7 +11,8 @@ from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_templat
 
 
 def zero_shot_classifier(model, classnames, templates, args):
-    tokenize = HFTokenizer(args.hf_tokenizer_name) if args.hf_tokenizer_name else tokenize
+    if hasattr(model, "text") and hasattr(model.text, "tokenizer"):
+        tokenize = model.text.tokenizer
     with torch.no_grad():
         zeroshot_weights = []
         for classname in tqdm(classnames):

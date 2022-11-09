@@ -134,11 +134,10 @@ def main(args):
     random_seed(args.seed, args.rank)
 
     if hasattr(model, "text") and hasattr(model.text, "tokenizer"):
-        args.hf_tokenizer_name = model.text.tokenizer.tokenizer_name
+        tokenizer = model.text.tokenizer
     else:
-        args.hf_tokenizer_name = None
+        tokenizer = None
 
-    quit()
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
@@ -230,7 +229,7 @@ def main(args):
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch)
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=tokenizer)
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
