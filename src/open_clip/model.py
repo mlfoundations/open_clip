@@ -167,7 +167,6 @@ class CLIP(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
-        self.tokenizer = tokenize
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
