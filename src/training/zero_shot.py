@@ -5,11 +5,13 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from open_clip import tokenize, get_cast_dtype
+from open_clip.tokenizer import HFTokenizer
 from .precision import get_autocast
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
 def zero_shot_classifier(model, classnames, templates, args):
+    tokenize = HFTokenizer(args.hf_tokenizer_name) if args.hf_tokenizer_name else tokenize
     with torch.no_grad():
         zeroshot_weights = []
         for classname in tqdm(classnames):
