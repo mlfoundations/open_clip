@@ -133,7 +133,7 @@ def main(args):
     )
     random_seed(args.seed, args.rank)
 
-    if args.custom_text and hasattr(model.text, "tokenizer")
+    if hasattr(model, "text") and hasattr(model.text, "tokenizer"):
         args.hf_tokenizer_name = model.text.tokenizer.tokenizer_name
 
     if args.trace:
