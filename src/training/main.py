@@ -135,7 +135,10 @@ def main(args):
 
     if hasattr(model, "text") and hasattr(model.text, "tokenizer"):
         args.hf_tokenizer_name = model.text.tokenizer.tokenizer_name
+    else:
+        args.hf_tokenizer_name = None
 
+    quit()
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
