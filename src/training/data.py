@@ -40,7 +40,7 @@ class CsvDataset(Dataset):
         self.transforms = transforms
         logging.debug('Done loading data.')
 
-        self.tokenize = tokenizer if tokenizer is not None else tokenize
+        self.tokenize = tokenizer
 
     def __len__(self):
         return len(self.captions)
@@ -73,14 +73,6 @@ class DataInfo:
             self.shared_epoch.set_value(epoch)
         if self.sampler is not None and isinstance(self.sampler, DistributedSampler):
             self.sampler.set_epoch(epoch)
-
-
-def preprocess_txt(text):
-    return tokenize([str(text)])[0]
-
-
-def get_text_processor(tokenizer:HFTokenizer=None):
-    return preprocess_txt if tokenizer is None else lambda text: tokenizer(text)[0] 
 
 
 def get_dataset_size(shards):
@@ -347,7 +339,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png", text="txt"),
-        wds.map_dict(image=preprocess_img, text=get_text_processor(tokenizer)),
+        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train),
     ])
@@ -435,7 +427,7 @@ class SyntheticDataset(Dataset):
         self.image = Image.new('RGB', image_size)
         self.dataset_size = dataset_size
 
-        self.preprocess_txt = get_text_processor(tokenizer)
+        self.preprocess_txt = lambda text: tokenizer(text)[0]
 
     def __len__(self):
         return self.dataset_size
