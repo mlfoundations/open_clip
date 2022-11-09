@@ -18,7 +18,6 @@ except ImportError as e:
     class PretrainedConfig: pass
 
 from .hf_configs import arch_dict
-from .tokenizer import HFTokenizer
 
 # utils
 def _camel2snake(s):
@@ -70,7 +69,6 @@ class PreTrainedTextEncoder(nn.Module):
     def __init__(
             self, 
             model_name_or_path:str,
-            tokenizer_name: str,
             output_dim:int,
             config: PretrainedConfig=None,
             pooler_type:str=None,
@@ -95,8 +93,6 @@ class PreTrainedTextEncoder(nn.Module):
             self.pooler = _POOLERS[(arch_dict[self.config.model_type]["pooler"])]()
         else:
             self.pooler = _POOLERS[pooler_type]()
-
-        self.tokenizer = HFTokenizer(tokenizer_name)
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
         if (d_model == output_dim) and (proj is None): # do we always need a proj?

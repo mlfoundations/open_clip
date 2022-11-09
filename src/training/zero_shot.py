@@ -4,20 +4,18 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from open_clip import tokenize, get_cast_dtype
+from open_clip import get_cast_dtype
 from open_clip.tokenizer import HFTokenizer
 from .precision import get_autocast
 from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
 def zero_shot_classifier(model, classnames, templates, args):
-    if hasattr(model, "text") and hasattr(model.text, "tokenizer"):
-        tokenize = model.text.tokenizer
     with torch.no_grad():
         zeroshot_weights = []
         for classname in tqdm(classnames):
             texts = [template(classname) for template in templates]  # format with class
-            texts = tokenize(texts).to(args.device)  # tokenize
+            texts = model.tokenizer(texts).to(args.device)  # tokenize
             if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
             else:

@@ -21,7 +21,7 @@ def test_poolers():
 def test_pretrained_text_encoder(model_id):
     bs, sl, d = 2, 10, 64
     cfg = AutoConfig.from_pretrained(model_id)
-    model = PreTrainedTextEncoder(model_id, "roberta-base", d, proj='linear')
+    model = PreTrainedTextEncoder(model_id, d, proj='linear')
 
     x = torch.randint(0, cfg.vocab_size, (bs, sl))
     with torch.no_grad():
