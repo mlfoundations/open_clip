@@ -224,7 +224,7 @@ def main(args):
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=getattr(model, "tokenizer", tokenize)
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=getattr(model, "tokenizer", tokenize))
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
