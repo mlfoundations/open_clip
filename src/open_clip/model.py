@@ -45,6 +45,7 @@ class CLIPTextCfg:
     layers: int = 12
     ls_init_value: Optional[float] = None  # layer scale initial value
     hf_model_name: str = None
+    hf_tokenizer_name: str = None
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
@@ -123,6 +124,7 @@ def _build_text_tower(
     if text_cfg.hf_model_name:
         text = PreTrainedTextEncoder(
             text_cfg.hf_model_name,
+            text_cfg.hf_tokenizer_name,
             output_dim=embed_dim,
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
