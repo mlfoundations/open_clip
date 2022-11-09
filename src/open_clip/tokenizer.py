@@ -189,6 +189,7 @@ class HFTokenizer:
     "HuggingFace tokenizer wrapper"
     def __init__(self, tokenizer_name:str, squeeze=False):
         from transformers import AutoTokenizer
+        self.tokenizer_name = tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.squeeze = squeeze
 
