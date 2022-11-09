@@ -40,7 +40,7 @@ class CsvDataset(Dataset):
         self.transforms = transforms
         logging.debug('Done loading data.')
 
-        self.tokenize = HFTokenizer(tokenizer_name) if self.tokenizer_name else tokenize
+        self.tokenize = HFTokenizer(tokenizer_name) if tokenizer_name else tokenize
 
     def __len__(self):
         return len(self.captions)
