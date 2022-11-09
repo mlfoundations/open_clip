@@ -19,6 +19,16 @@ class LayerNormFp32(nn.LayerNorm):
         return x.to(orig_type)
 
 
+class LayerNorm(nn.LayerNorm):
+    """Subclass torch's LayerNorm (with cast back to input dtype)."""
+
+    def forward(self, x: torch.Tensor):
+        orig_type = x.dtype
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        return x.to(orig_type)
+
+
+
 class QuickGELU(nn.Module):
     # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
@@ -119,7 +129,7 @@ class ResidualAttentionBlock(nn.Module):
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
 
@@ -154,7 +164,7 @@ class CustomResidualAttentionBlock(nn.Module):
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
             scale_cosine_attn: bool = False,
             scale_heads: bool = False,
             scale_attn: bool = False,
@@ -196,7 +206,7 @@ class Transformer(nn.Module):
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.width = width
@@ -233,7 +243,7 @@ class VisionTransformer(nn.Module):
             ls_init_value: float = None,
             output_dim: int = 512,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.image_size = to_2tuple(image_size)
@@ -324,7 +334,7 @@ class TextTransformer(nn.Module):
             ls_init_value: float = None,
             output_dim: int = 512,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.context_length = context_length

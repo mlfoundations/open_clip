@@ -276,6 +276,7 @@ python -m training.main \
          --workers 6 \
          --model "roberta-ViT-B-32" \
          --hf-tokenizer-name "roberta-base" \
+         --lock-text \
          --lock-text-unlocked-layers 10 \
          --name "10_unfrozen" \
          --report-to "tensorboard" \
