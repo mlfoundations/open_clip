@@ -189,7 +189,6 @@ class HFTokenizer:
     "HuggingFace tokenizer wrapper"
     def __init__(self, tokenizer_name:str):
         from transformers import AutoTokenizer
-        self.tokenizer_name = tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def __call__(self, texts:Union[str, List[str]], context_length:int=77) -> torch.Tensor:
