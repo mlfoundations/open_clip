@@ -70,7 +70,7 @@ def get_model_config(model_name):
         return None
 
 
-def get_tokenizer(model_name)
+def get_tokenizer(model_name):
     config = get_model_config(model_name)
     tokenizer = HFTokenizer(config.text_cfg.hf_tokenizer_name) if config.text_cfg.hf_tokenizer_name is not None else tokenize
     return tokenizer
