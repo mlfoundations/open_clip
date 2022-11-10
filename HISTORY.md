@@ -1,3 +1,7 @@
+## 2.4.1
+
+* Add missing hf_tokenizer_name in CLIPTextCfg.
+
 ## 2.4.0
 
 * Fix #211, missing RN50x64 config. Fix type of dropout param for ResNet models
