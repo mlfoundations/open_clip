@@ -8,6 +8,7 @@
     },
     "text_cfg": {
         "hf_model_name": "xlm-roberta-base",
+	    "hf_tokenizer_name": "xlm-roberta-base",
         "proj": "mlp",
         "pooler_type": "mean_pooler"
     }
