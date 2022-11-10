@@ -10,6 +10,7 @@ arch_dict = {
     },
     "pooler": "mean_pooler",
   },
+  # https://huggingface.co/docs/transformers/model_doc/xlm-roberta#transformers.XLMRobertaConfig
   "xlm-roberta": {
     "config_names": {
       "context_length": "max_position_embeddings",
