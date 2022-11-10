@@ -72,7 +72,7 @@ def get_model_config(model_name):
 
 def get_tokenizer(model_name):
     config = get_model_config(model_name)
-    tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if config['text_cfg']['hf_tokenizer_name'] is not None else tokenize
+    tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
     return tokenizer
 
 
