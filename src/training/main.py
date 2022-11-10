@@ -24,8 +24,7 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model
-from open_clip.factory import get_tokenizer
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
