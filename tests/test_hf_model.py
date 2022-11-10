@@ -17,7 +17,7 @@ def test_poolers():
         assert res.shape == (bs, d), f"{name} returned wrong shape"
 
 # test PreTrainedTextEncoder
-@pytest.mark.parametrize("model_id", ["arampacha/roberta-tiny", "roberta-base", "xlm-roberta"])
+@pytest.mark.parametrize("model_id", ["arampacha/roberta-tiny", "roberta-base", "xlm-roberta-base"])
 def test_pretrained_text_encoder(model_id):
     bs, sl, d = 2, 10, 64
     cfg = AutoConfig.from_pretrained(model_id)
