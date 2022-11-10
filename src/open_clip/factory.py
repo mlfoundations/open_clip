@@ -15,6 +15,7 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
 from .transform import image_transform
+from .tokenizer import HFTokenizer, tokenize
 
 
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
@@ -67,6 +68,12 @@ def get_model_config(model_name):
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
         return None
+
+
+def get_tokenizer(model_name)
+    config = get_model_config(model_name)
+    tokenizer = HFTokenizer(config.text_cfg.hf_tokenizer_name) if config.text_cfg.hf_tokenizer_name is not None else tokenize
+    return tokenizer
 
 
 def load_state_dict(checkpoint_path: str, map_location='cpu'):

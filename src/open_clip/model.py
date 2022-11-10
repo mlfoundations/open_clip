@@ -16,7 +16,6 @@ from torch.utils.checkpoint import checkpoint
 from .hf_model import PreTrainedTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
-from .tokenizer import HFTokenizer, tokenize
 from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer
 from .utils import to_2tuple
 
@@ -46,7 +45,6 @@ class CLIPTextCfg:
     layers: int = 12
     ls_init_value: Optional[float] = None  # layer scale initial value
     hf_model_name: str = None
-    hf_tokenizer_name: str = None
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
@@ -215,7 +213,6 @@ class CustomTextCLIP(nn.Module):
         super().__init__()
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
-        self.tokenizer = HFTokenizer(text_cfg["hf_tokenizer_name"]) if text_cfg["hf_tokenizer_name"] else tokenize
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):

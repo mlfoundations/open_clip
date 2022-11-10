@@ -24,7 +24,8 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, tokenize
+from open_clip import create_model_and_transforms, trace_model
+from open_clip.factory import get_tokenizer
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
@@ -224,7 +225,7 @@ def main(args):
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=getattr(model, "tokenizer", tokenize))
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
