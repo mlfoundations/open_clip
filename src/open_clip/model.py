@@ -45,6 +45,7 @@ class CLIPTextCfg:
     layers: int = 12
     ls_init_value: Optional[float] = None  # layer scale initial value
     hf_model_name: str = None
+    hf_tokenizer_name: str = None
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
