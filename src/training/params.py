@@ -293,13 +293,6 @@ def parse_args(args):
     parser.add_argument(
         "--grad-clip-norm", type=float, default=None, help="Gradient clip."
     )
-    # args for huggingface models support
-    parser.add_argument(
-        '--hf-model-name', type=str, default=None, help='Pretrained text encoder name from HuggingFace hub'
-    )
-    parser.add_argument(
-        '--hf-tokenizer-name', type=str, default=None, help='Pretrained tokenizer name HuggingFace hub'
-    )
     parser.add_argument(
         "--lock-text",
         default=False,
@@ -327,8 +320,5 @@ def parse_args(args):
     for name, val in default_params.items():
         if getattr(args, name) is None:
             setattr(args, name, val)
-
-    if getattr(args, 'hf_tokenizer_name') is None:
-        setattr(args, 'hf_tokenizer_name', args.hf_model_name)
 
     return args

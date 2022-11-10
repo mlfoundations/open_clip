@@ -43,9 +43,10 @@ from PIL import Image
 import open_clip
 
 model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
+tokenizer = open_clip.get_tokenizer('ViT-B-32-quickgelu')
 
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
-text = open_clip.tokenize(["a diagram", "a dog", "a cat"])
+text = tokenizer(["a diagram", "a dog", "a cat"])
 
 with torch.no_grad(), torch.cuda.amp.autocast():
     image_features = model.encode_image(image)
@@ -275,7 +276,6 @@ python -m training.main \
          --precision amp \
          --workers 6 \
          --model "roberta-ViT-B-32" \
-         --hf-tokenizer-name "roberta-base" \
          --lock-text \
          --lock-text-unlocked-layers 10 \
          --name "10_unfrozen" \
