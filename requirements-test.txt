@@ -1,3 +1,4 @@
 pytest-xdist==2.5.0
 pytest==7.0.1
 transformers
+timm==0.6.11

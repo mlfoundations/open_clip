@@ -117,10 +117,14 @@ make install
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
+
+#### Tests
+
 Test can be run with `make install-dev` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
+When introducing new models, `python3 tests/util_test.py` can generate new output expected data.
 
 #### Other dependencies
 
