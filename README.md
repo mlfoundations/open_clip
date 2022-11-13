@@ -411,6 +411,11 @@ This model was trained with a shorted schedule than other LAION-2B models with 1
 A ViT-B/32 with roberta base encoder with a 61.7% top-1 ImageNet-1k zero-shot was trained on stability. See model details here https://huggingface.co/laion/CLIP-ViT-B-32-roberta-base-laion2B-s12B-b32k
 This is the first openclip model using a HF text tower. It has better performance on a range of tasks compared to the standard text encoder, see [metrics](https://huggingface.co/laion/CLIP-ViT-B-32-roberta-base-laion2B-s12B-b32k/blob/main/unknown.png)
 
+#### ViT-B/32 xlm roberta base
+
+A ViT-B/32 with xlm roberta base encoder with a 62.33% top-1 ImageNet-1k zero-shot was trained on stability. See model details here https://huggingface.co/laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k
+This is the first openclip model trained on the full laion5B dataset; hence the first multilingual clip trained with openclip. It has better performance on a range of tasks compared to the standard text encoder, see [metrics](https://huggingface.co/laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k/blob/main/metrics.png)
+
 
 #### YFCC-15M
 
@@ -467,7 +472,8 @@ Future trained models will use nn.GELU.
  ('ViT-L-14-336', 'openai'),
  ('ViT-H-14', 'laion2b_s32b_b79k'),
  ('ViT-g-14', 'laion2b_s12b_b42k'),
- ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),]
+ ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
+ ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
