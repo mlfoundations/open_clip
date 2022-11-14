@@ -1,3 +1,9 @@
+## 2.5.0
+
+* pretrained B/32 xlm roberta base: first multilingual clip trained on laion5B
+* pretrained B/32 roberta base: first clip trained using an HF text encoder
+
+
 ## 2.4.1
 
 * Add missing hf_tokenizer_name in CLIPTextCfg.
