@@ -146,6 +146,10 @@ _robertaViTB32 = dict(
     laion2b_s12b_b32k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-roberta-base-laion2B-s12B-b32k/'),
 )
 
+_xlmRobertaBaseViTB32 = dict(
+    laion5b_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k/'),
+)
+
 _PRETRAINED = {
     "RN50": _RN50,
     "RN50-quickgelu": _RN50_quickgelu,
@@ -163,6 +167,7 @@ _PRETRAINED = {
     "ViT-H-14": _VITH14,
     "ViT-g-14": _VITg14,
     "roberta-ViT-B-32": _robertaViTB32,
+    "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
 }
 
 
