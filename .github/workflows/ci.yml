@@ -46,7 +46,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: .test_durations
-        key: test_durations-${{ maxtrix.os }}-{{ matrix.job }}-${{ github.run_id }}
+        key: test_durations-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}-${{ github.run_id }}
         restore-keys: test_durations-0-
     - name: Setup
       if: steps.venv-cache.outputs.cache-hit != 'true'
