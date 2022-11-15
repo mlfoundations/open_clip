@@ -25,7 +25,7 @@ jobs:
   Tests:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ] #, macos-latest ]
         python: [ 3.8 ]
         job_num: [ 4 ]
         job: [ 1, 2, 3, 4 ]
