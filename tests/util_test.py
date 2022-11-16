@@ -5,7 +5,6 @@ import numpy as np
 from PIL import Image
 import torch
 import open_clip
-import argparse
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -171,6 +170,7 @@ def create_test_data(
 
 
 def main(args):
+    import argparse
     parser = argparse.ArgumentParser(description="Populate test data directory")
     parser.add_argument(
         "--all",
@@ -219,5 +219,4 @@ def main(args):
 if __name__ == '__main__':
     import sys
     main(sys.argv[1:])
-
 
