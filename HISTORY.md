@@ -1,3 +1,7 @@
+## 2.6.1
+
+* fix setup.py _read_reqs
+
 ## 2.6.0
 
 * Make openclip training usable from pypi.
