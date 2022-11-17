@@ -4,31 +4,90 @@ on:
   push:
     branches:
     - main
+    paths-ignore:
+    - '**.md'
+    - 'CITATION.cff'
+    - 'LICENSE'
+    - '.gitignore'
+    - 'docs/**'
   pull_request:
     branches:
     - main
+    paths-ignore:
+    - '**.md'
+    - 'CITATION.cff'
+    - 'LICENSE'
+    - '.gitignore'
+    - 'docs/**'
+  workflow_dispatch:
 
 jobs:
-  tests:
-    runs-on: ubuntu-latest
+  Tests:
     strategy:
       matrix:
-        python-version: [3.8]
-
+        os: [ ubuntu-latest ] #, macos-latest ]
+        python: [ 3.8 ]
+        job_num: [ 4 ]
+        job: [ 1, 2, 3, 4 ]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python }}
+      uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install
+        python-version: ${{ matrix.python }}
+    - name: Venv cache
+      id: venv-cache
+      uses: actions/cache@v3
+      with:
+        path: .env
+        key: venv-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('requirements*') }}
+    - name: Pytest durations
+      uses: actions/cache@v3
+      with:
+        path: .test_durations
+        key: test_durations-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}-${{ github.run_id }}
+        restore-keys: test_durations-0-
+    - name: Setup
+      if: steps.venv-cache.outputs.cache-hit != 'true'
       run: |
         python3 -m venv .env
         source .env/bin/activate
         make install
-        make install-dev
+        make install-test
         make install-training
     - name: Unit tests
       run: |
         source .env/bin/activate
-        make test
+        python -m pytest \
+          -x -s -v \
+          --splitting-algorithm least_duration \
+          --splits ${{ matrix.job_num }} \
+          --group ${{ matrix.job }} \
+          --store-durations \
+          tests
+    - name: Collect pytest durations
+      uses: actions/upload-artifact@v3
+      with:
+        name: pytest_durations_${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}
+        path: .test_durations
+
+  Collect:
+    needs: Tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Cache
+      uses: actions/cache@v3
+      with:
+        path: .test_durations
+        key: test_durations-0-${{ github.run_id }}
+    - name: Collect
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+    - name: Consolidate
+      run: |
+        jq -n -S \
+          'reduce (inputs | to_entries[]) as {$key, $value} ({}; .[$key] += $value)' \
+          artifacts/pytest_durations_*/.test_durations > .test_durations
+

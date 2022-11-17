@@ -5,7 +5,7 @@ install: ## [Local development] Upgrade pip, install requirements, install packa
 install-training:
 	python -m pip install -r requirements-training.txt
 
-install-dev: ## [Local development] Install test requirements
+install-test: ## [Local development] Install test requirements
 	python -m pip install -r requirements-test.txt
 
 test: ## [Local development] Run unit tests

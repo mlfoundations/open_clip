@@ -5,12 +5,13 @@ import numpy as np
 from PIL import Image
 import torch
 import open_clip
-import argparse
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 def seed_all(seed = 0):
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=False)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -169,6 +170,7 @@ def create_test_data(
 
 
 def main(args):
+    import argparse
     parser = argparse.ArgumentParser(description="Populate test data directory")
     parser.add_argument(
         "--all",
@@ -217,5 +219,4 @@ def main(args):
 if __name__ == '__main__':
     import sys
     main(sys.argv[1:])
-
 

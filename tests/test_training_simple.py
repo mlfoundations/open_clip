@@ -1,11 +1,14 @@
 
-import torch
-from PIL import Image
-from training.main import main
-import pytest
 import os
+import sys
+import pytest
+from PIL import Image
+import torch
+from training.main import main
+
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+@pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
 def test_training():
     main([
     '--save-frequency', '1',
@@ -20,3 +23,4 @@ def test_training():
     '--workers', '2',
     '--model', 'RN50'
     ])
+

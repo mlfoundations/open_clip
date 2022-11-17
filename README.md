@@ -120,7 +120,7 @@ Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
 #### Tests
 
-Test can be run with `make install-dev` then `make test`
+Test can be run with `make install-test` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
