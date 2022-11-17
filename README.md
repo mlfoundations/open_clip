@@ -103,7 +103,7 @@ source .env/bin/activate
 pip install -U pip
 ```
 
-You can then install openclip for training with `pip install open_clip_torch[training]`.
+You can then install openclip for training with `pip install 'open_clip_torch[training]'`.
 
 #### Development
 
