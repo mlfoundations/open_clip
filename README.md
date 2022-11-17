@@ -93,32 +93,24 @@ The indices of images in this subset are in [OpenAI's CLIP repository](https://g
 
 ## Training CLIP
 
-### Setup Environment and Install dependencies
+### Install
 
-#### Conda
+We advise you first create a virtual environment with:
 
-```bash
-# Create a conda environment (heavily recommended)
-conda create -n open_clip python=3.10
-conda activate open_clip
-```
-
-Install conda PyTorch as per https://pytorch.org/get-started/locally/
-
-#### Virtualenv
-
-openclip also can be used with virtualenv with these lines:
 ```
 python3 -m venv .env
 source .env/bin/activate
 pip install -U pip
-make install
 ```
+
+You can then install openclip for training with `pip install open_clip_torch[training]`.
+
+#### Development
+
+If you want to make changes to contribute code, you can close openclip then run `make install` in openclip folder (after creating a virtualenv)
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
-
-#### Tests
 
 Test can be run with `make install-test` then `make test`
 
@@ -126,17 +118,8 @@ Test can be run with `make install-test` then `make test`
 
 When introducing new models, `python tests/util_test.py --model=xlm-roberta-large-ViT-H-14` can generate new output expected data.
 
-#### Other dependencies
+You may run `make install-training` to install training deps
 
-Install open_clip pacakge and remaining dependencies:
-
-```bash
-cd open_clip
-python setup.py install
-```
-
-If you want to train models, you will also need to install the packages
-from `requirements-training.txt`.
 
 ### Sample single-process running code:
 

@@ -10,6 +10,14 @@ here = path.abspath(path.dirname(__file__))
 with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
+def _read_reqs(relpath):
+    fullpath = os.path.join(os.path.dirname(__file__), relpath)
+    with open(fullpath) as f:
+        return [s.strip() for s in f.readlines() if (s.strip() and not s.startswith("#"))]
+
+REQUIREMENTS = _read_reqs("requirements.txt")
+TRAINING_REQUIREMENTS = _read_reqs("requirements-training.txt")
+
 exec(open('src/open_clip/version.py').read())
 setup(
     name='open_clip_torch',
@@ -43,15 +51,11 @@ setup(
     # Note that this is a string of words separated by whitespace, not a list.
     keywords='CLIP pretrained',
     package_dir={'': 'src'},
-    packages=find_packages(where='src', exclude=['training']),
+    packages=find_packages(where='src'),
     include_package_data=True,
-    install_requires=[
-        'torch >= 1.9',
-        'torchvision',
-        'ftfy',
-        'regex',
-        'tqdm',
-        'huggingface_hub',
-    ],
+    install_requires=REQUIREMENTS,
+    extras_require={
+        "training": TRAINING_REQUIREMENTS,
+    },
     python_requires='>=3.7',
 )
