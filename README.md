@@ -124,7 +124,7 @@ Test can be run with `make install-dev` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
-When introducing new models, `python3 tests/util_test.py` can generate new output expected data.
+When introducing new models, `python tests/util_test.py --model=xlm-roberta-large-ViT-H-14` can generate new output expected data.
 
 #### Other dependencies
 
