@@ -1,8 +1,12 @@
+## 2.6.0
+
+* Make openclip training usable from pypi.
+* Add xlm roberta large vit h 14 config.
+
 ## 2.5.0
 
 * pretrained B/32 xlm roberta base: first multilingual clip trained on laion5B
 * pretrained B/32 roberta base: first clip trained using an HF text encoder
-
 
 ## 2.4.1
 
