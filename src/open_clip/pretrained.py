@@ -150,6 +150,10 @@ _xlmRobertaBaseViTB32 = dict(
     laion5b_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k/'),
 )
 
+_xlmRobertaLargeFrozenViTH14 = dict(
+    frozen_laion5b_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-H-14-frozen-xlm-roberta-large-laion5B-s13B-b90k/'),
+)
+
 _PRETRAINED = {
     "RN50": _RN50,
     "RN50-quickgelu": _RN50_quickgelu,
@@ -168,6 +172,7 @@ _PRETRAINED = {
     "ViT-g-14": _VITg14,
     "roberta-ViT-B-32": _robertaViTB32,
     "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
+    "xlm-roberta-large-ViT-H-14": _xlmRobertaLargeFrozenViTH14,
 }
 
 
