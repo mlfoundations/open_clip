@@ -400,6 +400,20 @@ A ViT-B/32 with xlm roberta base encoder with a 62.33% top-1 ImageNet-1k zero-sh
 This is the first openclip model trained on the full laion5B dataset; hence the first multilingual clip trained with openclip. It has better performance on a range of tasks compared to the standard text encoder, see [metrics](https://huggingface.co/laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k/blob/main/metrics.png)
 A preliminary multilingual evaluation was run: 43% on imagenet1k italian (vs 21% for english B/32), 37% for imagenet1k japanese (vs 1% for english B/32 and 50% for B/16 clip japanese). It shows the multilingual property is indeed there as expected. Larger models will get even better performance.
 
+#### ViT-H/14 xlm roberta large
+
+A ViT-H/14 with xlm roberta large encoder with a 77.0% (vs 78% for the english equivalent) top-1 ImageNet-1k zero-shot was trained on stability. See model details here https://huggingface.co/laion/CLIP-ViT-H-14-frozen-xlm-roberta-large-laion5B-s13B-b90k
+
+This model was trained following the [LiT](https://arxiv.org/abs/2111.07991) methodology: the image tower was frozen (initialized from english openclip ViT-H/14), the text tower was initialized from [xlm roberta large](https://huggingface.co/xlm-roberta-large) and unfrozen. This reduced training cost by a 3x factor.
+
+See full english [metrics](https://huggingface.co/laion/CLIP-ViT-H-14-frozen-xlm-roberta-large-laion5B-s13B-b90k/resolve/main/results_xlm_roberta_large.png)
+
+On zero shot classification on imagenet with translated prompts this model reaches:
+
+* 56% in italian (vs 21% for https://github.com/clip-italian/clip-italian)
+* 53% in japanese (vs 54.6% for https://github.com/rinnakk/japanese-clip)
+* 55.7% in chinese (to be compared with https://github.com/OFA-Sys/Chinese-CLIP)
+
 
 #### YFCC-15M
 
@@ -457,7 +471,8 @@ Future trained models will use nn.GELU.
  ('ViT-H-14', 'laion2b_s32b_b79k'),
  ('ViT-g-14', 'laion2b_s12b_b42k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
- ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),]
+ ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
+ ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
