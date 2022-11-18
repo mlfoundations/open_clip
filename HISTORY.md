@@ -1,3 +1,7 @@
+## 2.7.0
+
+* add multilingual H/14 xlm roberta large
+
 ## 2.6.1
 
 * fix setup.py _read_reqs
