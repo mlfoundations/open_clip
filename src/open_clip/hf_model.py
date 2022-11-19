@@ -36,7 +36,7 @@ def register_pooler(cls):
 class MeanPooler(nn.Module):
     """Mean pooling"""
     def forward(self, x:BaseModelOutput, attention_mask:TensorType):
-        masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)        
+        masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)
         return masked_output.sum(dim=1) / attention_mask.sum(-1, keepdim=True)
 
 @register_pooler
@@ -55,24 +55,25 @@ class ClsPooler(nn.Module):
         self.use_pooler_output = use_pooler_output
 
     def forward(self, x:BaseModelOutput, attention_mask:TensorType):
-        
-        if (self.use_pooler_output and 
+
+        if (self.use_pooler_output and
             isinstance(x, (BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions)) and
             (x.pooler_output is not None)
             ):
             return x.pooler_output
-        
+
         return x.last_hidden_state[:, self.cls_token_position, :]
 
-class PreTrainedTextEncoder(nn.Module):
+class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     def __init__(
-            self, 
+            self,
             model_name_or_path:str,
             output_dim:int,
             config: PretrainedConfig=None,
             pooler_type:str=None,
-            proj:str=None):
+            proj:str=None,
+            pretrained:bool=True):
         super().__init__()
 
         self.output_dim = output_dim
@@ -84,7 +85,10 @@ class PreTrainedTextEncoder(nn.Module):
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
             self.config = AutoConfig.from_pretrained(model_name_or_path)
-            self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
+            if pretrained:
+                self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
+            else:
+                self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)

@@ -37,7 +37,8 @@ def test_inference_with_data(
             pretrained = pretrained,
             precision = precision,
             jit = jit,
-            force_quick_gelu = force_quick_gelu
+            force_quick_gelu = force_quick_gelu,
+            pretrained_hf = False
     )
     model_id = f'{model_name}_{pretrained}_{precision}'
     input_dir, output_dir = util_test.get_data_dirs()

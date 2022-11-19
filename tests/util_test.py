@@ -113,7 +113,8 @@ def create_test_data_for_model(
             pretrained = pretrained,
             precision = precision,
             jit = jit,
-            force_quick_gelu = force_quick_gelu
+            force_quick_gelu = force_quick_gelu,
+            pretrained_hf = False
     )
     # text
     if overwrite or not text_exists:

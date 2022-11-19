@@ -106,6 +106,7 @@ def create_model(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         pretrained_image: bool = False,
+        pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
@@ -141,9 +142,11 @@ def create_model(
                 assert False, 'pretrained image towers currently only supported for timm models'
 
         cast_dtype = get_cast_dtype(precision)
-        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg['text_cfg'])
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
 
         if custom_text:
+            if 'hf_model_name' in model_cfg.get('text_cfg', {}):
+                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
@@ -190,6 +193,7 @@ def create_model_and_transforms(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         pretrained_image: bool = False,
+        pretrained_hf: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
@@ -203,6 +207,7 @@ def create_model_and_transforms(
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         pretrained_image=pretrained_image,
+        pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
     )
 
