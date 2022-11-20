@@ -20,5 +20,10 @@ arch_dict = {
       "layers": "num_hidden_layers",
     },
     "pooler": "mean_pooler",
-  }
+  },
+  "mt5": {
+    "config_names": {
+    }
+    "pooler": "mean_pooler",
+  },
 }

@@ -87,6 +87,9 @@ class HFTextEncoder(nn.Module):
             self.config = AutoConfig.from_pretrained(model_name_or_path)
             if pretrained:
                 self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
+                # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
+                if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_encoder:
+                    self.transformer = self.transformer.encoder
             else:
                 self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
         else:
