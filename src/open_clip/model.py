@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from .hf_model import PreTrainedTextEncoder
+from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
 from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer
@@ -46,6 +46,7 @@ class CLIPTextCfg:
     ls_init_value: Optional[float] = None  # layer scale initial value
     hf_model_name: str = None
     hf_tokenizer_name: str = None
+    hf_model_pretrained: bool = True
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
@@ -122,11 +123,12 @@ def _build_text_tower(
         text_cfg = CLIPTextCfg(**text_cfg)
 
     if text_cfg.hf_model_name:
-        text = PreTrainedTextEncoder(
+        text = HFTextEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
+            pretrained=text_cfg.hf_model_pretrained
        )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
