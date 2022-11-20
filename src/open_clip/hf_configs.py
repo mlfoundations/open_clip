@@ -30,7 +30,7 @@ arch_dict = {
         "width": "d_model",
         "heads": "num_heads",
         "layers": "num_layers",
-    }
+    },
     "pooler": "mean_pooler",
   },
 }
