@@ -93,7 +93,11 @@ class HFTextEncoder(nn.Module):
                 else:
                     self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
             else:
-                self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
+                if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
+                    self.transformer = AutoModel.from_config(self.config)
+                    self.transformer = self.transformer.encoder
+                else:
+                    self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
