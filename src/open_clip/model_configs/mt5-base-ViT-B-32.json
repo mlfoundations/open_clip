@@ -1,0 +1,15 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 32
+    },
+    "text_cfg": {
+        "hf_model_name": "google/mt5-base",
+        "hf_tokenizer_name": "google/mt5-base",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}

@@ -1,5 +1,6 @@
 # HF architecture dict:
 arch_dict = {
+  # https://huggingface.co/docs/transformers/model_doc/roberta#roberta
   "roberta": {
     "config_names": {
       "context_length": "max_position_embeddings",
@@ -20,5 +21,19 @@ arch_dict = {
       "layers": "num_hidden_layers",
     },
     "pooler": "mean_pooler",
-  }
+  },
+  # https://huggingface.co/docs/transformers/model_doc/mt5#mt5
+  "mt5": {
+    "config_names": {
+        # unlimited seqlen
+        # https://github.com/google-research/text-to-text-transfer-transformer/issues/273
+        # https://github.com/huggingface/transformers/blob/v4.24.0/src/transformers/models/t5/modeling_t5.py#L374
+        "context_length": "",
+        "vocab_size": "vocab_size",
+        "width": "d_model",
+        "heads": "num_heads",
+        "layers": "num_layers",
+    },
+    "pooler": "mean_pooler",
+  },
 }
