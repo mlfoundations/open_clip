@@ -25,7 +25,10 @@ arch_dict = {
   # https://huggingface.co/docs/transformers/model_doc/mt5#mt5
   "mt5": {
     "config_names": {
-        "context_length": "relative_attention_max_distance", # very unsure of this, couldn't find anything better
+        # unlimited seqlen
+        # https://github.com/google-research/text-to-text-transfer-transformer/issues/273
+        # https://github.com/huggingface/transformers/blob/v4.24.0/src/transformers/models/t5/modeling_t5.py#L374
+        "context_length": "",
         "vocab_size": "vocab_size",
         "width": "d_model",
         "heads": "num_heads",
