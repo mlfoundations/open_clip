@@ -85,19 +85,13 @@ class HFTextEncoder(nn.Module):
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
             self.config = AutoConfig.from_pretrained(model_name_or_path)
-            if pretrained:
-                # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
-                if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
-                    self.transformer = AutoModel.from_pretrained(model_name_or_path)
-                    self.transformer.forward = self.transformer.encoder # TODO: check if more processing is done in forward
-                else:
-                    self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
+            create_func, model_args = AutoModel.from_pretrained, model_name_or_path if pretrained else AutoModel.from_config, self.config
+            # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
+            if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
+                self.transformer = create_func(model_args)
+                self.transformer.forward = self.transformer.encoder # TODO: check if more processing is done in forward
             else:
-                if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
-                    self.transformer = AutoModel.from_config(self.config)
-                    self.transformer.forward = self.transformer.encoder
-                else:
-                    self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
+                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
