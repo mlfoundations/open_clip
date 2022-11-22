@@ -89,13 +89,13 @@ class HFTextEncoder(nn.Module):
                 # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
                 if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                     self.transformer = AutoModel.from_pretrained(model_name_or_path)
-                    self.transformer = self.transformer.encoder
+                    self.transformer.forward = self.transformer.encoder # TODO: check if more processing is done in forward
                 else:
                     self.transformer = AutoModel.from_pretrained(model_name_or_path, add_pooling_layer=uses_transformer_pooler)
             else:
                 if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                     self.transformer = AutoModel.from_config(self.config)
-                    self.transformer = self.transformer.encoder
+                    self.transformer.forward = self.transformer.encoder
                 else:
                     self.transformer = AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
         else:
