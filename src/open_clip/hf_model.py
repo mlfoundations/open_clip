@@ -133,8 +133,11 @@ class HFTextEncoder(nn.Module):
                  p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
              return
 
-        n_layers = len(self.transformer.encoder.layer) - unlocked_layers - 1 # -1 for embeddings
-        modules = [self.transformer.embeddings, self.transformer.encoder.layer[:n_layers]]
+        encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
+        layer_list = encoder.layer if hasattr(encoder, 'layer') else encoder.block
+        n_layers = len(layer_list) - unlocked_layers - 1 # -1 for embeddings
+        embeddings = self.transformer.embeddings if hasattr(self.transformer,'embeddings') else self.transformer.embed_tokens
+        modules = [embeddings, layer_list[:n_layers]]
         for module in modules:
             for n, p in module.named_parameters():
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
