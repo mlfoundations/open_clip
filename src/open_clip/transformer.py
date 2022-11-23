@@ -272,9 +272,24 @@ class VisionTransformer(nn.Module):
         self.init_parameters()
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
         for param in self.parameters():
             param.requires_grad = False
+        
+        if unlocked_groups != 0:
+            modules = [
+                self.conv1,
+                self.class_embedding,
+                self.positional_embedding,
+                self.transformer.resblocks,
+                self.proj
+            ]
+            unlocked_modules = modules[:unlocked_groups]
+            for module in unlocked_modules:
+                if hasattr(module, 'named_parameters'):
+                    for _, p in module.named_parameters():
+                        p.requires_grad = True
+                else:
+                    module.requires_grad = True
 
     def init_parameters(self):
          # FIXME OpenAI CLIP did not define an init for the VisualTransformer
