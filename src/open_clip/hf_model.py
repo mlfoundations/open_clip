@@ -89,7 +89,7 @@ class HFTextEncoder(nn.Module):
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                 self.transformer = create_func(model_args)
-                self.transformer.forward = self.transformer.encoder # TODO: check if more processing is done in forward
+                self.transformer = self.transformer.encoder
             else:
                 self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
         else:
