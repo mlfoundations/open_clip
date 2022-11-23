@@ -134,9 +134,9 @@ class HFTextEncoder(nn.Module):
              return
 
         encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
-        layer_list = encoder.layer if hasattr(encoder, 'layer') else encoder.block
+        layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])
         n_layers = len(layer_list) - unlocked_layers - 1 # -1 for embeddings
-        embeddings = self.transformer.embeddings if hasattr(self.transformer,'embeddings') else self.transformer.embed_tokens
+        embeddings = getattr(self.transformer, arch_dict[self.config.model_type]["config_names"]["token_embeddings_attr"])
         modules = [embeddings, layer_list[:n_layers]]
         for module in modules:
             for n, p in module.named_parameters():
