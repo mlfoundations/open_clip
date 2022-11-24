@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import torch
 from torch import nn
@@ -276,20 +276,33 @@ class VisionTransformer(nn.Module):
             param.requires_grad = False
         
         if unlocked_groups != 0:
-            modules = [
-                self.conv1,
-                self.class_embedding,
-                self.positional_embedding,
-                *self.transformer.resblocks,
-                self.proj
+            groups = [
+                [
+                    self.conv1,
+                    self.class_embedding,
+                    self.positional_embedding,
+                    self.ln_pre,
+                ],
+                *self.transformer.resblocks[:-1],
+                [
+                    self.transformer.resblocks[-1],
+                    self.ln_post,
+                ],
+                self.proj,
             ]
-            unlocked_modules = modules[-unlocked_groups:]
-            for module in unlocked_modules:
-                if hasattr(module, 'named_parameters'):
-                    for _, p in module.named_parameters():
-                        p.requires_grad = True
+
+            def _unlock(x):
+                if isinstance(x, Sequence):
+                    for g in x:
+                        _unlock(g)
                 else:
-                    module.requires_grad = True
+                    if isinstance(x, torch.nn.Parameter):
+                        x.requires_grad = True
+                    else:
+                        for p in x.parameters():
+                            p.requires_grad = True
+
+            _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
          # FIXME OpenAI CLIP did not define an init for the VisualTransformer
