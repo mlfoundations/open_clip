@@ -129,9 +129,10 @@ class HFTextEncoder(nn.Module):
 
         encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
         layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])
-        n_layers = len(layer_list) - unlocked_layers - 1 # -1 for embeddings
+        print(f"Unlocking {unlocked_layers}/{len(layer_list)+1} layers of hf model")
         embeddings = getattr(self.transformer, arch_dict[self.config.model_type]["config_names"]["token_embeddings_attr"])
-        modules = [embeddings, layer_list[:n_layers]]
+        modules = [embeddings, *layer_list][:-unlocked_layers]
+        # freeze layers
         for module in modules:
             for n, p in module.named_parameters():
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
