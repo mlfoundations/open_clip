@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import torch
 from torch import nn
@@ -272,9 +272,37 @@ class VisionTransformer(nn.Module):
         self.init_parameters()
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
         for param in self.parameters():
             param.requires_grad = False
+        
+        if unlocked_groups != 0:
+            groups = [
+                [
+                    self.conv1,
+                    self.class_embedding,
+                    self.positional_embedding,
+                    self.ln_pre,
+                ],
+                *self.transformer.resblocks[:-1],
+                [
+                    self.transformer.resblocks[-1],
+                    self.ln_post,
+                ],
+                self.proj,
+            ]
+
+            def _unlock(x):
+                if isinstance(x, Sequence):
+                    for g in x:
+                        _unlock(g)
+                else:
+                    if isinstance(x, torch.nn.Parameter):
+                        x.requires_grad = True
+                    else:
+                        for p in x.parameters():
+                            p.requires_grad = True
+
+            _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
          # FIXME OpenAI CLIP did not define an init for the VisualTransformer
