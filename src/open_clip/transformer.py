@@ -280,7 +280,7 @@ class VisionTransformer(nn.Module):
                 self.conv1,
                 self.class_embedding,
                 self.positional_embedding,
-                self.transformer.resblocks,
+                *self.transformer.resblocks,
                 self.proj
             ]
             unlocked_modules = modules[unlocked_groups:]
