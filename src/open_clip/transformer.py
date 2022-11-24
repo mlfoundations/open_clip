@@ -283,7 +283,7 @@ class VisionTransformer(nn.Module):
                 *self.transformer.resblocks,
                 self.proj
             ]
-            unlocked_modules = modules[unlocked_groups:]
+            unlocked_modules = modules[-unlocked_groups:]
             for module in unlocked_modules:
                 if hasattr(module, 'named_parameters'):
                     for _, p in module.named_parameters():
