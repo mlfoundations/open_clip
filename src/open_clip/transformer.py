@@ -274,7 +274,7 @@ class VisionTransformer(nn.Module):
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         for param in self.parameters():
             param.requires_grad = False
-        
+
         if unlocked_groups != 0:
             groups = [
                 [
