@@ -3,7 +3,7 @@ import os
 import sys
 import random
 from datetime import datetime
-sys.path.append(os.getcwd())
+
 import numpy as np
 import torch
 from torch.cuda.amp import GradScaler

@@ -146,8 +146,9 @@ def get_parameters(args, model, skip_list, assigner, filter_bias_and_bn, group, 
             skip = set()
             if skip_list is not None:
                 skip = skip_list
-            if hasattr(model.text, 'no_weight_decay'):
-                skip = set.union(skip, model.text.no_weight_decay())
+            if hasattr(model, 'text'):
+                if hasattr(model.text, 'no_weight_decay'):
+                    skip = set.union(skip, model.text.no_weight_decay())
             get_num_layer  = assigner.get_layer_id if assigner is not None else None
             get_layer_scale = assigner.get_scale if assigner is not None else None
             text_parameters = get_parameter_groups(args, model, text_weight_decay, skip, get_num_layer, get_layer_scale, 'text', **kwargs)
