@@ -158,7 +158,7 @@ def filter_no_caption_or_no_image(sample):
 
 
 def log_and_continue(exn):
-    """Call in an exception handler to ignore any exception, isssue a warning, and continue."""
+    """Call in an exception handler to ignore any exception, issue a warning, and continue."""
     logging.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
     return True
 
@@ -475,7 +475,7 @@ def get_dataset_fn(data_path, dataset_type):
             return get_wds_dataset
         else:
             raise ValueError(
-                f"Tried to figure out dataset type, but failed for extention {ext}.")
+                f"Tried to figure out dataset type, but failed for extension {ext}.")
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
     
