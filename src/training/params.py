@@ -267,7 +267,7 @@ def parse_args(args):
         "--copy-codebase",
         default=False,
         action="store_true",
-        help="If true, we copy the entire base on the log diretory, and execute from there."
+        help="If true, we copy the entire base on the log directory, and execute from there."
     )
     parser.add_argument(
         "--horovod",
