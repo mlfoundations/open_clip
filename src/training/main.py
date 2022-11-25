@@ -3,10 +3,9 @@ import os
 import sys
 import random
 from datetime import datetime
-
+sys.path.append(os.getcwd())
 import numpy as np
 import torch
-from torch import optim
 from torch.cuda.amp import GradScaler
 
 try:
@@ -26,12 +25,12 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, world_info_from_env
+from training.distributed import is_master, init_distributed_device, world_info_from_env, create_deepspeed_config
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-
+from training.optim import LayerDecayValueAssigner, create_optimizer, get_all_parameters
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
@@ -40,7 +39,7 @@ def random_seed(seed=42, rank=0):
 
 
 def main(args):
-    args = parse_args(args)
+    args, ds_init = parse_args(args)
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -87,6 +86,10 @@ def main(args):
     # fully initialize distributed device environment
     device = init_distributed_device(args)
 
+    # create deepspeed config
+    if ds_init is not None:
+        create_deepspeed_config(args)
+
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
     if is_master(args):
@@ -128,10 +131,40 @@ def main(args):
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
         pretrained_image=args.pretrained_image,
+        pretrained_text=args.pretrained_text,
+        pretrained_visual_source=args.pretrained_visual_source,
+        pretrained_text_source=args.pretrained_text_source,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        skip_list=args.skip_list
     )
     random_seed(args.seed, args.rank)
+
+    model.to(device)
+
+    model_without_ddp = model
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logging.info(f'number of params: {n_parameters}')
+
+    visual_ld = args.visual_ld if args.visual_ld else args.ld
+    text_ld = args.text_ld if args.text_ld else args.ld
+    
+    if visual_ld < 1.0:
+        visual_num_layers = model_without_ddp.visual.get_num_layers()
+        assigner_visual = LayerDecayValueAssigner(list(visual_ld ** (visual_num_layers + 1 - i) for i in range(visual_num_layers + 2)))
+    else:
+        assigner_visual = None
+
+    if text_ld < 1.0:
+        text_num_layers = model_without_ddp.text.get_num_layers()
+        assigner_text = LayerDecayValueAssigner(list(text_ld ** (text_num_layers + 1 - i) for i in range(text_num_layers + 2)))
+    else:
+        assigner_text = None
+
+    if assigner_visual is not None:
+        logging.info("Assigned visual values = %s" % str(assigner_visual.values))
+    if assigner_text is not None:
+        logging.info("Assigned text values = %s" % str(assigner_text.values))
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
@@ -163,11 +196,13 @@ def main(args):
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+        if not args.enable_deepspeed:
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+            model_without_ddp = model.module
 
     # create optimizer and scaler
     optimizer = None
@@ -176,52 +211,74 @@ def main(args):
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
-        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-        include = lambda n, p: not exclude(n, p)
+        if not args.enable_deepspeed:
+            scaler = GradScaler() if args.precision == "amp" else None
+            optimizer = create_optimizer(
+                args,
+                model_without_ddp,
+                skip_list=None,
+                assigner_visual=assigner_visual,
+                assigner_text=assigner_text)
+        else:
+            scaler = None
+            optimizer_params = get_all_parameters(
+                args,
+                model,
+                skip_list=None,
+                assigner_visual=assigner_visual,
+                assigner_text=assigner_text)
+            model, optimizer, _, _ = ds_init(
+                args=args,
+                model=model,
+                model_parameters=optimizer_params,
+                dist_init_required=not args.distributed,
+            )
 
-        named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
-
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
-        if args.horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
-        scaler = GradScaler() if args.precision == "amp" else None
+        logging.info(f"num of optimizer.param_groups: {len(optimizer.param_groups)}")
 
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location='cpu')
-            if 'epoch' in checkpoint:
-                # resuming a train checkpoint w/ epoch and optimizer state
-                start_epoch = checkpoint["epoch"]
-                sd = checkpoint["state_dict"]
-                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                    sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
-                if optimizer is not None:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-                if scaler is not None and 'scaler' in checkpoint:
-                    scaler.load_state_dict(checkpoint['scaler'])
-                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        logging.info("Resume.....")
+        if args.enable_deepspeed:
+            logging.info("Start deepspeed load...")
+            if os.path.exists(args.resume):
+                import glob
+                all_checkpoints = glob.glob(os.path.join(args.resume, 'epoch_*'))
+                latest_ckpt = -1
+                for ckpt in all_checkpoints:
+                    t = ckpt.split('/')[-1].split('_')[1]
+                    if t.isdigit():
+                        latest_ckpt = max(int(t), latest_ckpt)
+                if latest_ckpt >= 0:
+                    start_epoch = latest_ckpt
+                    _, client_states = model.load_checkpoint(args.resume, tag='epoch_%d' % latest_ckpt)
+                    logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {latest_ckpt})")
+                else:
+                    logging.info("=> no checkpoint found at '{}'".format(args.resume))
             else:
-                # loading a bare (model only) checkpoint for fine-tune or evaluation
-                model.load_state_dict(checkpoint)
-                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+                logging.info("=> '{}' is not existing!".format(args.resume))
         else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
+            if os.path.isfile(args.resume):
+                checkpoint = torch.load(args.resume, map_location='cpu')
+                if 'epoch' in checkpoint:
+                    # resuming a train checkpoint w/ epoch and optimizer state
+                    start_epoch = checkpoint["epoch"]
+                    sd = checkpoint["state_dict"]
+                    if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                        sd = {k[len('module.'):]: v for k, v in sd.items()}
+                    model.load_state_dict(sd)
+                    if optimizer is not None:
+                        optimizer.load_state_dict(checkpoint["optimizer"])
+                    if scaler is not None and 'scaler' in checkpoint:
+                        scaler.load_state_dict(checkpoint['scaler'])
+                    logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+                else:
+                    # loading a bare (model only) checkpoint for fine-tune or evaluation
+                    model.load_state_dict(checkpoint)
+                    logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            else:
+                logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     # initialize datasets
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
@@ -231,7 +288,7 @@ def main(args):
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        scheduler = cosine_lr(args, optimizer, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
@@ -253,6 +310,7 @@ def main(args):
             notes=args.wandb_notes,
             tags=[],
             config=vars(args),
+            settings=wandb.Settings(start_method="fork")
         )
         if args.debug:
             wandb.watch(model, log='all')
@@ -274,7 +332,15 @@ def main(args):
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.
-        if args.save_logs:
+        # is_master(args) can not be here while using deepspped, otherwise ckpts can not be saved
+        if args.logs and args.logs.lower() != 'none' and args.enable_deepspeed:
+            deepspeed_checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+            if completed_epoch == args.epochs or (
+                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                ):
+                    client_state = {'epoch': completed_epoch}
+                    model.save_checkpoint(save_dir=deepspeed_checkpoint_path, tag="epoch_%s" % str(completed_epoch), client_state=client_state)
+        elif args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,

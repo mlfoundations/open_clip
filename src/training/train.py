@@ -43,6 +43,28 @@ def unwrap_model(model):
     else:
         return model
 
+def get_loss_scale_for_deepspeed(model):
+    optimizer = model.optimizer
+    loss_scale = None
+    if hasattr(optimizer, 'loss_scale'):
+        loss_scale = optimizer.loss_scale
+    elif hasattr(optimizer, 'cur_scale'):
+        loss_scale = optimizer.cur_scale
+    return loss_scale, optimizer._global_grad_norm
+
+def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
+    if isinstance(parameters, torch.Tensor):
+        parameters = [parameters]
+    parameters = [p for p in parameters if p.grad is not None]
+    norm_type = float(norm_type)
+    if len(parameters) == 0:
+        return torch.tensor(0.)
+    device = parameters[0].grad.device
+    if norm_type == inf:
+        total_norm = max(p.grad.detach().abs().max().to(device) for p in parameters)
+    else:
+        total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
+    return total_norm
 
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
@@ -66,6 +88,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     loss_m = AverageMeter()
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
+    loss_scaler = AverageMeter()
+    grad_norm_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
@@ -78,11 +102,15 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
-        optimizer.zero_grad()
+        if args.enable_deepspeed:
+            model.zero_grad()
+            model.micro_steps = 0
+        else:
+            optimizer.zero_grad()
 
         with autocast():
             image_features, text_features, logit_scale = model(images, texts)
-            total_loss = loss(image_features, text_features, logit_scale)
+            total_loss, acc = loss(image_features, text_features, logit_scale)
 
         if scaler is not None:
             scaler.scale(total_loss).backward()
@@ -99,6 +127,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
                 scaler.step(optimizer)
             scaler.update()
+        elif args.enable_deepspeed:
+            model.backward(total_loss)
+            model.step()
         else:
             total_loss.backward()
             if args.grad_clip_norm is not None:
@@ -121,23 +152,54 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
             logit_scale_scalar = logit_scale.item()
+            if args.enable_deepspeed:
+                loss_scale_value, grad_nrom = get_loss_scale_for_deepspeed(model)
+            elif scaler is not None:
+                loss_scale_value = scaler.get_scale()
+                grad_nrom = get_grad_norm_(model.parameters())
+            else:
+                loss_scale_value = 0.0
+                grad_nrom = get_grad_norm_(model.parameters())
+            loss_scaler.update(loss_scale_value, batch_size)
+            grad_norm_m.update(grad_nrom, batch_size)
+
+            index_visual, index_text = 0, 0
+            for i, v in enumerate(optimizer.param_groups):
+                if v['group'] == 'visual' and v['lr_scale'] == 1.0:
+                    index_visual = i
+                if v['group'] == 'text' and v['lr_scale'] == 1.0:
+                    index_text = i
+
             logging.info(
+                f"Global Steps: {step + 1} "
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
+                f"i2t_acc: {acc['i2t'].item() * 100:.2f} "
+                f"t2i_acc: {acc['t2i'].item() * 100:.2f} "
+                f"Grad Norm: {grad_norm_m.val:#.5g} ({grad_norm_m.avg:#.4g}) "
+                f"Loss Scaler: {loss_scaler.val:#.5g} ({loss_scaler.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {args.batch_size*args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
+                f"LR_visual: {optimizer.param_groups[index_visual]['lr']:5f} "
+                f"LR_text: {optimizer.param_groups[index_text]['lr']:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f}"
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
             log_data = {
                 "loss": loss_m.val,
+                "i2t_acc": acc['i2t'].item() * 100,
+                "t2i_acc": acc['t2i'].item() * 100,
+                "grad_nrom": grad_norm_m.val,
+                "loss_scaler": loss_scaler.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
                 "samples_per_scond": args.batch_size*args.world_size / batch_time_m.val,
                 "scale":  logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
+                "lr": optimizer.param_groups[0]["lr"],
+                "lr_visual": optimizer.param_groups[index_visual]["lr"],
+                "lr_text": optimizer.param_groups[index_text]["lr"]
             }
             for name, val in log_data.items():
                 name = "train/" + name

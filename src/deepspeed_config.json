@@ -1,0 +1,41 @@
+{
+  "train_batch_size": 41472,
+  "train_micro_batch_size_per_gpu": 162,
+  "steps_per_print": 1000,
+  "optimizer": {
+    "type": "Adam",
+    "adam_w_mode": true,
+    "params": {
+      "bias_correction": true,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08
+    }
+  },
+  "fp16": {
+    "enabled": true,
+    "loss_scale": 0,
+    "initial_scale_power": 16,
+    "loss_scale_window": 1000,
+    "hysteresis": 2,
+    "min_loss_scale": 1
+  },
+  "amp": {
+    "enabled": false,
+    "opt_level": "O2"
+  },
+  "flops_profiler": {
+    "enabled": true,
+    "profile_step": -1,
+    "module_depth": -1,
+    "top_modules": 1,
+    "detailed": true
+  },
+  "gradient_clipping": 5.0,
+  "zero_optimization": {
+    "stage": 1,
+    "reduce_bucket_size": 500000000.0
+  }
+}

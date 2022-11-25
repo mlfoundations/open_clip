@@ -1,5 +1,5 @@
 import argparse
-
+import os
 
 def get_default_params(model_name):
     # Params from paper (https://arxiv.org/pdf/2103.00020.pdf)
@@ -106,10 +106,17 @@ def parse_args(args):
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
+    parser.add_argument("--text_lr", type=float, default=None, help="Learning rate of text tower.")
+    parser.add_argument("--visual_lr", type=float, default=None, help="Learning rate of image tower.")
     parser.add_argument("--beta1", type=float, default=None, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
     parser.add_argument("--eps", type=float, default=None, help="Adam epsilon.")
     parser.add_argument("--wd", type=float, default=0.2, help="Weight decay.")
+    parser.add_argument("--text_wd", type=float, default=None, help="Weight decay of text tower.")
+    parser.add_argument("--visual_wd", type=float, default=None, help="Weight decay of image tower.")
+    parser.add_argument("--ld", type=float, default=1.0, help="Learning rate Layer decay.")
+    parser.add_argument("--text_ld", type=float, default=None, help="Learning rate Layer decay of text tower.")
+    parser.add_argument("--visual_ld", type=float, default=None, help="Learning rate Layer decay of image tower.")
     parser.add_argument(
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
     )
@@ -165,10 +172,31 @@ def parse_args(args):
     )
     parser.add_argument(
         "--pretrained-image",
-        default=False,
-        action='store_true',
+        default='',
+        type=str,
         help="Load imagenet pretrained weights for image tower backbone if available.",
     )
+    parser.add_argument(
+        "--pretrained-visual-source",
+        choices=["clip", "open_clip", "other"],
+        default="other",
+        help="Source of pretrained image tower."
+    )
+    parser.add_argument(
+        "--pretrained-text",
+        default='',
+        type=str,
+        help="Load pretrained text model weights for text tower backbone if available.",
+    )
+    parser.add_argument(
+        "--pretrained-text-source",
+        choices=["clip", "open_clip", "other"],
+        default="clip",
+        help="Source of pretrained text tower."
+    )
+    parser.add_argument(
+        '--skip-list', type=str, nargs='+', default=[],
+        help='skip list of weights to load')
     parser.add_argument(
         "--lock-image",
         default=False,
@@ -317,6 +345,8 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
+    parser.add_argument('--enable-deepspeed', action='store_true', default=False)
+    parser.add_argument('--zero-stage', type=int, default=1, help='stage of ZERO')
 
 
     args = parser.parse_args(args)
@@ -327,4 +357,17 @@ def parse_args(args):
         if getattr(args, name) is None:
             setattr(args, name, val)
 
-    return args
+    if args.enable_deepspeed:
+        try:
+            import deepspeed
+            os.environ['ENV_TYPE'] = "deepspeed"
+            parser = deepspeed.add_config_arguments(parser)
+            ds_init = deepspeed.initialize
+        except:
+            print("Please 'pip install deepspeed'")
+            exit(0)
+    else:
+        os.environ['ENV_TYPE'] = "pytorch"
+        ds_init = None
+
+    return args, ds_init

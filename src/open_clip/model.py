@@ -6,13 +6,13 @@ from dataclasses import dataclass
 import logging
 import math
 from typing import Optional, Tuple, Union
-
+from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
+from .eva_vit_model import EVAVisionTransformer
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
@@ -29,11 +29,13 @@ class CLIPVisionCfg:
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
     ls_init_value: Optional[float] = None  # layer scale initial value
+    drop_path_rate: Optional[float] = None  # drop path rate
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
     timm_proj_bias: bool = False  # enable bias final projection
+    eva_model_name: str = None # a valid custom model name overrides layers, width, patch_size
 
 
 @dataclass
@@ -74,7 +76,24 @@ def _build_vision_tower(
     # NOTE: timm models always use native GELU regardless of quick_gelu flag.
     act_layer = QuickGELU if quick_gelu else nn.GELU
 
-    if vision_cfg.timm_model_name:
+    if vision_cfg.eva_model_name:
+        vision_heads = vision_cfg.width // vision_cfg.head_width
+        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        visual = EVAVisionTransformer(
+            img_size=vision_cfg.image_size,
+            patch_size=vision_cfg.patch_size,
+            num_classes=embed_dim,
+            use_mean_pooling=False,
+            init_values=vision_cfg.ls_init_value,
+            embed_dim=vision_cfg.width,
+            depth=vision_cfg.layers,
+            num_heads=vision_heads,
+            mlp_ratio=vision_cfg.mlp_ratio,
+            qkv_bias=True,
+            drop_path_rate=vision_cfg.drop_path_rate,
+            norm_layer=partial(norm_layer, eps=1e-6)
+        )
+    elif vision_cfg.timm_model_name:
         visual = TimmModel(
             vision_cfg.timm_model_name,
             pretrained=vision_cfg.timm_model_pretrained,
@@ -179,6 +198,10 @@ class CLIP(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
+    
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'logit_scale'}
 
     def encode_image(self, image, normalize: bool = False):
         features = self.visual(image)
@@ -228,6 +251,10 @@ class CustomTextCLIP(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
+    
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'logit_scale'}
 
     def encode_image(self, image, normalize: bool = False):
         features = self.visual(image)

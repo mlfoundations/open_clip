@@ -118,4 +118,8 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
             ) / 2
-        return total_loss
+            
+        i2t_acc = (logits_per_image.argmax(-1) == labels).sum() / len(logits_per_image)
+        t2i_acc = (logits_per_text.argmax(-1) == labels).sum() / len(logits_per_text)
+        acc = {"i2t": i2t_acc, "t2i": t2i_acc}
+        return total_loss, acc
