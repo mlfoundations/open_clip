@@ -124,8 +124,8 @@ class ClipLoss(nn.Module):
 class CoCaLoss(nn.Module):
     def __init__(
         self,
-        captionloss_weight,
-        cliploss_weight,
+        caption_loss_weight,
+        clip_loss_weight,
         pad_id,
         local_loss=False,
         gather_with_grad=False,
@@ -143,9 +143,9 @@ class CoCaLoss(nn.Module):
             world_size=world_size,
             use_horovod=use_horovod
         )
-        self.clip_loss_weight = cliploss_weight
+        self.clip_loss_weight = clip_loss_weight
         self.caption_loss = nn.CrossEntropyLoss()
-        self.caption_loss_weight = captionloss_weight
+        self.caption_loss_weight = caption_loss_weight
         self.pad_id = pad_id
 
     def forward(self, image_features, text_features, logits, logit_scale, labels):
