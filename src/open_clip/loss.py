@@ -120,11 +120,29 @@ class ClipLoss(nn.Module):
             ) / 2
         return total_loss
 
-class CoCaLoss(nn.Module):
 
-    def __init__(self, captionloss_weight, cliploss_weight, pad_id):
+class CoCaLoss(nn.Module):
+    def __init__(
+        self,
+        captionloss_weight,
+        cliploss_weight,
+        pad_id,
+        local_loss=False,
+        gather_with_grad=False,
+        cache_labels=False,
+        rank=0,
+        world_size=1,
+        use_horovod=False,
+    ):
         super().__init__()
-        self.clip_loss = ClipLoss()
+        self.clip_loss = ClipLoss(
+            local_loss=local_loss,
+            gather_with_grad=gather_with_grad,
+            cache_labels=cache_labels,
+            rank=rank,
+            world_size=world_size,
+            use_horovod=use_horovod
+        )
         self.clip_loss_weight = cliploss_weight
         self.caption_loss = nn.CrossEntropyLoss()
         self.caption_loss_weight = captionloss_weight
