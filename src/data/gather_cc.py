@@ -24,7 +24,7 @@ def grab(line):
         print("Finished", uid)
         return uid, caption, url
 
-    # Let's not crash if anythign weird happens
+    # Let's not crash if anything weird happens
     try:
         dat = requests.get(url, timeout=20)
         if dat.status_code != 200:
