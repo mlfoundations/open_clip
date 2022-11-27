@@ -17,7 +17,7 @@ models_to_test = set(open_clip.list_models()).difference({
         'timm-convnext_xlarge',
         'timm-vit_medium_patch16_gap_256',
         # exceeds GH runner memory limit
-        'ViT-G-14',
+        'ViT-bigG-14',
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
 })
