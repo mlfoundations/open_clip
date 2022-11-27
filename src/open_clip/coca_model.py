@@ -13,15 +13,15 @@ from .model import CLIPTextCfg, _build_vision_tower
 @dataclass
 class CoCaCfg:
     model_name: str = "CoCa_base"
-    coca_dim: int = 768
-    coca_image_dim: int = 768
-    coca_ff_mult: int = 4
-    coca_unimodal_depth: int = 12
-    coca_multimodal_depth: int = 12
-    coca_dim_head: int = 64
-    coca_heads: int = 12
-    coca_contrastive_loss_weight: float = 1.0
-    coca_caption_loss_weight: float = 2.0
+    dim: int = 768
+    image_dim: int = 768
+    ff_mult: int = 4
+    unimodal_depth: int = 12
+    multimodal_depth: int = 12
+    dim_head: int = 64
+    heads: int = 12
+    contrastive_loss_weight: float = 1.0
+    caption_loss_weight: float = 2.0
 
     # vit_image_size: int = 288
     # vit_patch_size: int = 18
@@ -36,17 +36,17 @@ class CoCa(nn.Module):
     def __init__(self, coca_cfg: CoCaCfg, vit_cfg: CLIPTextCfg, tokenizer):
         super().__init__()
 
-        unimodal_depth = coca_cfg.coca_unimodal_depth
-        multimodal_depth = coca_cfg.coca_multimodal_depth
-        image_dim = coca_cfg.coca_image_dim
+        unimodal_depth = coca_cfg.unimodal_depth
+        multimodal_depth = coca_cfg.multimodal_depth
+        image_dim = coca_cfg.image_dim
         num_img_queries = 256
-        dim_head = coca_cfg.coca_dim_head
-        heads = coca_cfg.coca_heads
-        ff_mult = coca_cfg.coca_ff_mult
+        dim_head = coca_cfg.dim_head
+        heads = coca_cfg.heads
+        ff_mult = coca_cfg.ff_mult
 
-        self.dim = coca_cfg.coca_dim
-        self.caption_loss_weight = coca_cfg.coca_caption_loss_weight
-        self.contrastive_loss_weight = coca_cfg.coca_contrastive_loss_weight
+        self.dim = coca_cfg.dim
+        self.caption_loss_weight = coca_cfg.caption_loss_weight
+        self.contrastive_loss_weight = coca_cfg.contrastive_loss_weight
         self.pad_id = coca_cfg.pad_id
 
         self.tokenizer = tokenizer
