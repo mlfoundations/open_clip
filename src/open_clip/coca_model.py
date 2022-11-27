@@ -187,41 +187,10 @@ class CoCa(nn.Module):
             images=images, image_tokens=image_tokens
         )
 
-        # return embeddings if that is what the researcher wants
-
-        if return_embeddings:
-            return text_embeds, image_embeds
-
-        # go through multimodal layers
-
         for attn_ff, cross_attn in self.multimodal_layers:
             text_tokens = attn_ff(text_tokens)
             text_tokens = cross_attn(text_tokens, image_tokens)
 
         logits = self.to_logits(text_tokens)
 
-        if not return_loss:
-            return logits
-
-        # shorthand
-
-        ce = F.cross_entropy
-
-        # calculate caption loss (cross entropy loss)
-
-        logits = rearrange(logits, "b n c -> b c n")
-        caption_loss = ce(logits, labels, ignore_index=self.pad_id)
-        caption_loss = caption_loss * self.caption_loss_weight
-
-        # calculate contrastive loss
-
-        sim = einsum("i d, j d -> i j", text_embeds, image_embeds)
-        sim = sim * self.temperature.exp()
-        contrastive_labels = torch.arange(batch, device=device)
-
-        contrastive_loss = (
-            ce(sim, contrastive_labels) + ce(sim.t(), contrastive_labels)
-        ) * 0.5
-        contrastive_loss = contrastive_loss * self.contrastive_loss_weight
-
-        return caption_loss + contrastive_loss
+        return text_embeds, image_embeds, logits, labels
