@@ -119,3 +119,23 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_text, labels)
             ) / 2
         return total_loss
+
+class CoCaLoss(nn.Module):
+
+    def __init__(self, captionloss_weight, cliploss_weight, pad_id):
+        super().__init__()
+        self.clip_loss = ClipLoss()
+        self.clip_loss_weight = cliploss_weight
+        self.caption_loss = nn.CrossEntropyLoss()
+        self.caption_loss_weight = captionloss_weight
+        self.pad_id = pad_id
+
+    def forward(self, image_features, text_features, logits, logit_scale, labels):
+        clip_loss = self.clip_loss(image_features, text_features, logit_scale)
+        clip_loss = self.clip_loss_weight * clip_loss
+
+        logits = logits.permute(0, 2, 1)
+        caption_loss = self.caption_loss(logits, labels, ignore_index=self.pad_id)
+        caption_loss = caption_loss * self.caption_loss_weight
+
+        return clip_loss + caption_loss
