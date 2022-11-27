@@ -93,13 +93,14 @@ def create_test_data_for_model(
         pretrained = None,
         precision = 'fp32',
         jit = False,
+        pretrained_hf = False,
         force_quick_gelu = False,
         create_missing_input_data = True,
         batches = 1,
         batch_size = 1,
         overwrite = False
 ):
-    model_id = f'{model_name}_{pretrained}_{precision}'
+    model_id = f'{model_name}_{pretrained or pretrained_hf}_{precision}'
     input_dir, output_dir = get_data_dirs()
     output_file_text = os.path.join(output_dir, f'{model_id}_random_text.pt')
     output_file_image = os.path.join(output_dir, f'{model_id}_random_image.pt')
@@ -114,7 +115,7 @@ def create_test_data_for_model(
             precision = precision,
             jit = jit,
             force_quick_gelu = force_quick_gelu,
-            pretrained_hf = False
+            pretrained_hf = pretrained_hf
     )
     # text
     if overwrite or not text_exists:
@@ -155,13 +156,16 @@ def create_test_data(
         batch_size = 1,
         overwrite = False
 ):
-    models = set(models).difference({
+    models = list(set(models).difference({
             # not available with timm
             # see https://github.com/mlfoundations/open_clip/issues/219
             'timm-convnext_xlarge',
             'timm-vit_medium_patch16_gap_256'
-    })
+    }).intersection(open_clip.list_models()))
+    models.sort()
+    print(f"generating test data for:\n{models}")
     for model_name in models:
+        print(model_name)
         create_test_data_for_model(
                 model_name,
                 batches = batches,
@@ -169,46 +173,52 @@ def create_test_data(
                 overwrite = overwrite
         )
 
-
 def main(args):
     import argparse
-    parser = argparse.ArgumentParser(description="Populate test data directory")
+    parser = argparse.ArgumentParser(description = "Populate test data directory")
     parser.add_argument(
-        "--all",
-        default=False,
-        action='store_true',
-        help="create test data for all models"
+        '-a', '--all',
+        action = 'store_true',
+        help = "create test data for all models"
     )
     parser.add_argument(
-        "--model",
-        default=None,
-        type=str,
-        help="model to create test data for (default: None)"
+        '-m', '--model',
+        type = str,
+        default = [],
+        nargs = '+',
+        help = "model(s) to create test data for"
     )
     parser.add_argument(
-        "--overwrite",
-        default=False,
-        action='store_true',
-        help="overwrite existing data"
+        '-f', '--model_file',
+        type = str,
+        help = "path to a text file containing a list of model names, one line per model"
     )
     parser.add_argument(
-        "--num_batches",
-        default=1,
-        type=int,
-        help="amount of data batches to create (default: 1)"
+        '--overwrite',
+        action = 'store_true',
+        help = "overwrite existing output data"
     )
     parser.add_argument(
-        "--batch_size",
-        default=1,
-        type=int,
-        help="test data batch size (default: 1)"
+        '-n', '--num_batches',
+        default = 1,
+        type = int,
+        help = "amount of data batches to create (default: 1)"
+    )
+    parser.add_argument(
+        '-b', '--batch_size',
+        default = 1,
+        type = int,
+        help = "test data batch size (default: 1)"
     )
     args = parser.parse_args(args)
-    if not args.all and args.model is None:
+    model_file_list = []
+    if args.model_file is not None:
+        with open(args.model_file, 'r') as f:
+            model_file_list = f.read().splitlines()
+    if not args.all and len(args.model) < 1 and len(model_file_list) < 1:
         parser.print_help()
-        parser.exit()
-    models = open_clip.list_models() if args.all else [args.model]
-    print(f"generating test data for:\n{models}")
+        parser.exit(1)
+    models = open_clip.list_models() if args.all else args.model + model_file_list
     create_test_data(
         models,
         batches = args.num_batches,
