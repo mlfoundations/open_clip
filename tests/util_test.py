@@ -239,15 +239,17 @@ def main(args):
         parser.print_help()
         parser.exit(1)
     if args.git_revision is not None:
-        assert os.system(f'git stash') == 0
-        current_branch = subprocess.check_output(
-                ['git', 'branch', '--show-current']
-        ).splitlines()[0].decode()
+        _sytem_assert(f'git stash')
+        current_branch = subprocess.check_output(['git', 'branch', '--show-current'])
+        if len(current_branch) < 1:
+            # not on a branch -> detached head
+            current_branch = subprocess.check_output(['git', 'rev-parse', 'HEAD'])
+        current_branch = current_branch.splitlines()[0].decode()
         try:
             _sytem_assert(f'git checkout {args.git_revision}')
         except AssertionError as e:
             _sytem_assert(f'git checkout -f {current_branch}')
-            _sytem_assert(f'git stash pop')
+            os.system(f'git stash pop')
             raise e
     open_clip = importlib.import_module('open_clip')
     models = open_clip.list_models() if args.all else args.model + model_list
@@ -266,11 +268,11 @@ def main(args):
                 shutil.rmtree(test_dir_ref)
             os.rename(test_dir, test_dir_ref)
             _sytem_assert(f'git checkout {current_branch}')
-            _sytem_assert(f'git stash pop')
+            os.system(f'git stash pop')
             os.rename(test_dir_ref, test_dir)
-    if args.save_model_file is not None:
-        print(f"Saving model list as {args.save_model_file}")
-        with open(args.save_model_file, 'w') as f:
+    if args.save_model_list is not None:
+        print(f"Saving model list as {args.save_model_list}")
+        with open(args.save_model_list, 'w') as f:
             for m in models:
                 print(m, file=f)
 
