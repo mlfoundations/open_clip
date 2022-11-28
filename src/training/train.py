@@ -95,24 +95,27 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
             backward(total_loss, scaler)
         else:
+            # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
                     chunk_image_features, chunk_text_features, _ = model(images, texts)
                 accum_image_features.append(chunk_image_features)
                 accum_text_features.append(chunk_text_features)
 
-                # accum_images.append(images.cpu())
-                # accum_texts.append(texts.cpu())
                 accum_images.append(images)
                 accum_texts.append(texts)
 
+            # If (i + 1) % accum_freq is not zero, move on to the next batch.
             if ((i + 1) % args.accum_freq) > 0:
                 continue
             
+            # Now, ready to take gradients for the last accum_freq batches.
+            # Re-do the forward pass for those batches, and use the cached features from the other batches as negatives.
+            # Call backwards each time, but only step optimizer at the end.
             optimizer.zero_grad()
             for j in range(args.accum_freq):
-                images = accum_images[j]#.to(device=device, dtype=cast_dtype, non_blocking=True)
-                texts = accum_texts[j]#.to(device=device, non_blocking=True)
+                images = accum_images[j]
+                texts = accum_texts[j]
                 with autocast():
                     chunk_image_features, chunk_text_features, logit_scale = model(images, texts)
                     image_features = torch.cat(accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
