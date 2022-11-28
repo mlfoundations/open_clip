@@ -44,6 +44,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0
+        ref: ${{ inputs.manual_revision_test }}
     - name: Set up Python ${{ matrix.python }}
       uses: actions/setup-python@v4
       with:
@@ -80,9 +81,6 @@ jobs:
           tests \
           | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=])' \
           > models_gh_runner.txt
-        if [ -n "${{ inputs.manual_revision_test }}" ]; then
-          git checkout ${{ inputs.manual_revision_test }}
-        fi
         if [ -n "${{ inputs.manual_revision_reference }}" ]; then
           REVISION_REFERENCE=${{ inputs.manual_revision_reference }}
         fi
