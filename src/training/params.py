@@ -16,13 +16,13 @@ def parse_args(args):
         "--train-data",
         type=str,
         default=None,
-        help="Path to csv filewith training data",
+        help="Path to file(s) with training data",
     )
     parser.add_argument(
         "--val-data",
         type=str,
         default=None,
-        help="Path to csv file with validation data",
+        help="Path to file(s) with validation data",
     )
     parser.add_argument(
         "--train-num-samples",
