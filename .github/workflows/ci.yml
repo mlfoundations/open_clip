@@ -88,7 +88,10 @@ jobs:
         if [ -n "${{ inputs.manual_revision_reference }}" ]; then
           REVISION_REFERENCE=${{ inputs.manual_revision_reference }}
         fi
-        python tests/util_test.py --model_list models_gh_runner.txt --git_revision $REVISION_REFERENCE
+        python tests/util_test.py \
+          --save_model_list models_gh_runner.txt \
+          --model_list models_gh_runner.txt \
+          --git_revision $REVISION_REFERENCE
     - name: Unit tests
       run: |
         source .env/bin/activate
