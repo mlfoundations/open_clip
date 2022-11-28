@@ -1,5 +1,5 @@
 import os
-
+import json
 import torch
 
 try:
@@ -111,3 +111,67 @@ def init_distributed_device(args):
     args.device = device
     device = torch.device(device)
     return device
+
+def create_deepspeed_config(args):
+    args.deepspeed_config = os.path.join(os.getcwd(), "deepspeed_config.json")
+    _, _, world_size = world_info_from_env()
+    with open(args.deepspeed_config, mode="w") as writer:
+        ds_config = {
+            "train_batch_size": args.batch_size * world_size,
+            "train_micro_batch_size_per_gpu": args.batch_size,
+            "steps_per_print": 1000,
+            "optimizer": {
+                "type": "Adam",
+                "adam_w_mode": True,
+                "params": {
+                    "bias_correction": True,
+                    "betas": [
+                        args.beta1,
+                        args.beta2
+                    ],
+                    "eps": args.eps
+                }
+            },
+            "fp16": {
+                "enabled": True,
+                "loss_scale": 0,
+                "initial_scale_power": 16,
+                "loss_scale_window": 1000,
+                "hysteresis": 2,
+                "min_loss_scale": 1
+            },
+            # "bf16": {
+            #     "enabled": True
+            # },
+            "amp": {
+                "enabled": False,
+                "opt_level": "O2"
+            },
+            "flops_profiler": {
+                "enabled": True,
+                "profile_step": -1,
+                "module_depth": -1,
+                "top_modules": 1,
+                "detailed": True,
+            },
+        }
+
+        if args.grad_clip_norm is not None:
+            ds_config.update({'gradient_clipping': args.grad_clip_norm})
+
+        if args.zero_stage == 1:
+            ds_config.update(
+                {
+                    "zero_optimization": {
+                        "stage": 1, 
+                        "reduce_bucket_size": 5e8,
+                        # "offload_optimizer": {
+                        #     "device": "cpu"
+                        # }
+                    }
+                }
+            )
+        elif args.zero_stage > 1:
+            raise NotImplementedError()
+
+        writer.write(json.dumps(ds_config, indent=2))

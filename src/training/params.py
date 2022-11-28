@@ -1,5 +1,5 @@
 import argparse
-
+import os
 
 def get_default_params(model_name):
     # Params from paper (https://arxiv.org/pdf/2103.00020.pdf)
@@ -317,6 +317,8 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
+    parser.add_argument('--enable-deepspeed', action='store_true', default=False)
+    parser.add_argument('--zero-stage', type=int, default=1, help='stage of ZERO')
 
 
     args = parser.parse_args(args)
@@ -327,4 +329,17 @@ def parse_args(args):
         if getattr(args, name) is None:
             setattr(args, name, val)
 
-    return args
+    if args.enable_deepspeed:
+        try:
+            import deepspeed
+            os.environ['ENV_TYPE'] = "deepspeed"
+            parser = deepspeed.add_config_arguments(parser)
+            ds_init = deepspeed.initialize
+        except:
+            print("Please 'pip install deepspeed'")
+            exit(0)
+    else:
+        os.environ['ENV_TYPE'] = "pytorch"
+        ds_init = None
+
+    return args, ds_init
