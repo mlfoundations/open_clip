@@ -71,14 +71,12 @@ jobs:
     - name: Prepare test data
       run: |
         source .env/bin/activate
-        # TODO switch to marker instead of name filter (-k inference_with_data -> -m regression_test)
-        # once marker is in a release
         python -m pytest \
           --quiet --co \
           --splitting-algorithm least_duration \
           --splits ${{ matrix.job_num }} \
           --group ${{ matrix.job }} \
-          -k inference_with_data \
+          -m regression_test \
           tests \
           | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=])' \
           > models_gh_runner.txt
