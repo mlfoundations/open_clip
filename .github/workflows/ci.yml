@@ -71,18 +71,6 @@ jobs:
     - name: Prepare test data
       run: |
         source .env/bin/activate
-        # TODO: remove line once new util_test is in a release
-        cp tests/util_test.py tests/util_test_ref.py
-        REVISION_TEST=`git rev-parse HEAD`
-        if [ -n "${{ inputs.manual_revision_test }}" ]; then
-          REVISION_TEST=${{ inputs.manual_revision_test }}
-        fi
-        if [ -n "${{ inputs.manual_revision_reference }}" ]; then
-          REVISION_REFERENCE=${{ inputs.manual_revision_reference }}
-        fi
-        git checkout $REVISION_REFERENCE
-        mkdir -p tests/data
-        rm -rf tests/data/*
         # TODO switch to marker instead of name filter (-k inference_with_data -> -m regression_test)
         # once marker is in a release
         python -m pytest \
@@ -93,13 +81,14 @@ jobs:
           -k inference_with_data \
           tests \
           | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=])' \
-          > tests/data/models_gh_runner.txt
-        python tests/util_test_ref.py --model_file $PWD/tests/data/models_gh_runner.txt
-        mkdir -p tests/data_ref
-        cp -r tests/data/* tests/data_ref
-        git reset --hard $REVISION_TEST
-        rm -rf tests/data/*
-        cp -r tests/data_ref/* tests/data
+          > models_gh_runner.txt
+        if [ -n "${{ inputs.manual_revision_test }}" ]; then
+          git checkout ${{ inputs.manual_revision_test }}
+        fi
+        if [ -n "${{ inputs.manual_revision_reference }}" ]; then
+          REVISION_REFERENCE=${{ inputs.manual_revision_reference }}
+        fi
+        python tests/util_test.py --model_list models_gh_runner.txt --git_revision $REVISION_REFERENCE
     - name: Unit tests
       run: |
         source .env/bin/activate
@@ -115,7 +104,7 @@ jobs:
           --clean-durations \
           -m "not regression_test" \
           tests
-        IS_GH_RUNNER=1 python -m pytest \
+        OPEN_CLIP_TEST_REG_MODELS=models_gh_runner.txt python -m pytest \
           -x -s -v \
           --store-durations \
           --durations-path durations_2 \

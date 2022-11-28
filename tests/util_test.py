@@ -1,10 +1,11 @@
-
 import os
 import random
 import numpy as np
 from PIL import Image
 import torch
-import open_clip
+
+if __name__ != '__main__':
+    import open_clip
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -172,8 +173,16 @@ def create_test_data(
                 batch_size = batch_size,
                 overwrite = overwrite
         )
+    return models
+
+def _sytem_assert(string):
+    assert os.system(string) == 0
 
 def main(args):
+    global open_clip
+    import importlib
+    import shutil
+    import subprocess
     import argparse
     parser = argparse.ArgumentParser(description = "Populate test data directory")
     parser.add_argument(
@@ -189,9 +198,19 @@ def main(args):
         help = "model(s) to create test data for"
     )
     parser.add_argument(
-        '-f', '--model_file',
+        '-f', '--model_list',
         type = str,
-        help = "path to a text file containing a list of model names, one line per model"
+        help = "path to a text file containing a list of model names, one model per line"
+    )
+    parser.add_argument(
+        '-s', '--save_model_list',
+        type = str,
+        help = "path to save the list of models that data was generated for"
+    )
+    parser.add_argument(
+        '-g', '--git_revision',
+        type = str,
+        help = "git revision to generate test data for"
     )
     parser.add_argument(
         '--overwrite',
@@ -211,20 +230,49 @@ def main(args):
         help = "test data batch size (default: 1)"
     )
     args = parser.parse_args(args)
-    model_file_list = []
-    if args.model_file is not None:
-        with open(args.model_file, 'r') as f:
-            model_file_list = f.read().splitlines()
-    if not args.all and len(args.model) < 1 and len(model_file_list) < 1:
+    model_list = []
+    if args.model_list is not None:
+        with open(args.model_list, 'r') as f:
+            model_list = f.read().splitlines()
+    if not args.all and len(args.model) < 1 and len(model_list) < 1:
+        print("error: at least one model name is required")
         parser.print_help()
         parser.exit(1)
-    models = open_clip.list_models() if args.all else args.model + model_file_list
-    create_test_data(
-        models,
-        batches = args.num_batches,
-        batch_size = args.batch_size,
-        overwrite = args.overwrite
-    )
+    if args.git_revision is not None:
+        assert os.system(f'git stash') == 0
+        current_branch = subprocess.check_output(
+                ['git', 'branch', '--show-current']
+        ).splitlines()[0].decode()
+        try:
+            _sytem_assert(f'git checkout {args.git_revision}')
+        except AssertionError as e:
+            _sytem_assert(f'git checkout -f {current_branch}')
+            _sytem_assert(f'git stash pop')
+            raise e
+    open_clip = importlib.import_module('open_clip')
+    models = open_clip.list_models() if args.all else args.model + model_list
+    try:
+        models = create_test_data(
+            models,
+            batches = args.num_batches,
+            batch_size = args.batch_size,
+            overwrite = args.overwrite
+        )
+    finally:
+        if args.git_revision is not None:
+            test_dir = os.path.join(os.path.dirname(__file__), 'data')
+            test_dir_ref = os.path.join(os.path.dirname(__file__), 'data_ref')
+            if os.path.exists(test_dir_ref):
+                shutil.rmtree(test_dir_ref)
+            os.rename(test_dir, test_dir_ref)
+            _sytem_assert(f'git checkout {current_branch}')
+            _sytem_assert(f'git stash pop')
+            os.rename(test_dir_ref, test_dir)
+    if args.save_model_file is not None:
+        print(f"Saving model list as {args.save_model_file}")
+        with open(args.save_model_file, 'w') as f:
+            for m in models:
+                print(m, file=f)
 
 
 if __name__ == '__main__':

@@ -111,15 +111,26 @@ If you want to make changes to contribute code, you can close openclip then run 
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
+You may run `make install-training` to install training deps
+
+#### Testing
 
 Test can be run with `make install-test` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
-When introducing new models, `python tests/util_test.py --model=xlm-roberta-large-ViT-H-14` can generate new output expected data.
+Running regression tests against a specific git revision or tag:
+1. Generate testing data
+    ```sh
+    python tests/util_test.py --model RN50 RN101 --save_model_list models.txt --git_revision 9d31b2ec4df6d8228f370ff20c8267ec6ba39383
+    ```
+    **_WARNING_: This will invoke git and modify your working tree, but will reset it to the current state after data has been generated! \
+    Don't modify your working tree while test data is being generated this way.**
 
-You may run `make install-training` to install training deps
-
+2. Run regression tests
+    ```sh
+    OPEN_CLIP_TEST_REG_MODELS=models.txt python -m pytest -x -s -v -m regression_test
+    ```
 
 ### Sample single-process running code:
 
@@ -502,7 +513,7 @@ quantifies robustness as accuracy beyond this baseline, i.e., how far a model li
 Even though the CLIP models trained with
 this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
 trend of improved effective robustness (the purple line). Therefore, we can study what makes
-CLIP robust without requiring industrial-scale compute. 
+CLIP robust without requiring industrial-scale compute.
 
 For more information on effective robustness, please see:
 

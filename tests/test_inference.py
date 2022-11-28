@@ -9,12 +9,8 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 models_to_test = set(open_clip.list_models())
 
-if os.environ.get('IS_GH_RUNNER', '0') == '1':
-    with open(os.path.join(os.path.dirname(__file__), 'data', 'models_gh_runner.txt'), 'r') as f:
-        models_to_test = set(f.read().splitlines()).intersection(models_to_test)
-
 # testing excemptions
-models_to_test = list(models_to_test.difference({
+models_to_test = models_to_test.difference({
         # not available with timm yet
         # see https://github.com/mlfoundations/open_clip/issues/219
         'timm-convnext_xlarge',
@@ -23,7 +19,15 @@ models_to_test = list(models_to_test.difference({
         'ViT-bigG-14',
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
-}))
+})
+
+if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
+    external_model_list = os.environ['OPEN_CLIP_TEST_REG_MODELS']
+    with open(external_model_list, 'r') as f:
+        models_to_test = set(f.read().splitlines()).intersection(models_to_test)
+    print(f"Selected models from {external_model_list}: {models_to_test}")
+
+models_to_test = list(models_to_test)
 models_to_test.sort()
 
 @pytest.mark.regression_test
@@ -50,8 +54,10 @@ def test_inference_with_data(
     # text
     input_text_path = os.path.join(input_dir, 'random_text.pt')
     gt_text_path = os.path.join(output_dir, f'{model_id}_random_text.pt')
-    assert os.path.isfile(input_text_path), f"missing test data, expected at {input_text_path}"
-    assert os.path.isfile(gt_text_path), f"missing test data, expected at {gt_text_path}"
+    if not os.path.isfile(input_text_path):
+        pytest.skip(reason = f"missing test data, expected at {input_text_path}")
+    if not os.path.isfile(gt_text_path):
+        pytest.skip(reason = f"missing test data, expected at {gt_text_path}")
     input_text = torch.load(input_text_path)
     gt_text = torch.load(gt_text_path)
     y_text = util_test.inference_text(model, model_name, input_text)
@@ -62,8 +68,10 @@ def test_inference_with_data(
         image_size = (image_size, image_size)
     input_image_path = os.path.join(input_dir, f'random_image_{image_size[0]}_{image_size[1]}.pt')
     gt_image_path = os.path.join(output_dir, f'{model_id}_random_image.pt')
-    assert os.path.isfile(input_image_path), f"missing test data, expected at {input_image_path}"
-    assert os.path.isfile(gt_image_path), f"missing test data, expected at {gt_image_path}"
+    if not os.path.isfile(input_image_path):
+        pytest.skip(reason = f"missing test data, expected at {input_image_path}")
+    if not os.path.isfile(gt_image_path):
+        pytest.skip(reason = f"missing test data, expected at {gt_image_path}")
     input_image = torch.load(input_image_path)
     gt_image = torch.load(gt_image_path)
     y_image = util_test.inference_image(model, preprocess_val, input_image)
