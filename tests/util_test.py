@@ -265,8 +265,9 @@ def main(args):
             test_dir = os.path.join(os.path.dirname(__file__), 'data')
             test_dir_ref = os.path.join(os.path.dirname(__file__), 'data_ref')
             if os.path.exists(test_dir_ref):
-                shutil.rmtree(test_dir_ref)
-            os.rename(test_dir, test_dir_ref)
+                shutil.rmtree(test_dir_ref, ignore_errors = True)
+            if os.path.exists(test_dir):
+                os.rename(test_dir, test_dir_ref)
             _sytem_assert(f'git checkout {current_branch}')
             os.system(f'git stash pop')
             os.rename(test_dir_ref, test_dir)
