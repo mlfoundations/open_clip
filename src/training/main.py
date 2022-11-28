@@ -230,7 +230,7 @@ def main(args):
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
-        total_steps = data["train"].dataloader.num_batches * args.epochs
+        total_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
