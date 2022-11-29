@@ -94,10 +94,14 @@ class Attention(nn.Module):
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None
     ):
+
         L, N, C = q_x.shape
+        k_x = k_x if k_x is not None else q_x
+        v_x = v_x if v_x is not None else q_x
+
         q = F.linear(q_x, self.in_proj_weight['q_weight'], self.in_proj_bias['q_bias'])
-        k = F.linear(k_x if k_x is not None else q_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
-        v = F.linear(v_x if v_x is not None else q_x, self.in_proj_weight['v_weight'], self.in_proj_bias['v_bias'])
+        k = F.linear(k_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
+        v = F.linear(v_x, self.in_proj_weight['v_weight'], self.in_proj_bias['v_bias'])
 
         q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
@@ -167,13 +171,13 @@ class ResidualAttentionBlock(nn.Module):
         v_x: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None
     ):
+
+        k_x = k_x if k_x is not None else q_x,
+        v_x = v_x if v_x is not None else q_x,
+
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
         return self.attn(
-            q_x,
-            k_x if k_x is not None else q_x,
-            v_x if v_x is not None else q_x,
-            need_weights=False,
-            attn_mask=attn_mask
+            q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
         )[0]
 
     def forward(self,
