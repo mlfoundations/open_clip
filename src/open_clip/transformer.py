@@ -172,8 +172,8 @@ class ResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None
     ):
 
-        k_x = k_x if k_x is not None else q_x,
-        v_x = v_x if v_x is not None else q_x,
+        k_x = k_x if k_x is not None else q_x
+        v_x = v_x if v_x is not None else q_x
 
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
         return self.attn(

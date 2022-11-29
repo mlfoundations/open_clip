@@ -11,6 +11,7 @@ from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultiModalTran
 from .coca_layers import ParallelTransformerBlock, CrossAttention
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
+
 @dataclass
 class CoCaCfg:
     model_name: str = "CoCa_base"
@@ -42,7 +43,9 @@ def _build_coca_multimodal_tower(
         coca_cfg = CoCaCfg(**coca_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
-    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    norm_layer = (
+        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    )
 
     text = CoCaMultiModalTransformer(
         context_length=coca_cfg.context_length,
@@ -77,15 +80,17 @@ class CoCa(nn.Module):
         self.positional_embedding = text.positional_embedding
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
-        self.register_buffer('attn_mask', text.attn_mask, persistent=False)
+        self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
         self.img_encoder = _build_vision_tower(vit_cfg)
 
-        self.multimodal = _build_coca_multimodal_tower(embed_dim, coca_cfg, quick_gelu, cast_dtype)
+        self.multimodal = _build_coca_multimodal_tower(
+            embed_dim, coca_cfg, quick_gelu, cast_dtype
+        )
+        num_img_queries = 256
 
         # multimodal_depth = coca_cfg.multimodal_depth
         # image_dim = coca_cfg.image_dim
-        # num_img_queries = 256
         # dim_head = coca_cfg.dim_head
         # heads = coca_cfg.heads
         # ff_mult = coca_cfg.ff_mult
