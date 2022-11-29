@@ -31,7 +31,7 @@ from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-
+from training.optim import LayerDecayValueAssigner, create_optimizer
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
@@ -133,6 +133,22 @@ def main(args):
     )
     random_seed(args.seed, args.rank)
 
+    model_without_ddp = model
+    visual_ld = args.visual_ld if args.visual_ld else args.ld
+    text_ld = args.text_ld if args.text_ld else args.ld
+    
+    if visual_ld < 1.0:
+        visual_num_layers = model_without_ddp.visual.get_num_layers()
+        assigner_visual = LayerDecayValueAssigner(list(visual_ld ** (visual_num_layers + 1 - i) for i in range(visual_num_layers + 2)))
+    else:
+        assigner_visual = None
+
+    if text_ld < 1.0:
+        text_num_layers = model_without_ddp.text.get_num_layers()
+        assigner_text = LayerDecayValueAssigner(list(text_ld ** (text_num_layers + 1 - i) for i in range(text_num_layers + 2)))
+    else:
+        assigner_text = None
+
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
@@ -150,6 +166,10 @@ def main(args):
         model.set_grad_checkpointing()
 
     if is_master(args):
+        if assigner_visual is not None:
+            logging.info("Assigned visual lr values = %s" % str(assigner_visual.values))
+        if assigner_text is not None:
+            logging.info("Assigned text lr values = %s" % str(assigner_text.values))
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
@@ -176,22 +196,12 @@ def main(args):
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
-        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-        include = lambda n, p: not exclude(n, p)
+        optimizer = create_optimizer(
+                args,
+                model_without_ddp,
+                assigner_visual=assigner_visual,
+                assigner_text=assigner_text)
 
-        named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
-
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -231,7 +241,7 @@ def main(args):
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        scheduler = cosine_lr(optimizer, args, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
