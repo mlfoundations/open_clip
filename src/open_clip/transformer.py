@@ -281,7 +281,7 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
         return x
 
-class TransformerDecoder(nn.Module):
+class CoCaMultiModalTransformer(nn.Module):
     def __init__(
             self,
             width: int,
@@ -298,16 +298,16 @@ class TransformerDecoder(nn.Module):
         self.layers = layers
         self.grad_checkpointing = False
 
-        self.resblocks = nn.ModuleList(
-            zip(
-                [
-                    ResidualAttentionBlock(
-                        width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
-                    for _ in range(layers)
-                ],
-                [Attention(width, heads) for _ in range(layers)]
+        all_layers = []
+        for _ in range(layers):
+            all_layers.append(
+                ResidualAttentionBlock(
+                        width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer
+                )
             )
-        )
+            all_layers.append(Attention(width, heads))
+
+        self.resblocks = nn.ModuleList(all_layers)
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
@@ -540,3 +540,4 @@ class CoCaMultiModalTransformer(nn.Module):
         act_layer: Callable = nn.GELU,
         norm_layer: Callable = LayerNorm,
     ):
+        super().__init__()
