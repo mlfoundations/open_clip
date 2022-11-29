@@ -285,6 +285,7 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
         return x
 
+
 class CoCaMultiModalTransformer(nn.Module):
     def __init__(
             self,
@@ -530,18 +531,3 @@ class TextTransformer(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
         return x
-
-class CoCaMultiModalTransformer(nn.Module):
-    def __init__(
-        self,
-        context_length: int = 77,
-        vocab_size: int = 49408,
-        width: int = 512,
-        heads: int = 8,
-        layers: int = 12,
-        ls_init_value: float = None,
-        output_dim: int = 512,
-        act_layer: Callable = nn.GELU,
-        norm_layer: Callable = LayerNorm,
-    ):
-        super().__init__()
