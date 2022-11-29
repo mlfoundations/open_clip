@@ -281,6 +281,50 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
         return x
 
+class TransformerDecoder(nn.Module):
+    def __init__(
+            self,
+            width: int,
+            layers: int,
+            heads: int,
+            mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = LayerNorm,
+    ):
+
+        super().__init__()
+        self.width = width
+        self.layers = layers
+        self.grad_checkpointing = False
+
+        self.resblocks = nn.ModuleList(
+            zip(
+                [
+                    ResidualAttentionBlock(
+                        width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
+                    for _ in range(layers)
+                ],
+                [Attention(width, heads) for _ in range(layers)]
+            )
+        )
+
+    def get_cast_dtype(self) -> torch.dtype:
+        return self.resblocks[0].mlp.c_fc.weight.dtype
+
+    def forward(
+        self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor],
+        v_x: Optional[torch.Tensor],
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+        for r in self.resblocks:
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                q_x = checkpoint(r, q_x, k_x, v_x, attn_mask)
+            else:
+                q_x = r(q_x=q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask)
+        return q_x
 
 class VisionTransformer(nn.Module):
     def __init__(
@@ -482,3 +526,17 @@ class TextTransformer(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
         return x
+
+class CoCaMultiModalTransformer(nn.Module):
+    def __init__(
+        self,
+        context_length: int = 77,
+        vocab_size: int = 49408,
+        width: int = 512,
+        heads: int = 8,
+        layers: int = 12,
+        ls_init_value: float = None,
+        output_dim: int = 512,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
+    ):
