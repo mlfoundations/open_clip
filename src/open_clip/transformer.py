@@ -96,8 +96,8 @@ class Attention(nn.Module):
     ):
         L, N, C = q_x.shape
         q = F.linear(q_x, self.in_proj_weight['q_weight'], self.in_proj_bias['q_bias'])
-        k = F.linear(k_x if k_x else q_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
-        v = F.linear(v_x if v_x else q_x, self.in_proj_weight['v_weight'], self.in_proj_bias['v_bias'])
+        k = F.linear(k_x if k_x is not None else q_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
+        v = F.linear(v_x if v_x is not None else q_x, self.in_proj_weight['v_weight'], self.in_proj_bias['v_bias'])
 
         q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
@@ -170,8 +170,8 @@ class ResidualAttentionBlock(nn.Module):
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
         return self.attn(
             q_x,
-            k_x if k_x else q_x,
-            v_x if v_x else q_x,
+            k_x if k_x is not None else q_x,
+            v_x if v_x is not None else q_x,
             need_weights=False,
             attn_mask=attn_mask
         )[0]
@@ -183,8 +183,8 @@ class ResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None
     ):
 
-        k_x = self.ln_1_kv(k_x) if k_x else self.ln_1(q_x)
-        v_x = self.ln_1_kv(v_x) if v_x else self.ln_1(q_x)
+        k_x = self.ln_1_kv(k_x) if k_x is not None else self.ln_1(q_x)
+        v_x = self.ln_1_kv(v_x) if v_x is not None else self.ln_1(q_x)
 
         x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
@@ -238,8 +238,8 @@ class CustomResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None
     ):
 
-        k_x = self.ln_1_kv(k_x) if k_x else self.ln_1(q_x)
-        v_x = self.ln_1_kv(v_x) if v_x else self.ln_1(q_x)
+        k_x = self.ln_1_kv(k_x) if k_x is not None else self.ln_1(q_x)
+        v_x = self.ln_1_kv(v_x) if v_x is not None else self.ln_1(q_x)
 
         x = q_x + self.ls_1(
             self.ln_attn(self.attn(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
