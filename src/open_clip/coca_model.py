@@ -1,3 +1,5 @@
+from typing import Callable, Optional
+
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
@@ -5,10 +7,9 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from dataclasses import dataclass
 
-from .transformer import LayerNorm
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultiModalTransformer
 from .coca_layers import ParallelTransformerBlock, CrossAttention
-from .model import CLIPTextCfg, _build_vision_tower
-
+from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
 @dataclass
 class CoCaCfg:
@@ -25,43 +26,86 @@ class CoCaCfg:
 
     # vit_image_size: int = 288
     # vit_patch_size: int = 18
-    # # vit_num_classes: int = 1000
     # vit_dim: int = 768
     # vit_depth: int = 12
     # vit_heads: int = 12
     # vit_mlp_dim: int = 3072
 
 
+def _build_coca_multimodal_tower(
+    embed_dim: int,
+    coca_cfg: CoCaCfg,
+    quick_gelu: bool = False,
+    cast_dtype: Optional[torch.dtype] = None,
+):
+    if isinstance(coca_cfg, dict):
+        coca_cfg = CoCaCfg(**coca_cfg)
+
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+
+    text = CoCaMultiModalTransformer(
+        context_length=coca_cfg.context_length,
+        width=coca_cfg.width,
+        heads=coca_cfg.heads,
+        layers=coca_cfg.layers,
+        ls_init_value=coca_cfg.ls_init_value,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+    )
+
+    return text
+
+
 class CoCa(nn.Module):
-    def __init__(self, coca_cfg: CoCaCfg, vit_cfg: CLIPTextCfg, tokenizer):
+    def __init__(
+        self,
+        embed_dim,
+        coca_cfg: CoCaCfg,
+        text_cfg: CLIPTextCfg,
+        vit_cfg: CLIPVisionCfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+    ):
         super().__init__()
 
-        unimodal_depth = coca_cfg.unimodal_depth
-        multimodal_depth = coca_cfg.multimodal_depth
-        image_dim = coca_cfg.image_dim
-        num_img_queries = 256
-        dim_head = coca_cfg.dim_head
-        heads = coca_cfg.heads
-        ff_mult = coca_cfg.ff_mult
+        text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.transformer = text.transformer
+        self.vocab_size = text.vocab_size
+        self.token_embedding = text.token_embedding
+        self.positional_embedding = text.positional_embedding
+        self.ln_final = text.ln_final
+        self.text_projection = text.text_projection
+        self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
-        self.dim = coca_cfg.dim
-        self.caption_loss_weight = coca_cfg.caption_loss_weight
-        self.contrastive_loss_weight = coca_cfg.contrastive_loss_weight
-        self.pad_id = coca_cfg.pad_id
-
-        self.tokenizer = tokenizer
-        num_tokens = len(self.tokenizer)
         self.img_encoder = _build_vision_tower(vit_cfg)
+
+        self.multimodal = _build_coca_multimodal_tower(embed_dim, coca_cfg, quick_gelu, cast_dtype)
+
+        # multimodal_depth = coca_cfg.multimodal_depth
+        # image_dim = coca_cfg.image_dim
+        # num_img_queries = 256
+        # dim_head = coca_cfg.dim_head
+        # heads = coca_cfg.heads
+        # ff_mult = coca_cfg.ff_mult
+        # self.dim = coca_cfg.dim
+        # self.caption_loss_weight = coca_cfg.caption_loss_weight
+        # self.contrastive_loss_weight = coca_cfg.contrastive_loss_weight
+        # self.pad_id = coca_cfg.pad_id
+
+        num_tokens = len(self.tokenizer)
+
         self.token_emb = nn.Embedding(num_tokens, self.dim)
         self.text_cls_token = nn.Parameter(torch.randn(self.dim))
 
         # num image queries for multimodal, but 1 extra CLS for contrastive learning
         self.img_queries = nn.Parameter(torch.randn(num_img_queries + 1, self.dim))
         self.img_attn_pool = CrossAttention(
-            dim=self.dim,
-            context_dim=image_dim,
-            dim_head=dim_head,
-            heads=heads,
+            dim=coca_cfg.dim,
+            context_dim=coca_cfg.image_dim,
+            dim_head=coca_cfg.dim_head,
+            heads=coca_cfg.heads,
             norm_context=True,
         )
 
@@ -71,41 +115,6 @@ class CoCa(nn.Module):
         # contrastive learning temperature
 
         self.temperature = nn.Parameter(torch.Tensor([1.0]))
-
-        # unimodal layers
-
-        self.unimodal_layers = nn.ModuleList([])
-        for ind in range(unimodal_depth):
-            self.unimodal_layers.append(
-                ParallelTransformerBlock(
-                    dim=self.dim, dim_head=dim_head, heads=heads, ff_mult=ff_mult
-                ),
-            )
-
-        # multimodal layers
-
-        self.multimodal_layers = nn.ModuleList([])
-        for ind in range(multimodal_depth):
-            self.multimodal_layers.append(
-                nn.ModuleList(
-                    [
-                        ParallelTransformerBlock(
-                            dim=self.dim,
-                            dim_head=dim_head,
-                            heads=heads,
-                            ff_mult=ff_mult,
-                        ),
-                        CrossAttention(
-                            dim=self.dim,
-                            dim_head=dim_head,
-                            heads=heads,
-                            residual=True,
-                            parallel_ff=True,
-                            ff_mult=ff_mult,
-                        ),
-                    ]
-                )
-            )
 
         # to logits
 
