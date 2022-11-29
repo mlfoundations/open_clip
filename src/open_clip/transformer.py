@@ -67,11 +67,14 @@ class Attention(nn.Module):
         self.logit_scale_max = logit_scale_max
 
         # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
-        self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
-        if qkv_bias:
-            self.in_proj_bias = nn.Parameter(torch.zeros(dim * 3))
-        else:
-            self.in_proj_bias = None
+        self.in_proj_weight = nn.ModuleDict()
+        self.in_proj_bias = nn.ModuleDict()
+        for k in ['q', 'k', 'v']:
+            self.in_proj_weight[k + "_weight"] = nn.Parameter(torch.randn((dim, dim)) * self.scale)
+            if qkv_bias:
+                self.in_proj_bias[k + "_bias"] = nn.Parameter(torch.zeros(dim * 3))
+            else:
+                self.in_proj_bias = None
 
         if self.scaled_cosine:
             self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((num_heads, 1, 1))))
@@ -85,9 +88,17 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        L, N, C = x.shape
-        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+    def forward(self,
+            q_x,
+            k_x: Optional[torch.Tensor] = None,
+            v_x: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None
+    ):
+        L, N, C = q_x.shape
+        q = F.linear(q_x, self.in_proj_weight['q_weight'], self.in_proj_bias['q_bias'])
+        k = F.linear(k_x if k_x else q_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
+        v = F.linear(v_x if v_x else q_x, self.in_proj_weight['v_weight'], self.in_proj_bias['v_bias'])
+
         q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
@@ -130,12 +141,15 @@ class ResidualAttentionBlock(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            is_cross_attention: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        if is_cross_attention:
+            self.ln_1_kv = norm_layer(d_model)
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -146,12 +160,33 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
-    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        attn_mask = attn_mask.to(x.dtype) if attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+    def attention(
+        self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+        attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
+        return self.attn(
+            q_x,
+            k_x if k_x else q_x,
+            v_x if v_x else q_x,
+            need_weights=False,
+            attn_mask=attn_mask
+        )[0]
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ls_1(self.attention(self.ln_1(x), attn_mask=attn_mask))
+    def forward(self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        k_x = self.ln_1_kv(k_x) if k_x else self.ln_1(q_x)
+        v_x = self.ln_1_kv(v_x) if v_x else self.ln_1(q_x)
+
+        x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
@@ -169,10 +204,14 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_heads: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
+            is_cross_attention: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
+        if is_cross_attention:
+            self.ln_1_kv = norm_layer(d_model)
+
         self.attn = Attention(
            d_model, n_head,
            scaled_cosine=scale_cosine_attn,
@@ -191,8 +230,20 @@ class CustomResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
+    def forward(
+        self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        k_x = self.ln_1_kv(k_x) if k_x else self.ln_1(q_x)
+        v_x = self.ln_1_kv(v_x) if v_x else self.ln_1(q_x)
+
+        x = q_x + self.ls_1(
+            self.ln_attn(self.attn(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
+        )
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
