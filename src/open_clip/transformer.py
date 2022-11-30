@@ -286,7 +286,7 @@ class Transformer(nn.Module):
         return x
 
 
-class CoCaMultiModalTransformer(nn.Module):
+class MultimodalTransformerDecoder(nn.Module):
     def __init__(
             self,
             width: int,
@@ -303,16 +303,17 @@ class CoCaMultiModalTransformer(nn.Module):
         self.layers = layers
         self.grad_checkpointing = False
 
-        all_layers = []
-        for _ in range(layers):
-            all_layers.append(
-                ResidualAttentionBlock(
-                        width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer
-                )
-            )
-            all_layers.append(Attention(width, heads))
+        self.resblocks = nn.ModuleList([
+            ResidualAttentionBlock(
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
+            for _ in range(layers)
+        ])
 
-        self.resblocks = nn.ModuleList(all_layers)
+        self.cross_attn = nn.ModuleList([
+            ResidualAttentionBlock(
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
+            for _ in range(layers)
+        ])
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
@@ -324,11 +325,13 @@ class CoCaMultiModalTransformer(nn.Module):
         v_x: Optional[torch.Tensor],
         attn_mask: Optional[torch.Tensor] = None
     ):
-        for r in self.resblocks:
+        for r, ca in zip(self.resblocks, self.cross_attn):
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                q_x = checkpoint(r, q_x, k_x, v_x, attn_mask)
+                q_x = checkpoint(r, q_x, attn_mask=attn_mask)
+                q_x = checkpoint(ca, q_x, k_x=k_x, v_x=v_x)
             else:
-                q_x = r(q_x=q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask)
+                q_x = r(q_x, attn_mask=attn_mask)
+                q_x = ca(q_x, k_x=k_x, v_x=v_x)
         return q_x
 
 class VisionTransformer(nn.Module):
@@ -529,5 +532,81 @@ class TextTransformer(nn.Module):
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        return x
+
+class CoCaMultimodalTransformer(nn.Module):
+    def __init__(
+            self,
+            context_length: int = 77,
+            vocab_size: int = 49408,
+            width: int = 512,
+            heads: int = 8,
+            layers: int = 12,
+            ls_init_value: float = None,
+            output_dim: int = 512,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = LayerNorm,
+    ):
+        super().__init__()
+        self.context_length = context_length
+        self.vocab_size = vocab_size
+        self.width = width
+        self.output_dim = output_dim
+
+        self.transformer = MultimodalTransformerDecoder(
+            width=width,
+            layers=layers,
+            heads=heads,
+            ls_init_value=ls_init_value,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
+        self.ln_final = norm_layer(width)
+        # this will be shared with the textual decoder (in CoCa)
+        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+
+    def init_parameters(self):
+
+        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.transformer.width ** -0.5
+        fc_std = (2 * self.transformer.width) ** -0.5
+        for block in self.transformer.resblocks:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        for block in self.transformer.cross_attn:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+
+        if self.text_projection is not None:
+            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
+
+    def build_attention_mask(self):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(self.context_length, self.context_length)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)  # zero out the lower diagonal
+        return mask
+
+    def forward(self, text_embs, image_embs, text_eot_mask):
+
+        text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
+        image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(text_embs, image_embs, image_embs, attn_mask=self.attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x)
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), text_eot_mask] @ self.text_projection
 
         return x
