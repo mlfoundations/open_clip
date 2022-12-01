@@ -96,7 +96,7 @@ class Attention(nn.Module):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
-        w_q, w_k, w_v = self.in_proj_weight.chunk(3, dim=0)
+        w_q, w_k, w_v = self.in_proj_weight.split(3, dim=0)
 
         q = F.linear(q_x, w_q, self.in_proj_bias)
         k = F.linear(k_x, w_k, self.in_proj_bias)
@@ -597,7 +597,6 @@ class CoCaMultimodalTransformer(nn.Module):
         return mask
 
     def forward(self, text_embs, image_embs, text_eot_mask):
-
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(text_embs, image_embs, image_embs, attn_mask=self.attn_mask)
