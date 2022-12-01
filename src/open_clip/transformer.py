@@ -100,7 +100,7 @@ class Attention(nn.Module):
 
         q = F.linear(q_x, w_q, self.in_proj_bias)
         k = F.linear(k_x, w_k, self.in_proj_bias)
-        v = F.linear(v_x, w_q, self.in_proj_bias)
+        v = F.linear(v_x, w_v, self.in_proj_bias)
 
         q = F.linear(q_x, self.in_proj_weight['q_weight'], self.in_proj_bias['q_bias'])
         k = F.linear(k_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
