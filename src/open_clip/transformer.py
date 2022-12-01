@@ -96,7 +96,7 @@ class Attention(nn.Module):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
-        w_q, w_k, w_v = self.in_proj_weight.chunk(3)
+        w_q, w_k, w_v = self.in_proj_weight.chunk(3, dim=0)
 
         q = F.linear(q_x, w_q, self.in_proj_bias)
         k = F.linear(k_x, w_k, self.in_proj_bias)
