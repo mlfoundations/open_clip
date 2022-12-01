@@ -7,9 +7,9 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from dataclasses import dataclass
 
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer, ResidualAttentionBlock
-from .coca_layers import ParallelTransformerBlock, CrossAttention
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .hf_model import AttentionalPooler
 
 
 @dataclass
@@ -101,15 +101,7 @@ class CoCa(nn.Module):
 
         # num image queries for multimodal, but 1 extra CLS for contrastive learning
         self.img_queries = nn.Parameter(torch.randn(num_img_queries + 1, self.width))
-        self.img_attn_pool = ResidualAttentionBlock(
-            d_model=coca_cfg.width,
-            n_head=coca_cfg.heads,
-            mlp_ratio=coca_cfg.mlp_ratio,
-            act_layer=act_layer,
-            norm_layer=norm_layer,
-            is_cross_attention=True,
-            is_pooler=True,
-        )
+        self.img_attn_pool = AttentionalPooler(coca_cfg.width, coca_cfg.heads)
 
         self.img_attn_pool_norm = norm_layer(self.width)
         self.text_cls_norm = norm_layer(self.width)
