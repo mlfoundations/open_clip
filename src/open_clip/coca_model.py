@@ -7,7 +7,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from dataclasses import dataclass
 
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultiModalTransformer
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer, ResidualAttentionBlock
 from .coca_layers import ParallelTransformerBlock, CrossAttention
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -15,13 +15,15 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 @dataclass
 class CoCaCfg:
     model_name: str = "CoCa_base"
-    dim: int = 768
+    context_length = 77
+    width: int = 768
     image_dim: int = 768
-    ff_mult: int = 4
-    unimodal_depth: int = 12
-    multimodal_depth: int = 12
+    mlp_ratio: int = 4
+    ls_init_value: Optional[float] = None
+    layers: int = 12
     dim_head: int = 64
     heads: int = 12
+    num_image_queries: int = 256
     contrastive_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
 
@@ -47,7 +49,7 @@ def _build_coca_multimodal_tower(
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
 
-    text = CoCaMultiModalTransformer(
+    text = CoCaMultimodalTransformer(
         context_length=coca_cfg.context_length,
         width=coca_cfg.width,
         heads=coca_cfg.heads,
@@ -67,11 +69,14 @@ class CoCa(nn.Module):
         embed_dim,
         coca_cfg: CoCaCfg,
         text_cfg: CLIPTextCfg,
-        vit_cfg: CLIPVisionCfg,
+        vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
+
+        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        act_layer = QuickGELU if quick_gelu else nn.GELU
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.transformer = text.transformer
@@ -82,40 +87,32 @@ class CoCa(nn.Module):
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
-        self.img_encoder = _build_vision_tower(vit_cfg)
+        self.img_encoder = _build_vision_tower(
+            embed_dim, vision_cfg, quick_gelu, cast_dtype
+        )
 
-        self.multimodal = _build_coca_multimodal_tower(
+        self.multimodal_decoder = _build_coca_multimodal_tower(
             embed_dim, coca_cfg, quick_gelu, cast_dtype
         )
-        num_img_queries = 256
-
-        # multimodal_depth = coca_cfg.multimodal_depth
-        # image_dim = coca_cfg.image_dim
-        # dim_head = coca_cfg.dim_head
-        # heads = coca_cfg.heads
-        # ff_mult = coca_cfg.ff_mult
-        # self.dim = coca_cfg.dim
-        # self.caption_loss_weight = coca_cfg.caption_loss_weight
-        # self.contrastive_loss_weight = coca_cfg.contrastive_loss_weight
-        # self.pad_id = coca_cfg.pad_id
-
-        num_tokens = len(self.tokenizer)
-
-        self.token_emb = nn.Embedding(num_tokens, self.dim)
-        self.text_cls_token = nn.Parameter(torch.randn(self.dim))
+        num_img_queries = coca_cfg.num_image_queries
+        self.width = coca_cfg.width
+        num_tokens = text_cfg.vocab_size
+        self.text_cls_token = nn.Parameter(torch.randn(self.width))
 
         # num image queries for multimodal, but 1 extra CLS for contrastive learning
-        self.img_queries = nn.Parameter(torch.randn(num_img_queries + 1, self.dim))
-        self.img_attn_pool = CrossAttention(
-            dim=coca_cfg.dim,
-            context_dim=coca_cfg.image_dim,
-            dim_head=coca_cfg.dim_head,
-            heads=coca_cfg.heads,
-            norm_context=True,
+        self.img_queries = nn.Parameter(torch.randn(num_img_queries + 1, self.width))
+        self.img_attn_pool = ResidualAttentionBlock(
+            d_model=coca_cfg.width,
+            n_head=coca_cfg.heads,
+            mlp_ratio=coca_cfg.mlp_ratio,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+            is_cross_attention=True,
+            is_pooler=True,
         )
 
-        self.img_attn_pool_norm = LayerNorm(self.dim)
-        self.text_cls_norm = LayerNorm(self.dim)
+        self.img_attn_pool_norm = norm_layer(self.width)
+        self.text_cls_norm = norm_layer(self.width)
 
         # contrastive learning temperature
 
@@ -124,12 +121,18 @@ class CoCa(nn.Module):
         # to logits
 
         self.to_logits = nn.Sequential(
-            LayerNorm(self.dim), nn.Linear(self.dim, num_tokens, bias=False)
+            norm_layer(self.width), nn.Linear(self.width, num_tokens, bias=False)
         )
 
+        # get the token embeddings whether the encoder is HF or custom
+        for mod in self.transformer.state_dict():
+            if any((emb_name in mod) and ("weight" in mod) for emb_name in ["word_embeddings", "token_embeddings"]):
+                token_embeddings = self.transformer.get_parameter(mod)
+                break
+
         # they used embedding weight tied projection out to logits, not common, but works
-        self.to_logits[-1].weight = self.token_emb.weight
-        nn.init.normal_(self.token_emb.weight, std=0.02)
+        self.to_logits[-1].weight = token_embeddings
+        nn.init.normal_(token_embeddings, std=0.02)
 
     def embed_text(self, text):
         batch, device = text.shape[0], text.device
