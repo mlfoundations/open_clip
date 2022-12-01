@@ -67,14 +67,11 @@ class Attention(nn.Module):
         self.logit_scale_max = logit_scale_max
 
         # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
-        self.in_proj_weight = nn.ModuleDict()
-        self.in_proj_bias = nn.ModuleDict()
-        for k in ['q', 'k', 'v']:
-            self.in_proj_weight[k + "_weight"] = nn.Parameter(torch.randn((dim, dim)) * self.scale)
-            if qkv_bias:
-                self.in_proj_bias[k + "_bias"] = nn.Parameter(torch.zeros(dim * 3))
-            else:
-                self.in_proj_bias = None
+        self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
+        if qkv_bias:
+            self.in_proj_bias = nn.Parameter(torch.zeros(dim * 3))
+        else:
+            self.in_proj_bias = None
 
         if self.scaled_cosine:
             self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((num_heads, 1, 1))))
@@ -98,6 +95,12 @@ class Attention(nn.Module):
         L, N, C = q_x.shape
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
+
+        w_q, w_k, w_v = self.in_proj_weight.chunk(3)
+
+        q = F.linear(q_x, w_q, self.in_proj_bias)
+        k = F.linear(k_x, w_k, self.in_proj_bias)
+        v = F.linear(v_x, w_q, self.in_proj_bias).chunk(3, dim=-1)
 
         q = F.linear(q_x, self.in_proj_weight['q_weight'], self.in_proj_bias['q_bias'])
         k = F.linear(k_x, self.in_proj_weight['k_weight'], self.in_proj_bias['k_bias'])
