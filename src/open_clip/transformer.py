@@ -134,6 +134,27 @@ class Attention(nn.Module):
         x = self.out_drop(x)
         return x
 
+class AttentionPooler(nn.Module):
+    def __init__(
+            self,
+            d_model: int,
+            n_head: int,
+            norm_layer: Callable = LayerNorm,
+    ):
+        super().__init__()
+
+        self.ln_1 = norm_layer(d_model)
+        self.ln_1_kv = norm_layer(d_model)
+        self.attn = nn.MultiheadAttention(d_model, n_head)
+
+    def attention(self, q_x: torch.Tensor, kv_x: torch.Tensor):
+        return self.attn(q_x, kv_x, kv_x, need_weights=False)[0]
+
+    def forward(self, q_x: torch.Tensor, kv_x: torch.Tensor):
+        return self.ls_1(
+            self.attention(q_x=self.ln_1(q_x), k_x=self.ln_1_kv(kv_x),)
+        )
+
 
 class ResidualAttentionBlock(nn.Module):
     def __init__(
@@ -451,6 +472,25 @@ class VisionTransformer(nn.Module):
 
         return x
 
+class CoCaVisionTransformer(VisionTransformer):
+    def forward(self, x: torch.Tensor):
+        x = self.conv1(x)  # shape = [*, width, grid, grid]
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+        x = torch.cat(
+            [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
+             x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = x + self.positional_embedding.to(x.dtype)
+        x = self.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_post(x)
+
+        img_embs, img_tokens = x[:, 0, :], x[:, 1:, :]
+
+        return img_embs, img_tokens
 
 class TextTransformer(nn.Module):
 
@@ -533,6 +573,30 @@ class TextTransformer(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
         return x
+
+class COCaTextTransformer(TextTransformer):
+
+
+    def forward(self, text):
+        cast_dtype = self.transformer.get_cast_dtype()
+
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding.to(cast_dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x)
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        eot_emb = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # looking at the tokenizer this seems ok
+        token_emb = x[torch.arange(x.shape[0]), :-1, :] @ self.text_projection
+
+        return eot_emb, token_emb
+
 
 class CoCaMultimodalTransformer(nn.Module):
     def __init__(
