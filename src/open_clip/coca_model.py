@@ -7,9 +7,8 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from dataclasses import dataclass
 
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer, ResidualAttentionBlock, AttentionPooler
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
-from .hf_model import AttentionalPooler
 
 
 @dataclass
@@ -101,7 +100,7 @@ class CoCa(nn.Module):
 
         # num image queries for multimodal, but 1 extra CLS for contrastive learning
         self.img_queries = nn.Parameter(torch.randn(num_img_queries + 1, self.width))
-        self.img_attn_pool = AttentionalPooler(coca_cfg.width, coca_cfg.heads)
+        self.img_attn_pool = AttentionPooler(coca_cfg.width, coca_cfg.heads, norm_layer=norm_layer)
 
         self.img_attn_pool_norm = norm_layer(self.width)
         self.text_cls_norm = norm_layer(self.width)
@@ -111,20 +110,12 @@ class CoCa(nn.Module):
         self.temperature = nn.Parameter(torch.Tensor([1.0]))
 
         # to logits
-
         self.to_logits = nn.Sequential(
             norm_layer(self.width), nn.Linear(self.width, num_tokens, bias=False)
         )
 
-        # get the token embeddings whether the encoder is HF or custom
-        for mod in self.transformer.state_dict():
-            if any((emb_name in mod) and ("weight" in mod) for emb_name in ["word_embeddings", "token_embeddings"]):
-                token_embeddings = self.transformer.get_parameter(mod)
-                break
-
         # they used embedding weight tied projection out to logits, not common, but works
-        self.to_logits[-1].weight = token_embeddings
-        nn.init.normal_(token_embeddings, std=0.02)
+        self.to_logits[-1].weight = self.token_embedding.weight
 
     def embed_text(self, text):
         batch, device = text.shape[0], text.device
@@ -144,14 +135,7 @@ class CoCa(nn.Module):
         cls_mask = rearrange(text != self.pad_id, "b j -> b 1 j")
         attn_mask = F.pad(cls_mask, (0, 1, seq, 0), value=True)
 
-        # go through unimodal layers
-
-        for attn_ff in self.unimodal_layers:
-            text_tokens = attn_ff(text_tokens, attn_mask=attn_mask)
-
-        # get text cls token
-
-        text_tokens, text_cls_tokens = text_tokens[:, :-1], text_tokens[:, -1]
+        text_tokens, text_cls_tokens = self.transformer(text_tokens, attn_mask=attn_mask)
         text_embeds = self.text_cls_norm(text_cls_tokens)
         return text_embeds, text_tokens
 
