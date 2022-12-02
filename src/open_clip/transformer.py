@@ -51,16 +51,20 @@ class PatchDropout(nn.Module):
     https://arxiv.org/abs/2212.00794
     """
 
-    def __init__(self, prob):
+    def __init__(self, prob, exclude_first_token = True):
         super().__init__()
         assert 0 <= prob < 1.
         self.prob = prob
+        self.exclude_first_token = exclude_first_token # exclude CLS token
 
     def forward(self, x):
         if not self.training or self.prob == 0.:
             return x
 
-        batch, num_tokens, _, device = *x.shape, x.device
+        batch, num_tokens, _, device, exclude_first_token = *x.shape, x.device, self.exclude_first_token
+
+        if exclude_first_token:
+            num_tokens -= 1
 
         batch_indices = torch.arange(batch, device = device)
         batch_indices = batch_indices[..., None]
@@ -69,6 +73,10 @@ class PatchDropout(nn.Module):
         num_patches_keep = max(1, int(num_tokens * keep_prob))
 
         rand = torch.randn(batch, num_tokens, device = device)
+
+        if exclude_first_token:
+            rand[:, 0] = float('-inf')
+
         patch_indices_keep = rand.topk(num_patches_keep, dim = -1).indices
 
         return x[batch_indices, patch_indices_keep]
