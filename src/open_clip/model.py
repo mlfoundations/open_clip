@@ -29,7 +29,7 @@ class CLIPVisionCfg:
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
     ls_init_value: Optional[float] = None  # layer scale initial value
-    patch_dropout: float = 0.  # how many patches to dropout during training (not inference) - saves compute and yields better results
+    patch_dropout: float = 0.  # what percentage of patches to dropout during training (not inference) - 0.5 to 0.75 recommended in the paper for optimal results
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
