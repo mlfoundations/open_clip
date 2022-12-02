@@ -61,10 +61,10 @@ class PatchDropout(nn.Module):
         if not self.training or self.prob == 0.:
             return x
 
-        batch, num_tokens, _, device, exclude_first_token = *x.shape, x.device, self.exclude_first_token
+        if self.exclude_first_token:
+            cls_tokens, x = x[:, :1], x[:, 1:]
 
-        if exclude_first_token:
-            num_tokens -= 1
+        batch, num_tokens, _, device = *x.shape, x.device
 
         batch_indices = torch.arange(batch, device = device)
         batch_indices = batch_indices[..., None]
@@ -73,13 +73,14 @@ class PatchDropout(nn.Module):
         num_patches_keep = max(1, int(num_tokens * keep_prob))
 
         rand = torch.randn(batch, num_tokens, device = device)
-
-        if exclude_first_token:
-            rand[:, 0] = float('-inf')
-
         patch_indices_keep = rand.topk(num_patches_keep, dim = -1).indices
 
-        return x[batch_indices, patch_indices_keep]
+        x = x[batch_indices, patch_indices_keep]
+
+        if self.exclude_first_token:
+            x = torch.cat((cls_tokens, x), dim = 1)
+
+        return x
 
 class Attention(nn.Module):
     def __init__(
