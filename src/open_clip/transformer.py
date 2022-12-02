@@ -44,6 +44,34 @@ class LayerScale(nn.Module):
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
+class PatchDropout(nn.Module):
+    """
+    Research is adding up that discarding visual tokens prior to transformer blocks leads to compute savings as well as better end results
+    https://arxiv.org/abs/2208.07220
+    https://arxiv.org/abs/2212.00794
+    """
+
+    def __init__(self, prob):
+        super().__init__()
+        assert 0 <= prob < 1.
+        self.prob = prob
+
+    def forward(self, x):
+        if not self.training or self.prob == 0.:
+            return x
+
+        batch, num_tokens, _, device = *x.shape, x.device
+
+        batch_indices = torch.arange(batch, device = device)
+        batch_indices = batch_indices[..., None]
+
+        keep_prob = 1 - self.prob
+        num_patches_keep = max(1, int(num_tokens * keep_prob))
+
+        rand = torch.randn(batch, num_tokens, device = device)
+        patch_indices_keep = rand.topk(num_patches_keep, dim = -1).indices
+
+        return x[batch_indices, patch_indices_keep]
 
 class Attention(nn.Module):
     def __init__(
@@ -242,6 +270,7 @@ class VisionTransformer(nn.Module):
             mlp_ratio: float,
             ls_init_value: float = None,
             output_dim: int = 512,
+            patch_dropout: float = 0.5,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
     ):
@@ -255,6 +284,8 @@ class VisionTransformer(nn.Module):
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
+        self.patch_dropout = PatchDropout(patch_dropout)
+
         self.ln_pre = norm_layer(width)
         self.transformer = Transformer(
             width,
@@ -337,6 +368,8 @@ class VisionTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
+
+        x = self.patch_dropout(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
@@ -421,6 +454,7 @@ class TextTransformer(nn.Module):
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.to(cast_dtype)
+
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
