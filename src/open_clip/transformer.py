@@ -270,7 +270,7 @@ class VisionTransformer(nn.Module):
             mlp_ratio: float,
             ls_init_value: float = None,
             output_dim: int = 512,
-            patch_dropout: float = 0.5,
+            patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
     ):
@@ -454,7 +454,6 @@ class TextTransformer(nn.Module):
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.to(cast_dtype)
-
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
