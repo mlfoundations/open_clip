@@ -65,24 +65,6 @@ class ClsPooler(nn.Module):
 
         return x.last_hidden_state[:, self.cls_token_position, :]
 
-@register_pooler
-class AttentionalPooler(nn.Module):
-    def __init__(self, dim, num_heads):
-        super().__init__()
-        self.ln_q = nn.LayerNorm()
-        self.ln_kv = nn.LayerNorm()
-        self.attn = Attention(
-            dim=dim, num_heads=num_heads, causal=False, attn_dropout=0.0, ff_dropout=0.0
-        )
-        self.to_out = nn.Linear(dim, dim, bias=False)
-
-    def forward(self, q_x, k_x: TensorType, v_x: TensorType):
-        q_x = self.ln_q(q_x)
-        k_x = self.ln_kv(k_x)
-        v_x = self.ln_kv(v_x)
-        x = self.attn(q_x, k_x, v_x)
-        return self.to_out(x)
-
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     def __init__(
