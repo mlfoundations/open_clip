@@ -380,7 +380,7 @@ class VisionTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
-        x = self.patch_dropout(x, self.training)
+        x = self.patch_dropout(x, self.training) # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
