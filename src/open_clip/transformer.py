@@ -146,8 +146,14 @@ class AttentionPooler(nn.Module):
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
         self.attn = nn.MultiheadAttention(d_model, n_head)
 
-    def forward(self, q_x: torch.Tensor, kv_x: torch.Tensor):
-        return self.attn(q_x, self.query, self.query, need_weights=False)[0]
+    def forward(self, kv: torch.Tensor):
+        kv = kv.reshape(1, 0 ,2)
+        N = kv.shape[1]
+        return self.attn(self._repeat(self.query, N), kv, kv, need_weights=False)[0]
+
+    def _repeat(self, query, N):
+        L, D = query.shape
+        return query.unsqueeze(0).repeat(L, N, D)
 
 
 class ResidualAttentionBlock(nn.Module):
