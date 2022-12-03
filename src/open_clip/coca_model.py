@@ -7,7 +7,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 from dataclasses import dataclass
 
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, CoCaMultimodalTransformer, ResidualAttentionBlock, AttentionPooler
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, MultimodalTransformer, AttentionPooler
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
 
@@ -48,7 +48,7 @@ def _build_coca_multimodal_tower(
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
 
-    text = CoCaMultimodalTransformer(
+    text = MultimodalTransformer(
         context_length=coca_cfg.context_length,
         width=coca_cfg.width,
         heads=coca_cfg.heads,
@@ -118,6 +118,26 @@ class CoCa(nn.Module):
         self.to_logits[-1].weight = self.token_embedding.weight
 
     def embed_text(self, text):
+    # def forward(self, text):
+        # cast_dtype = self.transformer.get_cast_dtype()
+
+        # x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+        # x = x + self.positional_embedding.to(cast_dtype)
+        # x = x.permute(1, 0, 2)  # NLD -> LND
+        # x = self.transformer(x, attn_mask=self.attn_mask)
+        # x = x.permute(1, 0, 2)  # LND -> NLD
+        # x = self.ln_final(x)
+
+        # # x.shape = [batch_size, n_ctx, transformer.width]
+        # # take features from the eot embedding (eot_token is the highest number in each sequence)
+        # eot_emb = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # # looking at the tokenizer this seems ok
+        # token_emb = x[torch.arange(x.shape[0]), :-1, :] @ self.text_projection
+
+        # return eot_emb, token_emb
+
         batch, device = text.shape[0], text.device
 
         seq = text.shape[1]
@@ -143,6 +163,22 @@ class CoCa(nn.Module):
         # encode images into embeddings
         # with the img_encoder passed in at init
         # it can also accept precomputed image tokens
+
+    # def forward(self, x: torch.Tensor):
+    #     x = self.conv1(x)  # shape = [*, width, grid, grid]
+    #     x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+    #     x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+    #     x = torch.cat(
+    #         [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
+    #          x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+    #     x = x + self.positional_embedding.to(x.dtype)
+    #     x = self.ln_pre(x)
+    #     x = x.permute(1, 0, 2)  # NLD -> LND
+    #     x = self.transformer(x)
+    #     x = x.permute(1, 0, 2)  # LND -> NLD
+    #     x = self.ln_post(x)
+    #     img_embs, img_tokens = x[:, 0, :], x[:, 1:, :]
+    #     return img_embs, img_tokens
 
         assert images is None or image_tokens is None
 
