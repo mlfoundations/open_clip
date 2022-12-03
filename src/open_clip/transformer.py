@@ -44,7 +44,7 @@ class LayerScale(nn.Module):
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
-class PatchDropout(nn.Module):
+class PatchDropout():
     """
     Research is adding up that discarding visual tokens prior to transformer blocks leads to compute savings as well as better end results
     https://arxiv.org/abs/2208.07220
@@ -53,14 +53,13 @@ class PatchDropout(nn.Module):
     https://arxiv.org/abs/2202.07765 - perceiver AR also drop out entire tokens being cross attended to
     """
 
-    def __init__(self, prob, exclude_first_token = True):
-        super().__init__()
+    def __init__(self, prob, exclude_first_token = True):        
         assert 0 <= prob < 1.
         self.prob = prob
         self.exclude_first_token = exclude_first_token # exclude CLS token
 
-    def forward(self, x):
-        if not self.training or self.prob == 0.:
+    def __call__(self, x, is_training):
+        if not is_training or self.prob == 0.:
             return x
 
         if self.exclude_first_token:
@@ -379,7 +378,7 @@ class VisionTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
-        x = self.patch_dropout(x)
+        x = self.patch_dropout(x, self.training)
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
