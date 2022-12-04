@@ -106,6 +106,7 @@ def _build_vision_tower(
             heads=vision_heads,
             mlp_ratio=vision_cfg.mlp_ratio,
             ls_init_value=vision_cfg.ls_init_value,
+            patch_dropout=vision_cfg.patch_dropout,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
