@@ -140,20 +140,19 @@ class AttentionPooler(nn.Module):
             d_model: int,
             n_head: int = 1,
             n_queries: int = 256,
-            norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
         self.attn = nn.MultiheadAttention(d_model, n_head)
 
     def forward(self, kv: torch.Tensor):
-        kv = kv.reshape(1, 0 ,2)
+        kv = kv.permute(1, 0 ,2) # NLD -> LND
         N = kv.shape[1]
-        return self.attn(self._repeat(self.query, N), kv, kv, need_weights=False)[0]
+        kv = self.attn(self._repeat(self.query, N), kv, kv, need_weights=False)[0]
+        return kv.permute(1, 0, 2) # LND -> NLD
 
     def _repeat(self, query, N):
-        L, D = query.shape
-        return query.unsqueeze(0).repeat(L, N, D)
+        return query.unsqueeze(1).repeat(1, N, 1)
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -196,6 +195,13 @@ class ResidualAttentionBlock(nn.Module):
         v_x = v_x if v_x is not None else q_x
 
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
+        print("####################", q_x.shape)
+        print("#", k_x.shape)
+        print("##", v_x.shape)
+        try:
+            print("###", attn_mask.shape)
+        except:
+            pass
         return self.attn(
             q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
         )[0]
@@ -305,55 +311,6 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
         return x
 
-
-class TransformerDecoder(nn.Module):
-    def __init__(
-            self,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-    ):
-
-        super().__init__()
-        self.width = width
-        self.layers = layers
-        self.grad_checkpointing = False
-
-        self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
-            for _ in range(layers)
-        ])
-
-        self.cross_attn = nn.ModuleList([
-            ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
-            for _ in range(layers)
-        ])
-
-    def get_cast_dtype(self) -> torch.dtype:
-        return self.resblocks[0].mlp.c_fc.weight.dtype
-
-    def forward(
-        self,
-        q_x: torch.Tensor,
-        k_x: Optional[torch.Tensor],
-        v_x: Optional[torch.Tensor],
-        attn_mask: Optional[torch.Tensor] = None
-    ):
-        for r, ca in zip(self.resblocks, self.cross_attn):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
-                q_x = checkpoint(r, q_x, attn_mask=attn_mask)
-                q_x = checkpoint(ca, q_x, k_x=k_x, v_x=v_x)
-            else:
-                q_x = r(q_x, attn_mask=attn_mask)
-                q_x = ca(q_x, k_x=k_x, v_x=v_x)
-        return q_x
-
 class VisionTransformer(nn.Module):
     def __init__(
             self,
@@ -428,24 +385,24 @@ class VisionTransformer(nn.Module):
             _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
-         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
-         # TODO experiment if default PyTorch init, below, or alternate init is best.
+        # FIXME OpenAI CLIP did not define an init for the VisualTransformer
+        # TODO experiment if default PyTorch init, below, or alternate init is best.
 
-         # nn.init.normal_(self.class_embedding, std=self.scale)
-         # nn.init.normal_(self.positional_embedding, std=self.scale)
-         #
-         # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-         # attn_std = self.transformer.width ** -0.5
-         # fc_std = (2 * self.transformer.width) ** -0.5
-         # for block in self.transformer.resblocks:
-         #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-         #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-         #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-         #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-         #
-         # if self.text_projection is not None:
-         #     nn.init.normal_(self.text_projection, std=self.scale)
-         pass
+        # nn.init.normal_(self.class_embedding, std=self.scale)
+        # nn.init.normal_(self.positional_embedding, std=self.scale)
+        #
+        # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        # attn_std = self.transformer.width ** -0.5
+        # fc_std = (2 * self.transformer.width) ** -0.5
+        # for block in self.transformer.resblocks:
+        #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+        #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+        #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+        #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        #
+        # if self.text_projection is not None:
+        #     nn.init.normal_(self.text_projection, std=self.scale)
+        pass
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -555,39 +512,44 @@ class TextTransformer(nn.Module):
         return x
 
 
-class MultimodalTransformer(nn.Module):
+class TransformerDecoder(Transformer):
     def __init__(
             self,
+            width: int,
+            layers: int,
+            heads: int,
             context_length: int = 77,
-            vocab_size: int = 49408,
-            width: int = 512,
-            heads: int = 8,
-            layers: int = 12,
+            mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            output_dim: int = 512,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            output_dim: int = 512,
     ):
-        super().__init__()
-        self.context_length = context_length
-        self.vocab_size = vocab_size
-        self.width = width
-        self.output_dim = output_dim
 
-        self.transformer = MultimodalTransformerDecoder(
+        super().__init__(
             width=width,
             layers=layers,
             heads=heads,
+            mlp_ratio=mlp_ratio,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
+        self.context_length = context_length
+        self.cross_attn = nn.ModuleList([
+            ResidualAttentionBlock(
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
+            for _ in range(layers)
+        ])
+
+        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+
         self.ln_final = norm_layer(width)
+
         # this will be shared with the textual decoder (in CoCa)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
     def init_parameters(self):
-
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
         fc_std = (2 * self.transformer.width) ** -0.5
@@ -617,15 +579,23 @@ class MultimodalTransformer(nn.Module):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def forward(self, text_embs, image_embs, text_eot_mask):
+    def forward(self, text_embs, image_embs, eot_token_mask):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(text_embs, image_embs, image_embs, attn_mask=self.attn_mask)
+
+        for r, ca in zip(self.resblocks, self.cross_attn):
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                text_embs = checkpoint(r, text_embs, attn_mask=self.attn_mask)
+                text_embs = checkpoint(ca, text_embs, k_x=image_embs, v_x=image_embs)
+            else:
+                text_embs = r(text_embs, attn_mask=self.attn_mask)
+                text_embs = ca(text_embs, k_x=image_embs, v_x=image_embs)
+
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text_eot_mask] @ self.text_projection
+        x = x[torch.arange(x.shape[0]), eot_token_mask] @ self.text_projection
 
         return x
