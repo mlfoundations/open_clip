@@ -179,8 +179,8 @@ class CoCa(nn.Module):
         image_embeds, image_tokens = self.embed_image(images)
 
         text_tokens = self.multimodal_decoder(
-            image_tokens, text_tokens, eot_token_mask=text.argmax(dim=-1)
+            text_tokens, image_tokens, eot_token_mask=text.argmax(dim=-1)
         )
         logits = self.to_logits(text_tokens)
 
-        return text_embeds, image_embeds, logits, labels, self.logits_scale
+        return text_embeds, image_embeds, logits, labels, self.logit_scale
