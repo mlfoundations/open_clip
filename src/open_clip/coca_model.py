@@ -18,14 +18,14 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 @dataclass
 class CoCaCfg:
     model_name: str = "CoCa_base"
-    context_length = 77
-    width: int = 768
-    image_dim: int = 768
+    context_length:int = 76
+    width: int = 512
+    image_dim: int = 512
     mlp_ratio: int = 4
     ls_init_value: Optional[float] = None
     layers: int = 12
     dim_head: int = 64
-    heads: int = 12
+    heads: int = 8
     contrastive_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
     n_queries: int = 256
@@ -119,7 +119,7 @@ class CoCa(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def embed_text(self, text):
+    def encode_text(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
@@ -138,7 +138,7 @@ class CoCa(nn.Module):
         token_emb = x[torch.arange(x.shape[0]), :-1]
         return cls_emb, token_emb
 
-    def embed_image(self, images=None):
+    def encode_image(self, images=None):
         x = self.img_encoder.conv1(images)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -175,8 +175,8 @@ class CoCa(nn.Module):
         if labels is None:
             text, labels = text[:, :-1], text[:, 1:]
 
-        text_embeds, text_tokens = self.embed_text(text)
-        image_embeds, image_tokens = self.embed_image(images)
+        text_embeds, text_tokens = self.encode_text(text)
+        image_embeds, image_tokens = self.encode_image(images)
 
         text_tokens = self.multimodal_decoder(
             text_tokens, image_tokens, eot_token_mask=text.argmax(dim=-1)
