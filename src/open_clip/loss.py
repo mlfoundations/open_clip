@@ -148,7 +148,7 @@ class CoCaLoss(nn.Module):
         self.caption_loss_weight = caption_loss_weight
         self.pad_id = pad_id
 
-    def forward(self, image_features, text_features, logits, logit_scale, labels):
+    def forward(self, image_features, text_features, logits, labels, logit_scale):
         clip_loss = self.clip_loss(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 

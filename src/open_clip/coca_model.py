@@ -1,10 +1,8 @@
-from typing import Callable, Optional
+from typing import Optional
 
 import torch
-import torch.nn.functional as F
-from torch import nn, einsum
-
-from einops import rearrange, repeat
+from torch import nn
+import numpy as np
 from dataclasses import dataclass
 
 from .transformer import (
@@ -31,13 +29,6 @@ class CoCaCfg:
     contrastive_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
     n_queries: int = 256
-
-    # vit_image_size: int = 288
-    # vit_patch_size: int = 18
-    # vit_dim: int = 768
-    # vit_depth: int = 12
-    # vit_heads: int = 12
-    # vit_mlp_dim: int = 3072
 
 
 def _build_text_decoder_tower(
@@ -99,6 +90,8 @@ class CoCa(nn.Module):
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
+
+
         self.multimodal_decoder = _build_text_decoder_tower(
             embed_dim, coca_cfg, quick_gelu, cast_dtype
         )
@@ -123,6 +116,8 @@ class CoCa(nn.Module):
 
         # they used embedding weight tied projection out to logits, not common, but works
         self.to_logits[-1].weight = self.token_embedding.weight
+
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def embed_text(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
@@ -188,4 +183,4 @@ class CoCa(nn.Module):
         )
         logits = self.to_logits(text_tokens)
 
-        return text_embeds, image_embeds, logits, labels
+        return text_embeds, image_embeds, logits, labels, self.logits_scale
