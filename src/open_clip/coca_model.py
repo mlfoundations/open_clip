@@ -86,7 +86,7 @@ class CoCa(nn.Module):
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
-        self.img_encoder = _build_vision_tower(
+        self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
@@ -139,12 +139,12 @@ class CoCa(nn.Module):
         return cls_emb, token_emb
 
     def encode_image(self, images=None):
-        x = self.img_encoder.conv1(images)  # shape = [*, width, grid, grid]
+        x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         x = torch.cat(
             [
-                self.img_encoder.class_embedding.to(x.dtype)
+                self.visual.class_embedding.to(x.dtype)
                 + torch.zeros(
                     x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device
                 ),
@@ -152,12 +152,12 @@ class CoCa(nn.Module):
             ],
             dim=1,
         )  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.img_encoder.positional_embedding.to(x.dtype)
-        x = self.img_encoder.ln_pre(x)
+        x = x + self.visual.positional_embedding.to(x.dtype)
+        x = self.visual.ln_pre(x)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.img_encoder.transformer(x)
+        x = self.visual.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.img_encoder.ln_post(x)
+        x = self.visual.ln_post(x)
 
         x = self.img_attn_pool(x)
         x = self.img_attn_pool_norm(x)
