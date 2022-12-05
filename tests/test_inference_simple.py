@@ -3,6 +3,7 @@ import torch
 from PIL import Image
 from open_clip.factory import get_tokenizer
 import pytest
+import numpy as np
 import open_clip
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -24,3 +25,22 @@ def test_inference_simple(model_type, pretrained):
         text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
 
     assert text_probs.cpu().numpy()[0].tolist() == [1.0, 0.0, 0.0]
+
+
+# def test_inference_simple_coca():
+#     model = open_clip.CoCa(512, open_clip.CoCaCfg(), open_clip.CLIPTextCfg(), open_clip.CLIPVisionCfg(width=512))
+#     preprocess = open_clip.image_transform(model.visual.image_size, is_train=False, mean=0, std=0)
+
+#     tokenizer = open_clip.tokenize
+#     current_dir = os.path.dirname(os.path.realpath(__file__))
+
+#     image = preprocess(Image.open(current_dir + "/../docs/CLIP.png")).unsqueeze(0)
+#     text = tokenizer(["a diagram", "a dog", "a cat"])
+
+#     with torch.no_grad():
+#         image_features = model.encode_image(image)[0]
+#         text_features = model.encode_text(text)[0]
+
+#         text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+
+#     assert text_probs.cpu().numpy()[0].tolist() == [1.0, 0.0, 0.0]
