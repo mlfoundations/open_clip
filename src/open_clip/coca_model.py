@@ -30,7 +30,7 @@ class CoCaCfg:
     heads: int = 12
     contrastive_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
-    vocab_size = 49408
+    n_queries: int = 256
 
     # vit_image_size: int = 288
     # vit_patch_size: int = 18
@@ -104,13 +104,9 @@ class CoCa(nn.Module):
         )
 
         self.width = coca_cfg.width
-        # self.text_cls_token = nn.Parameter(torch.randn(self.width))
-        # self.text_cls_pos_emb = nn.Parameter(torch.empty(self.width))
-        # nn.init.normal_(self.text_cls_pos_emb, std=0.01)
 
-        # num image queries for multimodal, but 1 extra CLS for contrastive learning
         self.img_attn_pool = AttentionPooler(
-            coca_cfg.width, coca_cfg.heads, n_queries=coca_cfg.context_length + 1
+            coca_cfg.width, coca_cfg.heads, n_queries=coca_cfg.n_queries + 1
         )
 
         self.img_attn_pool_norm = norm_layer(self.width)
