@@ -150,7 +150,6 @@ class AttentionPooler(nn.Module):
         N = kv.shape[1]
         kv = self.attn(self._repeat(self.query, N), kv, kv, need_weights=False)[0]
         out = kv.permute(1, 0, 2) # LND -> NLD
-        print("################### attn_pool", out.shape)
         return out
 
     def _repeat(self, query, N):
