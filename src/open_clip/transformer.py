@@ -149,7 +149,9 @@ class AttentionPooler(nn.Module):
         kv = kv.permute(1, 0 ,2) # NLD -> LND
         N = kv.shape[1]
         kv = self.attn(self._repeat(self.query, N), kv, kv, need_weights=False)[0]
-        return kv.permute(1, 0, 2) # LND -> NLD
+        out = kv.permute(1, 0, 2) # LND -> NLD
+        print("################### attn_pool", out.shape)
+        return out
 
     def _repeat(self, query, N):
         return query.unsqueeze(1).repeat(1, N, 1)
@@ -195,13 +197,6 @@ class ResidualAttentionBlock(nn.Module):
         v_x = v_x if v_x is not None else q_x
 
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
-        print("####################", q_x.shape)
-        print("#", k_x.shape)
-        print("##", v_x.shape)
-        try:
-            print("###", attn_mask.shape)
-        except:
-            pass
         return self.attn(
             q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
         )[0]
@@ -538,7 +533,7 @@ class TransformerDecoder(Transformer):
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
             ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer, is_cross_attention=True)
             for _ in range(layers)
         ])
 
@@ -591,11 +586,11 @@ class TransformerDecoder(Transformer):
                 text_embs = r(text_embs, attn_mask=self.attn_mask)
                 text_embs = ca(text_embs, k_x=image_embs, v_x=image_embs)
 
-        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = text_embs.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), eot_token_mask] @ self.text_projection
+        # x = x[torch.arange(x.shape[0]), eot_token_mask] @ self.text_projection
 
         return x
