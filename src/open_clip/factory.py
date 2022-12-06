@@ -12,6 +12,8 @@ import torch
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
+from .coca_model import CoCa
+from .loss import ClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
 from .transform import image_transform
@@ -149,7 +151,10 @@ def create_model(
                 model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            if "coca" in model_name:
+                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+            else:
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_cfg = {}
         if pretrained:
@@ -182,6 +187,26 @@ def create_model(
             model = torch.jit.script(model)
 
     return model
+
+def create_loss(args):
+
+    if "coca" not in args.model.lower():
+        return CoCaLoss(
+        caption_loss_weight=args.caption_loss_weight,
+        clip_loss_weight=args.clip_loss_weight,
+        local_loss=args.local_loss,
+        gather_with_grad=args.gather_with_grad,
+        cache_labels=True,
+        rank=args.rank,
+        world_size=args.world_size,
+        use_horovod=args.horovod)
+    return ClipLoss(
+        local_loss=args.local_loss,
+        gather_with_grad=args.gather_with_grad,
+        cache_labels=True,
+        rank=args.rank,
+        world_size=args.world_size,
+        use_horovod=args.horovod)
 
 
 def create_model_and_transforms(
