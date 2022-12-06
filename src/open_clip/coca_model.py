@@ -138,7 +138,7 @@ class CoCa(nn.Module):
 
         cls_emb = self.text_cls_norm(cls_emb)
         text_latent = self.to_text_latent(cls_emb)
-        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latents
+        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
         return text_latent, token_emb
 
