@@ -1,12 +1,10 @@
 {
     "embed_dim": 768,
-    "coca_cfg": {
-        "width":768,
-        "model_name": "coca_base",
+    "decoder_cfg": {
+        "width": 768,
         "context_length": 77,
         "image_dim": 768,
         "mlp_ratio": 4,
-        "ls_init_value": "None",
         "layers": 12,
         "dim_head": 64,
         "heads": 12,
@@ -23,10 +21,8 @@
     "text_cfg": {
         "vocab_size": 64000,
         "layers": 12,
-        "dim_head": 64,
-        "heads":12,
-        "mlp_ration": 4,
-        "context_length": 512,
-        "ls_init_value": "None"
+        "heads": 12,
+        "width": 768,
+        "context_length": 512
     }
 }
