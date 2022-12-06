@@ -92,7 +92,6 @@ class CoCa(nn.Module):
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
-
         self.multimodal_decoder = _build_text_decoder_tower(
             embed_dim, coca_cfg, quick_gelu, cast_dtype
         )
@@ -105,10 +104,6 @@ class CoCa(nn.Module):
 
         self.img_attn_pool_norm = norm_layer(self.width)
         self.text_cls_norm = norm_layer(self.width)
-
-        # contrastive learning temperature
-
-        self.temperature = nn.Parameter(torch.Tensor([1.0]))
 
         self.dim_latents = coca_cfg.dim_latents if coca_cfg.dim_latents else coca_cfg.width
         self.to_text_latent = nn.Linear(self.width, self.dim_latents, bias=False)
