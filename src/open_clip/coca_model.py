@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass
 
@@ -29,6 +30,7 @@ class CoCaCfg:
     contrastive_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
     n_queries: int = 256
+    dim_latents: int = None
 
 
 def _build_text_decoder_tower(
@@ -91,7 +93,6 @@ class CoCa(nn.Module):
         )
 
 
-
         self.multimodal_decoder = _build_text_decoder_tower(
             embed_dim, coca_cfg, quick_gelu, cast_dtype
         )
@@ -108,6 +109,10 @@ class CoCa(nn.Module):
         # contrastive learning temperature
 
         self.temperature = nn.Parameter(torch.Tensor([1.0]))
+
+        self.dim_latents = coca_cfg.dim_latents if coca_cfg.dim_latents else coca_cfg.width
+        self.to_text_latents = nn.Linear(self.width, self.dim_latents, bias=False)
+        self.to_image_latents = nn.Linear(self.width, self.dim_latents, bias=False)
 
         # to logits
         self.to_logits = nn.Sequential(
@@ -127,16 +132,15 @@ class CoCa(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), :] @ self.text_projection
 
         # looking at the tokenizer this seems ok
-        cls_emb = self.text_cls_norm(x[torch.arange(x.shape[0]), -1])
+        cls_emb = x[torch.arange(x.shape[0]), -1]
         token_emb = x[torch.arange(x.shape[0]), :-1]
-        return cls_emb, token_emb
+        return self.text_cls_norm(cls_emb), token_emb
 
     def encode_image(self, images=None):
         x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
@@ -177,6 +181,9 @@ class CoCa(nn.Module):
 
         text_embeds, text_tokens = self.encode_text(text)
         image_embeds, image_tokens = self.encode_image(images)
+
+        text_embeds = F.normalize(self.to_text_latents(text_embeds), dim=-1)
+        image_embeds = F.normalize(self.to_image_latents(image_embeds), dim=-1)
 
         text_tokens = self.multimodal_decoder(
             text_tokens, image_tokens, eot_token_mask=text.argmax(dim=-1)

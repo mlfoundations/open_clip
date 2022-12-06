@@ -138,7 +138,7 @@ class AttentionPooler(nn.Module):
     def __init__(
             self,
             d_model: int,
-            n_head: int = 1,
+            n_head: int = 8,
             n_queries: int = 256,
     ):
         super().__init__()
