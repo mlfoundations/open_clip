@@ -17,8 +17,7 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 
 @dataclass
-class CoCaCfg:
-    model_name: str = "CoCa_base"
+class TextDecoderCfg:
     context_length:int = 76
     width: int = 512
     image_dim: int = 512
@@ -35,12 +34,12 @@ class CoCaCfg:
 
 def _build_text_decoder_tower(
     embed_dim: int,
-    coca_cfg: CoCaCfg,
+    decoder_cfg: TextDecoderCfg,
     quick_gelu: bool = False,
     cast_dtype: Optional[torch.dtype] = None,
 ):
-    if isinstance(coca_cfg, dict):
-        coca_cfg = CoCaCfg(**coca_cfg)
+    if isinstance(decoder_cfg, dict):
+        decoder_cfg = TextDecoderCfg(**decoder_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
@@ -48,30 +47,31 @@ def _build_text_decoder_tower(
     )
 
     text = TransformerDecoder(
-        context_length=coca_cfg.context_length,
-        width=coca_cfg.width,
-        heads=coca_cfg.heads,
-        layers=coca_cfg.layers,
-        ls_init_value=coca_cfg.ls_init_value,
+        context_length=decoder_cfg.context_length,
+        width=decoder_cfg.width,
+        heads=decoder_cfg.heads,
+        layers=decoder_cfg.layers,
+        ls_init_value=decoder_cfg.ls_init_value,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
 
-    return text
+    return text, decoder_cfg
 
 
 class CoCa(nn.Module):
     def __init__(
         self,
         embed_dim,
-        coca_cfg: CoCaCfg,
+        decoder_cfg: TextDecoderCfg,
         text_cfg: CLIPTextCfg,
         vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
+
 
         norm_layer = (
             LayerNormFp32
@@ -92,26 +92,26 @@ class CoCa(nn.Module):
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
-        self.multimodal_decoder = _build_text_decoder_tower(
-            embed_dim, coca_cfg, quick_gelu, cast_dtype
+        self.multimodal_decoder, decoder_cfg = _build_text_decoder_tower(
+            embed_dim, decoder_cfg, quick_gelu, cast_dtype
         )
 
-        self.width = coca_cfg.width
+        self.width = decoder_cfg.width
 
         self.img_attn_pool = AttentionPooler(
-            coca_cfg.width, coca_cfg.heads, n_queries=coca_cfg.n_queries + 1
+            decoder_cfg.width, decoder_cfg.heads, n_queries=decoder_cfg.n_queries + 1
         )
 
         self.img_attn_pool_norm = norm_layer(self.width)
         self.text_cls_norm = norm_layer(self.width)
 
-        self.dim_latents = coca_cfg.dim_latents if coca_cfg.dim_latents else coca_cfg.width
+        self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
         self.to_text_latent = nn.Linear(self.width, self.dim_latents, bias=False)
         self.to_image_latent = nn.Linear(self.width, self.dim_latents, bias=False)
 
         # to logits
         self.to_logits = nn.Sequential(
-            norm_layer(self.width), nn.Linear(self.width, text_cfg.vocab_size, bias=False)
+            norm_layer(self.width), nn.Linear(self.width, self.vocab_size, bias=False)
         )
 
         # they used embedding weight tied projection out to logits, not common, but works
