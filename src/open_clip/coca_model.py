@@ -26,7 +26,7 @@ class TextDecoderCfg:
     layers: int = 12
     dim_head: int = 64
     heads: int = 8
-    contrastive_loss_weight: float = 1.0
+    clip_loss_weight: float = 1.0
     caption_loss_weight: float = 2.0
     n_queries: int = 256
     dim_latents: int = None
@@ -95,6 +95,11 @@ class CoCa(nn.Module):
         self.multimodal_decoder, decoder_cfg = _build_text_decoder_tower(
             embed_dim, decoder_cfg, quick_gelu, cast_dtype
         )
+
+        self.loss_parameters = {
+            "caption_loss_weight": decoder_cfg.caption_loss_weight,
+            "clip_loss_weight": decoder_cfg.clip_loss_weight
+        }
 
         self.width = decoder_cfg.width
 
