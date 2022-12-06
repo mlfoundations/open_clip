@@ -8,7 +8,7 @@
         "layers": 12,
         "dim_head": 64,
         "heads": 12,
-        "contrastive_loss_weight": 1.0,
+        "clip_loss_weight": 1.0,
         "caption_loss_weight": 2.0,
         "n_queries": 256
     },
@@ -24,5 +24,6 @@
         "heads": 12,
         "width": 768,
         "context_length": 512
-    }
+    },
+    "custom_text": "True"
 }
