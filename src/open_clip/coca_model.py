@@ -111,8 +111,8 @@ class CoCa(nn.Module):
         self.temperature = nn.Parameter(torch.Tensor([1.0]))
 
         self.dim_latents = coca_cfg.dim_latents if coca_cfg.dim_latents else coca_cfg.width
-        self.to_text_latents = nn.Linear(self.width, self.dim_latents, bias=False)
-        self.to_image_latents = nn.Linear(self.width, self.dim_latents, bias=False)
+        self.to_text_latent = nn.Linear(self.width, self.dim_latents, bias=False)
+        self.to_image_latent = nn.Linear(self.width, self.dim_latents, bias=False)
 
         # to logits
         self.to_logits = nn.Sequential(
@@ -124,7 +124,7 @@ class CoCa(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def encode_text(self, text):
+    def encode_text(self, text, normalize=True):
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
@@ -140,9 +140,14 @@ class CoCa(nn.Module):
         # looking at the tokenizer this seems ok
         cls_emb = x[torch.arange(x.shape[0]), -1]
         token_emb = x[torch.arange(x.shape[0]), :-1]
-        return self.text_cls_norm(cls_emb), token_emb
 
-    def encode_image(self, images=None):
+        cls_emb = self.text_cls_norm(cls_emb)
+        text_latent = self.to_text_latent(cls_emb)
+        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latents
+
+        return text_latent, token_emb
+
+    def encode_image(self, images=None, normalize=True):
         x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -166,7 +171,10 @@ class CoCa(nn.Module):
         x = self.img_attn_pool(x)
         x = self.img_attn_pool_norm(x)
 
-        return x[:, 0], x[:, 1:]
+        image_latent = self.to_image_latent(x[:, 0])
+        image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
+
+        return image_latent, x[:, 1:]
 
     def forward(
         self,
@@ -179,15 +187,12 @@ class CoCa(nn.Module):
         if labels is None:
             text, labels = text[:, :-1], text[:, 1:]
 
-        text_embeds, text_tokens = self.encode_text(text)
-        image_embeds, image_tokens = self.encode_image(images)
-
-        text_embeds = F.normalize(self.to_text_latents(text_embeds), dim=-1)
-        image_embeds = F.normalize(self.to_image_latents(image_embeds), dim=-1)
+        text_latents, text_tokens = self.encode_text(text)
+        image_latents, image_tokens = self.encode_image(images)
 
         text_tokens = self.multimodal_decoder(
             text_tokens, image_tokens, eot_token_mask=text.argmax(dim=-1)
         )
         logits = self.to_logits(text_tokens)
 
-        return text_embeds, image_embeds, logits, labels, self.logit_scale
+        return text_latents, image_latents, logits, labels, self.logit_scale
