@@ -329,6 +329,9 @@ class VisionTransformer(nn.Module):
         self.transformer.grad_checkpointing = enable
 
     def forward(self, x: torch.Tensor):
+        cast_dtype = self.transformer.get_cast_dtype()
+        x = x.to(cast_dtype)
+
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
