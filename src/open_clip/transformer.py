@@ -588,8 +588,4 @@ class TransformerDecoder(Transformer):
         x = text_embs.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        # x = x[torch.arange(x.shape[0]), eot_token_mask] @ self.text_projection
-
         return x
