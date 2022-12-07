@@ -540,9 +540,6 @@ class TransformerDecoder(Transformer):
 
         self.ln_final = norm_layer(width)
 
-        # this will be shared with the textual decoder (in CoCa)
-        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-
     def init_parameters(self):
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
