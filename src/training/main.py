@@ -24,7 +24,7 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
@@ -267,7 +267,8 @@ def main(args):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, writer)
+        loss = create_loss(args)
+        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
