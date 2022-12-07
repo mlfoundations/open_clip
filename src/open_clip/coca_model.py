@@ -106,7 +106,6 @@ class CoCa(nn.Module):
 
         self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
         self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
-        self.to_image_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
         # to logits
         self.to_logits = nn.Sequential(
