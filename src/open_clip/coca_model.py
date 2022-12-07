@@ -18,7 +18,7 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 @dataclass
 class TextDecoderCfg:
-    context_length:int = 76
+    context_length: int = 77
     width: int = 512
     image_dim: int = 512
     mlp_ratio: int = 4
@@ -67,6 +67,7 @@ class CoCa(nn.Module):
         decoder_cfg: TextDecoderCfg,
         text_cfg: CLIPTextCfg,
         vision_cfg: CLIPVisionCfg,
+        n_queries: int = 256,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
     ):
@@ -88,6 +89,7 @@ class CoCa(nn.Module):
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
+        self.cls_token = nn.Parameter(torch.randn(embed_dim))
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
@@ -101,33 +103,39 @@ class CoCa(nn.Module):
             "clip_loss_weight": decoder_cfg.clip_loss_weight
         }
 
-        self.width = decoder_cfg.width
 
         self.img_attn_pool = AttentionPooler(
-            decoder_cfg.width, decoder_cfg.heads, n_queries=decoder_cfg.n_queries + 1
+            decoder_cfg.width, decoder_cfg.heads, n_queries=n_queries + 1
         )
 
-        self.img_attn_pool_norm = norm_layer(self.width)
-        self.text_cls_norm = norm_layer(self.width)
+        self.img_attn_pool_norm = norm_layer(embed_dim)
+        self.text_cls_norm = norm_layer(embed_dim)
 
         self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
-        self.to_text_latent = nn.Linear(self.width, self.dim_latents, bias=False)
-        self.to_image_latent = nn.Linear(self.width, self.dim_latents, bias=False)
+        self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
+        self.to_image_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
         # to logits
         self.to_logits = nn.Sequential(
-            norm_layer(self.width), nn.Linear(self.width, self.vocab_size, bias=False)
+            norm_layer(embed_dim), nn.Linear(embed_dim, self.vocab_size, bias=False)
         )
 
-        # they used embedding weight tied projection out to logits, not common, but works
+        # tie embedding weights and projection
         self.to_logits[-1].weight = self.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
+    def _repeat(self, t, N):
+        return t.reshape(1, 1, -1).repeat(N, 1, 1)
+
     def encode_text(self, text, normalize=True):
         cast_dtype = self.transformer.get_cast_dtype()
 
+        # cls_mask = (text!=self.pad_id).unsqueeze(1)
+        # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
+        # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
@@ -176,23 +184,14 @@ class CoCa(nn.Module):
 
         return image_latent, x[:, 1:]
 
-    def forward(
-        self,
-        text,
-        images=None,
-        image_tokens=None,
-        labels=None,
-    ):
+    def forward(self, image, text,):
 
-        if labels is None:
-            text, labels = text[:, :-1], text[:, 1:]
+        text, labels = text[:, :-1], text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text)
-        image_latents, image_tokens = self.encode_image(images)
+        image_latents, image_tokens = self.encode_image(image)
 
-        text_tokens = self.multimodal_decoder(
-            text_tokens, image_tokens, eot_token_mask=text.argmax(dim=-1)
-        )
+        text_tokens = self.multimodal_decoder(text_tokens, image_tokens)
         logits = self.to_logits(text_tokens)
 
         return text_latents, image_latents, logits, labels, self.logit_scale
