@@ -573,7 +573,7 @@ class TransformerDecoder(Transformer):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def forward(self, text_embs, image_embs, eot_token_mask):
+    def forward(self, text_embs, image_embs):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
 
