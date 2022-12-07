@@ -61,6 +61,51 @@ def gather_features(
 
     return all_image_features, all_text_features
 
+# def gather_logits_and_labels(
+#     logits,
+#     labels,
+#     local_loss=False,
+#     gather_with_grad=False,
+#     rank=0,
+#     world_size=1,
+#     use_horovod=False
+# ):
+#     assert has_distributed, 'torch.distributed did not import correctly, please use a PyTorch version with support.'
+#     if use_horovod:
+#         assert hvd is not None, 'Please install horovod'
+#         if gather_with_grad:
+#             all_logits = hvd.allgather(logits)
+#             all_labels = hvd.allgather(labels)
+#         else:
+#             with torch.no_grad():
+#                 all_logits = hvd.allgather(logits)
+#                 all_labels = hvd.allgather(labels)
+#             if not local_loss:
+#                 # ensure grads for local rank when all_* features don't have a gradient
+#                 gathered_logits = list(logits.chunk(world_size, dim=0))
+#                 gathered_labels = list(labels.chunk(world_size, dim=0))
+#                 gathered_logits[rank] = logits
+#                 gathered_labels[rank] = labels
+#                 all_image_features = torch.cat(gathered_logits, dim=0)
+#                 all_text_features = torch.cat(gathered_labels, dim=0)
+#     else:
+#         # We gather tensors from all gpus
+#         if gather_with_grad:
+#             all_logits = torch.cat(torch.distributed.nn.all_gather(logits), dim=0)
+#             all_labels = torch.cat(torch.distributed.nn.all_gather(labels), dim=0)
+#         else:
+#             gathered_image_features = [torch.zeros_like(image_features) for _ in range(world_size)]
+#             gathered_text_features = [torch.zeros_like(text_features) for _ in range(world_size)]
+#             dist.all_gather(gathered_image_features, image_features)
+#             dist.all_gather(gathered_text_features, text_features)
+#             if not local_loss:
+#                 # ensure grads for local rank when all_* features don't have a gradient
+#                 gathered_image_features[rank] = image_features
+#                 gathered_text_features[rank] = text_features
+#             all_image_features = torch.cat(gathered_image_features, dim=0)
+#             all_text_features = torch.cat(gathered_text_features, dim=0)
+
+#     return all_image_features, all_text_features
 
 class ClipLoss(nn.Module):
 
@@ -121,12 +166,12 @@ class ClipLoss(nn.Module):
         return total_loss
 
 
-class CoCaLoss(nn.Module):
+class CoCaLoss(ClipLoss):
     def __init__(
         self,
         caption_loss_weight,
         clip_loss_weight,
-        pad_id,
+        pad_id=-100,
         local_loss=False,
         gather_with_grad=False,
         cache_labels=False,
@@ -134,8 +179,7 @@ class CoCaLoss(nn.Module):
         world_size=1,
         use_horovod=False,
     ):
-        super().__init__()
-        self.clip_loss = ClipLoss(
+        super().__init__(
             local_loss=local_loss,
             gather_with_grad=gather_with_grad,
             cache_labels=cache_labels,
@@ -143,17 +187,25 @@ class CoCaLoss(nn.Module):
             world_size=world_size,
             use_horovod=use_horovod
         )
+
         self.clip_loss_weight = clip_loss_weight
-        self.caption_loss = nn.CrossEntropyLoss()
         self.caption_loss_weight = caption_loss_weight
-        self.pad_id = pad_id
+        self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
     def forward(self, image_features, text_features, logits, labels, logit_scale):
-        clip_loss = self.clip_loss(image_features, text_features, logit_scale)
+        clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
-        logits = logits.permute(0, 2, 1)
-        caption_loss = self.caption_loss(logits, labels, ignore_index=self.pad_id)
+        if self.world_size > 1:
+            all_logits, all_labels = gather_features(
+                logits.contiguous(), labels.contiguous(),
+                self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
+        else:
+            all_logits = logits
+            all_labels = labels
+
+        all_logits = all_logits.permute(0, 2, 1)
+        caption_loss = self.caption_loss(all_logits, all_labels)
         caption_loss = caption_loss * self.caption_loss_weight
 
         return clip_loss + caption_loss
