@@ -98,18 +98,11 @@ class CoCa(nn.Module):
             embed_dim, decoder_cfg, quick_gelu, cast_dtype
         )
 
-        self.loss_parameters = {
-            "caption_loss_weight": decoder_cfg.caption_loss_weight,
-            "clip_loss_weight": decoder_cfg.clip_loss_weight
-        }
-
-
         self.img_attn_pool = AttentionPooler(
             decoder_cfg.width, decoder_cfg.heads, n_queries=n_queries + 1
         )
 
         self.img_attn_pool_norm = norm_layer(embed_dim)
-        self.text_cls_norm = norm_layer(embed_dim)
 
         self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
         self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
@@ -149,7 +142,7 @@ class CoCa(nn.Module):
         cls_emb = x[torch.arange(x.shape[0]), -1]
         token_emb = x[torch.arange(x.shape[0]), :-1]
 
-        cls_emb = self.text_cls_norm(cls_emb)
+        cls_emb = self.ln_final(cls_emb)
         text_latent = self.to_text_latent(cls_emb)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
@@ -179,7 +172,9 @@ class CoCa(nn.Module):
         x = self.img_attn_pool(x)
         x = self.img_attn_pool_norm(x)
 
-        image_latent = self.to_image_latent(x[:, 0])
+        image_latent = x[:, 0]
+        if self.visual.proj is not None:
+            image_latent = image_latent @ self.visual.proj
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
 
         return image_latent, x[:, 1:]
