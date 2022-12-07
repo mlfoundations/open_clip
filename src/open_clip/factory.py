@@ -74,8 +74,7 @@ def get_model_config(model_name):
 
 def get_tokenizer(model_name):
     config = get_model_config(model_name)
-    tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
-    return tokenizer
+    return HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
 
 
 def load_state_dict(checkpoint_path: str, map_location='cpu'):
@@ -149,12 +148,12 @@ def create_model(
         if custom_text:
             if 'hf_model_name' in model_cfg.get('text_cfg', {}):
                 model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
-            model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
-        else:
             if "coca" in model_name:
                 model = CoCa(**model_cfg, cast_dtype=cast_dtype)
             else:
-                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+        else:
+            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_cfg = {}
         if pretrained:
@@ -189,17 +188,16 @@ def create_model(
     return model
 
 def create_loss(args):
-
-    if "coca" not in args.model.lower():
+    if "coca" in args.model.lower():
         return CoCaLoss(
-        caption_loss_weight=args.caption_loss_weight,
-        clip_loss_weight=args.clip_loss_weight,
-        local_loss=args.local_loss,
-        gather_with_grad=args.gather_with_grad,
-        cache_labels=True,
-        rank=args.rank,
-        world_size=args.world_size,
-        use_horovod=args.horovod)
+            caption_loss_weight=args.coca_caption_loss_weight,
+            clip_loss_weight=args.coca_contrastive_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod)
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
