@@ -107,7 +107,6 @@ class CoCa(nn.Module):
         self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
         self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
-        # to logits
         self.to_logits = nn.Sequential(
             norm_layer(embed_dim), nn.Linear(embed_dim, self.vocab_size, bias=False)
         )
@@ -126,6 +125,7 @@ class CoCa(nn.Module):
         # cls_mask = (text!=self.pad_id).unsqueeze(1)
         # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
         # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
+
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
         x = x + self.positional_embedding.to(cast_dtype)
@@ -137,7 +137,6 @@ class CoCa(nn.Module):
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), :] @ self.text_projection
 
-        # looking at the tokenizer this seems ok
         cls_emb = x[torch.arange(x.shape[0]), -1]
         token_emb = x[torch.arange(x.shape[0]), :-1]
 
