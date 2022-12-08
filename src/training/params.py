@@ -235,6 +235,9 @@ def parse_args(args):
         action='store_true',
         help="torch.jit.trace the model for inference / eval only",
     )
+    parser.add_argument(
+        "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
+    )
     # arguments for distributed training
     parser.add_argument(
         "--dist-url",
