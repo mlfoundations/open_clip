@@ -239,7 +239,8 @@ def main(args):
         parser.print_help()
         parser.exit(1)
     if args.git_revision is not None:
-        _sytem_assert(f'git stash')
+        stash_output = subprocess.check_output(['git', 'stash']).decode().splitlines()
+        has_stash = len(stash_output) > 0 and stash_output[0] != 'No local changes to save'
         current_branch = subprocess.check_output(['git', 'branch', '--show-current'])
         if len(current_branch) < 1:
             # not on a branch -> detached head
@@ -249,7 +250,8 @@ def main(args):
             _sytem_assert(f'git checkout {args.git_revision}')
         except AssertionError as e:
             _sytem_assert(f'git checkout -f {current_branch}')
-            os.system(f'git stash pop')
+            if has_stash:
+                os.system(f'git stash pop')
             raise e
     open_clip = importlib.import_module('open_clip')
     models = open_clip.list_models() if args.all else args.model + model_list
@@ -269,7 +271,8 @@ def main(args):
             if os.path.exists(test_dir):
                 os.rename(test_dir, test_dir_ref)
             _sytem_assert(f'git checkout {current_branch}')
-            os.system(f'git stash pop')
+            if has_stash:
+                os.system(f'git stash pop')
             os.rename(test_dir_ref, test_dir)
     if args.save_model_list is not None:
         print(f"Saving model list as {args.save_model_list}")
