@@ -60,14 +60,13 @@ jobs:
       uses: actions/cache@v3
       with:
         path: .test_durations
-        key: test_durations-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}-${{ github.run_id }}
+        key: test_durations-${{ matrix.os }}-${{ steps.pythonsetup.outputs.python-version }}-${{ matrix.job }}-${{ github.run_id }}
         restore-keys: test_durations-0-
     - name: Setup
       if: steps.venv-cache.outputs.cache-hit != 'true'
       run: |
         python3 -m venv .env
         source .env/bin/activate
-        python -m pip cache dir
         make install
         make install-test
         make install-training
