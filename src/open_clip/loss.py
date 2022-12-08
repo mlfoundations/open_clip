@@ -151,7 +151,7 @@ class CoCaLoss(ClipLoss):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
-        if self.world_size > 1:
+        if self.world_size > 1 and not self.local_loss:
             all_logits, all_labels = gather_features(
                 logits.contiguous(), labels.contiguous(),
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
