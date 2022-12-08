@@ -20,7 +20,6 @@ models_to_test = set(open_clip.list_models()).difference({
         'ViT-bigG-14',
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
-        'coca_base'
 })
 
 @pytest.mark.parametrize('model_name', models_to_test)
