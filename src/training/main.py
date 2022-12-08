@@ -248,7 +248,7 @@ def main(args):
             args.val_sz = data["val"].dataloader.num_samples
         # you will have to configure this for your project!
         wandb.init(
-            project="open-clip",
+            project=args.wandb_project_name,
             name=args.name,
             notes=args.wandb_notes,
             tags=[],
