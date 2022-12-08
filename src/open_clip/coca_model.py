@@ -167,7 +167,7 @@ class CoCa(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.visual.ln_post(x)
 
-        x = self.img_attn_pool(x)
+        x = self.img_attn_pool(x, x)
         x = self.img_attn_pool_norm(x)
 
         image_latent = x[:, 0]
