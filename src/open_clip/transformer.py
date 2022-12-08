@@ -275,6 +275,7 @@ class VisionTransformer(nn.Module):
             heads: int,
             mlp_ratio: float,
             ls_init_value: float = None,
+            global_average_pool: bool = False,
             output_dim: int = 512,
             patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
@@ -305,6 +306,7 @@ class VisionTransformer(nn.Module):
             norm_layer=norm_layer,
         )
 
+        self.global_average_pool = global_average_pool
         self.ln_post = norm_layer(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -383,7 +385,12 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        x = self.ln_post(x[:, 0, :])
+        if self.global_average_pool:
+            x = x.mean(dim=1)
+        else:
+            x = x[:, 0]
+
+        x = self.ln_post(x)
 
         if self.proj is not None:
             x = x @ self.proj
