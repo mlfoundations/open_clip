@@ -506,7 +506,7 @@ class TextTransformer(nn.Module):
         return x
 
 
-class TransformerDecoder(Transformer):
+class MultimodalTransformer(Transformer):
     def __init__(
             self,
             width: int,

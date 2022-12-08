@@ -10,7 +10,7 @@ from .transformer import (
     LayerNormFp32,
     LayerNorm,
     QuickGELU,
-    TransformerDecoder,
+    MultimodalTransformer,
     AttentionalPooler,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
@@ -46,7 +46,7 @@ def _build_text_decoder_tower(
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
 
-    text = TransformerDecoder(
+    text = MultimodalTransformer(
         context_length=decoder_cfg.context_length,
         width=decoder_cfg.width,
         heads=decoder_cfg.heads,
