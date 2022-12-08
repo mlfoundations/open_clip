@@ -46,11 +46,7 @@ class LayerScale(nn.Module):
 
 class PatchDropout():
     """
-    Research is adding up that discarding visual tokens prior to transformer blocks leads to compute savings as well as better end results
-    https://arxiv.org/abs/2208.07220
-    https://arxiv.org/abs/2211.11586
     https://arxiv.org/abs/2212.00794
-    https://arxiv.org/abs/2202.07765 - perceiver AR also drop out entire tokens being cross attended to
     """
 
     def __init__(self, prob, exclude_first_token = True):        

@@ -160,6 +160,14 @@ numerical results as the naïve method.
 
 For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with --dataset-resampled to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
 
+#### Patch Dropout
+
+<a href="https://arxiv.org/abs/2212.00794">Recent research</a> has shown that one can dropout half to three-quarters of the visual tokens, leading to up to 2-3x training speeds without loss of accuracy.
+
+You can set this on your visual transformer config with the key `patch_dropout`.
+
+In the paper, they also finetuned without the patch dropout at the end. You can do this with the command-line argument `--force-patch-dropout 0.`
+
 #### Single-Node
 
 We make use of `torchrun` to launch distributed jobs. The following launches a
