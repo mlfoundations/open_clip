@@ -46,6 +46,7 @@ jobs:
         fetch-depth: 0
         ref: ${{ inputs.manual_revision_test }}
     - name: Set up Python ${{ matrix.python }}
+      id: pythonsetup
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python }}
@@ -54,7 +55,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: .env
-        key: venv-${{ matrix.os }}-${{ matrix.python }}-${{ hashFiles('requirements*') }}
+        key: venv-${{ matrix.os }}-${{ steps.pythonsetup.outputs.python-version }}-${{ hashFiles('requirements*') }}
     - name: Pytest durations cache
       uses: actions/cache@v3
       with:
@@ -66,6 +67,7 @@ jobs:
       run: |
         python3 -m venv .env
         source .env/bin/activate
+        python -m pip cache dir
         make install
         make install-test
         make install-training
@@ -91,6 +93,7 @@ jobs:
     - name: Unit tests
       run: |
         source .env/bin/activate
+        touch .test_durations
         cp .test_durations durations_1
         mv .test_durations durations_2
         python -m pytest \
