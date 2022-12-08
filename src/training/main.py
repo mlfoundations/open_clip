@@ -263,11 +263,12 @@ def main(args):
         evaluate(model, data, start_epoch, args, writer)
         return
 
+    loss = create_loss(args)
+
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        loss = create_loss(args)
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
