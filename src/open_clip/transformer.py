@@ -134,7 +134,7 @@ class Attention(nn.Module):
         x = self.out_drop(x)
         return x
 
-class AttentionPooler(nn.Module):
+class AttentionalPooler(nn.Module):
     def __init__(
             self,
             d_model: int,

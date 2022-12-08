@@ -11,7 +11,7 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     TransformerDecoder,
-    AttentionPooler,
+    AttentionalPooler,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -98,7 +98,7 @@ class CoCa(nn.Module):
             embed_dim, decoder_cfg, quick_gelu, cast_dtype
         )
 
-        self.img_attn_pool = AttentionPooler(
+        self.img_attn_pool = AttentionalPooler(
             decoder_cfg.width, decoder_cfg.heads, n_queries=n_queries + 1
         )
 
