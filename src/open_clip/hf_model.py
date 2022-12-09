@@ -18,7 +18,6 @@ except ImportError as e:
     class PretrainedConfig: pass
 
 from .hf_configs import arch_dict
-from .transformer import Attention
 
 # utils
 def _camel2snake(s):
