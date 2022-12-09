@@ -21,8 +21,7 @@
         "vocab_size": 64000,
         "layers": 12,
         "heads": 12,
-        "width": 768,
-        "hf_tokenizer_name": "roberta-base"
+        "width": 768
     },
     "custom_text": "True"
 }
