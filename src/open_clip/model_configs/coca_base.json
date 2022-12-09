@@ -1,6 +1,6 @@
 {
     "embed_dim": 768,
-    "decoder_cfg": {
+    "multimodal_cfg": {
         "width": 768,
         "context_length": 76,
         "image_dim": 768,
@@ -8,8 +8,6 @@
         "layers": 12,
         "dim_head": 64,
         "heads": 12,
-        "clip_loss_weight": 1.0,
-        "caption_loss_weight": 2.0,
         "n_queries": 256
     },
     "vision_cfg": {
