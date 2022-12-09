@@ -313,6 +313,6 @@ def get_clip_metrics(image_features, text_features, logit_scale):
 
 def maybe_compute_generative_loss(model_out):
     if len(model_out) > 3:
-        token_logits = model_out[2]
-        token_labels = model_out[3]
+        token_logits = model_out[3]
+        token_labels = model_out[4]
         return F.cross_entropy(token_logits.reshape(0, 2, 1), token_labels)
