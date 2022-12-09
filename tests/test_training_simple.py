@@ -37,7 +37,7 @@ def test_training_coca():
     '--wd', '0.1',
     '--epochs', '1',
     '--workers', '2',
-    '--model', 'coca_base'
+    '--model', 'coca_ViT-B-32'
     ])
 
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
