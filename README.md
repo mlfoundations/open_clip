@@ -507,6 +507,8 @@ There is some additional GPU memory required --- the features and data from all 
 
 There are also `m` loss computations instead of the usual 1.
 
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+
 ## Scaling trends
 
 The plot below shows how zero-shot performance of CLIP models varies as we scale the number of samples used for training. Zero-shot performance increases steadily for both ImageNet and [ImageNetV2](https://arxiv.org/abs/1902.10811), and is far from saturated at ~15M samples.
