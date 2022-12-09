@@ -83,9 +83,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
 
         if args.accum_freq == 1:
             with autocast():
-                loss_args = model(images, texts)
-                logit_scale = loss_args[-1]
-                total_loss = loss(*loss_args)
+                model_out = model(images, texts)
+                logit_scale = model_out[-1]
+                total_loss = loss(*model_out)
 
             backward(total_loss, scaler)
         else:
@@ -242,16 +242,16 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Loss: {cumulative_loss / num_samples:.6f}\t")
+                        f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
-            val_metrics = get_metrics(
+            val_metrics = get_clip_metrics(
                 image_features=torch.cat(all_image_features),
                 text_features=torch.cat(all_text_features),
                 logit_scale=logit_scale.cpu(),
             )
             loss = cumulative_loss / num_samples
             metrics.update(
-                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
+                {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
 
     if not metrics:
@@ -279,7 +279,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     return metrics
 
 
-def get_metrics(image_features, text_features, logit_scale):
+def get_clip_metrics(image_features, text_features, logit_scale):
     metrics = {}
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
@@ -297,3 +297,7 @@ def get_metrics(image_features, text_features, logit_scale):
             metrics[f"{name}_R@{k}"] = np.mean(preds < k)
 
     return metrics
+
+
+def get_generative_metrics(logits, labels):
+    loss = F.cross_entropy(logits.reshape(0, 2, 1), labels)
