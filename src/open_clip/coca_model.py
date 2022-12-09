@@ -18,7 +18,6 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
-    image_dim: int = 512
     mlp_ratio: int = 4
     dim_head: int = 64
     heads: int = 8
@@ -171,12 +170,13 @@ class CoCa(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.visual.ln_post(x)
 
+        if self.visual.proj is not None:
+            x = x @ self.visual.proj
+
         x = self.img_attn_pool(x, x)
         x = self.img_attn_pool_norm(x)
 
         image_latent = x[:, 0]
-        if self.visual.proj is not None:
-            image_latent = image_latent @ self.visual.proj
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
 
         return image_latent, x[:, 1:]
