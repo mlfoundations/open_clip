@@ -315,6 +315,4 @@ def maybe_compute_generative_loss(model_out):
     if len(model_out) > 3:
         token_logits = model_out[2]
         token_labels = model_out[3]
-        print("TOKEN_LOGITS", token_logits.shape)
-        print("TOKEN_LABELS", token_labels.shape)
         return F.cross_entropy(token_logits.permute(0, 2, 1), token_labels)
