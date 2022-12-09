@@ -111,15 +111,26 @@ If you want to make changes to contribute code, you can close openclip then run 
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
+You may run `make install-training` to install training deps
+
+#### Testing
 
 Test can be run with `make install-test` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
-When introducing new models, `python tests/util_test.py --model=xlm-roberta-large-ViT-H-14` can generate new output expected data.
+Running regression tests against a specific git revision or tag:
+1. Generate testing data
+    ```sh
+    python tests/util_test.py --model RN50 RN101 --save_model_list models.txt --git_revision 9d31b2ec4df6d8228f370ff20c8267ec6ba39383
+    ```
+    **_WARNING_: This will invoke git and modify your working tree, but will reset it to the current state after data has been generated! \
+    Don't modify your working tree while test data is being generated this way.**
 
-You may run `make install-training` to install training deps
-
+2. Run regression tests
+    ```sh
+    OPEN_CLIP_TEST_REG_MODELS=models.txt python -m pytest -x -s -v -m regression_test
+    ```
 
 ### Sample single-process running code:
 
@@ -248,7 +259,7 @@ python -m training.main \
 
 ### Training with pre-trained language models as text encoder:
 
-If you wish to use different language models as the text encoder for CLIP you can do so by using one of the huggingface model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
+If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
 ```bash
 python -m training.main \
          --train-data="pipe:aws s3 cp s3://s-mas/cc3m/{00000..00329}.tar -" \
@@ -476,6 +487,17 @@ Future trained models will use nn.GELU.
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
+### Gradient accumulation
+
+To simulate larger batches use `--accum-freq k`. If per gpu batch size, `--batch-size`, is `m`, then the effective batch size will be `k * m * num_gpus`.
+
+When increasing `--accum-freq` from its default of 1, samples/s will remain approximately constant (batch size will double, as will time-per-batch). It is recommended to use other features to reduce batch size such as `--grad-checkpointing --local-loss --gather-with-grad` before increasing `--accum-freq`. `--accum-freq` can be used in addition to these features.
+
+Instead of 1 forward pass per example, there are now 2 forward passes per-example. However, the first is done with `torch.no_grad`.
+
+There is some additional GPU memory required --- the features and data from all `m` batches are stored in memory.
+
+There are also `m` loss computations instead of the usual 1.
 
 ## Scaling trends
 
@@ -502,7 +524,7 @@ quantifies robustness as accuracy beyond this baseline, i.e., how far a model li
 Even though the CLIP models trained with
 this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
 trend of improved effective robustness (the purple line). Therefore, we can study what makes
-CLIP robust without requiring industrial-scale compute. 
+CLIP robust without requiring industrial-scale compute.
 
 For more information on effective robustness, please see:
 
