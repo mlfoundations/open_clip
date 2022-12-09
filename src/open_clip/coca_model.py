@@ -17,17 +17,11 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 
 @dataclass
-class MultimodalCfg:
-    context_length: int = 77
-    width: int = 512
+class MultimodalCfg(CLIPTextCfg):
     image_dim: int = 512
     mlp_ratio: int = 4
-    ls_init_value: Optional[float] = None
-    layers: int = 12
     dim_head: int = 64
     heads: int = 8
-    clip_loss_weight: float = 1.0
-    caption_loss_weight: float = 2.0
     n_queries: int = 256
     dim_latents: int = None
 
@@ -48,8 +42,8 @@ def _build_input_dependent_text_tower(
             cast_dtype=cast_dtype
         )
 
-    if isinstance(decoder_cfg, dict):
-        decoder_cfg = MultimodalCfg(**decoder_cfg)
+    if isinstance(multimodal_cfg, dict):
+        multimodal_cfg = MultimodalCfg(**multimodal_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
@@ -57,17 +51,17 @@ def _build_input_dependent_text_tower(
     )
 
     text = MultimodalTransformer(
-        context_length=decoder_cfg.context_length,
-        width=decoder_cfg.width,
-        heads=decoder_cfg.heads,
-        layers=decoder_cfg.layers,
-        ls_init_value=decoder_cfg.ls_init_value,
+        context_length=multimodal_cfg.context_length,
+        width=multimodal_cfg.width,
+        heads=multimodal_cfg.heads,
+        layers=multimodal_cfg.layers,
+        ls_init_value=multimodal_cfg.ls_init_value,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
 
-    return text, decoder_cfg
+    return text, multimodal_cfg
 
 
 class CoCa(nn.Module):
@@ -90,7 +84,7 @@ class CoCa(nn.Module):
             else LayerNorm
         )
 
-        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
         self.transformer = text.transformer
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
@@ -104,17 +98,17 @@ class CoCa(nn.Module):
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
-        self.multimodal_decoder, decoder_cfg = _build_input_dependent_text_tower(
-            embed_dim, decoder_cfg, quick_gelu, cast_dtype
+        self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
+            embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
 
         self.img_attn_pool = AttentionalPooler(
-            decoder_cfg.width, decoder_cfg.heads, n_queries=n_queries + 1
+            multimodal_cfg.width, multimodal_cfg.heads, n_queries=n_queries + 1
         )
 
         self.img_attn_pool_norm = norm_layer(embed_dim)
 
-        self.dim_latents = decoder_cfg.dim_latents if decoder_cfg.dim_latents else decoder_cfg.width
+        self.dim_latents = multimodal_cfg.dim_latents if multimodal_cfg.dim_latents else multimodal_cfg.width
         self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
         self.to_logits = nn.Sequential(
