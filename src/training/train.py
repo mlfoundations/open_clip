@@ -210,6 +210,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         # FIXME this does not scale past small eval datasets
         # all_image_features @ all_text_features will blow up memory and compute very quickly
         cumulative_loss = 0.0
+        cumulative_gen_loss = 0.0
         all_image_features, all_text_features = [], []
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
@@ -237,12 +238,20 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
+                    gen_loss = maybe_compute_generative_loss(model_out)
+
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                         f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
+
+                    if gen_loss is not None:
+                        cumulative_gen_loss += gen_loss * batch_size
+                        logging.info(
+                            f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+
 
             val_metrics = get_clip_metrics(
                 image_features=torch.cat(all_image_features),
@@ -253,6 +262,9 @@ def evaluate(model, data, epoch, args, tb_writer=None):
             metrics.update(
                 {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
+            if gen_loss is not None:
+                gen_loss = cumulative_gen_loss / num_samples
+                metrics.update({"val_generative_loss": gen_loss.item()})
 
     if not metrics:
         return metrics
@@ -299,5 +311,8 @@ def get_clip_metrics(image_features, text_features, logit_scale):
     return metrics
 
 
-def get_generative_metrics(logits, labels):
-    loss = F.cross_entropy(logits.reshape(0, 2, 1), labels)
+def maybe_compute_generative_loss(model_out):
+    if len(model_out) > 3:
+        token_logits = model_out[2]
+        token_labels = model_out[3]
+        return F.cross_entropy(token_logits.reshape(0, 2, 1), token_labels)
