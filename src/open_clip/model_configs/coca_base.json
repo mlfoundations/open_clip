@@ -3,7 +3,6 @@
     "multimodal_cfg": {
         "width": 768,
         "context_length": 76,
-        "image_dim": 768,
         "mlp_ratio": 4,
         "layers": 12,
         "dim_head": 64,
