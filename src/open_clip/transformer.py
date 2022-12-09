@@ -44,6 +44,40 @@ class LayerScale(nn.Module):
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
+class PatchDropout():
+    """
+    https://arxiv.org/abs/2212.00794
+    """
+
+    def __init__(self, prob, exclude_first_token = True):        
+        assert 0 <= prob < 1.
+        self.prob = prob
+        self.exclude_first_token = exclude_first_token # exclude CLS token
+
+    def __call__(self, x, is_training):
+        if not is_training or self.prob == 0.:
+            return x
+
+        if self.exclude_first_token:
+            cls_tokens, x = x[:, :1], x[:, 1:]
+
+        batch, num_tokens, _, device = *x.shape, x.device
+
+        batch_indices = torch.arange(batch, device = device)
+        batch_indices = batch_indices[..., None]
+
+        keep_prob = 1 - self.prob
+        num_patches_keep = max(1, int(num_tokens * keep_prob))
+
+        rand = torch.randn(batch, num_tokens, device = device)
+        patch_indices_keep = rand.topk(num_patches_keep, dim = -1).indices
+
+        x = x[batch_indices, patch_indices_keep]
+
+        if self.exclude_first_token:
+            x = torch.cat((cls_tokens, x), dim = 1)
+
+        return x
 
 class Attention(nn.Module):
     def __init__(
@@ -316,6 +350,7 @@ class VisionTransformer(nn.Module):
             ls_init_value: float = None,
             global_average_pool: bool = False,
             output_dim: int = 512,
+            patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
     ):
@@ -329,6 +364,10 @@ class VisionTransformer(nn.Module):
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
+
+        # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
+        self.patch_dropout = PatchDropout(patch_dropout)
+
         self.ln_pre = norm_layer(width)
         self.transformer = Transformer(
             width,
@@ -411,6 +450,8 @@ class VisionTransformer(nn.Module):
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
+
+        x = self.patch_dropout(x, self.training) # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND

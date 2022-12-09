@@ -218,6 +218,12 @@ def parse_args(args):
         help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
     parser.add_argument(
+        "--force-patch-dropout",
+        default=None,
+        type=float,
+        help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
+    )
+    parser.add_argument(
         "--force-custom-text",
         default=False,
         action='store_true',

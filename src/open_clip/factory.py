@@ -106,6 +106,7 @@ def create_model(
         jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
+        force_patch_dropout: Optional[float] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
@@ -134,6 +135,10 @@ def create_model(
         if force_quick_gelu:
             # override for use of QuickGELU on non-OpenAI transformer models
             model_cfg["quick_gelu"] = True
+
+        if force_patch_dropout is not None:
+            # override the default patch dropout value
+            model_cfg["patch_dropout"] = force_patch_dropout
 
         if pretrained_image:
             if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
@@ -215,6 +220,7 @@ def create_model_and_transforms(
         jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
+        force_patch_dropout: Optional[float] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
@@ -229,6 +235,7 @@ def create_model_and_transforms(
         jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
+        force_patch_dropout=force_patch_dropout,
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,

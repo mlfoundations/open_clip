@@ -127,6 +127,7 @@ def main(args):
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
+        force_patch_dropout=args.force_patch_dropout,
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
