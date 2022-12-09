@@ -17,7 +17,7 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 
 @dataclass
-class TextDecoderCfg:
+class MultimodalCfg:
     context_length: int = 77
     width: int = 512
     image_dim: int = 512
@@ -32,14 +32,24 @@ class TextDecoderCfg:
     dim_latents: int = None
 
 
-def _build_text_decoder_tower(
+def _build_input_dependent_text_tower(
     embed_dim: int,
-    decoder_cfg: TextDecoderCfg,
+    multimodal_cfg: MultimodalCfg,
     quick_gelu: bool = False,
     cast_dtype: Optional[torch.dtype] = None,
+    multimodal:bool = True
 ):
+
+    if not multimodal:
+        return _build_text_tower(
+            embed_dim=embed_dim,
+            text_cfg=multimodal_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype
+        )
+
     if isinstance(decoder_cfg, dict):
-        decoder_cfg = TextDecoderCfg(**decoder_cfg)
+        decoder_cfg = MultimodalCfg(**decoder_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
@@ -64,7 +74,7 @@ class CoCa(nn.Module):
     def __init__(
         self,
         embed_dim,
-        decoder_cfg: TextDecoderCfg,
+        multimodal_cfg: MultimodalCfg,
         text_cfg: CLIPTextCfg,
         vision_cfg: CLIPVisionCfg,
         n_queries: int = 256,
@@ -80,7 +90,7 @@ class CoCa(nn.Module):
             else LayerNorm
         )
 
-        text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.transformer = text.transformer
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
@@ -94,7 +104,7 @@ class CoCa(nn.Module):
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
 
-        self.multimodal_decoder, decoder_cfg = _build_text_decoder_tower(
+        self.multimodal_decoder, decoder_cfg = _build_input_dependent_text_tower(
             embed_dim, decoder_cfg, quick_gelu, cast_dtype
         )
 
