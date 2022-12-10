@@ -240,8 +240,8 @@ class ResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None
     ):
 
-        k_x = self.ln_1_kv(k_x) if k_x is not None else self.ln_1(q_x)
-        v_x = self.ln_1_kv(v_x) if v_x is not None else self.ln_1(q_x)
+        k_x = self.ln_1_kv(k_x) if k_x is not None else None
+        v_x = self.ln_1_kv(v_x) if v_x is not None else None
 
         x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
@@ -295,8 +295,8 @@ class CustomResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None
     ):
 
-        k_x = self.ln_1_kv(k_x) if k_x is not None else self.ln_1(q_x)
-        v_x = self.ln_1_kv(v_x) if v_x is not None else self.ln_1(q_x)
+        k_x = self.ln_1_kv(k_x) if k_x is not None else None
+        v_x = self.ln_1_kv(v_x) if v_x is not None else None
 
         x = q_x + self.ls_1(
             self.ln_attn(self.attn(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
