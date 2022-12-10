@@ -1,35 +1,35 @@
 from torch import optim
 
 def get_num_layer_for_transformer(var_name, num_max_layer):
-    first_layer_var_names = ["visual.cls_token", 
-                    "visual.mask_token", 
-                    "visual.pos_embed", 
-                    "visual.positional_embedding", 
-                    "text.pos_embed", 
-                    "text.positional_embedding",
-                    "text.token_embedding",
-                    "text.transformer.embeddings.word_embeddings",
-                    "text.transformer.embeddings.position_embeddings",
-                    "text.transformer.embeddings.token_type_embeddings"]
-    if var_name in first_layer_var_names:
-        return 0
-    elif var_name.startswith("visual.patch_embed"):
-        return 0
-    elif var_name.startswith("visual.conv1"):
-        return 0
-    elif var_name.startswith("visual.rel_pos_bias"):
+    first_layer_var_names = [
+        "cls_token", 
+        "mask_token",
+        "pos_embed", 
+        "positional_embedding",
+        "token_embedding",
+        "patch_embed",
+        "conv1", # name of patch embedding in VisionTransformer
+        "transformer.embeddings.word_embeddings",
+        "transformer.embeddings.position_embeddings",
+        "transformer.embeddings.token_type_embeddings"
+    ]
+    for first_layer_var_name in first_layer_var_names:
+        if var_name == first_layer_var_name or var_name.startswith(first_layer_var_name):
+            return 0
+
+    if var_name.startswith("rel_pos_bias"):
         return num_max_layer - 1
-    elif var_name.startswith("visual.blocks"):
+    elif var_name.startswith("blocks"):
+        layer_id = int(var_name.split('.')[1])
+        return layer_id + 1
+    elif var_name.startswith("transformer.resblocks"):
         layer_id = int(var_name.split('.')[2])
         return layer_id + 1
-    elif var_name.startswith("visual.transformer.resblocks"):
-        layer_id = int(var_name.split('.')[3])
+    elif var_name.startswith("transformer.resblocks"):
+        layer_id = int(var_name.split('.')[2])
         return layer_id + 1
-    elif var_name.startswith("text.transformer.resblocks"):
+    elif var_name.startswith("transformer.encoder.layer"):
         layer_id = int(var_name.split('.')[3])
-        return layer_id + 1
-    elif var_name.startswith("text.transformer.encoder.layer"):
-        layer_id = int(var_name.split('.')[4])
         return layer_id + 1
     else:
         return num_max_layer - 1
