@@ -2,34 +2,35 @@ from torch import optim
 
 def get_num_layer_for_transformer(var_name, num_max_layer):
     first_layer_var_names = [
-        "cls_token", 
-        "mask_token",
-        "pos_embed", 
-        "positional_embedding",
-        "token_embedding",
-        "patch_embed",
-        "conv1", # name of patch embedding in VisionTransformer
-        "transformer.embeddings.word_embeddings",
-        "transformer.embeddings.position_embeddings",
-        "transformer.embeddings.token_type_embeddings"
+        "visual.cls_token", 
+        "visual.mask_token", 
+        "visual.pos_embed", 
+        "visual.positional_embedding", 
+        "visual.patch_embed",
+        "visual.conv1", # name of patch embed in VisionTransformer
+        "text.pos_embed", 
+        "text.positional_embedding",
+        "text.token_embedding",
+        "text.transformer.embeddings.word_embeddings",
+        "text.transformer.embeddings.position_embeddings",
+        "text.transformer.embeddings.token_type_embeddings"
     ]
     for first_layer_var_name in first_layer_var_names:
         if var_name == first_layer_var_name or var_name.startswith(first_layer_var_name):
             return 0
-
-    if var_name.startswith("rel_pos_bias"):
+    if var_name.startswith("visual.rel_pos_bias"):
         return num_max_layer - 1
-    elif var_name.startswith("blocks"):
-        layer_id = int(var_name.split('.')[1])
-        return layer_id + 1
-    elif var_name.startswith("transformer.resblocks"):
+    elif var_name.startswith("visual.blocks"):
         layer_id = int(var_name.split('.')[2])
         return layer_id + 1
-    elif var_name.startswith("transformer.resblocks"):
-        layer_id = int(var_name.split('.')[2])
-        return layer_id + 1
-    elif var_name.startswith("transformer.encoder.layer"):
+    elif var_name.startswith("visual.transformer.resblocks"):
         layer_id = int(var_name.split('.')[3])
+        return layer_id + 1
+    elif var_name.startswith("text.transformer.resblocks"):
+        layer_id = int(var_name.split('.')[3])
+        return layer_id + 1
+    elif var_name.startswith("text.transformer.encoder.layer"):
+        layer_id = int(var_name.split('.')[4])
         return layer_id + 1
     else:
         return num_max_layer - 1
@@ -49,13 +50,11 @@ def get_parameters(args, model, assigner, tower):
     if tower == 'visual':
         lr = args.visual_lr if args.visual_lr is not None else args.lr
         weight_decay = args.visual_wd if args.visual_wd is not None else args.wd
-        if hasattr(model, 'visual'):
-            filter_parameters = model.visual.named_parameters()
+        filter_parameters = [[name, param] for name, param in model.named_parameters() if 'visual.' in name]
     elif tower == 'text':
         lr = args.text_lr if args.text_lr is not None else args.lr
         weight_decay = args.text_wd if args.text_wd is not None else args.wd
-        if hasattr(model, 'text'):
-            filter_parameters = model.text.named_parameters()
+        filter_parameters = [[name, param] for name, param in model.named_parameters() if 'text.' in name]
     else:
         lr = args.lr
         weight_decay = args.wd
@@ -71,7 +70,7 @@ def get_parameters(args, model, assigner, tower):
         if not param.requires_grad:
             continue
 
-        if param.ndim < 2 or "bn" in name or "ln" in name or "bias" in name or 'logit_scale' in name:
+        if param.ndim <= 1 or name.endswith(".bias") or 'logit_scale' in name:
             group_name = "no_decay"
             this_weight_decay = 0.
         else:
