@@ -158,7 +158,7 @@ class CoCaLoss(ClipLoss):
                 logits, labels,
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
 
-        logits = logits.permute(0, 2, 1)
+        logits = logits.permute(0, 2, 1).contiguous()
         caption_loss = self.caption_loss(logits, labels)
         caption_loss = caption_loss * self.caption_loss_weight
 
