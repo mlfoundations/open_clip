@@ -28,7 +28,6 @@ class LayerNorm(nn.LayerNorm):
         return x.to(orig_type)
 
 
-
 class QuickGELU(nn.Module):
     # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
@@ -44,15 +43,16 @@ class LayerScale(nn.Module):
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
-class PatchDropout():
+
+class PatchDropout:
     """
     https://arxiv.org/abs/2212.00794
     """
 
-    def __init__(self, prob, exclude_first_token = True):        
+    def __init__(self, prob, exclude_first_token=True):
         assert 0 <= prob < 1.
         self.prob = prob
-        self.exclude_first_token = exclude_first_token # exclude CLS token
+        self.exclude_first_token = exclude_first_token  # exclude CLS token
 
     def __call__(self, x, is_training):
         if not is_training or self.prob == 0.:
@@ -63,21 +63,22 @@ class PatchDropout():
 
         batch, num_tokens, _, device = *x.shape, x.device
 
-        batch_indices = torch.arange(batch, device = device)
+        batch_indices = torch.arange(batch, device=device)
         batch_indices = batch_indices[..., None]
 
         keep_prob = 1 - self.prob
         num_patches_keep = max(1, int(num_tokens * keep_prob))
 
-        rand = torch.randn(batch, num_tokens, device = device)
-        patch_indices_keep = rand.topk(num_patches_keep, dim = -1).indices
+        rand = torch.randn(batch, num_tokens, device=device)
+        patch_indices_keep = rand.topk(num_patches_keep, dim=-1).indices
 
         x = x[batch_indices, patch_indices_keep]
 
         if self.exclude_first_token:
-            x = torch.cat((cls_tokens, x), dim = 1)
+            x = torch.cat((cls_tokens, x), dim=1)
 
         return x
+
 
 class Attention(nn.Module):
     def __init__(
@@ -208,9 +209,9 @@ class CustomResidualAttentionBlock(nn.Module):
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
-           d_model, n_head,
-           scaled_cosine=scale_cosine_attn,
-           scale_heads=scale_heads,
+            d_model, n_head,
+            scaled_cosine=scale_cosine_attn,
+            scale_heads=scale_heads,
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
@@ -315,7 +316,7 @@ class VisionTransformer(nn.Module):
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         for param in self.parameters():
             param.requires_grad = False
-        
+
         if unlocked_groups != 0:
             groups = [
                 [
@@ -346,24 +347,24 @@ class VisionTransformer(nn.Module):
             _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
-         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
-         # TODO experiment if default PyTorch init, below, or alternate init is best.
+        # FIXME OpenAI CLIP did not define an init for the VisualTransformer
+        # TODO experiment if default PyTorch init, below, or alternate init is best.
 
-         # nn.init.normal_(self.class_embedding, std=self.scale)
-         # nn.init.normal_(self.positional_embedding, std=self.scale)
-         #
-         # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-         # attn_std = self.transformer.width ** -0.5
-         # fc_std = (2 * self.transformer.width) ** -0.5
-         # for block in self.transformer.resblocks:
-         #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-         #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-         #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-         #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-         #
-         # if self.text_projection is not None:
-         #     nn.init.normal_(self.text_projection, std=self.scale)
-         pass
+        # nn.init.normal_(self.class_embedding, std=self.scale)
+        # nn.init.normal_(self.positional_embedding, std=self.scale)
+        #
+        # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        # attn_std = self.transformer.width ** -0.5
+        # fc_std = (2 * self.transformer.width) ** -0.5
+        # for block in self.transformer.resblocks:
+        #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+        #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+        #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+        #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        #
+        # if self.text_projection is not None:
+        #     nn.init.normal_(self.text_projection, std=self.scale)
+        pass
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -378,7 +379,8 @@ class VisionTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
-        x = self.patch_dropout(x, self.training) # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
+        # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
+        x = self.patch_dropout(x, self.training)
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
