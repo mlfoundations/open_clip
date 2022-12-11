@@ -26,9 +26,6 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import tokenize
-from open_clip.tokenizer import HFTokenizer
-
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
@@ -201,12 +198,16 @@ def tarfile_to_samples_nothrow(src, handler=log_and_continue):
     return samples
 
 
-def pytorch_worker_seed():
+def pytorch_worker_seed(increment=0):
     """get dataloader worker seed from pytorch"""
     worker_info = get_worker_info()
     if worker_info is not None:
-        # favour the seed already created for pytorch dataloader workers if it exists
-        return worker_info.seed
+        # favour using the seed already created for pytorch dataloader workers if it exists
+        seed = worker_info.seed
+        if increment:
+            # space out seed increments so they can't overlap across workers in different iterations
+            seed += increment * max(1, worker_info.num_workers)
+        return seed
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
 
@@ -240,8 +241,10 @@ class detshuffle2(wds.PipelineStage):
             epoch = self.epoch
         rng = random.Random()
         if self.seed < 0:
-            seed = pytorch_worker_seed() + epoch
+            # If seed is negative, we use the worker's seed, this will be different across all nodes/workers
+            seed = pytorch_worker_seed(epoch)
         else:
+            # This seed to be deterministic AND the same across all nodes/workers in each epoch
             seed = self.seed + epoch
         rng.seed(seed)
         return _shuffle(src, self.bufsize, self.initial, rng)
@@ -268,7 +271,7 @@ class ResampledShards2(IterableDataset):
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
-        self.worker_seed = pytorch_worker_seed if worker_seed is None else worker_seed
+        self.worker_seed = worker_seed
         self.deterministic = deterministic
         self.epoch = epoch
 
@@ -282,8 +285,13 @@ class ResampledShards2(IterableDataset):
             self.epoch += 1
             epoch = self.epoch
         if self.deterministic:
-            # reset seed w/ epoch if deterministic, worker seed should be deterministic due to arg.seed
-            self.rng.seed(self.worker_seed() + epoch)
+            # reset seed w/ epoch if deterministic
+            if self.worker_seed is None:
+                # pytorch worker seed should be deterministic due to being init by arg.seed + rank + worker id
+                seed = pytorch_worker_seed(epoch)
+            else:
+                seed = self.worker_seed() + epoch
+            self.rng.seed(seed)
         for _ in range(self.nshards):
             yield dict(url=self.rng.choice(self.urls))
 
@@ -402,7 +410,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
         img_key=args.csv_img_key,
         caption_key=args.csv_caption_key,
         sep=args.csv_separator,
-		tokenizer=tokenizer)
+        tokenizer=tokenizer
+    )
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -420,6 +429,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     dataloader.num_batches = len(dataloader)
 
     return DataInfo(dataloader, sampler)
+
 
 class SyntheticDataset(Dataset):
 
@@ -462,6 +472,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
     dataloader.num_batches = len(dataloader)
 
     return DataInfo(dataloader, sampler)
+
 
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
