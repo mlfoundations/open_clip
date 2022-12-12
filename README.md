@@ -71,16 +71,7 @@ To download datasets as webdataset, we recommend [img2dataset](https://github.co
 
 ### Conceptual Captions
 
-OpenCLIP reads a CSV file with two columns: a path to an image, and a text caption. The names of the columns are passed as an argument to `main.py`.
-
-The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the script from our repository:
-
-```bash
-python3 src/data/gather_cc.py path/to/Train_GCC-training.tsv path/to/Validation_GCC-1.1.0-Validation.tsv
-```
-
-Our training set contains 2.89M images, and our validation set contains 13K images.
-
+See [cc3m img2dataset example](https://github.com/rom1504/img2dataset/blob/main/dataset_examples/cc3m.md)
 
 ### YFCC and other datasets
 
