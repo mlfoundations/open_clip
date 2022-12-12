@@ -153,13 +153,17 @@ class CoCaLoss(ClipLoss):
 
 
         if self.world_size > 1:
-            logits, labels = gather_features(
-                logits, labels,
+            all_logits, all_labels = gather_features(
+                logits.contiguous(), labels.contiguous(),
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
-        
-        labels = labels.contiguous()
-        logits = logits.permute(0, 2, 1).contiguous()
-        caption_loss = self.caption_loss(logits, labels)
+        else:
+            all_logits = logits
+            all_labels = labels
+
+        caption_loss = self.caption_loss(
+            all_logits.permute(0, 2, 1).contiguous(),
+            all_labels
+        )
         caption_loss = caption_loss * self.caption_loss_weight
 
         return clip_loss + caption_loss
