@@ -21,6 +21,7 @@ from .precision import get_autocast
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -42,6 +43,7 @@ def unwrap_model(model):
         return model.module
     else:
         return model
+
 
 def backward(total_loss, scaler):
     if scaler is not None:
@@ -69,7 +71,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
     data_time_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
-        step = num_batches_per_epoch * epoch + (i // args.accum_freq)
+        i_accum = i // args.accum_freq
+        step = num_batches_per_epoch * epoch + i_accum
 
         if not args.skip_scheduler:
             scheduler(step)
@@ -113,8 +116,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 texts = accum_texts[j]
                 with autocast():
                     chunk_image_features, chunk_text_features, logit_scale = model(images, texts)
-                    image_features = torch.cat(accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
-                    text_features = torch.cat(accum_text_features[:j] + [chunk_text_features] + accum_text_features[j + 1:])
+                    image_features = torch.cat(
+                        accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
+                    text_features = torch.cat(
+                        accum_text_features[:j] + [chunk_text_features] + accum_text_features[j + 1:])
                     total_loss = loss(image_features, text_features, logit_scale)
                 backward(total_loss, scaler)
 
@@ -147,8 +152,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
 
         batch_time_m.update(time.time() - end)
         end = time.time()
-        batch_count = (i // args.accum_freq) + 1
-        if is_master(args) and ((i // args.accum_freq) % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
+        batch_count = i_accum + 1
+        if is_master(args) and (i_accum % args.log_every_n_steps or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
             samples_per_epoch = dataloader.num_samples
@@ -161,7 +166,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq*args.batch_size*args.world_size / batch_time_m.val:#g}/s "
+                f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq * args.batch_size * args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f}"
             )
@@ -171,8 +176,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "samples_per_scond": args.accum_freq*args.batch_size*args.world_size / batch_time_m.val,
-                "scale":  logit_scale_scalar,
+                "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
+                "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
             for name, val in log_data.items():
