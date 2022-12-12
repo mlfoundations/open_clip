@@ -6,31 +6,34 @@ Wraps HuggingFace transformers (https://github.com/huggingface/transformers) mod
 import re
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch import TensorType
+from typing import Optional
 
 try:
     import transformers
-    from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
-    from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, \
-        BaseModelOutputWithPoolingAndCrossAttentions
+    from transformers import AutoModel, AutoConfig, PretrainedConfig
+    from transformers.modeling_outputs import (
+        BaseModelOutput,
+        BaseModelOutputWithPooling,
+        BaseModelOutputWithPoolingAndCrossAttentions,
+    )
 except ImportError as e:
     transformers = None
 
-
-    class BaseModelOutput:
+    class BaseModelOutput:  # type: ignore
         pass
 
-
-    class PretrainedConfig:
+    class PretrainedConfig:  # type: ignore
         pass
+
 
 from .hf_configs import arch_dict
 
 
 # utils
 def _camel2snake(s):
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', s).lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
 
 
 # TODO: ?last - for gpt-like models
@@ -48,8 +51,8 @@ class MeanPooler(nn.Module):
     """Mean pooling"""
 
     def forward(self, x: BaseModelOutput, attention_mask: TensorType):
-        masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)
-        return masked_output.sum(dim=1) / attention_mask.sum(-1, keepdim=True)
+        masked_output = x.last_hidden_state * attention_mask.unsqueeze(-1)  # type: ignore
+        return masked_output.sum(dim=1) / attention_mask.sum(-1, keepdim=True)  # type: ignore
 
 
 @register_pooler
@@ -57,7 +60,7 @@ class MaxPooler(nn.Module):
     """Max pooling"""
 
     def forward(self, x: BaseModelOutput, attention_mask: TensorType):
-        masked_output = x.last_hidden_state.masked_fill(attention_mask.unsqueeze(-1), -torch.inf)
+        masked_output = x.last_hidden_state.masked_fill(attention_mask.unsqueeze(-1), -torch.inf)  # type: ignore
         return masked_output.max(1).values
 
 
@@ -70,10 +73,11 @@ class ClsPooler(nn.Module):
         self.cls_token_position = 0
         self.use_pooler_output = use_pooler_output
 
-    def forward(self, x: BaseModelOutput, attention_mask: TensorType):
-        if (self.use_pooler_output and
-            isinstance(x, (BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions)) and
-            (x.pooler_output is not None)
+    def forward(self, x: BaseModelOutput, attention_mask: TensorType):  # pylint: disable=unused-argument
+        if (
+            self.use_pooler_output
+            and isinstance(x, (BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions))
+            and (x.pooler_output is not None)
         ):
             return x.pooler_output
 
@@ -84,26 +88,28 @@ class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
 
     def __init__(
-            self,
-            model_name_or_path: str,
-            output_dim: int,
-            config: PretrainedConfig = None,
-            pooler_type: str = None,
-            proj: str = None,
-            pretrained: bool = True):
+        self,
+        model_name_or_path: str,
+        output_dim: int,
+        config: Optional[PretrainedConfig] = None,
+        pooler_type: Optional[str] = None,
+        proj: Optional[str] = None,
+        pretrained: Optional[bool] = True,
+    ):
         super().__init__()
 
         self.output_dim = output_dim
 
         # TODO: find better way to get this information
-        uses_transformer_pooler = (pooler_type == "cls_pooler")
+        uses_transformer_pooler = pooler_type == "cls_pooler"
 
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
             self.config = AutoConfig.from_pretrained(model_name_or_path)
-            create_func, model_args = (AutoModel.from_pretrained, model_name_or_path) if pretrained else (
-                AutoModel.from_config, self.config)
+            create_func, model_args = (
+                (AutoModel.from_pretrained, model_name_or_path) if pretrained else (AutoModel.from_config, self.config)
+            )
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                 self.transformer = create_func(model_args)
@@ -119,14 +125,14 @@ class HFTextEncoder(nn.Module):
         else:
             self.pooler = _POOLERS[pooler_type]()
 
-        d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
+        d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])  # type: ignore
         if (d_model == output_dim) and (proj is None):  # do we always need a proj?
             self.proj = nn.Identity()
-        elif proj == 'linear':
-            self.proj = nn.Linear(d_model, output_dim, bias=False)
-        elif proj == 'mlp':
+        elif proj == "linear":
+            self.proj = nn.Linear(d_model, output_dim, bias=False)  # type: ignore
+        elif proj == "mlp":
             hidden_size = (d_model + output_dim) // 2
-            self.proj = nn.Sequential(
+            self.proj = nn.Sequential(  # type: ignore
                 nn.Linear(d_model, hidden_size, bias=False),
                 nn.GELU(),
                 nn.Linear(hidden_size, output_dim, bias=False),
@@ -140,16 +146,18 @@ class HFTextEncoder(nn.Module):
         return self.proj(pooled_out)
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        """Freeze layers of the model"""
         if not unlocked_layers:  # full freezing
             for n, p in self.transformer.named_parameters():
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
             return
 
-        encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
-        layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])
+        encoder = self.transformer.encoder if hasattr(self.transformer, "encoder") else self.transformer
+        layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])  # type: ignore
         print(f"Unlocking {unlocked_layers}/{len(layer_list) + 1} layers of hf model")
         embeddings = getattr(
-            self.transformer, arch_dict[self.config.model_type]["config_names"]["token_embeddings_attr"])
+            self.transformer, arch_dict[self.config.model_type]["config_names"]["token_embeddings_attr"]  # type: ignore
+        )
         modules = [embeddings, *layer_list][:-unlocked_layers]
         # freeze layers
         for module in modules:
@@ -157,7 +165,7 @@ class HFTextEncoder(nn.Module):
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
 
     @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True):  # pylint: disable=unused-argument
         self.transformer.gradient_checkpointing_enable()
 
     def init_parameters(self):

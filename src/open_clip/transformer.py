@@ -1,3 +1,5 @@
+"""Transformer module"""
+
 from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence
@@ -13,7 +15,7 @@ from .utils import to_2tuple
 class LayerNormFp32(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor):  # pylint: disable=arguments-renamed
         orig_type = x.dtype
         x = F.layer_norm(x.to(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
@@ -22,7 +24,7 @@ class LayerNormFp32(nn.LayerNorm):
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm (with cast back to input dtype)."""
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor):  # pylint: disable=arguments-renamed
         orig_type = x.dtype
         x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
@@ -50,18 +52,18 @@ class PatchDropout:
     """
 
     def __init__(self, prob, exclude_first_token=True):
-        assert 0 <= prob < 1.
+        assert 0 <= prob < 1.0
         self.prob = prob
         self.exclude_first_token = exclude_first_token  # exclude CLS token
 
     def __call__(self, x, is_training):
-        if not is_training or self.prob == 0.:
+        if not is_training or self.prob == 0.0:
             return x
 
         if self.exclude_first_token:
             cls_tokens, x = x[:, :1], x[:, 1:]
 
-        batch, num_tokens, _, device = *x.shape, x.device
+        batch, num_tokens, _, device = *x.shape, x.device  # type: ignore
 
         batch_indices = torch.arange(batch, device=device)
         batch_indices = batch_indices[..., None]
@@ -81,24 +83,26 @@ class PatchDropout:
 
 
 class Attention(nn.Module):
+    """Multi-head attention with relative positional encoding."""
+
     def __init__(
-            self,
-            dim,
-            num_heads=8,
-            qkv_bias=True,
-            scaled_cosine=False,
-            scale_heads=False,
-            logit_scale_max=math.log(1. / 0.01),
-            attn_drop=0.,
-            proj_drop=0.
+        self,
+        dim,
+        num_heads=8,
+        qkv_bias=True,
+        scaled_cosine=False,
+        scale_heads=False,
+        logit_scale_max=math.log(1.0 / 0.01),
+        attn_drop=0.0,
+        proj_drop=0.0,
     ):
         super().__init__()
         self.scaled_cosine = scaled_cosine
         self.scale_heads = scale_heads
-        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.logit_scale_max = logit_scale_max
 
         # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
@@ -121,7 +125,8 @@ class Attention(nn.Module):
         self.out_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        L, N, C = x.shape
+        """x: [L, N, C]"""
+        L, N, C = x.shape  # pylint: disable=invalid-name
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
         q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
@@ -157,14 +162,16 @@ class Attention(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
+    """Residual attention block with relative positional encoding."""
+
     def __init__(
-            self,
-            d_model: int,
-            n_head: int,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+        self,
+        d_model: int,
+        n_head: int,
+        mlp_ratio: float = 4.0,
+        ls_init_value: Optional[float] = None,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
 
@@ -174,11 +181,15 @@ class ResidualAttentionBlock(nn.Module):
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, mlp_width)),
-            ("gelu", act_layer()),
-            ("c_proj", nn.Linear(mlp_width, d_model))
-        ]))
+        self.mlp = nn.Sequential(
+            OrderedDict(
+                [
+                    ("c_fc", nn.Linear(d_model, mlp_width)),
+                    ("gelu", act_layer()),
+                    ("c_proj", nn.Linear(mlp_width, d_model)),
+                ]
+            )
+        )
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
@@ -192,24 +203,27 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class CustomResidualAttentionBlock(nn.Module):
+    """Residual attention block with relative positional encoding."""
+
     def __init__(
-            self,
-            d_model: int,
-            n_head: int,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-            scale_cosine_attn: bool = False,
-            scale_heads: bool = False,
-            scale_attn: bool = False,
-            scale_fc: bool = False,
+        self,
+        d_model: int,
+        n_head: int,
+        mlp_ratio: float = 4.0,
+        ls_init_value: Optional[float] = None,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
+        scale_cosine_attn: bool = False,
+        scale_heads: bool = False,
+        scale_attn: bool = False,
+        scale_fc: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
-            d_model, n_head,
+            d_model,
+            n_head,
             scaled_cosine=scale_cosine_attn,
             scale_heads=scale_heads,
         )
@@ -218,12 +232,16 @@ class CustomResidualAttentionBlock(nn.Module):
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, mlp_width)),
-            ('ln', norm_layer(mlp_width) if scale_fc else nn.Identity()),
-            ("gelu", act_layer()),
-            ("c_proj", nn.Linear(mlp_width, d_model))
-        ]))
+        self.mlp = nn.Sequential(
+            OrderedDict(
+                [
+                    ("c_fc", nn.Linear(d_model, mlp_width)),
+                    ("ln", norm_layer(mlp_width) if scale_fc else nn.Identity()),
+                    ("gelu", act_layer()),
+                    ("c_proj", nn.Linear(mlp_width, d_model)),
+                ]
+            )
+        )
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
@@ -233,26 +251,31 @@ class CustomResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
+    """Transformer model."""
+
     def __init__(
-            self,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+        self,
+        width: int,
+        layers: int,
+        heads: int,
+        mlp_ratio: float = 4.0,
+        ls_init_value: Optional[float] = None,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.width = width
         self.layers = layers
         self.grad_checkpointing = False
 
-        self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
-            for _ in range(layers)
-        ])
+        self.resblocks = nn.ModuleList(
+            [
+                ResidualAttentionBlock(
+                    width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer
+                )
+                for _ in range(layers)
+            ]
+        )
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
@@ -267,20 +290,22 @@ class Transformer(nn.Module):
 
 
 class VisionTransformer(nn.Module):
+    """Vision Transformer model."""
+
     def __init__(
-            self,
-            image_size: int,
-            patch_size: int,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float,
-            ls_init_value: float = None,
-            global_average_pool: bool = False,
-            output_dim: int = 512,
-            patch_dropout: float = 0.,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+        self,
+        image_size: int,
+        patch_size: int,
+        width: int,
+        layers: int,
+        heads: int,
+        mlp_ratio: float,
+        ls_init_value: Optional[float] = None,
+        global_average_pool: bool = False,
+        output_dim: int = 512,
+        patch_dropout: float = 0.0,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.image_size = to_2tuple(image_size)
@@ -289,7 +314,7 @@ class VisionTransformer(nn.Module):
         self.output_dim = output_dim
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
-        scale = width ** -0.5
+        scale = width**-0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
 
@@ -313,7 +338,8 @@ class VisionTransformer(nn.Module):
 
         self.init_parameters()
 
-    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+    def lock(self, unlocked_groups=0, freeze_bn_stats=False):  # pylint: disable=unused-argument
+        """Locks the model to prevent further training."""
         for param in self.parameters():
             param.requires_grad = False
 
@@ -347,6 +373,7 @@ class VisionTransformer(nn.Module):
             _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
+        """Initialize parameters."""
         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
         # TODO experiment if default PyTorch init, below, or alternate init is best.
 
@@ -371,12 +398,18 @@ class VisionTransformer(nn.Module):
         self.transformer.grad_checkpointing = enable
 
     def forward(self, x: torch.Tensor):
+        """Forward pass."""
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         x = torch.cat(
-            [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
-             x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+            [
+                self.class_embedding.to(x.dtype)
+                + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
+                x,
+            ],
+            dim=1,
+        )  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
         # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
@@ -401,18 +434,19 @@ class VisionTransformer(nn.Module):
 
 
 class TextTransformer(nn.Module):
+    """Transformer model for text."""
 
     def __init__(
-            self,
-            context_length: int = 77,
-            vocab_size: int = 49408,
-            width: int = 512,
-            heads: int = 8,
-            layers: int = 12,
-            ls_init_value: float = None,
-            output_dim: int = 512,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+        self,
+        context_length: int = 77,
+        vocab_size: int = 49408,
+        width: int = 512,
+        heads: int = 8,
+        layers: int = 12,
+        ls_init_value: Optional[float] = None,
+        output_dim: int = 512,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
     ):
         super().__init__()
         self.context_length = context_length
@@ -433,16 +467,17 @@ class TextTransformer(nn.Module):
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
-        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+        self.register_buffer("attn_mask", self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
 
     def init_parameters(self):
+        """Initialize parameters."""
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
 
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
+        proj_std = (self.transformer.width**-0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.transformer.width**-0.5
         fc_std = (2 * self.transformer.width) ** -0.5
         for block in self.transformer.resblocks:
             nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
@@ -451,7 +486,7 @@ class TextTransformer(nn.Module):
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+            nn.init.normal_(self.text_projection, std=self.transformer.width**-0.5)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -466,6 +501,8 @@ class TextTransformer(nn.Module):
         return mask
 
     def forward(self, text):
+        """Forward pass."""
+
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]

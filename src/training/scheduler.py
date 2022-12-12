@@ -1,3 +1,5 @@
+"""Learning rate scheduler."""
+
 import numpy as np
 
 
@@ -11,6 +13,8 @@ def _warmup_lr(base_lr, warmup_length, step):
 
 
 def cosine_lr(optimizer, base_lr, warmup_length, steps):
+    """Cosine learning rate scheduler."""
+
     def _lr_adjuster(step):
         if step < warmup_length:
             lr = _warmup_lr(base_lr, warmup_length, step)
@@ -20,4 +24,5 @@ def cosine_lr(optimizer, base_lr, warmup_length, steps):
             lr = 0.5 * (1 + np.cos(np.pi * e / es)) * base_lr
         assign_learning_rate(optimizer, lr)
         return lr
+
     return _lr_adjuster

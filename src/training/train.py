@@ -1,3 +1,5 @@
+"""Training loop for Open-CLIP"""
+
 import json
 import logging
 import math
@@ -19,7 +21,7 @@ from .zero_shot import zero_shot_eval
 from .precision import get_autocast
 
 
-class AverageMeter(object):
+class AverageMeter:
     """Computes and stores the average and current value"""
 
     def __init__(self):
@@ -39,7 +41,7 @@ class AverageMeter(object):
 
 
 def unwrap_model(model):
-    if hasattr(model, 'module'):
+    if hasattr(model, "module"):
         return model.module
     else:
         return model
@@ -53,6 +55,7 @@ def backward(total_loss, scaler):
 
 
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
+    """Train one epoch of the model."""
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
@@ -64,10 +67,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         cache_labels=True,
         rank=args.rank,
         world_size=args.world_size,
-        use_horovod=args.horovod)
+        use_horovod=args.horovod,
+    )
 
-    data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
-    dataloader = data['train'].dataloader
+    data["train"].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
+    dataloader = data["train"].dataloader
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
@@ -124,9 +128,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 with autocast():
                     chunk_image_features, chunk_text_features, logit_scale = model(images, texts)
                     image_features = torch.cat(
-                        accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
+                        accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1 :]
+                    )
                     text_features = torch.cat(
-                        accum_text_features[:j] + [chunk_text_features] + accum_text_features[j + 1:])
+                        accum_text_features[:j] + [chunk_text_features] + accum_text_features[j + 1 :]
+                    )
                     total_loss = loss(image_features, text_features, logit_scale)
                 backward(total_loss, scaler)
 
@@ -185,15 +191,15 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 "batch_time": batch_time_m.val,
                 "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
                 "scale": logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
+                "lr": optimizer.param_groups[0]["lr"],
             }
             for name, val in log_data.items():
                 name = "train/" + name
                 if tb_writer is not None:
                     tb_writer.add_scalar(name, val, step)
                 if args.wandb:
-                    assert wandb is not None, 'Please install wandb.'
-                    wandb.log({name: val, 'step': step})
+                    assert wandb is not None, "Please install wandb."
+                    wandb.log({name: val, "step": step})
 
             # resetting batch / data time meters per log window
             batch_time_m.reset()
@@ -202,6 +208,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
 
 def evaluate(model, data, epoch, args, tb_writer=None):
+    """Evaluate model on validation set."""
     metrics = {}
     if not is_master(args):
         return metrics
@@ -214,8 +221,8 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
 
-    if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        dataloader = data['val'].dataloader
+    if "val" in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
+        dataloader = data["val"].dataloader
         num_samples = 0
         samples_per_val = dataloader.num_samples
 
@@ -242,8 +249,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                     batch_size = images.shape[0]
                     labels = torch.arange(batch_size, device=device).long()
                     total_loss = (
-                        F.cross_entropy(logits_per_image, labels) +
-                        F.cross_entropy(logits_per_text, labels)
+                        F.cross_entropy(logits_per_image, labels) + F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
                 cumulative_loss += total_loss * batch_size
@@ -251,7 +257,8 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Loss: {cumulative_loss / num_samples:.6f}\t")
+                        f"Loss: {cumulative_loss / num_samples:.6f}\t"
+                    )
 
             val_metrics = get_metrics(
                 image_features=torch.cat(all_image_features),
@@ -259,36 +266,33 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 logit_scale=logit_scale.cpu(),
             )
             loss = cumulative_loss / num_samples
-            metrics.update(
-                {**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
-            )
+            metrics.update({**val_metrics, "val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples})
 
     if not metrics:
         return metrics
 
-    logging.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
+    logs = "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
+    logging.info(f"Eval Epoch: {epoch}  {logs}")
 
     if args.save_logs:
         for name, val in metrics.items():
             if tb_writer is not None:
                 tb_writer.add_scalar(f"val/{name}", val, epoch)
 
-        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
+        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+", encoding="utf8") as f:
             f.write(json.dumps(metrics))
             f.write("\n")
 
     if args.wandb:
-        assert wandb is not None, 'Please install wandb.'
+        assert wandb is not None, "Please install wandb."
         for name, val in metrics.items():
-            wandb.log({f"val/{name}": val, 'epoch': epoch})
+            wandb.log({f"val/{name}": val, "epoch": epoch})
 
     return metrics
 
 
 def get_metrics(image_features, text_features, logit_scale):
+    """Compute metrics for image-text retrieval."""
     metrics = {}
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()

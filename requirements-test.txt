@@ -2,3 +2,7 @@ pytest-split==0.8.0
 pytest==7.2.0
 transformers
 timm==0.6.11
+black==22.3.0
+mypy==0.991
+pylint==2.13.4
+types-requests

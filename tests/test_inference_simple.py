@@ -1,13 +1,16 @@
-
 import torch
 from PIL import Image
 from open_clip.factory import get_tokenizer
 import pytest
 import open_clip
 import os
+
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-@pytest.mark.parametrize("model_type,pretrained", [("ViT-B-32-quickgelu", "laion400m_e32"), ("roberta-ViT-B-32", "laion2b_s12b_b32k")])
+
+@pytest.mark.parametrize(
+    "model_type,pretrained", [("ViT-B-32-quickgelu", "laion400m_e32"), ("roberta-ViT-B-32", "laion2b_s12b_b32k")]
+)
 def test_inference_simple(model_type, pretrained):
     model, _, preprocess = open_clip.create_model_and_transforms(model_type, pretrained=pretrained, jit=False)
     tokenizer = get_tokenizer(model_type)

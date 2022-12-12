@@ -2,6 +2,14 @@ install: ## [Local development] Upgrade pip, install requirements, install packa
 	python -m pip install -U pip
 	python -m pip install -e .
 
+black: ## [Local development] Auto-format python code using black
+	python -m black -l 120 .
+
+lint: ## [Local development] Run mypy, pylint and black
+	python -m black --check -l 120 src
+	python -m mypy src
+	python -m pylint src
+
 install-training:
 	python -m pip install -r requirements-training.txt
 

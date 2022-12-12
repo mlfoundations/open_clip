@@ -1,14 +1,19 @@
+"""Logging utilities."""
+
 import logging
 
 
 def setup_logging(log_file, level, include_host=False):
+    """Setup logging to console and file."""
     if include_host:
-        import socket
+        import socket  # pylint: disable=import-outside-toplevel
+
         hostname = socket.gethostname()
         formatter = logging.Formatter(
-            f'%(asctime)s |  {hostname} | %(levelname)s | %(message)s', datefmt='%Y-%m-%d,%H:%M:%S')
+            f"%(asctime)s |  {hostname} | %(levelname)s | %(message)s", datefmt="%Y-%m-%d,%H:%M:%S"
+        )
     else:
-        formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s', datefmt='%Y-%m-%d,%H:%M:%S')
+        formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d,%H:%M:%S")
 
     logging.root.setLevel(level)
     loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
@@ -23,4 +28,3 @@ def setup_logging(log_file, level, include_host=False):
         file_handler = logging.FileHandler(filename=log_file)
         file_handler.setFormatter(formatter)
         logging.root.addHandler(file_handler)
-

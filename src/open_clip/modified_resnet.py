@@ -1,4 +1,8 @@
+"""Modified resnet"""
+
 from collections import OrderedDict
+
+from typing import Optional
 
 import torch
 from torch import nn
@@ -8,6 +12,8 @@ from open_clip.utils import freeze_batch_norm_2d
 
 
 class Bottleneck(nn.Module):
+    """Bottleneck block for ResNet"""
+
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1):
@@ -33,13 +39,18 @@ class Bottleneck(nn.Module):
 
         if stride > 1 or inplanes != planes * Bottleneck.expansion:
             # downsampling layer is prepended with an avgpool, and the subsequent convolution has stride 1
-            self.downsample = nn.Sequential(OrderedDict([
-                ("-1", nn.AvgPool2d(stride)),
-                ("0", nn.Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False)),
-                ("1", nn.BatchNorm2d(planes * self.expansion))
-            ]))
+            self.downsample = nn.Sequential(
+                OrderedDict(
+                    [
+                        ("-1", nn.AvgPool2d(stride)),
+                        ("0", nn.Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False)),
+                        ("1", nn.BatchNorm2d(planes * self.expansion)),
+                    ]
+                )
+            )
 
     def forward(self, x: torch.Tensor):
+        """Forward pass"""
         identity = x
 
         out = self.act1(self.bn1(self.conv1(x)))
@@ -56,9 +67,11 @@ class Bottleneck(nn.Module):
 
 
 class AttentionPool2d(nn.Module):
-    def __init__(self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: int = None):
+    """Attention pooling layer"""
+
+    def __init__(self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: Optional[int] = None):
         super().__init__()
-        self.positional_embedding = nn.Parameter(torch.randn(spacial_dim ** 2 + 1, embed_dim) / embed_dim ** 0.5)
+        self.positional_embedding = nn.Parameter(torch.randn(spacial_dim**2 + 1, embed_dim) / embed_dim**0.5)
         self.k_proj = nn.Linear(embed_dim, embed_dim)
         self.q_proj = nn.Linear(embed_dim, embed_dim)
         self.v_proj = nn.Linear(embed_dim, embed_dim)
@@ -66,11 +79,14 @@ class AttentionPool2d(nn.Module):
         self.num_heads = num_heads
 
     def forward(self, x):
+        """Forward pass"""
         x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3]).permute(2, 0, 1)  # NCHW -> (HW)NC
         x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (HW+1)NC
         x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (HW+1)NC
         x, _ = F.multi_head_attention_forward(
-            query=x, key=x, value=x,
+            query=x,
+            key=x,
+            value=x,
             embed_dim_to_check=x.shape[-1],
             num_heads=self.num_heads,
             q_proj_weight=self.q_proj.weight,
@@ -81,12 +97,12 @@ class AttentionPool2d(nn.Module):
             bias_k=None,
             bias_v=None,
             add_zero_attn=False,
-            dropout_p=0.,
+            dropout_p=0.0,
             out_proj_weight=self.c_proj.weight,
             out_proj_bias=self.c_proj.bias,
             use_separate_proj_weight=True,
             training=self.training,
-            need_weights=False
+            need_weights=False,
         )
 
         return x[0]
@@ -139,8 +155,9 @@ class ModifiedResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def init_parameters(self):
+        """Initialize parameters"""
         if self.attnpool is not None:
-            std = self.attnpool.c_proj.in_features ** -0.5
+            std = self.attnpool.c_proj.in_features**-0.5
             nn.init.normal_(self.attnpool.q_proj.weight, std=std)
             nn.init.normal_(self.attnpool.k_proj.weight, std=std)
             nn.init.normal_(self.attnpool.v_proj.weight, std=std)
@@ -152,7 +169,7 @@ class ModifiedResNet(nn.Module):
                     nn.init.zeros_(param)
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
+        assert unlocked_groups == 0, "partial locking not currently supported for this model"
         for param in self.parameters():
             param.requires_grad = False
         if freeze_bn_stats:

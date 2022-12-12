@@ -1,0 +1,29 @@
+name: Lint
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: Install
+        run: |
+          python3 -m venv .env
+          source .env/bin/activate
+          python -m pip install -U pip
+          make install-test
+      - name: Lint
+        run: |
+          source .env/bin/activate
+          make lint

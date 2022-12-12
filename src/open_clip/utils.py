@@ -1,11 +1,13 @@
+"""Utility functions for OpenClip."""
+
 from itertools import repeat
 import collections.abc
 
-from torch import nn as nn
+from torch import nn
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 
-def freeze_batch_norm_2d(module, module_match={}, name=''):
+def freeze_batch_norm_2d(module, module_match=None, name=""):
     """
     Converts all `BatchNorm2d` and `SyncBatchNorm` layers of provided module into `FrozenBatchNorm2d`. If `module` is
     itself an instance of either `BatchNorm2d` or `SyncBatchNorm`, it is converted into `FrozenBatchNorm2d` and
@@ -21,6 +23,8 @@ def freeze_batch_norm_2d(module, module_match={}, name=''):
 
     Inspired by https://github.com/pytorch/pytorch/blob/a5895f85be0f10212791145bfedc0261d364f103/torch/nn/modules/batchnorm.py#L762
     """
+    if module_match is None:
+        module_match = {}
     res = module
     is_match = True
     if module_match:
@@ -37,7 +41,7 @@ def freeze_batch_norm_2d(module, module_match={}, name=''):
         res.eps = module.eps
     else:
         for child_name, child in module.named_children():
-            full_child_name = '.'.join([name, child_name]) if name else child_name
+            full_child_name = ".".join([name, child_name]) if name else child_name
             new_child = freeze_batch_norm_2d(child, module_match, full_child_name)
             if new_child is not child:
                 res.add_module(child_name, new_child)
@@ -50,6 +54,7 @@ def _ntuple(n):
         if isinstance(x, collections.abc.Iterable):
             return x
         return tuple(repeat(x, n))
+
     return parse
 
 

@@ -1,3 +1,5 @@
+"""Version information for open_clip."""
+
 import requests
 import os
 import multiprocessing as mp
@@ -5,7 +7,6 @@ from io import BytesIO
 import numpy as np
 import PIL
 from PIL import Image
-import pickle
 import sys
 
 
@@ -13,81 +14,82 @@ def grab(line):
     """
     Download a single image from the TSV.
     """
-    uid, split, line = line
+    uid, ssplit, line = line
     try:
-        caption, url = line.split("\t")[:2]
-    except:
+        ccaption, uurl = line.ssplit("\t")[:2]
+    except:  # pylint: disable=bare-except
         print("Parse error")
-        return
+        return None
 
-    if os.path.exists(ROOT+"/%s/%d/%d.jpg"%(split,uid%1000,uid)):
+    if os.path.exists(f"{ROOT}/{ssplit}/{uid % 1000}/{uid}.jpg"):
         print("Finished", uid)
-        return uid, caption, url
+        return uid, ccaption, uurl
 
     # Let's not crash if anything weird happens
     try:
-        dat = requests.get(url, timeout=20)
+        dat = requests.get(uurl, timeout=20)
         if dat.status_code != 200:
-            print("404 file", url)
-            return
+            print("404 file", uurl)
+            return None
 
         # Try to parse this as an Image file, we'll fail out if not
         im = Image.open(BytesIO(dat.content))
         im.thumbnail((512, 512), PIL.Image.BICUBIC)
-        if min(*im.size) < max(*im.size)/3:
-            print("Too small", url)
-            return
+        if min(*im.size) < max(*im.size) / 3:
+            print("Too small", uurl)
+            return None
 
-        im.save(ROOT+"/%s/%d/%d.jpg"%(split,uid%1000,uid))
+        im.save(f"{ROOT}/{ssplit}/{uid % 1000}/{uid}.jpg")
 
         # Another try/catch just because sometimes saving and re-loading
         # the image is different than loading it once.
         try:
-            o = Image.open(ROOT+"/%s/%d/%d.jpg"%(split,uid%1000,uid))
+            o = Image.open(f"{ROOT}/{ssplit}/{uid % 1000}/{uid}.jpg")
             o = np.array(o)
 
-            print("Success", o.shape, uid, url)
-            return uid, caption, url
-        except:
-            print("Failed", uid, url)
-            
-    except Exception as e:
+            print("Success", o.shape, uid, uurl)
+            return uid, ccaption, uurl
+        except:  # pylint: disable=bare-except
+            print("Failed", uid, uurl)
+
+    except Exception as e:  # pylint: disable=broad-except
         print("Unknown error", e)
         pass
+    return None
+
 
 if __name__ == "__main__":
     ROOT = "cc_data"
 
     if not os.path.exists(ROOT):
         os.mkdir(ROOT)
-        os.mkdir(os.path.join(ROOT,"train"))
-        os.mkdir(os.path.join(ROOT,"val"))
+        os.mkdir(os.path.join(ROOT, "train"))
+        os.mkdir(os.path.join(ROOT, "val"))
         for i in range(1000):
-            os.mkdir(os.path.join(ROOT,"train", str(i)))
-            os.mkdir(os.path.join(ROOT,"val", str(i)))
+            os.mkdir(os.path.join(ROOT, "train", str(i)))
+            os.mkdir(os.path.join(ROOT, "val", str(i)))
 
-    
-    p = mp.Pool(300)
-    
-    for tsv in sys.argv[1:]:
-        print("Processing file", tsv)
-        assert 'val' in tsv.lower() or 'train' in tsv.lower()
-        split = 'val' if 'val' in tsv.lower() else 'train'
-        results = p.map(grab,
-                        [(i,split,x) for i,x in enumerate(open(tsv).read().split("\n"))])
-        
-        out = open(tsv.replace(".tsv","_output.csv"),"w")
-        out.write("title\tfilepath\n")
-        
-        for row in results:
-            if row is None: continue
-            id, caption, url = row
-            fp = os.path.join(ROOT, split, str(id % 1000), str(id) + ".jpg")
-            if os.path.exists(fp):
-                out.write("%s\t%s\n"%(caption,fp))
-            else:
-                print("Drop", id)
-        out.close()
-        
-    p.close()
+    with mp.Pool(300) as p:
 
+        for tsv in sys.argv[1:]:
+            print("Processing file", tsv)
+            assert "val" in tsv.lower() or "train" in tsv.lower()
+            split = "val" if "val" in tsv.lower() else "train"
+            with open(tsv, "r", encoding="utf8") as f:
+                results = p.map(grab, [(i, split, x) for i, x in enumerate(f.read().split("\n"))])
+
+            with open(tsv.replace(".tsv", "_output.csv"), "w", encoding="utf8") as out:
+                out.write("title\tfilepath\n")
+
+                for row in results:
+                    if row is None:
+                        continue
+                    idd, caption, url = row
+                    fp = os.path.join(ROOT, split, str(idd % 1000), str(idd) + ".jpg")
+                    if os.path.exists(fp):
+                        out.write(f"{caption}\t{fp}\n")
+                    else:
+                        print("Drop", idd)
+                out.close()
+
+        p.close()
