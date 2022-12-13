@@ -31,7 +31,7 @@ from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-from training.optim import LayerDecayValueAssigner, create_optimizer
+from training.optim_factory import create_optimizer
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
@@ -133,22 +133,6 @@ def main(args):
     )
     random_seed(args.seed, args.rank)
 
-    model_without_ddp = model
-    visual_ld = args.visual_ld if args.visual_ld else args.ld
-    text_ld = args.text_ld if args.text_ld else args.ld
-    
-    if visual_ld < 1.0:
-        visual_num_layers = model_without_ddp.visual.get_num_layers()
-        assigner_visual = LayerDecayValueAssigner(list(visual_ld ** (visual_num_layers + 1 - i) for i in range(visual_num_layers + 2)))
-    else:
-        assigner_visual = None
-
-    if text_ld < 1.0:
-        text_num_layers = model_without_ddp.text.get_num_layers()
-        assigner_text = LayerDecayValueAssigner(list(text_ld ** (text_num_layers + 1 - i) for i in range(text_num_layers + 2)))
-    else:
-        assigner_text = None
-
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
@@ -166,10 +150,6 @@ def main(args):
         model.set_grad_checkpointing()
 
     if is_master(args):
-        if assigner_visual is not None:
-            logging.info("Assigned visual lr values = %s" % str(assigner_visual.values))
-        if assigner_text is not None:
-            logging.info("Assigned text lr values = %s" % str(assigner_text.values))
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
@@ -196,11 +176,7 @@ def main(args):
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
-        optimizer = create_optimizer(
-                args,
-                model_without_ddp,
-                assigner_visual=assigner_visual,
-                assigner_text=assigner_text)
+        optimizer = create_optimizer(args, model)
 
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())

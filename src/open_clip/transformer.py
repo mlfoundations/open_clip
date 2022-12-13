@@ -328,6 +328,13 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
+    def get_num_layers(self):
+        return self.transformer.layers
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'positional_embedding', 'class_embedding'}
+
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
@@ -406,6 +413,13 @@ class TextTransformer(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
+
+    def get_num_layers(self):
+        return self.transformer.layers
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'positional_embedding'}
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
