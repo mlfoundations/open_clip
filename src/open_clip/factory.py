@@ -137,7 +137,7 @@ def create_model(
 
         if force_patch_dropout is not None:
             # override the default patch dropout value
-            model_cfg["patch_dropout"] = force_patch_dropout
+            model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
 
         if pretrained_image:
             if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
