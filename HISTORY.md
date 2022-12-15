@@ -1,6 +1,7 @@
 ## 2.8.1
 
 * relax protobuf dependency
+* override the default patch dropout value in 'vision_cfg'
 
 ## 2.8.0
 
