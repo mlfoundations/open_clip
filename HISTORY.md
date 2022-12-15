@@ -1,3 +1,7 @@
+## 2.8.1
+
+* relax protobuf dependency
+
 ## 2.8.0
 
 * better support for HF models
