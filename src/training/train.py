@@ -99,7 +99,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 rep_size = image_features.shape[1]
                 total_loss = loss(image_features, text_features, logit_scale[0])
                 for i in range(1, 4):
-                    total_loss += loss(image_features[:, :(rep_size/(2**i)], text_features[:, :(rep_size/(2**i)], logit_scale[i])
+                    total_loss += loss(image_features[:, :(rep_size//(2**i)], text_features[:, :(rep_size//(2**i)], logit_scale[i])
 
             backward(total_loss, scaler)
         else:
