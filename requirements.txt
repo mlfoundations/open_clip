@@ -5,4 +5,4 @@ ftfy
 tqdm
 huggingface_hub
 sentencepiece
-protobuf>=3.19.5
+protobuf==3.20.*
