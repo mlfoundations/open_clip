@@ -5,4 +5,5 @@ ftfy
 tqdm
 huggingface_hub
 sentencepiece
+transformers
 protobuf==3.20.*
