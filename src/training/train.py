@@ -95,7 +95,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         if args.accum_freq == 1:
             with autocast():
                 image_features, text_features, logit_scale = model(images, texts)
-                total_loss = loss(image_features, text_features, logit_scale)
+                # Hard coding 4 MRL dims -- [dim, dim/2, dim/4, dim/8]
+                rep_size = image_features.shape[1]
+                total_loss = loss(image_features, text_features, logit_scale[0])
+                for i in range(1, 4):
+                    total_loss += loss(image_features[:, :(rep_size/(2**i)], text_features[:, :(rep_size/(2**i)], logit_scale[i])
 
             backward(total_loss, scaler)
         else:
