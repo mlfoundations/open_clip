@@ -1,3 +1,7 @@
+## 2.8.2
+
+* wrapped patchdropout in a torch.nn.Module
+
 ## 2.8.1
 
 * relax protobuf dependency
