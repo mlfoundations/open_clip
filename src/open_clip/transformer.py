@@ -137,9 +137,9 @@ class Attention(nn.Module):
         k = F.linear(k_x, w_k, self.in_proj_bias)
         v = F.linear(v_x, w_v, self.in_proj_bias)
 
-        q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
-        k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
-        v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+        q = q.view(L, N * self.num_heads, -1).transpose(0, 1)
+        k = k.view(L, N * self.num_heads, -1).transpose(0, 1)
+        v = v.view(L, N * self.num_heads, -1).transpose(0, 1)
 
         if self.logit_scale is not None:
             attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))

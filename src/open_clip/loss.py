@@ -44,6 +44,9 @@ def gather_features(
                 all_text_features = torch.cat(gathered_text_features, dim=0)
     else:
         # We gather tensors from all gpus
+        print("in gather_features")
+        print(image_features.requires_grad)
+        print(text_features.requires_grad)
         if gather_with_grad:
             all_image_features = torch.cat(torch.distributed.nn.all_gather(image_features), dim=0)
             all_text_features = torch.cat(torch.distributed.nn.all_gather(text_features), dim=0)
@@ -58,6 +61,10 @@ def gather_features(
                 gathered_text_features[rank] = text_features
             all_image_features = torch.cat(gathered_image_features, dim=0)
             all_text_features = torch.cat(gathered_text_features, dim=0)
+
+        print('after gather')
+        print(all_image_features.requires_grad)
+        print(all_text_features.requires_grad)
 
     return all_image_features, all_text_features
 
@@ -151,18 +158,9 @@ class CoCaLoss(ClipLoss):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
-
-        if self.world_size > 1:
-            all_logits, all_labels = gather_features(
-                logits.contiguous(), labels.contiguous(),
-                self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
-        else:
-            all_logits = logits
-            all_labels = labels
-
         caption_loss = self.caption_loss(
-            all_logits.permute(0, 2, 1).contiguous(),
-            all_labels
+            logits.permute(0, 2, 1),
+            labels,
         )
         caption_loss = caption_loss * self.caption_loss_weight
 
