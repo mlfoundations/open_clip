@@ -181,8 +181,7 @@ class CoCa(nn.Module):
 
         return image_latent, x[:, 1:]
 
-    def forward(self, image, text,):
-
+    def forward(self, image, text):
         text, labels = text[:, :-1], text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text)
@@ -191,4 +190,4 @@ class CoCa(nn.Module):
         text_tokens = self.multimodal_decoder(text_tokens, image_tokens)
         logits = self.to_logits(text_tokens)
 
-        return text_latents, image_latents, logits, labels, self.logit_scale
+        return image_latents, text_latents, logits, labels, self.logit_scale.exp()
