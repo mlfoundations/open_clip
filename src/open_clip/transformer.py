@@ -334,7 +334,8 @@ class Transformer(nn.Module):
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                x = checkpoint(r, x, attn_mask=attn_mask)
+                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
+                x = checkpoint(r, x, None, None, attn_mask)
             else:
                 x = r(x, attn_mask=attn_mask)
         return x
@@ -619,14 +620,15 @@ class MultimodalTransformer(Transformer):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def forward(self, text_embs, image_embs):
+    def forward(self, image_embs, text_embs):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
 
         for r, ca in zip(self.resblocks, self.cross_attn):
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                text_embs = checkpoint(r, text_embs, attn_mask=self.attn_mask)
-                text_embs = checkpoint(ca, text_embs, k_x=image_embs, v_x=image_embs)
+                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
+                text_embs = checkpoint(r, text_embs, None, None, self.attn_mask)
+                text_embs = checkpoint(ca, text_embs, image_embs, image_embs, None)
             else:
                 text_embs = r(text_embs, attn_mask=self.attn_mask)
                 text_embs = ca(text_embs, k_x=image_embs, v_x=image_embs)

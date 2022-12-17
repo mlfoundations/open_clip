@@ -119,35 +119,11 @@ class CoCa(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def _repeat(self, t, N):
-        return t.reshape(1, 1, -1).repeat(N, 1, 1)
-
-    def encode_text(self, text, normalize=True):
-        cast_dtype = self.transformer.get_cast_dtype()
-
-        # cls_mask = (text!=self.pad_id).unsqueeze(1)
-        # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
-        # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
-
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
-        x = x + self.positional_embedding.to(cast_dtype)
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=self.attn_mask)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), :] @ self.text_projection
-
-        cls_emb = x[torch.arange(x.shape[0]), -1]
-        token_emb = x[torch.arange(x.shape[0]), :-1]
-
-        cls_emb = self.ln_final(cls_emb)
-        text_latent = self.to_text_latent(cls_emb)
-        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-
-        return text_latent, token_emb
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.visual.set_grad_checkpointing(enable)
+        self.transformer.grad_checkpointing = enable
+        self.multimodal_decoder.grad_checkpointing = enable
 
     def encode_image(self, images=None, normalize=True):
         x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
@@ -181,13 +157,44 @@ class CoCa(nn.Module):
 
         return image_latent, x[:, 1:]
 
+    def _repeat(self, t, N):
+        return t.reshape(1, 1, -1).repeat(N, 1, 1)
+
+    def encode_text(self, text, normalize=True):
+        cast_dtype = self.transformer.get_cast_dtype()
+
+        # cls_mask = (text!=self.pad_id).unsqueeze(1)
+        # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
+        # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
+
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
+        x = x + self.positional_embedding.to(cast_dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), :] @ self.text_projection
+
+        cls_emb = x[torch.arange(x.shape[0]), -1]
+        token_emb = x[torch.arange(x.shape[0]), :-1]
+
+        cls_emb = self.ln_final(cls_emb)
+        text_latent = self.to_text_latent(cls_emb)
+        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
+
+        return text_latent, token_emb
+
+
     def forward(self, image, text):
         text, labels = text[:, :-1], text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text)
         image_latents, image_tokens = self.encode_image(image)
 
-        text_tokens = self.multimodal_decoder(text_tokens, image_tokens)
+        text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
         logits = self.to_logits(text_tokens)
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
