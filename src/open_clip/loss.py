@@ -44,9 +44,6 @@ def gather_features(
                 all_text_features = torch.cat(gathered_text_features, dim=0)
     else:
         # We gather tensors from all gpus
-        print("in gather_features")
-        print(image_features.requires_grad)
-        print(text_features.requires_grad)
         if gather_with_grad:
             all_image_features = torch.cat(torch.distributed.nn.all_gather(image_features), dim=0)
             all_text_features = torch.cat(torch.distributed.nn.all_gather(text_features), dim=0)
@@ -61,10 +58,6 @@ def gather_features(
                 gathered_text_features[rank] = text_features
             all_image_features = torch.cat(gathered_image_features, dim=0)
             all_text_features = torch.cat(gathered_text_features, dim=0)
-
-        print('after gather')
-        print(all_image_features.requires_grad)
-        print(all_text_features.requires_grad)
 
     return all_image_features, all_text_features
 
