@@ -1,13 +1,13 @@
 # OpenCLIP
 
-[[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+[[Paper]](https://arxiv.org/abs/2212.07143) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset.
+We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 
 We have trained:
   * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
@@ -71,16 +71,7 @@ To download datasets as webdataset, we recommend [img2dataset](https://github.co
 
 ### Conceptual Captions
 
-OpenCLIP reads a CSV file with two columns: a path to an image, and a text caption. The names of the columns are passed as an argument to `main.py`.
-
-The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the script from our repository:
-
-```bash
-python3 src/data/gather_cc.py path/to/Train_GCC-training.tsv path/to/Validation_GCC-1.1.0-Validation.tsv
-```
-
-Our training set contains 2.89M images, and our validation set contains 13K images.
-
+See [cc3m img2dataset example](https://github.com/rom1504/img2dataset/blob/main/dataset_examples/cc3m.md)
 
 ### YFCC and other datasets
 
@@ -111,15 +102,26 @@ If you want to make changes to contribute code, you can close openclip then run 
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
+You may run `make install-training` to install training deps
+
+#### Testing
 
 Test can be run with `make install-test` then `make test`
 
 `python -m pytest -x -s -v tests -k "training"` to run a specific test
 
-When introducing new models, `python tests/util_test.py --model=xlm-roberta-large-ViT-H-14` can generate new output expected data.
+Running regression tests against a specific git revision or tag:
+1. Generate testing data
+    ```sh
+    python tests/util_test.py --model RN50 RN101 --save_model_list models.txt --git_revision 9d31b2ec4df6d8228f370ff20c8267ec6ba39383
+    ```
+    **_WARNING_: This will invoke git and modify your working tree, but will reset it to the current state after data has been generated! \
+    Don't modify your working tree while test data is being generated this way.**
 
-You may run `make install-training` to install training deps
-
+2. Run regression tests
+    ```sh
+    OPEN_CLIP_TEST_REG_MODELS=models.txt python -m pytest -x -s -v -m regression_test
+    ```
 
 ### Sample single-process running code:
 
@@ -159,6 +161,14 @@ numerical results as the naïve method.
 #### Epochs
 
 For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with --dataset-resampled to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
+
+#### Patch Dropout
+
+<a href="https://arxiv.org/abs/2212.00794">Recent research</a> has shown that one can dropout half to three-quarters of the visual tokens, leading to up to 2-3x training speeds without loss of accuracy.
+
+You can set this on your visual transformer config with the key `patch_dropout`.
+
+In the paper, they also finetuned without the patch dropout at the end. You can do this with the command-line argument `--force-patch-dropout 0.`
 
 #### Single-Node
 
@@ -248,7 +258,7 @@ python -m training.main \
 
 ### Training with pre-trained language models as text encoder:
 
-If you wish to use different language models as the text encoder for CLIP you can do so by using one of the huggingface model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
+If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
 ```bash
 python -m training.main \
          --train-data="pipe:aws s3 cp s3://s-mas/cc3m/{00000..00329}.tar -" \
@@ -476,6 +486,19 @@ Future trained models will use nn.GELU.
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
+### Gradient accumulation
+
+To simulate larger batches use `--accum-freq k`. If per gpu batch size, `--batch-size`, is `m`, then the effective batch size will be `k * m * num_gpus`.
+
+When increasing `--accum-freq` from its default of 1, samples/s will remain approximately constant (batch size will double, as will time-per-batch). It is recommended to use other features to reduce batch size such as `--grad-checkpointing --local-loss --gather-with-grad` before increasing `--accum-freq`. `--accum-freq` can be used in addition to these features.
+
+Instead of 1 forward pass per example, there are now 2 forward passes per-example. However, the first is done with `torch.no_grad`.
+
+There is some additional GPU memory required --- the features and data from all `m` batches are stored in memory.
+
+There are also `m` loss computations instead of the usual 1.
+
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
 
 ## Scaling trends
 
@@ -502,7 +525,7 @@ quantifies robustness as accuracy beyond this baseline, i.e., how far a model li
 Even though the CLIP models trained with
 this codebase achieve much lower accuracy than those trained by OpenAI, our models still lie on the same
 trend of improved effective robustness (the purple line). Therefore, we can study what makes
-CLIP robust without requiring industrial-scale compute. 
+CLIP robust without requiring industrial-scale compute.
 
 For more information on effective robustness, please see:
 

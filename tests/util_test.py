@@ -1,10 +1,11 @@
-
 import os
 import random
 import numpy as np
 from PIL import Image
 import torch
-import open_clip
+
+if __name__ != '__main__':
+    import open_clip
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -93,13 +94,14 @@ def create_test_data_for_model(
         pretrained = None,
         precision = 'fp32',
         jit = False,
+        pretrained_hf = False,
         force_quick_gelu = False,
         create_missing_input_data = True,
         batches = 1,
         batch_size = 1,
         overwrite = False
 ):
-    model_id = f'{model_name}_{pretrained}_{precision}'
+    model_id = f'{model_name}_{pretrained or pretrained_hf}_{precision}'
     input_dir, output_dir = get_data_dirs()
     output_file_text = os.path.join(output_dir, f'{model_id}_random_text.pt')
     output_file_image = os.path.join(output_dir, f'{model_id}_random_image.pt')
@@ -114,7 +116,7 @@ def create_test_data_for_model(
             precision = precision,
             jit = jit,
             force_quick_gelu = force_quick_gelu,
-            pretrained_hf = False
+            pretrained_hf = pretrained_hf
     )
     # text
     if overwrite or not text_exists:
@@ -155,66 +157,128 @@ def create_test_data(
         batch_size = 1,
         overwrite = False
 ):
-    models = set(models).difference({
+    models = list(set(models).difference({
             # not available with timm
             # see https://github.com/mlfoundations/open_clip/issues/219
             'timm-convnext_xlarge',
             'timm-vit_medium_patch16_gap_256'
-    })
+    }).intersection(open_clip.list_models()))
+    models.sort()
+    print(f"generating test data for:\n{models}")
     for model_name in models:
+        print(model_name)
         create_test_data_for_model(
                 model_name,
                 batches = batches,
                 batch_size = batch_size,
                 overwrite = overwrite
         )
+    return models
 
+def _sytem_assert(string):
+    assert os.system(string) == 0
 
 def main(args):
+    global open_clip
+    import importlib
+    import shutil
+    import subprocess
     import argparse
-    parser = argparse.ArgumentParser(description="Populate test data directory")
+    parser = argparse.ArgumentParser(description = "Populate test data directory")
     parser.add_argument(
-        "--all",
-        default=False,
-        action='store_true',
-        help="create test data for all models"
+        '-a', '--all',
+        action = 'store_true',
+        help = "create test data for all models"
     )
     parser.add_argument(
-        "--model",
-        default=None,
-        type=str,
-        help="model to create test data for (default: None)"
+        '-m', '--model',
+        type = str,
+        default = [],
+        nargs = '+',
+        help = "model(s) to create test data for"
     )
     parser.add_argument(
-        "--overwrite",
-        default=False,
-        action='store_true',
-        help="overwrite existing data"
+        '-f', '--model_list',
+        type = str,
+        help = "path to a text file containing a list of model names, one model per line"
     )
     parser.add_argument(
-        "--num_batches",
-        default=1,
-        type=int,
-        help="amount of data batches to create (default: 1)"
+        '-s', '--save_model_list',
+        type = str,
+        help = "path to save the list of models that data was generated for"
     )
     parser.add_argument(
-        "--batch_size",
-        default=1,
-        type=int,
-        help="test data batch size (default: 1)"
+        '-g', '--git_revision',
+        type = str,
+        help = "git revision to generate test data for"
+    )
+    parser.add_argument(
+        '--overwrite',
+        action = 'store_true',
+        help = "overwrite existing output data"
+    )
+    parser.add_argument(
+        '-n', '--num_batches',
+        default = 1,
+        type = int,
+        help = "amount of data batches to create (default: 1)"
+    )
+    parser.add_argument(
+        '-b', '--batch_size',
+        default = 1,
+        type = int,
+        help = "test data batch size (default: 1)"
     )
     args = parser.parse_args(args)
-    if not args.all and args.model is None:
+    model_list = []
+    if args.model_list is not None:
+        with open(args.model_list, 'r') as f:
+            model_list = f.read().splitlines()
+    if not args.all and len(args.model) < 1 and len(model_list) < 1:
+        print("error: at least one model name is required")
         parser.print_help()
-        parser.exit()
-    models = open_clip.list_models() if args.all else [args.model]
-    print(f"generating test data for:\n{models}")
-    create_test_data(
-        models,
-        batches = args.num_batches,
-        batch_size = args.batch_size,
-        overwrite = args.overwrite
-    )
+        parser.exit(1)
+    if args.git_revision is not None:
+        stash_output = subprocess.check_output(['git', 'stash']).decode().splitlines()
+        has_stash = len(stash_output) > 0 and stash_output[0] != 'No local changes to save'
+        current_branch = subprocess.check_output(['git', 'branch', '--show-current'])
+        if len(current_branch) < 1:
+            # not on a branch -> detached head
+            current_branch = subprocess.check_output(['git', 'rev-parse', 'HEAD'])
+        current_branch = current_branch.splitlines()[0].decode()
+        try:
+            _sytem_assert(f'git checkout {args.git_revision}')
+        except AssertionError as e:
+            _sytem_assert(f'git checkout -f {current_branch}')
+            if has_stash:
+                os.system(f'git stash pop')
+            raise e
+    open_clip = importlib.import_module('open_clip')
+    models = open_clip.list_models() if args.all else args.model + model_list
+    try:
+        models = create_test_data(
+            models,
+            batches = args.num_batches,
+            batch_size = args.batch_size,
+            overwrite = args.overwrite
+        )
+    finally:
+        if args.git_revision is not None:
+            test_dir = os.path.join(os.path.dirname(__file__), 'data')
+            test_dir_ref = os.path.join(os.path.dirname(__file__), 'data_ref')
+            if os.path.exists(test_dir_ref):
+                shutil.rmtree(test_dir_ref, ignore_errors = True)
+            if os.path.exists(test_dir):
+                os.rename(test_dir, test_dir_ref)
+            _sytem_assert(f'git checkout {current_branch}')
+            if has_stash:
+                os.system(f'git stash pop')
+            os.rename(test_dir_ref, test_dir)
+    if args.save_model_list is not None:
+        print(f"Saving model list as {args.save_model_list}")
+        with open(args.save_model_list, 'w') as f:
+            for m in models:
+                print(m, file=f)
 
 
 if __name__ == '__main__':

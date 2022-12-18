@@ -1,3 +1,21 @@
+## 2.8.2
+
+* wrapped patchdropout in a torch.nn.Module
+
+## 2.8.1
+
+* relax protobuf dependency
+* override the default patch dropout value in 'vision_cfg'
+
+## 2.8.0
+
+* better support for HF models
+* add support for gradient accumulation
+* CI fixes
+* add support for patch dropout
+* add convnext configs
+
+
 ## 2.7.0
 
 * add multilingual H/14 xlm roberta large
