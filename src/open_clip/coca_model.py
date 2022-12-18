@@ -155,7 +155,7 @@ class CoCa(nn.Module):
         image_latent = x[:, 0]
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
 
-        return (image_latent, x[:, 1:]) if return_tokens image_latent
+        return (image_latent, x[:, 1:]) if return_tokens else image_latent
 
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
