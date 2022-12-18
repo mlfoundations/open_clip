@@ -125,7 +125,7 @@ class CoCa(nn.Module):
         self.transformer.grad_checkpointing = enable
         self.multimodal_decoder.grad_checkpointing = enable
 
-    def encode_image(self, images=None, normalize=True):
+    def encode_image(self, images, normalize=True, return_tokens=False):
         x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -155,12 +155,12 @@ class CoCa(nn.Module):
         image_latent = x[:, 0]
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
 
-        return image_latent, x[:, 1:]
+        return (image_latent, x[:, 1:]) if return_tokens image_latent
 
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def encode_text(self, text, normalize=True):
+    def encode_text(self, text, normalize=True, return_tokens=False):
         cast_dtype = self.transformer.get_cast_dtype()
 
         # cls_mask = (text!=self.pad_id).unsqueeze(1)
@@ -185,14 +185,14 @@ class CoCa(nn.Module):
         text_latent = self.to_text_latent(cls_emb)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
-        return text_latent, token_emb
+        return (text_latent, token_emb) if return_tokens else text_latent
 
 
     def forward(self, image, text):
         text, labels = text[:, :-1], text[:, 1:]
 
-        text_latents, text_tokens = self.encode_text(text)
-        image_latents, image_tokens = self.encode_image(image)
+        text_latents, text_tokens = self.encode_text(text, return_tokens=True)
+        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
 
         text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
         logits = self.to_logits(text_tokens)

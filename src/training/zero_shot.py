@@ -19,7 +19,8 @@ def zero_shot_classifier(model, classnames, templates, args):
             if args.distributed and not args.horovod:
                 class_embeddings = model.module.encode_text(texts)
             else:
-                class_embeddings = model.encode_text(texts)
+                texts = texts[:, :-1] # TODO: temp do this bretter
+                class_embeddings, _ = model.encode_text(texts)
             class_embedding = F.normalize(class_embeddings, dim=-1).mean(dim=0)
             class_embedding /= class_embedding.norm()
             zeroshot_weights.append(class_embedding)
@@ -49,7 +50,7 @@ def run(model, classifier, dataloader, args):
                 if args.distributed and not args.horovod:
                     image_features = model.module.encode_image(images)
                 else:
-                    image_features = model.encode_image(images)
+                    image_features, _ = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
                 logits = 100. * image_features @ classifier
 
