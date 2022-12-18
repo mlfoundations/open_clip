@@ -44,32 +44,36 @@ class LayerScale(nn.Module):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
 
 
-class PatchDropout:
+class PatchDropout(nn.Module):
     """
     https://arxiv.org/abs/2212.00794
     """
 
     def __init__(self, prob, exclude_first_token=True):
+        super().__init__()
         assert 0 <= prob < 1.
         self.prob = prob
         self.exclude_first_token = exclude_first_token  # exclude CLS token
 
-    def __call__(self, x, is_training):
-        if not is_training or self.prob == 0.:
+    def forward(self, x):
+        if not self.training or self.prob == 0.:
             return x
 
         if self.exclude_first_token:
             cls_tokens, x = x[:, :1], x[:, 1:]
+        else:
+            cls_tokens = torch.jit.annotate(torch.Tensor, x[:, :1])
 
-        batch, num_tokens, _, device = *x.shape, x.device
+        batch = x.size()[0]
+        num_tokens = x.size()[1]
 
-        batch_indices = torch.arange(batch, device=device)
+        batch_indices = torch.arange(batch)
         batch_indices = batch_indices[..., None]
 
         keep_prob = 1 - self.prob
         num_patches_keep = max(1, int(num_tokens * keep_prob))
 
-        rand = torch.randn(batch, num_tokens, device=device)
+        rand = torch.randn(batch, num_tokens)
         patch_indices_keep = rand.topk(num_patches_keep, dim=-1).indices
 
         x = x[batch_indices, patch_indices_keep]
@@ -368,7 +372,7 @@ class VisionTransformer(nn.Module):
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
 
         # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
-        self.patch_dropout = PatchDropout(patch_dropout)
+        self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
 
         self.ln_pre = norm_layer(width)
         self.transformer = Transformer(
@@ -454,7 +458,7 @@ class VisionTransformer(nn.Module):
         x = x + self.positional_embedding.to(x.dtype)
 
         # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
-        x = self.patch_dropout(x, self.training)
+        x = self.patch_dropout(x)
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
