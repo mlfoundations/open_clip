@@ -68,17 +68,20 @@ def main(args):
     args.distributed = False
     args.local_rank, args.rank, args.world_size = world_info_from_env()
 
-    args.log_path = None
-    if is_master(args, local=args.log_local):
-        log_base_path = os.path.join(args.logs, args.name)
-        os.makedirs(log_base_path, exist_ok=True)
-        log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
-        args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path):
+    log_base_path = os.path.join(args.logs, args.name)
+    os.makedirs(log_base_path, exist_ok=True)
+    log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
+    args.log_path = os.path.join(log_base_path, log_filename)
+    if os.path.exists(args.log_path):
+        if not args.save_most_recent:
             print(
-                "Error. Experiment already exists. Use --name {} to specify a new experiment."
+                "Error. Experimetn exists and can only autoresume if saving most recent."
             )
             return -1
+        print('Experiment already exists, auto-resuming.')
+        cpdir = os.path.join(args.logs, args.name, 'checkpoints/epoch_latest.pt')
+        if os.path.exists(cpdir):
+            args.resume = cpdir
 
     # Set logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
