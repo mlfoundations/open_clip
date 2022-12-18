@@ -161,6 +161,7 @@ class CoCa(nn.Module):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
     def encode_text(self, text, normalize=True, return_tokens=False):
+        text = text[:, :-1] # make space for CLS token
         cast_dtype = self.transformer.get_cast_dtype()
 
         # cls_mask = (text!=self.pad_id).unsqueeze(1)
@@ -187,9 +188,8 @@ class CoCa(nn.Module):
 
         return (text_latent, token_emb) if return_tokens else text_latent
 
-
     def forward(self, image, text):
-        text, labels = text[:, :-1], text[:, 1:]
+        labels = text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
         image_latents, image_tokens = self.encode_image(image, return_tokens=True)
