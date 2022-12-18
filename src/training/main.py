@@ -75,10 +75,10 @@ def main(args):
     if os.path.exists(args.log_path):
         if not args.save_most_recent:
             print(
-                "Error. Experimetn exists and can only autoresume if saving most recent."
+                "Error. Experiment exists and can only autoresume if saving most recent."
             )
             return -1
-        print('Experiment already exists, auto-resuming.')
+        print('Warning. Experiment already exists, auto-resuming.')
         cpdir = os.path.join(args.logs, args.name, 'checkpoints/epoch_latest.pt')
         if os.path.exists(cpdir):
             args.resume = cpdir
