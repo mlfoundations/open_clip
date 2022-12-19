@@ -106,15 +106,14 @@ def main(args):
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
+    args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
     if is_master(args):
         args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
-        args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
         for dirname in [args.tensorboard_path, args.checkpoint_path]:
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
     else:
         args.tensorboard_path = ''
-        args.checkpoint_path = ''
 
     if args.copy_codebase:
         copy_codebase(args)
@@ -221,7 +220,7 @@ def main(args):
     start_epoch = 0
     if args.resume is not None:
         if args.resume == 'latest':
-            logging.info(f"=> Finding most recent checkpoint to resume from...")
+            logging.info(f"=> Finding most recent checkpoint to resume from in {args.checkpoint_path}...")
             args.resume = get_latest_checkpoint(args.checkpoint_path)
 
         if args.resume and os.path.isfile(args.resume):
