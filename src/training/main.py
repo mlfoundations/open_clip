@@ -1,5 +1,7 @@
+import glob
 import logging
 import os
+import re
 import sys
 import random
 from datetime import datetime
@@ -39,6 +41,20 @@ def random_seed(seed=42, rank=0):
     random.seed(seed + rank)
 
 
+def natural_key(string_):
+    """See http://www.codinghorror.com/blog/archives/001018.html"""
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
+
+
+def get_latest_checkpoint(path: str):
+    # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
+    checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+    if checkpoints:
+        checkpoints = sorted(checkpoints, key=natural_key)
+        return checkpoints[-1]
+    return None
+
+
 def main(args):
     args = parse_args(args)
 
@@ -74,11 +90,12 @@ def main(args):
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path):
-            print(
-                "Error. Experiment already exists. Use --name {} to specify a new experiment."
-            )
-            return -1
+
+    if args.log_path and os.path.exists(args.log_path) and args.resume != 'latest':
+        print(
+            "Error. Experiment already exists. Use --name {} to specify a new experiment."
+        )
+        return -1
 
     # Set logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
@@ -203,7 +220,11 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
+        if args.resume == 'latest':
+            logging.info(f"=> Finding most recent checkpoint to resume from...")
+            args.resume = get_latest_checkpoint(args.checkpoint_path)
+
+        if args.resume and os.path.isfile(args.resume):
             checkpoint = torch.load(args.resume, map_location='cpu')
             if 'epoch' in checkpoint:
                 # resuming a train checkpoint w/ epoch and optimizer state
@@ -293,6 +314,7 @@ def main(args):
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
             if args.save_most_recent:
+                # FIXME can get rid of this w/ search based resume?
                 torch.save(
                     checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
