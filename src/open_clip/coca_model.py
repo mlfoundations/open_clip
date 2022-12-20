@@ -30,7 +30,7 @@ def _build_input_dependent_text_tower(
     multimodal_cfg: MultimodalCfg,
     quick_gelu: bool = False,
     cast_dtype: Optional[torch.dtype] = None,
-    multimodal:bool = True
+    multimodal: bool = True,
 ):
 
     if not multimodal:
@@ -38,16 +38,14 @@ def _build_input_dependent_text_tower(
             embed_dim=embed_dim,
             text_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype
+            cast_dtype=cast_dtype,
         )
 
     if isinstance(multimodal_cfg, dict):
         multimodal_cfg = MultimodalCfg(**multimodal_cfg)
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
-    norm_layer = (
-        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
-    )
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
 
     text = MultimodalTransformer(
         context_length=multimodal_cfg.context_length,
@@ -76,14 +74,11 @@ class CoCa(nn.Module):
     ):
         super().__init__()
 
+        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
 
-        norm_layer = (
-            LayerNormFp32
-            if cast_dtype in (torch.float16, torch.bfloat16)
-            else LayerNorm
+        text = _build_input_dependent_text_tower(
+            embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False
         )
-
-        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
         self.transformer = text.transformer
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
@@ -92,10 +87,9 @@ class CoCa(nn.Module):
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
+        self.heads = text_cfg["heads"]
         self.cls_token = nn.Parameter(torch.randn(embed_dim))
-        self.visual = _build_vision_tower(
-            embed_dim, vision_cfg, quick_gelu, cast_dtype
-        )
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
         self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
@@ -107,7 +101,9 @@ class CoCa(nn.Module):
 
         self.img_attn_pool_norm = norm_layer(embed_dim)
 
-        self.dim_latents = multimodal_cfg.dim_latents if multimodal_cfg.dim_latents else multimodal_cfg.width
+        self.dim_latents = (
+            multimodal_cfg.dim_latents if multimodal_cfg.dim_latents else multimodal_cfg.width
+        )
         self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
         self.to_logits = nn.Sequential(
@@ -118,6 +114,7 @@ class CoCa(nn.Module):
         self.to_logits[-1].weight = self.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.pad_id = 0
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -132,9 +129,7 @@ class CoCa(nn.Module):
         x = torch.cat(
             [
                 self.visual.class_embedding.to(x.dtype)
-                + torch.zeros(
-                    x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device
-                ),
+                + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
                 x,
             ],
             dim=1,
@@ -160,19 +155,31 @@ class CoCa(nn.Module):
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
+    def _build_cls_mask(self, text, cast_dtype):
+        cls_mask = (text != self.pad_id).unsqueeze(1)
+        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
+        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
+        additive_mask.fill_(0)
+        additive_mask.masked_fill_(~cls_mask, float("-inf"))
+        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
+        return additive_mask
+
     def encode_text(self, text, normalize=True, return_tokens=False):
-        text = text[:, :-1] # make space for CLS token
+        text = text[:, :-1]  # make space for CLS token
         cast_dtype = self.transformer.get_cast_dtype()
 
         # cls_mask = (text!=self.pad_id).unsqueeze(1)
-        # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
+        attn_mask = self.attn_mask[None, :].expand(
+            text.shape[0] * self.heads, *self.attn_mask.shape
+        )
+        cls_mask = self._build_cls_mask(text, cast_dtype)
         # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = self.transformer(x, attn_mask=attn_mask + cls_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
