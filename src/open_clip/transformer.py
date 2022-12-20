@@ -124,12 +124,26 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        L, N, C = x.shape
-        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-        q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
-        k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
-        v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+    def forward(self,
+            q_x,
+            k_x: Optional[torch.Tensor] = None,
+            v_x: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        L, N, C = q_x.shape
+        k_x = k_x if k_x is not None else q_x
+        v_x = v_x if v_x is not None else q_x
+
+        w_q, w_k, w_v = self.in_proj_weight.split(3, dim=0)
+
+        q = F.linear(q_x, w_q, self.in_proj_bias)
+        k = F.linear(k_x, w_k, self.in_proj_bias)
+        v = F.linear(v_x, w_v, self.in_proj_bias)
+
+        q = q.view(L, N * self.num_heads, -1).transpose(0, 1)
+        k = k.view(L, N * self.num_heads, -1).transpose(0, 1)
+        v = v.view(L, N * self.num_heads, -1).transpose(0, 1)
 
         if self.logit_scale is not None:
             attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))
@@ -159,6 +173,26 @@ class Attention(nn.Module):
         x = self.out_drop(x)
         return x
 
+class AttentionalPooler(nn.Module):
+    def __init__(
+            self,
+            d_model: int,
+            n_head: int = 8,
+            n_queries: int = 256,
+    ):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(n_queries, d_model))
+        self.attn = nn.MultiheadAttention(d_model, n_head)
+
+    def forward(self, k: torch.Tensor, v: torch.Tensor):
+        k, v = k.permute(1, 0, 2), v.permute(1, 0 ,2) # NLD -> LND
+        N = k.shape[1]
+        out = self.attn(self._repeat(self.query, N), k, v, need_weights=False)[0]
+        return out.permute(1, 0, 2) # LND -> NLD
+
+    def _repeat(self, query, N):
+        return query.unsqueeze(1).repeat(1, N, 1)
+
 
 class ResidualAttentionBlock(nn.Module):
     def __init__(
@@ -169,12 +203,15 @@ class ResidualAttentionBlock(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            is_cross_attention: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        if is_cross_attention:
+            self.ln_1_kv = norm_layer(d_model)
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -185,12 +222,33 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
-    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        attn_mask = attn_mask.to(x.dtype) if attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+    def attention(
+        self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ls_1(self.attention(self.ln_1(x), attn_mask=attn_mask))
+        k_x = k_x if k_x is not None else q_x
+        v_x = v_x if v_x is not None else q_x
+
+        attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
+        return self.attn(
+            q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
+        )[0]
+
+    def forward(self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        k_x = self.ln_1_kv(k_x) if k_x is not None else None
+        v_x = self.ln_1_kv(v_x) if v_x is not None else None
+
+        x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
@@ -208,10 +266,14 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_heads: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
+            is_cross_attention: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
+        if is_cross_attention:
+            self.ln_1_kv = norm_layer(d_model)
+
         self.attn = Attention(
             d_model, n_head,
             scaled_cosine=scale_cosine_attn,
@@ -230,8 +292,20 @@ class CustomResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
+    def forward(
+        self,
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        k_x = self.ln_1_kv(k_x) if k_x is not None else None
+        v_x = self.ln_1_kv(v_x) if v_x is not None else None
+
+        x = q_x + self.ls_1(
+            self.ln_attn(self.attn(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
+        )
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
@@ -264,11 +338,11 @@ class Transformer(nn.Module):
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                x = checkpoint(r, x, attn_mask)
+                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
+                x = checkpoint(r, x, None, None, attn_mask)
             else:
                 x = r(x, attn_mask=attn_mask)
         return x
-
 
 class VisionTransformer(nn.Module):
     def __init__(
@@ -403,7 +477,6 @@ class VisionTransformer(nn.Module):
 
         return x
 
-
 class TextTransformer(nn.Module):
 
     def __init__(
@@ -483,5 +556,88 @@ class TextTransformer(nn.Module):
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        return x
+
+
+class MultimodalTransformer(Transformer):
+    def __init__(
+            self,
+            width: int,
+            layers: int,
+            heads: int,
+            context_length: int = 77,
+            mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = LayerNorm,
+            output_dim: int = 512,
+    ):
+
+        super().__init__(
+            width=width,
+            layers=layers,
+            heads=heads,
+            mlp_ratio=mlp_ratio,
+            ls_init_value=ls_init_value,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
+        self.context_length = context_length
+        self.cross_attn = nn.ModuleList([
+            ResidualAttentionBlock(
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer, is_cross_attention=True)
+            for _ in range(layers)
+        ])
+
+        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+
+        self.ln_final = norm_layer(width)
+
+    def init_parameters(self):
+        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.transformer.width ** -0.5
+        fc_std = (2 * self.transformer.width) ** -0.5
+        for block in self.transformer.resblocks:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        for block in self.transformer.cross_attn:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+
+        if self.text_projection is not None:
+            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable
+
+    def build_attention_mask(self):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(self.context_length, self.context_length)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)  # zero out the lower diagonal
+        return mask
+
+    def forward(self, image_embs, text_embs):
+        text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
+        image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
+
+        for r, ca in zip(self.resblocks, self.cross_attn):
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
+                text_embs = checkpoint(r, text_embs, None, None, self.attn_mask)
+                text_embs = checkpoint(ca, text_embs, image_embs, image_embs, None)
+            else:
+                text_embs = r(text_embs, attn_mask=self.attn_mask)
+                text_embs = ca(text_embs, k_x=image_embs, v_x=image_embs)
+
+        x = text_embs.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x)
 
         return x
