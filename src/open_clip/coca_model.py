@@ -96,6 +96,7 @@ class CoCa(nn.Module):
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
+        self.heads = text_cfg["heads"]
 
         self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
@@ -118,6 +119,7 @@ class CoCa(nn.Module):
         self.to_logits[-1].weight = self.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.pad_id = 0
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -145,19 +147,29 @@ class CoCa(nn.Module):
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
+    def _build_cls_mask(self, text, cast_dtype):
+        cls_mask = (text != self.pad_id).unsqueeze(1)
+        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
+        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
+        additive_mask.fill_(0)
+        additive_mask.masked_fill_(~cls_mask, float("-inf"))
+        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
+        return additive_mask
+
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
         cast_dtype = self.transformer.get_cast_dtype()
 
-        # cls_mask = (text!=self.pad_id).unsqueeze(1)
-        # attn_mask = F.pad(cls_mask, (0, 1, text.shape[1], 0), value=True)
-        # attn_mask = F.pad(self.attn_mask, (0, 1, 0, 1), value=0.0)
+        attn_mask = self.attn_mask[None, :].expand(
+            text.shape[0] * self.heads, *self.attn_mask.shape
+        )
+        cls_mask = self._build_cls_mask(text, cast_dtype)
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = self.transformer(x, attn_mask=attn_mask + cls_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
