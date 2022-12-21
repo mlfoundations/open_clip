@@ -14,7 +14,7 @@ from .transformer import (
     AttentionalPooler,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
-
+from .generation_utils import top_a, top_k, top_p
 
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
@@ -91,6 +91,7 @@ class CoCa(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
+        self.context_length = self.positional_embedding.shape[0] - 1
 
         self.cls_token = nn.Parameter(torch.randn(embed_dim))
         self.visual = _build_vision_tower(
@@ -167,13 +168,12 @@ class CoCa(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
-        x = x + self.positional_embedding.to(cast_dtype)
+        print(x.shape, self.positional_embedding[:x.shape[1], :].shape)
+        x = x + self.positional_embedding[:x.shape[1], :].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask + cls_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), :] @ self.text_projection
 
         cls_emb = x[torch.arange(x.shape[0]), -1]
@@ -195,3 +195,72 @@ class CoCa(nn.Module):
         logits = self.to_logits(text_tokens)
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
+
+    def generate(
+        self,
+        image,
+        text,
+        seq_len,
+        max_seq_len=None,
+        pad_value = 0,
+        mask_prob = 0.0,
+        eos_token = None,
+        temperature = 1.,
+        filter_logits_fn = top_k,
+        filter_thres = 0.9,
+        min_p_pow = 2.0,
+        min_p_ratio = 0.02,
+        **kwargs,
+        ):
+
+        assert mask_prob < 1, "mask_prob must be smaller than 1."
+
+        if max_seq_len is None:
+            max_seq_len = self.context_length
+
+        was_training = self.training
+        num_dims = len(text.shape)
+
+        if num_dims == 1:
+            text = text[None, :]
+
+        _, t = text.shape
+        self.eval()
+        out = text
+
+        for _ in range(seq_len):
+            x = out[:, -max_seq_len:]
+            print(self.context_length, x.shape)
+
+            # TODO: adjust for dict output
+            logits = self(image, x, **kwargs)[2][:, -1]
+
+            if filter_logits_fn in {top_k, top_p}:
+                filtered_logits = filter_logits_fn(logits, thres = filter_thres)
+                probs = F.softmax(filtered_logits / temperature, dim=-1)
+
+            elif filter_logits_fn is top_a:
+                filtered_logits = filter_logits_fn(logits, min_p_pow = min_p_pow, min_p_ratio= min_p_ratio)
+                probs = F.softmax(filtered_logits / temperature, dim=-1)
+
+            sample = torch.multinomial(probs, 1)
+
+            out = torch.cat((out, sample), dim=-1)
+
+            if eos_token is not None:
+                is_eos_tokens = (out == eos_token)
+
+                if is_eos_tokens.any(dim = -1).all():
+                    # mask out everything after the eos tokens
+                    shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
+                    mask = shifted_is_eos_tokens.float().cumsum(dim = -1) >= 1
+                    out = out.masked_fill(mask, pad_value)
+                    break
+
+        out = out[:, t:]
+
+        if num_dims == 1:
+            out = out.squeeze(0)
+
+        self.train(was_training)
+        return out
