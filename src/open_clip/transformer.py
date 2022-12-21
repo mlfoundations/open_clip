@@ -448,7 +448,7 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, output_tokens: bool = False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -465,15 +465,17 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        if self.global_average_pool:
-            x = x.mean(dim=1)
-        else:
-            x = x[:, 0]
 
-        x = self.ln_post(x)
+        if not output_tokens:
+            if self.global_average_pool:
+                x = x.mean(dim=1)
+            else:
+                x = x[:, 0]
 
-        if self.proj is not None:
-            x = x @ self.proj
+            x = self.ln_post(x)
+
+            if self.proj is not None:
+                x = x @ self.proj
 
         return x
 
