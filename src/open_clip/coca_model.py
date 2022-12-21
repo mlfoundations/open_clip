@@ -233,7 +233,7 @@ class CoCa(nn.Module):
             x_seq_len = x.shape[1] - 1
 
             # TODO: adjust for dict output
-            logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len], **kwargs)[2][:, -1]
+            logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len])[2][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
