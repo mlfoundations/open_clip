@@ -13,7 +13,8 @@ on:
     - 'docs/**'
   pull_request:
     branches:
-    - main
+    - main 
+    - coca
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
