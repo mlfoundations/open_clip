@@ -126,27 +126,12 @@ class CoCa(nn.Module):
         self.multimodal_decoder.grad_checkpointing = enable
 
     def encode_image(self, images, normalize=True, return_tokens=False):
-        x = self.visual.conv1(images)  # shape = [*, width, grid, grid]
-        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
-        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
-        x = torch.cat(
-            [
-                self.visual.class_embedding.to(x.dtype)
-                + torch.zeros(
-                    x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device
-                ),
-                x,
-            ],
-            dim=1,
-        )  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.visual.positional_embedding.to(x.dtype)
-        x = self.visual.ln_pre(x)
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.visual.transformer(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.visual.ln_post(x)
+        x = self.visual(images, output_tokens=True)
 
-        if self.visual.proj is not None:
+        if hasattr(self.visual, "ln_post"):
+            x = self.visual.ln_post(x)
+
+        if hasattr(self.visual, "proj") and self.visual.proj is not None:
             x = x @ self.visual.proj
 
         x = self.img_attn_pool(x, x)
