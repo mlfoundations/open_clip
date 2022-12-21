@@ -160,6 +160,15 @@ class CoCa(nn.Module):
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
+    def _build_cls_mask(self, text, cast_dtype):
+        cls_mask = (text != self.pad_id).unsqueeze(1)
+        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
+        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
+        additive_mask.fill_(0)
+        additive_mask.masked_fill_(~cls_mask, float("-inf"))
+        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
+        return additive_mask
+
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
         cast_dtype = self.transformer.get_cast_dtype()
