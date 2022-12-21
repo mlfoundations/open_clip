@@ -3,7 +3,8 @@ name: Continuous integration
 on:
   push:
     branches:
-    - main
+    - main 
+    - coca
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
