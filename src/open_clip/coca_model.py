@@ -168,8 +168,8 @@ class CoCa(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
-        print(x.shape, self.positional_embedding[:x.shape[1], :].shape)
-        x = x + self.positional_embedding[:x.shape[1], :].to(cast_dtype)
+        seq_len = x.shape[1]
+        x = x + self.positional_embedding[: seq_len, :].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask + cls_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
@@ -185,13 +185,13 @@ class CoCa(nn.Module):
 
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text):
+    def forward(self, image, text, attn_mask=None):
         labels = text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
         image_latents, image_tokens = self.encode_image(image, return_tokens=True)
 
-        text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
+        text_tokens = self.multimodal_decoder(image_tokens, text_tokens, attn_mask)
         logits = self.to_logits(text_tokens)
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
@@ -230,32 +230,25 @@ class CoCa(nn.Module):
 
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
-            print(self.context_length, x.shape)
+            x_seq_len = x.shape[1] - 1
 
             # TODO: adjust for dict output
-            logits = self(image, x, **kwargs)[2][:, -1]
+            logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len], **kwargs)[2][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
-                filtered_logits = filter_logits_fn(logits, thres = filter_thres)
+                filtered_logits = filter_logits_fn(logits, thres=filter_thres)
                 probs = F.softmax(filtered_logits / temperature, dim=-1)
 
             elif filter_logits_fn is top_a:
-                filtered_logits = filter_logits_fn(logits, min_p_pow = min_p_pow, min_p_ratio= min_p_ratio)
+                filtered_logits = filter_logits_fn(
+                    logits, min_p_pow=min_p_pow, min_p_ratio=min_p_ratio
+                )
                 probs = F.softmax(filtered_logits / temperature, dim=-1)
 
             sample = torch.multinomial(probs, 1)
 
             out = torch.cat((out, sample), dim=-1)
 
-            if eos_token is not None:
-                is_eos_tokens = (out == eos_token)
-
-                if is_eos_tokens.any(dim = -1).all():
-                    # mask out everything after the eos tokens
-                    shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
-                    mask = shifted_is_eos_tokens.float().cumsum(dim = -1) >= 1
-                    out = out.masked_fill(mask, pad_value)
-                    break
 
         out = out[:, t:]
 
