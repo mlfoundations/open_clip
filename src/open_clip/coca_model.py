@@ -96,6 +96,7 @@ class CoCa(nn.Module):
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
+        self.heads = text_cfg["heads"]
 
         self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
@@ -118,6 +119,7 @@ class CoCa(nn.Module):
         self.to_logits[-1].weight = self.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.pad_id = 0
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
