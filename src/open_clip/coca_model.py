@@ -190,13 +190,13 @@ class CoCa(nn.Module):
 
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text, attn_mask=None):
+    def forward(self, image, text):
         labels = text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
         image_latents, image_tokens = self.encode_image(image, return_tokens=True)
 
-        text_tokens = self.multimodal_decoder(image_tokens, text_tokens, attn_mask)
+        text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
         logits = self.to_logits(text_tokens)
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
@@ -232,10 +232,9 @@ class CoCa(nn.Module):
 
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
-            x_seq_len = x.shape[1] - 1
 
             # TODO: adjust for dict output
-            logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len])[2][:, -1]
+            logits = self(image, x)[2][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
