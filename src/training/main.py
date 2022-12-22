@@ -127,6 +127,7 @@ def main(args):
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
+        force_patch_dropout=args.force_patch_dropout,
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
@@ -216,7 +217,7 @@ def main(args):
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
-        total_steps = data["train"].dataloader.num_batches * args.epochs
+        total_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs
         scheduler = cosine_lr(optimizer, args, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
@@ -234,7 +235,7 @@ def main(args):
             args.val_sz = data["val"].dataloader.num_samples
         # you will have to configure this for your project!
         wandb.init(
-            project="open-clip",
+            project=args.wandb_project_name,
             name=args.name,
             notes=args.wandb_notes,
             tags=[],

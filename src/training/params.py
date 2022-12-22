@@ -225,6 +225,12 @@ def parse_args(args):
         help="Force use of QuickGELU activation for non-OpenAI transformer models.",
     )
     parser.add_argument(
+        "--force-patch-dropout",
+        default=None,
+        type=float,
+        help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
+    )
+    parser.add_argument(
         "--force-custom-text",
         default=False,
         action='store_true',
@@ -241,6 +247,9 @@ def parse_args(args):
         default=False,
         action='store_true',
         help="torch.jit.trace the model for inference / eval only",
+    )
+    parser.add_argument(
+        "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
     )
     # arguments for distributed training
     parser.add_argument(
@@ -263,6 +272,12 @@ def parse_args(args):
         default='',
         type=str,
         help="Notes if logging with wandb"
+    )
+    parser.add_argument(
+        "--wandb-project-name",
+        type=str,
+        default='open-clip',
+        help="Name of the project if logging with wandb.",
     )
     parser.add_argument(
         "--debug",

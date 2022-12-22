@@ -28,7 +28,6 @@ class LayerNorm(nn.LayerNorm):
         return x.to(orig_type)
 
 
-
 class QuickGELU(nn.Module):
     # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
@@ -43,6 +42,46 @@ class LayerScale(nn.Module):
 
     def forward(self, x):
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
+
+
+class PatchDropout(nn.Module):
+    """
+    https://arxiv.org/abs/2212.00794
+    """
+
+    def __init__(self, prob, exclude_first_token=True):
+        super().__init__()
+        assert 0 <= prob < 1.
+        self.prob = prob
+        self.exclude_first_token = exclude_first_token  # exclude CLS token
+
+    def forward(self, x):
+        if not self.training or self.prob == 0.:
+            return x
+
+        if self.exclude_first_token:
+            cls_tokens, x = x[:, :1], x[:, 1:]
+        else:
+            cls_tokens = torch.jit.annotate(torch.Tensor, x[:, :1])
+
+        batch = x.size()[0]
+        num_tokens = x.size()[1]
+
+        batch_indices = torch.arange(batch)
+        batch_indices = batch_indices[..., None]
+
+        keep_prob = 1 - self.prob
+        num_patches_keep = max(1, int(num_tokens * keep_prob))
+
+        rand = torch.randn(batch, num_tokens)
+        patch_indices_keep = rand.topk(num_patches_keep, dim=-1).indices
+
+        x = x[batch_indices, patch_indices_keep]
+
+        if self.exclude_first_token:
+            x = torch.cat((cls_tokens, x), dim=1)
+
+        return x
 
 
 class Attention(nn.Module):
@@ -135,7 +174,7 @@ class ResidualAttentionBlock(nn.Module):
 
         self.ln_1 = norm_layer(d_model)
         self.attn = nn.MultiheadAttention(d_model, n_head)
-        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -144,7 +183,7 @@ class ResidualAttentionBlock(nn.Module):
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
-        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         attn_mask = attn_mask.to(x.dtype) if attn_mask is not None else None
@@ -174,12 +213,12 @@ class CustomResidualAttentionBlock(nn.Module):
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
-           d_model, n_head,
-           scaled_cosine=scale_cosine_attn,
-           scale_heads=scale_heads,
+            d_model, n_head,
+            scaled_cosine=scale_cosine_attn,
+            scale_heads=scale_heads,
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
-        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -189,7 +228,7 @@ class CustomResidualAttentionBlock(nn.Module):
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
-        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
@@ -241,7 +280,9 @@ class VisionTransformer(nn.Module):
             heads: int,
             mlp_ratio: float,
             ls_init_value: float = None,
+            global_average_pool: bool = False,
             output_dim: int = 512,
+            patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
     ):
@@ -255,6 +296,10 @@ class VisionTransformer(nn.Module):
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
+
+        # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
+        self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
+
         self.ln_pre = norm_layer(width)
         self.transformer = Transformer(
             width,
@@ -266,6 +311,7 @@ class VisionTransformer(nn.Module):
             norm_layer=norm_layer,
         )
 
+        self.global_average_pool = global_average_pool
         self.ln_post = norm_layer(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -274,7 +320,7 @@ class VisionTransformer(nn.Module):
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         for param in self.parameters():
             param.requires_grad = False
-        
+
         if unlocked_groups != 0:
             groups = [
                 [
@@ -305,24 +351,24 @@ class VisionTransformer(nn.Module):
             _unlock(groups[-unlocked_groups:])
 
     def init_parameters(self):
-         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
-         # TODO experiment if default PyTorch init, below, or alternate init is best.
+        # FIXME OpenAI CLIP did not define an init for the VisualTransformer
+        # TODO experiment if default PyTorch init, below, or alternate init is best.
 
-         # nn.init.normal_(self.class_embedding, std=self.scale)
-         # nn.init.normal_(self.positional_embedding, std=self.scale)
-         #
-         # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-         # attn_std = self.transformer.width ** -0.5
-         # fc_std = (2 * self.transformer.width) ** -0.5
-         # for block in self.transformer.resblocks:
-         #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-         #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-         #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-         #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-         #
-         # if self.text_projection is not None:
-         #     nn.init.normal_(self.text_projection, std=self.scale)
-         pass
+        # nn.init.normal_(self.class_embedding, std=self.scale)
+        # nn.init.normal_(self.positional_embedding, std=self.scale)
+        #
+        # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        # attn_std = self.transformer.width ** -0.5
+        # fc_std = (2 * self.transformer.width) ** -0.5
+        # for block in self.transformer.resblocks:
+        #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+        #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+        #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+        #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        #
+        # if self.text_projection is not None:
+        #     nn.init.normal_(self.text_projection, std=self.scale)
+        pass
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -343,13 +389,21 @@ class VisionTransformer(nn.Module):
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
+
+        # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
+        x = self.patch_dropout(x)
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        x = self.ln_post(x[:, 0, :])
+        if self.global_average_pool:
+            x = x.mean(dim=1)
+        else:
+            x = x[:, 0]
+
+        x = self.ln_post(x)
 
         if self.proj is not None:
             x = x @ self.proj
