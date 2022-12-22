@@ -160,14 +160,8 @@ class CoCa(nn.Module):
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
         cast_dtype = self.transformer.get_cast_dtype()
-
-        attn_mask = self.attn_mask[None, :].expand(
-            text.shape[0] * self.heads, *self.attn_mask.shape
-        )
-        cls_mask = self._build_cls_mask(text, cast_dtype)
-        
+        seq_len = text.shape[1]
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        seq_len = x.shape[1]
         x = torch.cat(
             [
                 x + self.positional_embedding[:seq_len, :].to(cast_dtype), 
@@ -175,6 +169,11 @@ class CoCa(nn.Module):
             ], 
             dim=1
         )
+        seq_len += 1
+        attn_mask = self.attn_mask[None, :seq_len, :seq_len].expand(
+            text.shape[0] * self.heads, seq_len, seq_len
+        )
+        cls_mask = self._build_cls_mask(text, cast_dtype)
         
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask + cls_mask)
