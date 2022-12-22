@@ -165,11 +165,18 @@ class CoCa(nn.Module):
             text.shape[0] * self.heads, *self.attn_mask.shape
         )
         cls_mask = self._build_cls_mask(text, cast_dtype)
-
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        x = torch.cat([x, self._repeat(self.cls_token, x.shape[0])], dim=1)
+        
         seq_len = x.shape[1]
-        x = x + self.positional_embedding[: seq_len, :].to(cast_dtype)
+        
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        x = torch.cat(
+            [
+                x + self.positional_embedding[:seq_len, :].to(cast_dtype), 
+                self._repeat(self.cls_token + self.positional_embedding[-1, :], x.shape[0])
+            ], 
+            dim=1
+        )
+        
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask + cls_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
