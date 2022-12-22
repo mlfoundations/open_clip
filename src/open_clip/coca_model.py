@@ -169,7 +169,7 @@ class CoCa(nn.Module):
             ], 
             dim=1
         )
-        seq_len += 1
+        seq_len += 1 # seq is 1 longer as we added CLS
         attn_mask = self.attn_mask[None, :seq_len, :seq_len].expand(
             text.shape[0] * self.heads, seq_len, seq_len
         )
