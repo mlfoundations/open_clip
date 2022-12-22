@@ -207,15 +207,12 @@ class CoCa(nn.Module):
         text,
         seq_len,
         max_seq_len=None,
-        pad_value = 0,
         mask_prob = 0.0,
-        eos_token = None,
         temperature = 1.,
         filter_logits_fn = top_k,
         filter_thres = 0.9,
         min_p_pow = 2.0,
         min_p_ratio = 0.02,
-        **kwargs,
         ):
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
