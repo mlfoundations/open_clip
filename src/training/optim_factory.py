@@ -138,15 +138,36 @@ def get_all_param_groups(args, model, lr_scale_assigner_visual, lr_scale_assigne
         optim_params = model.parameters()
     return optim_params
 
+def check_lr_layer_decay_available(model):
+    def is_available(model, white_list):
+        for name, _ in model.named_parameters():
+            for white_name in white_list:
+                if name.startswith(white_name):
+                    return True
+        return False
+
+    visual_white_list = ["visual.blocks", "visual.transformer.resblocks"]
+    text_white_list = ["text.transformer.resblocks", "text.transformer.encoder.layer"]
+    
+    visual_flag = is_available(model, visual_white_list)
+    text_flag = is_available(model, text_white_list)
+    
+    if not visual_flag:
+        logging.info("Learning rate layer decay currently only supported for built-in ViT models")
+    if not text_flag:
+        logging.info("Learning rate layer decay currently only supported for built-in text transformers")
+    return visual_flag, text_flag
+
 def create_optimizer(args, model):
     lr_scale_assigner_visual, lr_scale_assigner_text = None, None
-    
-    if args.visual_ld and "vit" in args.model.lower():
+    layer_decay_visual_flag, layer_decay_text_flag = check_lr_layer_decay_available(model)
+
+    if args.visual_ld and layer_decay_visual_flag:
         visual_num_layers = model.visual.get_num_layers()
         lr_scale_assigner_visual = LayerDecayValueAssigner(args.visual_ld, visual_num_layers)
         logging.info("Assigned visual lr scale values = %s" % str(lr_scale_assigner_visual.values))
 
-    if args.text_ld:
+    if args.text_ld and layer_decay_text_flag:
         text_num_layers = model.text.get_num_layers()
         lr_scale_assigner_text = LayerDecayValueAssigner(args.text_ld, text_num_layers)
         logging.info("Assigned text lr scale values = %s" % str(lr_scale_assigner_text.values))
