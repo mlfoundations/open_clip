@@ -90,7 +90,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
-        optimizer.zero_grad()
+        if args.enable_deepspeed:
+            model.zero_grad()
+            model.micro_steps = 0
+        else:
+            optimizer.zero_grad()
 
         if args.accum_freq == 1:
             with autocast():
@@ -144,6 +148,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
                 scaler.step(optimizer)
             scaler.update()
+        elif args.enable_deepspeed:
+            model.backward(total_loss)
+            model.step()
         else:
             if args.grad_clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)

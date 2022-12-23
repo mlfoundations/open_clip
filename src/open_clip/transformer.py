@@ -1,3 +1,4 @@
+import os
 from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence
@@ -5,7 +6,10 @@ from typing import Callable, Optional, Sequence
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.utils.checkpoint import checkpoint
+if os.getenv('ENV_TYPE') == 'deepspeed':
+    from deepspeed.runtime.activation_checkpointing.checkpointing import checkpoint
+else:
+    from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
 

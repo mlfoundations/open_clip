@@ -26,7 +26,7 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, world_info_from_env
+from training.distributed import is_master, init_distributed_device, world_info_from_env, create_deepspeed_config
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
@@ -40,7 +40,7 @@ def random_seed(seed=42, rank=0):
 
 
 def main(args):
-    args = parse_args(args)
+    args, ds_init = parse_args(args)
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -86,6 +86,10 @@ def main(args):
 
     # fully initialize distributed device environment
     device = init_distributed_device(args)
+
+    # create deepspeed config
+    if ds_init is not None:
+        create_deepspeed_config(args)
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
@@ -164,11 +168,12 @@ def main(args):
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+        if not args.enable_deepspeed:
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
@@ -184,45 +189,74 @@ def main(args):
         gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
         rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
-        if args.horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+        optimizer_params = [
+            {"params": gain_or_bias_params, "weight_decay": 0.},
+            {"params": rest_params, "weight_decay": args.wd},
+        ]
 
-        scaler = GradScaler() if args.precision == "amp" else None
+        if args.enable_deepspeed:
+            scaler = None
+            model, optimizer, _, _ = ds_init(
+                args=args,
+                model=model,
+                model_parameters=optimizer_params,
+                dist_init_required=not args.distributed,
+            )
+        else:
+            optimizer = optim.AdamW(
+                optimizer_params,
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                eps=args.eps,
+            )
+            if args.horovod:
+                optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+                hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+                hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
+            scaler = GradScaler() if args.precision == "amp" else None
 
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location='cpu')
-            if 'epoch' in checkpoint:
-                # resuming a train checkpoint w/ epoch and optimizer state
-                start_epoch = checkpoint["epoch"]
-                sd = checkpoint["state_dict"]
-                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                    sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
-                if optimizer is not None:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-                if scaler is not None and 'scaler' in checkpoint:
-                    scaler.load_state_dict(checkpoint['scaler'])
-                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        if args.enable_deepspeed:
+            if os.path.exists(args.resume):
+                import glob
+                all_checkpoints = glob.glob(os.path.join(args.resume, 'epoch_*'))
+                latest_ckpt = -1
+                for ckpt in all_checkpoints:
+                    t = ckpt.split('/')[-1].split('_')[1]
+                    if t.isdigit():
+                        latest_ckpt = max(int(t), latest_ckpt)
+                if latest_ckpt >= 0:
+                    start_epoch = latest_ckpt
+                    _, client_states = model.load_checkpoint(args.resume, tag='epoch_%d' % latest_ckpt)
+                    logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {latest_ckpt})")
+                else:
+                    logging.info("=> no checkpoint found at '{}'".format(args.resume))
             else:
-                # loading a bare (model only) checkpoint for fine-tune or evaluation
-                model.load_state_dict(checkpoint)
-                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+                logging.info("=> '{}' is not existing!".format(args.resume))
         else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
+            if os.path.isfile(args.resume):
+                checkpoint = torch.load(args.resume, map_location='cpu')
+                if 'epoch' in checkpoint:
+                    # resuming a train checkpoint w/ epoch and optimizer state
+                    start_epoch = checkpoint["epoch"]
+                    sd = checkpoint["state_dict"]
+                    if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                        sd = {k[len('module.'):]: v for k, v in sd.items()}
+                    model.load_state_dict(sd)
+                    if optimizer is not None:
+                        optimizer.load_state_dict(checkpoint["optimizer"])
+                    if scaler is not None and 'scaler' in checkpoint:
+                        scaler.load_state_dict(checkpoint['scaler'])
+                    logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+                else:
+                    # loading a bare (model only) checkpoint for fine-tune or evaluation
+                    model.load_state_dict(checkpoint)
+                    logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            else:
+                logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
     # initialize datasets
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
@@ -275,7 +309,15 @@ def main(args):
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.
-        if args.save_logs:
+        # is_master(args) can not be here while using deepspped, otherwise ckpts can not be saved
+        if args.logs and args.logs.lower() != 'none' and args.enable_deepspeed:
+            deepspeed_checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+            if completed_epoch == args.epochs or (
+                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                ):
+                    client_state = {'epoch': completed_epoch}
+                    model.save_checkpoint(save_dir=deepspeed_checkpoint_path, tag="epoch_%s" % str(completed_epoch), client_state=client_state)
+        elif args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
