@@ -332,7 +332,18 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
-
+    parser.add_argument(
+        "--sync-s3",
+        type=str,
+        default=None,
+        help="If you provide a path, it will sync it s3.",
+    )
+    parser.add_argument(
+        "--sync-s3-frequency",
+        type=int,
+        default=120,
+        help="How frequently to sync to s3.",
+    )
 
     args = parser.parse_args(args)
 

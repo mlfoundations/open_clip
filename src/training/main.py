@@ -33,6 +33,7 @@ from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
+from training.file_utils import pt_load, check_exists, start_sync_process, sync_s3
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -146,6 +147,20 @@ def main(args):
     if args.copy_codebase:
         copy_codebase(args)
 
+    # start the sync proces if s3-sync is not None
+    sync_s3process = None
+    if is_master(args) and args.sync_s3 is not None:
+        # first make sure it works
+        result = sync_s3(args.logs, args.sync_s3)
+        if result:
+            logging.info('s3 sync successful.')
+        else:
+            logging.info('Error: s3 sync failed. Exiting.')
+            return -1
+        # if all looks good, start a process to do this every args.sync_s3_frequency seconds
+        sync_s3process = start_sync_process(args.sync_s3_frequency, args.logs, args.sync_s3)
+        sync_s3process.start()
+
     if args.precision == 'fp16':
         logging.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
@@ -247,7 +262,7 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        checkpoint = torch.load(args.resume, map_location='cpu')
+        checkpoint = pt_load(args.resume, map_location='cpu')
         if 'epoch' in checkpoint:
             # resuming a train checkpoint w/ epoch and optimizer state
             start_epoch = checkpoint["epoch"]
@@ -345,6 +360,16 @@ def main(args):
     if args.wandb and is_master(args):
         wandb.finish()
 
+    # run a final sync.
+    if sync_s3process is not None:
+        logging.info('Final s3 sync.')
+        sync_s3process.terminate()
+        result = sync_s3(args.logs, args.sync_s3)
+        if result:
+            logging.info('Final s3 sync successful.')
+        else:
+            logging.info('Final s3 sync failed.')
+    
 
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
