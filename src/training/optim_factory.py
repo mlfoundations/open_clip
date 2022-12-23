@@ -23,26 +23,30 @@ def get_num_layer_for_transformer(var_name, num_max_layer):
     for first_layer_var_name in first_layer_var_names:
         if var_name.startswith(first_layer_var_name):
             return 0
+
     if var_name.startswith("visual.rel_pos_bias"):
-        return num_max_layer - 1
+        layer_id = num_max_layer - 1
     elif var_name.startswith("visual.blocks"):
-        layer_id = int(var_name.split('.')[2])
-        return layer_id + 1
+        layer_id = int(var_name.split('.')[2]) + 1
     elif var_name.startswith("visual.transformer.resblocks"):
-        layer_id = int(var_name.split('.')[3])
-        return layer_id + 1
+        layer_id = int(var_name.split('.')[3]) + 1
     elif var_name.startswith("text.transformer.resblocks"):
-        layer_id = int(var_name.split('.')[3])
-        return layer_id + 1
+        layer_id = int(var_name.split('.')[3]) + 1
     elif var_name.startswith("text.transformer.encoder.layer"):
-        layer_id = int(var_name.split('.')[4])
-        return layer_id + 1
+        layer_id = int(var_name.split('.')[4]) + 1
     else:
-        return num_max_layer - 1
+        logging.warning(f'Unknown layer for {var_name} when setting layer decay. Defaulting to {num_max_layer-1}.')
+        layer_id = num_max_layer - 1
+
+    return layer_id
+
 
 class LayerDecayValueAssigner(object):
     def __init__(self, layer_decay, num_layers):
-        self.values = list(layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2))
+        self.values = [
+            layer_decay ** (num_layers + 1 - i)
+            for i in range(num_layers + 2)
+        ]
 
     def get_scale(self, layer_id):
         return self.values[layer_id]
@@ -50,41 +54,38 @@ class LayerDecayValueAssigner(object):
     def get_layer_id(self, var_name):
         return get_num_layer_for_transformer(var_name, len(self.values))
 
-def param_groups_layer_decay(model_params, lr, weight_decay, lr_scale_assigner, tower):
-    get_num_layer  = lr_scale_assigner.get_layer_id if lr_scale_assigner else None
-    get_layer_scale = lr_scale_assigner.get_scale if lr_scale_assigner else None
 
-    param_group_names = {} # NOTE for debugging
+def do_weight_decay(name, param):
+    return (
+        param.ndim <= 1 or "bn" in name or
+        "ln" in name or
+        "bias" in name or
+        "logit_scale" in name
+    )
+        
+
+def param_groups_layer_decay(model_params, lr, weight_decay, lr_scale_assigner, tower):
     param_group_vars = {}
     for name, param in model_params:
         if not param.requires_grad:
             continue
 
-        if param.ndim <= 1 or name.endswith(".bias") or 'logit_scale' in name:
-            group_name = "no_decay"
-            this_weight_decay = 0.
-        else:
+        if do_weight_decay(name, param):
             group_name = "decay"
             this_weight_decay = weight_decay
-        if get_num_layer is not None:
-            layer_id = get_num_layer(name)
-            group_name = tower + "_" + "layer_%d_%s" % (layer_id, group_name)
+        else:
+            group_name = "no_decay"
+            this_weight_decay = 0.
+        
+        if lr_scale_assigner:
+            layer_id = lr_scale_assigner.get_layer_id(name)
+            scale = lr_scale_assigner.get_layer_scale(layer_id)
+            group_name = f"{tower}_layer_{layer_id}_{group_name}"
         else:
             layer_id = None
+            scale = 1.0
 
-        if group_name not in param_group_names:
-            if get_layer_scale is not None:
-                scale = get_layer_scale(layer_id)
-            else:
-                scale = 1.
-
-            param_group_names[group_name] = {
-                "group": tower,
-                "weight_decay": this_weight_decay,
-                "params": [],
-                "lr_scale": scale,
-                "lr": lr
-            }
+        if group_name not in param_group_vars:
             param_group_vars[group_name] = {
                 "group": tower,
                 "weight_decay": this_weight_decay,
@@ -94,8 +95,8 @@ def param_groups_layer_decay(model_params, lr, weight_decay, lr_scale_assigner, 
             }
 
         param_group_vars[group_name]["params"].append(param)
-        param_group_names[group_name]["params"].append(name)
     return list(param_group_vars.values())
+
 
 def get_all_param_groups(args, model, lr_scale_assigner_visual, lr_scale_assigner_text):
     visual_params, text_params, other_params = [], [], []
@@ -105,9 +106,10 @@ def get_all_param_groups(args, model, lr_scale_assigner_visual, lr_scale_assigne
         elif name.startswith('text.'):
             text_params.append([name, param])
         else:
+            if lr_scale_assigner_visual is not None or lr_scale_assigner_text is not None:
+                logging.warning(f"Param {param} is not assigned to either the visual or text encoders.")
             other_params.append([name, param])
 
-    optim_params = []
     visual_optim_params = param_groups_layer_decay(
         visual_params, 
         args.visual_lr or args.lr, 
@@ -129,14 +131,13 @@ def get_all_param_groups(args, model, lr_scale_assigner_visual, lr_scale_assigne
         None, 
         'other'
     )
-    
-    optim_params.extend(visual_optim_params)
-    optim_params.extend(text_optim_params)
-    optim_params.extend(other_optim_params)
 
+    optim_params = visual_optim_params + text_optim_params + other_optim_params
+    
     if len(optim_params) == 0:
         optim_params = model.parameters()
     return optim_params
+
 
 def check_lr_layer_decay_available(model):
     def is_available(model, white_list):
@@ -149,25 +150,26 @@ def check_lr_layer_decay_available(model):
     visual_white_list = ["visual.blocks", "visual.transformer.resblocks"]
     text_white_list = ["text.transformer.resblocks", "text.transformer.encoder.layer"]
     
-    visual_flag = is_available(model, visual_white_list)
-    text_flag = is_available(model, text_white_list)
+    do_visual_lr_decay = is_available(model, visual_white_list)
+    do_text_lr_decay = is_available(model, text_white_list)
     
-    if not visual_flag:
-        logging.info("Learning rate layer decay currently only supported for built-in ViT models")
-    if not text_flag:
-        logging.info("Learning rate layer decay currently only supported for built-in text transformers")
-    return visual_flag, text_flag
+    if not do_visual_lr_decay:
+        logging.warning("Learning rate layer decay is currently only supported for built-in ViT models.")
+    if not do_text_lr_decay:
+        logging.warning("Learning rate layer decay is currently only supported for built-in text transformers.")
+    return do_visual_lr_decay, do_text_lr_decay
+
 
 def create_optimizer(args, model):
     lr_scale_assigner_visual, lr_scale_assigner_text = None, None
-    layer_decay_visual_flag, layer_decay_text_flag = check_lr_layer_decay_available(model)
+    do_visual_lr_decay, do_text_lr_decay = check_lr_layer_decay_available(model)
 
-    if args.visual_ld and layer_decay_visual_flag:
+    if args.visual_ld and do_visual_lr_decay:
         visual_num_layers = model.visual.get_num_layers()
         lr_scale_assigner_visual = LayerDecayValueAssigner(args.visual_ld, visual_num_layers)
         logging.info("Assigned visual lr scale values = %s" % str(lr_scale_assigner_visual.values))
 
-    if args.text_ld and layer_decay_text_flag:
+    if args.text_ld and do_text_lr_decay:
         text_num_layers = model.text.get_num_layers()
         lr_scale_assigner_text = LayerDecayValueAssigner(args.text_ld, text_num_layers)
         logging.info("Assigned text lr scale values = %s" % str(lr_scale_assigner_text.values))
