@@ -309,7 +309,7 @@ class CoCa(nn.Module):
                 )
         return model_kwargs
 
-    def generate_beamsearch(
+    def generate_beamseach(
         self,
         image_inputs,
         max_length=None,
@@ -328,6 +328,7 @@ class CoCa(nn.Module):
         **kwargs,
         ):
         device = image_inputs.device
+        image_inputs = image_inputs.repeat(num_beams, 1, 1, 1)
 
         input_ids = torch.ones((num_beams, 1), device=device, dtype=torch.long)
         input_ids = input_ids * sot_token_id
