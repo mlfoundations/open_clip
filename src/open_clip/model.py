@@ -51,6 +51,8 @@ class CLIPTextCfg:
     hf_model_pretrained: bool = True
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
+    embed_cls: bool = False
+    pad_id: int = 0
 
 
 def get_cast_dtype(precision: str):
@@ -146,6 +148,8 @@ def _build_text_tower(
             layers=text_cfg.layers,
             ls_init_value=text_cfg.ls_init_value,
             output_dim=embed_dim,
+            embed_cls=text_cfg.embed_cls,
+            pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )

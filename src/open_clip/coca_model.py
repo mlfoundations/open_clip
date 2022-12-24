@@ -91,8 +91,10 @@ class CoCa(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
-        self.context_length = self.positional_embedding.shape[0] - 1
-
+        self.context_length = self.positional_embedding.shape[0]
+        self.text = text
+        
+        
         self.cls_token = nn.Parameter(torch.randn(embed_dim))
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
@@ -148,43 +150,10 @@ class CoCa(nn.Module):
     def _repeat(self, t, N):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def _build_cls_mask(self, text, cast_dtype):
-        cls_mask = (text != self.pad_id).unsqueeze(1)
-        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
-        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
-        additive_mask.fill_(0)
-        additive_mask.masked_fill_(~cls_mask, float("-inf"))
-        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
-        return additive_mask
-
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
-        cast_dtype = self.transformer.get_cast_dtype()
-        seq_len = text.shape[1]
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        x = torch.cat(
-            [
-                x + self.positional_embedding[:seq_len, :].to(cast_dtype), 
-                self._repeat(self.cls_token + self.positional_embedding[-1, :], x.shape[0])
-            ], 
-            dim=1
-        )
-        seq_len += 1 # seq is 1 longer as we added CLS
-        attn_mask = self.attn_mask[None, :seq_len, :seq_len].expand(
-            text.shape[0] * self.heads, seq_len, seq_len
-        )
-        cls_mask = self._build_cls_mask(text, cast_dtype)
-        
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask + cls_mask)
-        x = x.permute(1, 0, 2)  # LND -> NLD
+        cls_emb, token_emb = self.text(text, output_tokens=True)
 
-        x = x[torch.arange(x.shape[0]), :] @ self.text_projection
-
-        cls_emb = x[torch.arange(x.shape[0]), -1]
-        token_emb = x[torch.arange(x.shape[0]), :-1]
-
-        cls_emb = self.ln_final(cls_emb)
         text_latent = self.to_text_latent(cls_emb)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 

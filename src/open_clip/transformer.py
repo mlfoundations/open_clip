@@ -492,13 +492,22 @@ class TextTransformer(nn.Module):
             output_dim: int = 512,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            embed_cls: bool = False,
+            pad_id: int = 0,
     ):
         super().__init__()
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
         self.output_dim = output_dim
-
+        
+        if embed_cls:
+            self.embed_cls = embed_cls
+            self.cls_emb = nn.Parameter(torch.empty(width))
+            self.heads = heads
+            self.pad_id = pad_id
+            self.context_length += 1
+            
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, width))
         self.transformer = Transformer(
@@ -511,7 +520,6 @@ class TextTransformer(nn.Module):
         )
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
@@ -519,6 +527,8 @@ class TextTransformer(nn.Module):
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
+        if hasattr(self, "embed_cls") and self.embed_cls:
+            nn.init.normal_(self.cls_emb, std=0.01)
 
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
@@ -543,20 +553,41 @@ class TextTransformer(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
+    
+    def build_cls_mask(self, text, cast_dtype):
+        cls_mask = (text != self.pad_id).unsqueeze(1)
+        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
+        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
+        additive_mask.fill_(0)
+        additive_mask.masked_fill_(~cls_mask, float("-inf"))
+        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
+        return additive_mask
 
-    def forward(self, text):
+    def _repeat(self, t, N):
+        return t.reshape(1, 1, -1).repeat(N, 1, 1)
+
+    def forward(self, text, output_tokens: bool = False):
+        seq_len = text.shape[1]
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        attn_mask = self.attn_mask
+        if hasattr(self, "embed_cls") and self.embed_cls:
+            x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
+            cls_mask = self.build_cls_mask(text, cast_dtype)
+            attn_mask = attn_mask.unsqueeze(0) + cls_mask
 
-        x = x + self.positional_embedding.to(cast_dtype)
+        x = x + self.positional_embedding.to(cast_dtype)        
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=self.attn_mask)
+        x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
+        if output_tokens:
+            return x[:, -1], x[:, :-1]
+
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
         return x

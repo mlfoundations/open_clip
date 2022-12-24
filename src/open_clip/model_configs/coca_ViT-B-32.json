@@ -7,11 +7,12 @@
         "patch_size": 32
     },
     "text_cfg": {
-        "context_length": 77,
+        "context_length": 76,
         "vocab_size": 49408,
         "width": 512,
         "heads": 8,
-        "layers": 12
+        "layers": 12,
+        "embed_cls": true
     },
     "multimodal_cfg": {
         "context_length": 76,
