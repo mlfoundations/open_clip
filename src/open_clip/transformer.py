@@ -567,7 +567,6 @@ class TextTransformer(nn.Module):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
     def forward(self, text, output_tokens: bool = False):
-        seq_len = text.shape[1]
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
