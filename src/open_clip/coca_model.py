@@ -84,7 +84,6 @@ class CoCa(nn.Module):
         )
 
         text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
-        self.transformer = text.transformer
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
         self.positional_embedding = text.positional_embedding
@@ -127,7 +126,7 @@ class CoCa(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
-        self.transformer.grad_checkpointing = enable
+        self.text.set_grad_checkpointing(enable)
         self.multimodal_decoder.grad_checkpointing = enable
 
     def encode_image(self, images, normalize=True, return_tokens=False):
@@ -159,7 +158,7 @@ class CoCa(nn.Module):
 
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text):
+    def forward(self, image, text, output_dict=False):
         labels = text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
@@ -167,6 +166,14 @@ class CoCa(nn.Module):
 
         text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
         logits = self.to_logits(text_tokens)
+        if output_dict:
+            return {
+                "image_features":image_latents,
+                "text_features":text_latents,
+                "logits":logits,
+                "labels":labels,
+                "logit_scale":self.logit_scale.exp()
+            }
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
 

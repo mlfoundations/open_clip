@@ -86,16 +86,18 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
-                logit_scale = model_out[-1]
-                total_loss = loss(*model_out)
+                model_out = model(images, texts, output_dict=True)
+                logit_scale = model_out["logit_scale"]
+                total_loss = loss(**model_out)
 
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
-                    chunk_image_features, chunk_text_features, _ = model(images, texts)
+                    model_out = model(images, texts, output_dict=True)
+                    chunk_image_features = model_out["image_features"]
+                    chunk_text_features = model_out["text_features"]
                 accum_image_features.append(chunk_image_features)
                 accum_text_features.append(chunk_text_features)
 
@@ -115,7 +117,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 images = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    chunk_image_features, chunk_text_features, logit_scale = model(images, texts)
+                    model_out = model(images, texts, output_dict=True)
+                    chunk_image_features = model_out["image_features"]
+                    chunk_text_features = model_out["text_features"]
+                    logit_scale = model_out["logit_scale"]
                     image_features = torch.cat(
                         accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
                     text_features = torch.cat(
@@ -224,10 +229,10 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts)
-                    image_features = model_out[0]
-                    text_features = model_out[1]
-                    logit_scale = model_out[-1]
+                    model_out = model(images, texts, output_dict=True)
+                    image_features = model_out["image_features"]
+                    text_features = model_out["text_features"]
+                    logit_scale = model_out["logit_scale"]
                     # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
                     # however, system RAM is easily exceeded and compute time becomes problematic
                     all_image_features.append(image_features.cpu())
@@ -317,7 +322,7 @@ def get_clip_metrics(image_features, text_features, logit_scale):
 
 
 def maybe_compute_generative_loss(model_out):
-    if len(model_out) > 3:
-        token_logits = model_out[2]
-        token_labels = model_out[3]
+    if "logits" in model_out and "labels" in model_out:
+        token_logits = model_out["logits"]
+        token_labels = model_out["labels"]
         return F.cross_entropy(token_logits.permute(0, 2, 1), token_labels)

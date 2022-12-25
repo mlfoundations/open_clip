@@ -206,9 +206,15 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text):
+    def forward(self, image, text, output_dict=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        if output_dict:
+            return {
+                "image_features":image_features, 
+                "text_features":text_features,
+                "logit_scale":self.logit_scale.exp()
+            }
         return image_features, text_features, self.logit_scale.exp()
 
 
@@ -246,9 +252,15 @@ class CustomTextCLIP(nn.Module):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def forward(self, image, text):
+    def forward(self, image, text, output_dict=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        if output_dict:
+            return {
+                "image_features":image_features, 
+                "text_features":text_features,
+                "logit_scale":self.logit_scale.exp()
+            }
         return image_features, text_features, self.logit_scale.exp()
 
 
