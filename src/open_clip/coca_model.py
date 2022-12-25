@@ -198,25 +198,27 @@ class CoCa(nn.Module):
 
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text):
+    def forward(self, image, text, image_latents=None, image_tokens=None):
         labels = text[:, 1:]
 
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
-        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
+        if image_latents is None or image_tokens is None:
+            image_latents, image_tokens = self.encode_image(image, return_tokens=True)
 
         text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
         logits = self.to_logits(text_tokens)
 
         return image_latents, text_latents, logits, labels, self.logit_scale.exp()
 
-    def forward_return_dict(self, image, text, attn_mask=None):
+    def forward_return_dict(self, image, text, attn_mask=None, past_key_values=None, image_latents=None, image_tokens=None):
+        if image_latents is None or image_tokens is None:
+            image_latents, image_tokens = self.encode_image(image, return_tokens=True)
         text_latents, text_tokens = self.encode_text(text, return_tokens=True)
-        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
+
 
         text_tokens = self.multimodal_decoder(image_tokens, text_tokens, attn_mask)
         logits = self.to_logits(text_tokens)
-        # TODO: fix in future to get past_key_values
-        past_key_values = None
+
         outputs = {'logits': logits,
                    'past_key_values': past_key_values
 
@@ -251,12 +253,13 @@ class CoCa(nn.Module):
         _, t = text.shape
         self.eval()
         out = text
+        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
 
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
 
             # TODO: adjust for dict output
-            logits = self(image, x)[2][:, -1]
+            logits = self(image, x, image_latents=image_latents, image_tokens=image_tokens)[2][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -329,6 +332,7 @@ class CoCa(nn.Module):
         ):
         device = image_inputs.device
         image_inputs = image_inputs.repeat(num_beams, 1, 1, 1)
+        image_latents, image_tokens = self.encode_image(image_inputs, return_token=True)
 
         input_ids = torch.ones((num_beams, 1), device=device, dtype=torch.long)
         input_ids = input_ids * sot_token_id
@@ -423,7 +427,11 @@ class CoCa(nn.Module):
             # do one decoder step on all beams of all sentences in batch
             model_inputs = prepare_inputs_for_generation(input_ids=input_ids, image_inputs=image_inputs)
             # logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len])[2][:, -1]
-            outputs = self.forward_return_dict(model_inputs['images'], model_inputs['text'], attn_mask[:cur_len, :cur_len])
+            outputs = self.forward_return_dict(model_inputs['images'],
+                                               model_inputs['text'],
+                                               attn_mask[:cur_len, :cur_len],
+                                               image_latents=image_latents,
+                                               image_tokens=image_tokens)
 
             if synced_gpus and this_peer_finished:
                 cur_len = cur_len + 1
