@@ -76,7 +76,6 @@ class CoCa(nn.Module):
     ):
         super().__init__()
 
-
         norm_layer = (
             LayerNormFp32
             if cast_dtype in (torch.float16, torch.bfloat16)
@@ -84,41 +83,30 @@ class CoCa(nn.Module):
         )
 
         text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
-        self.vocab_size = text.vocab_size
-        self.token_embedding = text.token_embedding
-        self.positional_embedding = text.positional_embedding
-        self.ln_final = text.ln_final
-        self.text_projection = text.text_projection
-        self.register_buffer("attn_mask", text.attn_mask, persistent=False)
-        self.context_length = self.positional_embedding.shape[0]
         self.text = text
+        self.context_length = self.text.positional_embedding.shape[0]
+        self.heads = text_cfg["heads"]
         
-        
-        self.cls_token = nn.Parameter(torch.randn(embed_dim))
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
         )
-        self.heads = text_cfg["heads"]
 
         self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
 
         self.img_attn_pool = AttentionalPooler(
-            multimodal_cfg.width, multimodal_cfg.heads, n_queries=n_queries + 1
+            multimodal_cfg.width, multimodal_cfg.heads, n_queries=n_queries + 1 # extra query for contrastive_loss
         )
 
         self.img_attn_pool_norm = norm_layer(embed_dim)
 
-        self.dim_latents = multimodal_cfg.dim_latents if multimodal_cfg.dim_latents else multimodal_cfg.width
-        self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
-
         self.to_logits = nn.Sequential(
-            norm_layer(embed_dim), nn.Linear(embed_dim, self.vocab_size, bias=False)
+            norm_layer(embed_dim), nn.Linear(embed_dim, self.text.vocab_size, bias=False)
         )
 
         # tie embedding weights and projection
-        self.to_logits[-1].weight = self.token_embedding.weight
+        self.to_logits[-1].weight = self.text.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = 0
@@ -153,7 +141,9 @@ class CoCa(nn.Module):
         text = text[:, :-1] # make space for CLS token
         cls_emb, token_emb = self.text(text, output_tokens=True)
 
-        text_latent = self.to_text_latent(cls_emb)
+        if hasattr(self.text, "text_projection") and self.text.text_projection is not None:
+            text_latent = cls_emb @ self.text.text_projection
+
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
         return (text_latent, token_emb) if return_tokens else text_latent
