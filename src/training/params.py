@@ -333,18 +333,29 @@ def parse_args(args):
         help="Log every n steps to tensorboard/console/wandb.",
     )
     parser.add_argument(
-        "--sync-s3",
+        "--remote-sync",
         type=str,
         default=None,
-        help="If you provide a path, it will sync it s3.",
+        help="Optinoally sync with a remote path specified by this arg",
     )
     parser.add_argument(
-        "--sync-s3-frequency",
+        "--remote-sync-frequency",
         type=int,
-        default=120,
-        help="How frequently to sync to s3.",
+        default=300,
+        help="How frequently to sync to a remote directly if --remote-sync is not None.",
     )
-
+    parser.add_argument(
+        "--remote-sync-protocol",
+        choices=["s3", "fsspec"],
+        default="s3",
+        help="How to do the remote sync backup if --remote-sync is not None.",
+    )
+    parser.add_argument(
+        "--delete-previous-checkpoint",
+        default=False,
+        action="store_true",
+        help="If true, delete previous checkpoint after storing a new one."
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

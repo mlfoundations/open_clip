@@ -33,7 +33,7 @@ from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
-from training.file_utils import pt_load, check_exists, start_sync_process, sync_s3
+from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -147,19 +147,28 @@ def main(args):
     if args.copy_codebase:
         copy_codebase(args)
 
-    # start the sync proces if s3-sync is not None
-    sync_s3process = None
-    if is_master(args) and args.sync_s3 is not None:
+    # start the sync proces if remote-sync is not None
+    remote_sync_process = None
+    if is_master(args) and args.remote_sync is not None:
         # first make sure it works
-        result = sync_s3(args.logs, args.sync_s3)
+        result = remote_sync(
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
         if result:
-            logging.info('s3 sync successful.')
+            logging.info('remote sync successful.')
         else:
-            logging.info('Error: s3 sync failed. Exiting.')
+            logging.info('Error: remote sync failed. Exiting.')
             return -1
-        # if all looks good, start a process to do this every args.sync_s3_frequency seconds
-        sync_s3process = start_sync_process(args.sync_s3_frequency, args.logs, args.sync_s3)
-        sync_s3process.start()
+        # if all looks good, start a process to do this every args.remote_sync_frequency seconds
+        remote_sync_process = start_sync_process(
+            args.remote_sync_frequency,
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
+        remote_sync_process.start()
 
     if args.precision == 'fp16':
         logging.warning(
@@ -350,6 +359,11 @@ def main(args):
                     checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
+            if args.delete_previous_checkpoint:
+                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                if os.path.exists(previous_checkpoint):
+                    os.remove(previous_checkpoint)
+
             if args.save_most_recent:
                 # try not to corrupt the latest checkpoint if save fails
                 tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
@@ -361,14 +375,18 @@ def main(args):
         wandb.finish()
 
     # run a final sync.
-    if sync_s3process is not None:
-        logging.info('Final s3 sync.')
-        sync_s3process.terminate()
-        result = sync_s3(args.logs, args.sync_s3)
+    if remote_sync_process is not None:
+        logging.info('Final remote sync.')
+        remote_sync_process.terminate()
+        result = remote_sync(
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
         if result:
-            logging.info('Final s3 sync successful.')
+            logging.info('Final remote sync successful.')
         else:
-            logging.info('Final s3 sync failed.')
+            logging.info('Final remote sync failed.')
     
 
 def copy_codebase(args):
