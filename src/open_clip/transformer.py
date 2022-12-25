@@ -124,26 +124,12 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
-    def forward(self,
-            q_x,
-            k_x: Optional[torch.Tensor] = None,
-            v_x: Optional[torch.Tensor] = None,
-            attn_mask: Optional[torch.Tensor] = None
-    ):
-
-        L, N, C = q_x.shape
-        k_x = k_x if k_x is not None else q_x
-        v_x = v_x if v_x is not None else q_x
-
-        w_q, w_k, w_v = self.in_proj_weight.split(3, dim=0)
-
-        q = F.linear(q_x, w_q, self.in_proj_bias)
-        k = F.linear(k_x, w_k, self.in_proj_bias)
-        v = F.linear(v_x, w_v, self.in_proj_bias)
-
-        q = q.view(L, N * self.num_heads, -1).transpose(0, 1)
-        k = k.view(L, N * self.num_heads, -1).transpose(0, 1)
-        v = v.view(L, N * self.num_heads, -1).transpose(0, 1)
+    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
+        L, N, C = x.shape
+        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+        k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+        v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
 
         if self.logit_scale is not None:
             attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))
@@ -266,13 +252,10 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_heads: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
-            is_cross_attention: bool = False,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
-        if is_cross_attention:
-            self.ln_1_kv = norm_layer(d_model)
 
         self.attn = Attention(
             d_model, n_head,
@@ -280,7 +263,7 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_heads=scale_heads,
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
-        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
         self.ln_2 = norm_layer(d_model)
         mlp_width = int(d_model * mlp_ratio)
@@ -290,22 +273,10 @@ class CustomResidualAttentionBlock(nn.Module):
             ("gelu", act_layer()),
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
-        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value else nn.Identity()
+        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
-    def forward(
-        self,
-        q_x: torch.Tensor,
-        k_x: Optional[torch.Tensor] = None,
-        v_x: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None
-    ):
-
-        k_x = self.ln_1_kv(k_x) if k_x is not None else None
-        v_x = self.ln_1_kv(v_x) if v_x is not None else None
-
-        x = q_x + self.ls_1(
-            self.ln_attn(self.attn(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
-        )
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
