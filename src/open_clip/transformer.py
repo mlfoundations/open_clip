@@ -256,7 +256,6 @@ class CustomResidualAttentionBlock(nn.Module):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
-
         self.attn = Attention(
             d_model, n_head,
             scaled_cosine=scale_cosine_attn,
