@@ -228,7 +228,7 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
-        text_to_text: Optional[bool] = False，
+        text_to_text，
     )
 
     if not text_to_text:
@@ -249,7 +249,7 @@ def create_model_and_transforms(
     else:
         preprocess_val = None
         preprocess_train = None
-        
+
     return model, preprocess_train, preprocess_val
 
 
