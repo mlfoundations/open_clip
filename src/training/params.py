@@ -327,12 +327,53 @@ def parse_args(args):
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
+        "--lock-doc",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-doc-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n image tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-doc-freeze-layer-norm",
+        default=False,
+        action='store_true',
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
+        "--lock-query",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-query-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n image tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-query-freeze-layer-norm",
+        default=False,
+        action='store_true',
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
         "--log-every-n-steps",
         type=int,
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
-
+    parser.add_argument(
+        "--text-to-text",
+        type=bool,
+        default=False,
+        help="Train a TextTextCLIP model.",
+    )
 
     args = parser.parse_args(args)
 

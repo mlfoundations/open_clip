@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
-from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, CustomTextCLIP, TextTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
@@ -109,6 +109,7 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
+        text_to_text: Optional[bool] = False，
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     if isinstance(device, str):
@@ -148,13 +149,22 @@ def create_model(
 
         cast_dtype = get_cast_dtype(precision)
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
-
-        if custom_text:
-            if 'hf_model_name' in model_cfg.get('text_cfg', {}):
-                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
-            model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+        
+        # switch to TextTextCLIP
+        if text_to_text:
+            if 'hf_model_name' in model_cfg.get('doc_cfg', {}):
+                model_cfg['doc_cfg']['hf_model_pretrained'] = pretrained_hf
+            if 'hf_model_name' in model_cfg.get('query_cfg', {}):
+                model_cfg['query_cfg']['hf_model_pretrained'] = pretrained_hf
+                
+                model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            if custom_text:
+                if 'hf_model_name' in model_cfg.get('text_cfg', {}):
+                    model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
+                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+            else:
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_cfg = {}
         if pretrained:
@@ -179,9 +189,10 @@ def create_model(
         if precision in ("fp16", "bf16"):
             convert_weights_to_lp(model, dtype=torch.bfloat16 if precision == 'bf16' else torch.float16)
 
+        if not text_to_text:
         # set image / mean metadata from pretrained_cfg if available, or use default
-        model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
-        model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
+            model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
+            model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
         if jit:
             model = torch.jit.script(model)
@@ -203,6 +214,7 @@ def create_model_and_transforms(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        text_to_text: Optional[bool] = False，
 ):
     model = create_model(
         model_name,
@@ -216,23 +228,28 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
+        text_to_text: Optional[bool] = False，
     )
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(
-        model.visual.image_size,
-        is_train=True,
-        mean=image_mean,
-        std=image_std
-    )
-    preprocess_val = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std
-    )
-
+    if not text_to_text:
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess_train = image_transform(
+            model.visual.image_size,
+            is_train=True,
+            mean=image_mean,
+            std=image_std
+        )
+        preprocess_val = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std
+        )
+    else:
+        preprocess_val = None
+        preprocess_train = None
+        
     return model, preprocess_train, preprocess_val
 
 
@@ -248,6 +265,7 @@ def create_model_from_pretrained(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        text_to_text: Optional[bool] = False,
 ):
     if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
         raise RuntimeError(
@@ -263,18 +281,20 @@ def create_model_from_pretrained(
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         cache_dir=cache_dir,
+        text_to_text=text_to_text,
     )
 
     if not return_transform:
         return model
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std
-    )
+    if not text_to_text:
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std
+        )
 
     return model, preprocess
