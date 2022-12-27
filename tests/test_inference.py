@@ -20,7 +20,8 @@ models_to_test = models_to_test.difference({
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
         'coca_base',
-        'coca_ViT-B-32'
+        'coca_ViT-B-32',
+        'coca_roberta-ViT-B-32'
 })
 
 if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:

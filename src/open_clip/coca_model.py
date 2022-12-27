@@ -84,8 +84,8 @@ class CoCa(nn.Module):
 
         text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
         self.text = text
-        self.context_length = self.text.positional_embedding.shape[0]
-        self.heads = text_cfg["heads"]
+        if "hf_model_name" not in text_cfg or text_cfg["hf_model_name"] is None:
+            self.text_projection = nn.Parameter(torch.randn(embed_dim, embed_dim))
         
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype
@@ -100,13 +100,18 @@ class CoCa(nn.Module):
         )
 
         self.img_attn_pool_norm = norm_layer(embed_dim)
+        vocab_size = (
+            text_cfg["vocab_size"] 
+            if "vocab_size" in text_cfg
+            else self.text.config.vocab_size # for hf models
+        )
 
         self.to_logits = nn.Sequential(
-            norm_layer(embed_dim), nn.Linear(embed_dim, self.text.vocab_size, bias=False)
+            norm_layer(embed_dim), nn.Linear(embed_dim, vocab_size, bias=False)
         )
 
         # tie embedding weights and projection
-        self.to_logits[-1].weight = self.text.token_embedding.weight
+        # self.to_logits[-1].weight = self.text.token_embedding.weight
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = 0
@@ -139,10 +144,11 @@ class CoCa(nn.Module):
 
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
-        cls_emb, token_emb = self.text(text, output_tokens=True)
+        text_latent, token_emb = self.text(text, output_tokens=True)
 
-        if hasattr(self.text, "text_projection") and self.text.text_projection is not None:
-            text_latent = cls_emb @ self.text.text_projection
+        # not HF model
+        if hasattr(self, "text_projection") and self.text_projection is not None:
+            text_latent = text_latent @ self.text_projection
 
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
@@ -172,7 +178,7 @@ class CoCa(nn.Module):
         image,
         text,
         seq_len,
-        max_seq_len=None,
+        max_seq_len=77,
         mask_prob = 0.0,
         temperature = 1.,
         filter_logits_fn = top_k,
@@ -182,9 +188,6 @@ class CoCa(nn.Module):
         ):
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
-
-        if max_seq_len is None:
-            max_seq_len = self.context_length
 
         was_training = self.training
         num_dims = len(text.shape)

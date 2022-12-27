@@ -471,12 +471,15 @@ class TextTransformer(nn.Module):
         self.width = width
         self.output_dim = output_dim
         
+        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
         if embed_cls:
             self.embed_cls = embed_cls
             self.cls_emb = nn.Parameter(torch.empty(width))
             self.heads = heads
             self.pad_id = pad_id
             self.context_length += 1
+            self.text_projection = None
+            
             
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, width))
@@ -489,7 +492,7 @@ class TextTransformer(nn.Module):
             norm_layer=norm_layer,
         )
         self.ln_final = norm_layer(width)
-        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
@@ -557,7 +560,10 @@ class TextTransformer(nn.Module):
         if output_tokens:
             return x[:, -1], x[:, :-1]
 
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+        
+        if self.text_projection is not None:
+            x = x @ self.text_projection
 
         return x
 
