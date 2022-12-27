@@ -478,7 +478,6 @@ class TextTransformer(nn.Module):
             self.heads = heads
             self.pad_id = pad_id
             self.context_length += 1
-            self.text_projection = None
             
             
         self.token_embedding = nn.Embedding(vocab_size, width)
@@ -557,15 +556,15 @@ class TextTransformer(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        if output_tokens:
-            return x[:, -1], x[:, :-1]
-
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
-        
         if self.text_projection is not None:
             x = x @ self.text_projection
 
-        return x
+        if hasattr(self, "embed_cls") and self.embed_cls:
+            return (x[:, -1], x[:, :-1]) if output_tokens else x[:, -1]
+        
+        pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+
+        return (pooled, x) if output_tokens else pooled
 
 
 class MultimodalTransformer(Transformer):

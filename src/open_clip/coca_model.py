@@ -22,7 +22,8 @@ class MultimodalCfg(CLIPTextCfg):
     dim_head: int = 64
     heads: int = 8
     n_queries: int = 256
-    dim_latents: int = None
+    attn_pooler_heads: int = 8
+    latent_dim: int = 512
 
 
 def _build_input_dependent_text_tower(
@@ -82,34 +83,32 @@ class CoCa(nn.Module):
             else LayerNorm
         )
 
-        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
-        self.text = text
-        if "hf_model_name" not in text_cfg or text_cfg["hf_model_name"] is None:
-            self.text_projection = nn.Parameter(torch.randn(embed_dim, embed_dim))
-        
-        self.visual = _build_vision_tower(
-            embed_dim, vision_cfg, quick_gelu, cast_dtype
-        )
-
         self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
 
+        text = _build_input_dependent_text_tower(multimodal_cfg.width, text_cfg, quick_gelu, cast_dtype, multimodal=False)
+        self.text = text
+        self.visual = _build_vision_tower(
+            multimodal_cfg.width, vision_cfg, quick_gelu, cast_dtype
+        )
         self.img_attn_pool = AttentionalPooler(
-            multimodal_cfg.width, multimodal_cfg.heads, n_queries=n_queries + 1 # extra query for contrastive_loss
+            multimodal_cfg.width, multimodal_cfg.attn_pooler_heads, n_queries=n_queries + 1 # extra query for contrastive_loss
         )
 
-        self.img_attn_pool_norm = norm_layer(embed_dim)
+        self.img_attn_pool_norm = norm_layer(multimodal_cfg.width)
         vocab_size = (
-            text_cfg["vocab_size"] 
-            if "vocab_size" in text_cfg
-            else self.text.config.vocab_size # for hf models
+            self.text.config.vocab_size
+            if "hf_model_name" in text_cfg and text_cfg["hf_model_name"] is not None
+            else multimodal_cfg.vocab_size # for hf models
         )
 
         self.to_logits = nn.Sequential(
-            norm_layer(embed_dim), nn.Linear(embed_dim, vocab_size, bias=False)
+            norm_layer(multimodal_cfg.width), nn.Linear(multimodal_cfg.width, vocab_size, bias=False)
         )
 
+        self.to_img_latent = nn.Linear(multimodal_cfg.width, multimodal_cfg.latent_dim, bias=False)
+        self.to_txt_latent = nn.Linear(multimodal_cfg.width, multimodal_cfg.latent_dim, bias=False)
         # tie embedding weights and projection
         # self.to_logits[-1].weight = self.text.token_embedding.weight
 
@@ -125,7 +124,7 @@ class CoCa(nn.Module):
     def encode_image(self, images, normalize=True, return_tokens=False):
         x = self.visual(images, output_tokens=True)
 
-        if hasattr(self.visual, "ln_post"):
+        if hasattr(self.visual, "ln_post") and self.visual.ln_post is not None:
             x = self.visual.ln_post(x)
 
         if hasattr(self.visual, "proj") and self.visual.proj is not None:
@@ -134,7 +133,7 @@ class CoCa(nn.Module):
         x = self.img_attn_pool(x, x)
         x = self.img_attn_pool_norm(x)
 
-        image_latent = x[:, 0]
+        image_latent = self.to_img_latent(x[:, 0])
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
 
         return (image_latent, x[:, 1:]) if return_tokens else image_latent
@@ -144,12 +143,9 @@ class CoCa(nn.Module):
 
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
-        text_latent, token_emb = self.text(text, output_tokens=True)
+        cls_emb, token_emb = self.text(text, output_tokens=True)
 
-        # not HF model
-        if hasattr(self, "text_projection") and self.text_projection is not None:
-            text_latent = text_latent @ self.text_projection
-
+        text_latent = self.to_txt_latent(cls_emb)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
         return (text_latent, token_emb) if return_tokens else text_latent
@@ -157,21 +153,21 @@ class CoCa(nn.Module):
     def forward(self, image, text, output_dict=False):
         labels = text[:, 1:]
 
-        text_latents, text_tokens = self.encode_text(text, return_tokens=True)
-        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
+        text_latent, token_embs = self.encode_text(text, return_tokens=True)
+        image_latent, image_embs = self.encode_image(image, return_tokens=True)
 
-        text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
-        logits = self.to_logits(text_tokens)
+        token_embs = self.multimodal_decoder(image_embs, token_embs)
+        logits = self.to_logits(token_embs)
         if output_dict:
             return {
-                "image_features":image_latents,
-                "text_features":text_latents,
+                "image_features":image_latent,
+                "text_features":text_latent,
                 "logits":logits,
                 "labels":labels,
                 "logit_scale":self.logit_scale.exp()
             }
 
-        return image_latents, text_latents, logits, labels, self.logit_scale.exp()
+        return image_latent, text_latent, logits, labels, self.logit_scale.exp()
 
     def generate(
         self,
