@@ -123,10 +123,7 @@ class HFTextEncoder(nn.Module):
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
         
-        if pooler_type == "cls_last_pooler":
-            self.pooler = _POOLERS[pooler_type](self.config.eos_token_id)
-        else:
-            self.pooler = _POOLERS[pooler_type]()
+        self.pooler = _POOLERS[pooler_type]()
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
         if (d_model == output_dim) and (proj is None):  # do we always need a proj?
