@@ -41,7 +41,7 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')) or all(a in model_cfg for a in ('embed_dim', 'query_cfg', 'doc_cfg')):
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -72,7 +72,11 @@ def get_model_config(model_name):
 
 def get_tokenizer(model_name):
     config = get_model_config(model_name)
-    tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+    if 'text_cfg' in config.keys():
+        key = 'text_cfg'
+    elif 'query_cfg' in config.keys():
+        key = 'query_cfg'
+    tokenizer = HFTokenizer(config[key]['hf_tokenizer_name']) if 'hf_tokenizer_name' in config[key] else tokenize
     return tokenizer
 
 
@@ -109,7 +113,7 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
-        text_to_text: Optional[bool] = False，
+        text_to_text: Optional[bool] = False,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     if isinstance(device, str):
@@ -214,7 +218,7 @@ def create_model_and_transforms(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
-        text_to_text: Optional[bool] = False，
+        text_to_text: Optional[bool] = False,
 ):
     model = create_model(
         model_name,
@@ -228,7 +232,7 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
-        text_to_text，
+        text_to_text=text_to_text,
     )
 
     if not text_to_text:

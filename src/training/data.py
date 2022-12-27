@@ -47,7 +47,7 @@ class TextPairDataset(Dataset):
         return docs, queries
 
 
-def get_text_pair_dataset(args, is_train, epoch=0, tokenizer=None):
+def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
     dataset = CsvDataset(
