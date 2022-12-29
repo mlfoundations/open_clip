@@ -151,11 +151,13 @@ class CoCa(nn.Module):
         return (text_latent, token_emb) if return_tokens else text_latent
 
     def forward(self, image, text, output_dict=False):
-        labels = text[:, 1:]
 
         text_latent, token_embs = self.encode_text(text, return_tokens=True)
         image_latent, image_embs = self.encode_image(image, return_tokens=True)
-
+        
+        # TODO: add assertion to avoid bugs?
+        labels = text[:, -token_embs.shape[1]:]
+        
         token_embs = self.multimodal_decoder(image_embs, token_embs)
         logits = self.to_logits(token_embs)
         if output_dict:
