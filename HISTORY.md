@@ -1,6 +1,9 @@
 ## 2.9.0
 
 * Add training feature to auto-resume from the latest checkpoint on restart via `--resume latest`
+* Allow webp in webdataset
+* Fix logging for number of samples when using gradient accumulation
+* Add model configs for convnext xxlarge
 
 ## 2.8.2
 
