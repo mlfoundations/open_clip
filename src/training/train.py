@@ -152,7 +152,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
 
         # reset gradient accum, if enabled
         if args.accum_freq > 1:
-            accum_images, accum_texts, accum_image_features, accum_text_features = [], [], [], []
+            accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         with torch.no_grad():
@@ -174,18 +174,18 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 losses_m[key].update(val.item(), batch_size)
 
             logit_scale_scalar = logit_scale.item()
+            loss_log = " ".join(
+                [
+                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
+                    for loss_name, loss_m in losses_m.items()
+                ]
+            )
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq * args.batch_size * args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f}" + 
-                " ".join(
-                    [
-                        f"{loss_name}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
-                        for loss_name, loss_m in losses_m.items()
-                    ]
-                )
+                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
