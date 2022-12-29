@@ -1,3 +1,7 @@
+## 2.9.0
+
+* Add training feature to auto-resume from the latest checkpoint on restart via `--resume latest`.
+
 ## 2.8.2
 
 * wrapped patchdropout in a torch.nn.Module
