@@ -1,3 +1,7 @@
+## 2.9.1
+
+* Fix release
+
 ## 2.9.0
 
 * Add training feature to auto-resume from the latest checkpoint on restart via `--resume latest`
