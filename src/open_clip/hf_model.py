@@ -139,7 +139,7 @@ class HFTextEncoder(nn.Module):
 
         if output_tokens:
             tokens = self.proj(
-                out.last_hidden_state[:, 1:, :] 
+                out.last_hidden_state[:, self.pooler.cls_token_position + 1:, :] 
                 if type(self.pooler) == ClsPooler 
                 else out.last_hidden_state
             )
