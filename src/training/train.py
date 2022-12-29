@@ -90,6 +90,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 logit_scale = model_out["logit_scale"]
                 losses = loss(**model_out, output_dict=True)
                 total_loss = sum(losses.values())
+                losses["loss"] = total_loss
 
             backward(total_loss, scaler)
         else:
@@ -127,6 +128,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                         accumulated = accumulated[:j] +  [model_out[key]] + accumulated[j + 1:]
                     losses = loss(**accumulated, logit_scale=logit_scale, output_dict=True)
                     total_loss = sum(losses.values())
+                    losses["loss"] = total_loss
                 backward(total_loss, scaler)
 
         if scaler is not None:
