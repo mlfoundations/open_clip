@@ -87,8 +87,7 @@ class CoCa(nn.Module):
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
 
-        text = _build_input_dependent_text_tower(multimodal_cfg.width, text_cfg, quick_gelu, cast_dtype, multimodal=False)
-        self.text = text
+        self.text = _build_input_dependent_text_tower(multimodal_cfg.width, text_cfg, quick_gelu, cast_dtype, multimodal=False)
         self.visual = _build_vision_tower(
             multimodal_cfg.width, vision_cfg, quick_gelu, cast_dtype
         )
