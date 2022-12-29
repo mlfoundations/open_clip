@@ -1,5 +1,7 @@
+import glob
 import logging
 import os
+import re
 import sys
 import random
 from datetime import datetime
@@ -26,17 +28,34 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, world_info_from_env
+from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
 from training.train import train_one_epoch, evaluate
 
 
+LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
+
+
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
     random.seed(seed + rank)
+
+
+def natural_key(string_):
+    """See http://www.codinghorror.com/blog/archives/001018.html"""
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
+
+
+def get_latest_checkpoint(path: str):
+    # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
+    checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+    if checkpoints:
+        checkpoints = sorted(checkpoints, key=natural_key)
+        return checkpoints[-1]
+    return None
 
 
 def main(args):
@@ -53,10 +72,17 @@ def main(args):
     # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
     args.model = args.model.replace('/', '-')
 
+    # fully initialize distributed device environment
+    device = init_distributed_device(args)
+
     # get the name of the experiments
     if args.name is None:
+        date_str = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+        if args.distributed:
+            # sync date_str from master to all ranks
+            date_str = broadcast_object(args, date_str)
         args.name = '-'.join([
-            datetime.now().strftime("%Y_%m_%d-%H_%M_%S"),
+            date_str,
             f"model_{args.model}",
             f"lr_{args.lr}",
             f"b_{args.batch_size}",
@@ -64,40 +90,58 @@ def main(args):
             f"p_{args.precision}",
         ])
 
-    # discover initial world args early so we can log properly
-    args.distributed = False
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
-
+    resume_latest = args.resume == 'latest'
+    log_base_path = os.path.join(args.logs, args.name)
     args.log_path = None
     if is_master(args, local=args.log_local):
-        log_base_path = os.path.join(args.logs, args.name)
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path):
+        if os.path.exists(args.log_path) and not resume_latest:
             print(
                 "Error. Experiment already exists. Use --name {} to specify a new experiment."
             )
             return -1
 
-    # Set logger
+    # Setup text logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
 
-    # fully initialize distributed device environment
-    device = init_distributed_device(args)
-
+    # Setup wandb, tensorboard, checkpoint logging
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
+    args.checkpoint_path = os.path.join(log_base_path, "checkpoints")
     if is_master(args):
-        args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
-        args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+        args.tensorboard_path = os.path.join(log_base_path, "tensorboard") if args.tensorboard else ''
         for dirname in [args.tensorboard_path, args.checkpoint_path]:
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
     else:
         args.tensorboard_path = ''
-        args.checkpoint_path = ''
+
+    if resume_latest:
+        resume_from = None
+        if is_master(args):
+            # Checking for existing checkpoint via master rank only. It is possible for
+            # different rank processes to see different files if a shared file-system is under
+            # stress, however it's very difficult to fully work around such situations.
+            if args.save_most_recent:
+                # if --save-most-recent flag is set, look for latest at a fixed filename
+                resume_from = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                if not os.path.exists(resume_from):
+                    # If no latest checkpoint has been saved yet, don't try to resume
+                    resume_from = None
+            else:
+                # otherwise, list checkpoint dir contents and pick the newest checkpoint
+                resume_from = get_latest_checkpoint(args.checkpoint_path)
+            if resume_from:
+                logging.info(f'Found latest resume checkpoint at {resume_from}.')
+            else:
+                logging.info(f'No latest resume checkpoint found in {args.checkpoint_path}.')
+        if args.distributed:
+            # sync found checkpoint path to all ranks
+            resume_from = broadcast_object(args, resume_from)
+        args.resume = resume_from
 
     if args.copy_codebase:
         copy_codebase(args)
@@ -203,26 +247,23 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location='cpu')
-            if 'epoch' in checkpoint:
-                # resuming a train checkpoint w/ epoch and optimizer state
-                start_epoch = checkpoint["epoch"]
-                sd = checkpoint["state_dict"]
-                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                    sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
-                if optimizer is not None:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-                if scaler is not None and 'scaler' in checkpoint:
-                    scaler.load_state_dict(checkpoint['scaler'])
-                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
-            else:
-                # loading a bare (model only) checkpoint for fine-tune or evaluation
-                model.load_state_dict(checkpoint)
-                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        if 'epoch' in checkpoint:
+            # resuming a train checkpoint w/ epoch and optimizer state
+            start_epoch = checkpoint["epoch"]
+            sd = checkpoint["state_dict"]
+            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                sd = {k[len('module.'):]: v for k, v in sd.items()}
+            model.load_state_dict(sd)
+            if optimizer is not None:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            if scaler is not None and 'scaler' in checkpoint:
+                scaler.load_state_dict(checkpoint['scaler'])
+            logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
         else:
-            logging.info("=> no checkpoint found at '{}'".format(args.resume))
+            # loading a bare (model only) checkpoint for fine-tune or evaluation
+            model.load_state_dict(checkpoint)
+            logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
@@ -253,6 +294,7 @@ def main(args):
             name=args.name,
             notes=args.wandb_notes,
             tags=[],
+            resume='auto',
             config=vars(args),
         )
         if args.debug:
@@ -293,10 +335,11 @@ def main(args):
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
             if args.save_most_recent:
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
-                )
+                # try not to corrupt the latest checkpoint if save fails
+                tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+                latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                torch.save(checkpoint_dict, tmp_save_path)
+                os.replace(tmp_save_path, latest_save_path)
 
     if args.wandb and is_master(args):
         wandb.finish()
