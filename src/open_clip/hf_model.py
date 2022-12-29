@@ -89,8 +89,7 @@ class HFTextEncoder(nn.Module):
             config: PretrainedConfig = None,
             pooler_type: str = None,
             proj: str = None,
-            pretrained: bool = True,
-            embed_cls: bool = False
+            pretrained: bool = True
         ):
         super().__init__()
 
@@ -114,12 +113,6 @@ class HFTextEncoder(nn.Module):
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
-        
-        if embed_cls:
-            # add extra embedding as CLS embedding
-            self.transformer.resize_token_embeddings(self.config.vocab_size + 1)
-            self.embed_cls = embed_cls
-
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
         
@@ -139,20 +132,20 @@ class HFTextEncoder(nn.Module):
             )
 
     def forward(self, x: TensorType, output_tokens=False) -> TensorType:
-        if hasattr(self, "embed_cls") and self.embed_cls:
-            x[:, -2] = x[:, -1] # make room for embedded_cls id
-            x[:, -1] = self.config.vocab_size + 1 # embedded_cls id
-            
         attn_mask = (x != self.config.pad_token_id).long()
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
-        
-        if hasattr(self, "embed_cls") and self.embed_cls:
-            pooled_out = out.last_hidden_state[:, -1, :]
-            return (pooled_out, out.last_hidden_state[:, :-1, :]) if output_tokens else pooled_out
-        
         pooled_out = self.pooler(out, attn_mask)
         projected = self.proj(pooled_out)
-        return (projected, self.proj(out.last_hidden_state)) if output_tokens else projected
+
+        if output_tokens:
+            tokens = self.proj(
+                out.last_hidden_state[:, 1:, :] 
+                if type(self.pooler) == ClsPooler 
+                else out.last_hidden_state
+            )
+            return projected, tokens
+        
+        return projected
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         if not unlocked_layers:  # full freezing
