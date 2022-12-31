@@ -279,6 +279,50 @@ python -m training.main \
          --name "10_unfrozen" \
          --report-to "tensorboard" \
 ```
+### Training with pre-trained image tower and custom text tower:
+Here is an example to initialize the image tower with ViT-B-32 pretrained by `laion` while using `bert-base-uncased` as the text tower.
+```bash
+#!/bin/bash
+python \
+    -m training.main \
+    --pretrained laion2b_s34b_b79k \
+    --pretrained-image \
+    --pretrained-cache-dir ./laion-pretrained-models \
+    --model bert-base-uncased-laion-ViT-B-32 \
+    --lock-image \
+    --lock-image-freeze-bn-stats \
+    --lock-text \
+    --train-data="pipe:aws s3 cp s3://s-mas/cc3m/{00000..00329}.tar -" \
+    --train-num-samples 3000000 \
+    --val-data="pipe:aws s3 cp s3://s-mas/cc3m/{00330..00331}.tar -" \
+    --val-num-samples 10000 \
+    --dataset-type webdataset \
+    --batch-size 256 \
+    --warmup 2000 \
+    --epochs 10 \
+    --lr 5e-4 \
+    --precision amp \
+    --workers 6 \
+    --gather-with-grad \
+    --local-loss \
+```
+The arguments need to be clarified a little. Initializing the image tower with supported pretrained weights is triggered by setting `pretrained` and `pretrained-image` together. The `model` argument should point to a config json file with such `vision_cfg` syntax:
+```json
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "model_name": "ViT-B-32",
+        "pretrained": "laion2b_s34b_b79k"
+    },
+    "text_cfg": {
+        "hf_model_name": "bert-base-uncased",
+        "hf_tokenizer_name": "bert-base-uncased",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}
+```
+Where the `model_name` attribute of `vision_cfg` correspond to the actual structure of pretrained model. The `pretrained` attribute defaults to `openai` and would override the argument passed by `pretrained` if `pretrained-image` is also set.
 
 ### Loss Curves
 
