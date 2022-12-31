@@ -164,6 +164,12 @@ def parse_args(args):
         help="Use a pretrained CLIP model weights with the specified tag or file path.",
     )
     parser.add_argument(
+        "--pretrained-cache-dir",
+        default=None,
+        type=str,
+        help="Cache dir for storing downloaded pretrained weights",
+    )
+    parser.add_argument(
         "--pretrained-image",
         default=False,
         action='store_true',

@@ -96,6 +96,44 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
     return incompatible_keys
 
+def load_and_prepare_cfg(
+        model_name,
+        force_quick_gelu,
+        force_patch_dropout,
+        pretrained_image,
+        force_custom_text,
+        pretrained_hf,
+    ):
+    '''Decouples cfg loading and updating.'''
+    model_cfg = get_model_config(model_name)
+    if model_cfg is not None:
+        logging.info(f'Loaded {model_name} model config.')
+    else:
+        logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
+        raise RuntimeError(f'Model config for {model_name} not found.')
+
+    if force_quick_gelu:
+        # override for use of QuickGELU on non-OpenAI transformer models
+        model_cfg["quick_gelu"] = True
+
+    if force_patch_dropout is not None:
+        # override the default patch dropout value
+        model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
+
+    if pretrained_image:
+        if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
+            # pretrained weight loading for timm models set via vision_cfg
+            model_cfg['vision_cfg']['timm_model_pretrained'] = True
+        else:
+            assert False, 'pretrained image towers currently only supported for timm models'
+    
+    # for `custom_text`
+    custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
+    if custom_text:
+        if 'hf_model_name' in model_cfg.get('text_cfg', {}):
+            model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
+
+    return model_cfg, custom_text
 
 def create_model(
         model_name: str,
@@ -111,8 +149,11 @@ def create_model(
         cache_dir: Optional[str] = None,
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+
     if isinstance(device, str):
         device = torch.device(device)
+
+    cast_dtype = get_cast_dtype(precision)
 
     if pretrained and pretrained.lower() == 'openai':
         logging.info(f'Loading pretrained {model_name} from OpenAI.')
@@ -124,34 +165,17 @@ def create_model(
             cache_dir=cache_dir,
         )
     else:
-        model_cfg = get_model_config(model_name)
-        if model_cfg is not None:
-            logging.info(f'Loaded {model_name} model config.')
-        else:
-            logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
-            raise RuntimeError(f'Model config for {model_name} not found.')
-
-        if force_quick_gelu:
-            # override for use of QuickGELU on non-OpenAI transformer models
-            model_cfg["quick_gelu"] = True
-
-        if force_patch_dropout is not None:
-            # override the default patch dropout value
-            model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
-
-        if pretrained_image:
-            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
-                # pretrained weight loading for timm models set via vision_cfg
-                model_cfg['vision_cfg']['timm_model_pretrained'] = True
-            else:
-                assert False, 'pretrained image towers currently only supported for timm models'
-
-        cast_dtype = get_cast_dtype(precision)
-        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
+        # load and prepare model config
+        model_cfg, custom_text = load_and_prepare_cfg(
+            model_name=model_name,
+            force_quick_gelu=force_quick_gelu,
+            force_patch_dropout=force_patch_dropout,
+            pretrained_image=pretrained_image,
+            force_custom_text=force_custom_text,
+            pretrained_hf=pretrained_hf,
+        )
 
         if custom_text:
-            if 'hf_model_name' in model_cfg.get('text_cfg', {}):
-                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)

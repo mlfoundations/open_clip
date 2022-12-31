@@ -175,6 +175,7 @@ def main(args):
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        cache_dir=args.pretrained_cache_dir,
     )
     random_seed(args.seed, args.rank)
 
