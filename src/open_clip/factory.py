@@ -136,8 +136,10 @@ def load_and_prepare_cfg(
 
     # handle pretrained image
     which_pretrained_image_tower = None
+    vision_cfg = model_cfg.get('vision_cfg', {})
+    pretrained_image = pretrained_image or 'model_name' in vision_cfg or 'pretrained' in vision_cfg
+        
     if pretrained_image:
-        vision_cfg = model_cfg.get('vision_cfg', {})
         if 'timm_model_name' in vision_cfg:
             # pretrained weight loading for timm models set via vision_cfg
             model_cfg['vision_cfg']['timm_model_pretrained'] = True
@@ -243,7 +245,7 @@ def create_model(
                 which_pretrained_image_tower=which_pretrained_image_tower,
                 pretrained_image_tower=pretrained_image_tower,
             )
-        else:
+        elif pretrained:
             error_str = (
                 f'Pretrained weights ({pretrained}) not found for model {model_name}.'
                 f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
