@@ -13,7 +13,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import ClipLoss, get_cast_dtype
+from open_clip import ClipLoss, FlavaLoss, get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -38,6 +38,26 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
+class Batch(dict):
+    """Batch wrapper for a dictionary of tensors."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
+
+    def size(self):
+        if self.keys():
+            k = list(self.keys())[0]
+            return len(self[k])
+        return 0
+
+    def to(self, *, device, non_blocking=False, dtypes={}):
+        for k, v in self.items():
+            if isinstance(v, torch.Tensor):
+                dtype = dtypes.get(k, v.dtype)
+                self[k] = v.to(device=device, non_blocking=non_blocking, dtype=dtype)
+        return self
+
+
 def unwrap_model(model):
     if hasattr(model, 'module'):
         return model.module
@@ -56,9 +76,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
+    is_flava = args.model.startswith('flava')
 
     model.train()
-    loss = ClipLoss(
+    loss_cls = FlavaLoss if is_flava else ClipLoss
+    loss = loss_cls(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
         cache_labels=True,
@@ -85,24 +107,27 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         if not args.skip_scheduler:
             scheduler(step)
 
-        images, texts = batch
-        images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
-        texts = texts.to(device=device, non_blocking=True)
+        dtypes = {'image': cast_dtype}
+        batch = Batch(**batch).to(device=device, non_blocking=True, dtypes=dtypes)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         if args.accum_freq == 1:
             with autocast():
-                image_features, text_features, logit_scale = model(images, texts)
-                total_loss = loss(image_features, text_features, logit_scale)
+                output = model(**batch)
+                assert isinstance(output, dict)
+                total_loss, aux = loss(**output)
 
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
-                    chunk_image_features, chunk_text_features, _ = model(images, texts)
+                    output = model(**batch)
+                    assert isinstance(output, dict)
+                    chunk_image_features = output["image_features"]
+                    chunk_text_features = output["text_features"]
                 accum_image_features.append(chunk_image_features)
                 accum_text_features.append(chunk_text_features)
 
@@ -122,12 +147,19 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
                 images = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    chunk_image_features, chunk_text_features, logit_scale = model(images, texts)
+                    output = model(image=images, text=texts)
+                    chunk_image_features, chunk_text_features, logit_scale = output['image_features'], \
+                                                                             output['text_features'], \
+                                                                             output['logit_scale']
                     image_features = torch.cat(
                         accum_image_features[:j] + [chunk_image_features] + accum_image_features[j + 1:])
                     text_features = torch.cat(
                         accum_text_features[:j] + [chunk_text_features] + accum_text_features[j + 1:])
-                    total_loss = loss(image_features, text_features, logit_scale)
+                    total_loss = loss(
+                        image_features=image_features,
+                        text_features=text_features,
+                        logit_scale=logit_scale,
+                    )
                 backward(total_loss, scaler)
 
         if scaler is not None:
@@ -167,6 +199,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
             # NOTE loss is coarsely sampled, just master node and per log update
+            logit_scale = output['logit_scale']
             loss_m.update(total_loss.item(), batch_size)
             logit_scale_scalar = logit_scale.item()
             logging.info(
@@ -225,21 +258,22 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         all_image_features, all_text_features = [], []
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
-                images, texts = batch
-                images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
-                texts = texts.to(device=device, non_blocking=True)
+                batch = Batch(**batch).to(device=device, non_blocking=True, dtypes={'image': cast_dtype})
 
                 with autocast():
-                    image_features, text_features, logit_scale = model(images, texts)
+                    output = model(**batch)
                     # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
                     # however, system RAM is easily exceeded and compute time becomes problematic
+                    image_features, text_features, logit_scale = output['image_features'], \
+                                                                 output['text_features'], \
+                                                                 output['logit_scale']
                     all_image_features.append(image_features.cpu())
                     all_text_features.append(text_features.cpu())
                     logit_scale = logit_scale.mean()
                     logits_per_image = logit_scale * image_features @ text_features.t()
                     logits_per_text = logits_per_image.t()
 
-                    batch_size = images.shape[0]
+                    batch_size = batch.size()
                     labels = torch.arange(batch_size, device=device).long()
                     total_loss = (
                         F.cross_entropy(logits_per_image, labels) +

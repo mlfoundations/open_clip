@@ -42,4 +42,22 @@ arch_dict = {
         },
         "pooler": "mean_pooler",
     },
+    # https://huggingface.co/docs/transformers/model_doc/vit
+    "vit": {
+        "config_names": {
+            "width": "hidden_size",
+            "heads": "num_attention_heads",
+            "layers": "num_hidden_layers",
+        },
+        "pooler": "identity_pooler",
+    },
+    # https://huggingface.co/docs/transformers/model_doc/vit_mae
+    "vit_mae": {
+        "config_names": {
+            "width": "hidden_size",
+            "heads": "num_attention_heads",
+            "layers": "num_hidden_layers",
+        },
+        "pooler": "identity_pooler",
+    }
 }

@@ -118,4 +118,67 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
             ) / 2
-        return total_loss
+        return total_loss, {}
+
+
+class MLMLoss(nn.Module):
+
+    def __init__(self, ignore_index=-100):
+        super().__init__()
+        self.ignore_index = ignore_index
+
+    def forward(self, logits, labels):
+        assert logits.shape[:2] == labels.shape[:2]
+        vocab_size = logits.shape[-1]
+        logits = logits.reshape(-1, vocab_size)
+        labels = labels.reshape(-1)
+
+        # only compute loss on masked logits
+        masked_idx = torch.where(labels != self.ignore_index)
+        masked_logits = logits[masked_idx]
+        masked_labels = labels[masked_idx]
+
+        ce = F.cross_entropy(masked_logits, masked_labels)
+        return ce, {}
+
+
+class ITMLoss(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, itm_logits, itm_labels):
+        itm_logits = itm_logits.view(-1)
+        itm_labels = itm_labels.view(-1)
+        bce = F.binary_cross_entropy_with_logits(itm_logits, itm_labels)
+        return bce, {}
+
+
+class FlavaLoss(ClipLoss):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.mlm_loss = MLMLoss()
+        self.itm_loss = ITMLoss()
+
+    def forward(
+        self,
+        *,
+        image_features,
+        text_features,
+        logit_scale,
+        # text_masked_logits,
+        text_masked_labels,
+        itm_logits,
+        itm_labels,
+        mm_masked_logits,
+    ):
+        gc_loss, _ = super().forward(image_features, text_features, logit_scale)
+        # mlm_loss, _ = self.mlm_loss(text_masked_logits, text_masked_labels)
+        itm_loss, _ = self.itm_loss(itm_logits, itm_labels)
+        mm_mlm_loss, _ = self.mlm_loss(mm_masked_logits, text_masked_labels)
+
+        # TODO: make loss weights configurable
+        total_loss = gc_loss + itm_loss + mm_mlm_loss #mlm_loss# + itm_loss# + mm_mlm_loss
+        return total_loss, {'gc': gc_loss, 'itm': itm_loss, 'mm_mlm': mm_mlm_loss}#'mlm': mlm_loss}#, 'itm': itm_loss}#, 'mm_mlm': mm_mlm_loss}

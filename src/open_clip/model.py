@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from .hf_model import HFTextEncoder
+from .hf_model import HFEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
 from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer
@@ -36,6 +36,11 @@ class CLIPVisionCfg:
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
     timm_proj_bias: bool = False  # enable bias final projection
+    hf_model_name: str = None
+    hf_tokenizer_name: str = None
+    hf_model_pretrained: bool = True
+    proj: str = 'mlp'
+    pooler_type: str = 'mean_pooler'
 
 
 @dataclass
@@ -76,7 +81,15 @@ def _build_vision_tower(
     # NOTE: timm models always use native GELU regardless of quick_gelu flag.
     act_layer = QuickGELU if quick_gelu else nn.GELU
 
-    if vision_cfg.timm_model_name:
+    if hasattr(vision_cfg, 'hf_model_name') and vision_cfg.hf_model_name:
+        visual = HFEncoder(
+            vision_cfg.hf_model_name,
+            output_dim=embed_dim,
+            proj=vision_cfg.proj,
+            pooler_type=vision_cfg.pooler_type,
+            pretrained=vision_cfg.hf_model_pretrained
+       )
+    elif vision_cfg.timm_model_name:
         visual = TimmModel(
             vision_cfg.timm_model_name,
             pretrained=vision_cfg.timm_model_pretrained,
@@ -127,7 +140,7 @@ def _build_text_tower(
         text_cfg = CLIPTextCfg(**text_cfg)
 
     if text_cfg.hf_model_name:
-        text = HFTextEncoder(
+        text = HFEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
             proj=text_cfg.proj,
@@ -205,7 +218,11 @@ class CLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        return image_features, text_features, self.logit_scale.exp()
+        return {
+            'image_features': image_features,
+            'text_features': text_features,
+            'logit_scale': self.logit_scale.exp(),
+        }
 
 
 class CustomTextCLIP(nn.Module):
@@ -245,7 +262,11 @@ class CustomTextCLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        return image_features, text_features, self.logit_scale.exp()
+        return {
+            'image_features': image_features,
+            'text_features': text_features,
+            'logit_scale': self.logit_scale.exp(),
+        }
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):

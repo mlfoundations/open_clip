@@ -1,0 +1,23 @@
+{
+  "embed_dim": 512,
+  "vision_cfg": {
+      "hf_model_name": "google/vit-large-patch16-224",
+      "hf_model_pretrained": false,
+      "pooler_type": "identity_pooler",
+      "proj": "linear"
+  },
+  "text_cfg": {
+      "hf_model_name": "roberta-base",
+      "hf_model_pretrained": false,
+      "context_length": 78,
+      "hf_tokenizer_name": "roberta-base",
+      "pooler_type": "identity_pooler",
+      "proj": "linear"
+  },
+  "multimodal_cfg": {
+    "context_length": 273,
+    "layers": 6,
+    "width": 512,
+    "heads": 4
+  }
+}

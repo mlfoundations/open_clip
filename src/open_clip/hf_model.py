@@ -26,6 +26,8 @@ except ImportError as e:
         pass
 
 from .hf_configs import arch_dict
+from .utils import to_2tuple
+
 
 
 # utils
@@ -80,7 +82,14 @@ class ClsPooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 
-class HFTextEncoder(nn.Module):
+@register_pooler
+class IdentityPooler(nn.Module):
+    """Identity pooling"""
+    def forward(self, x:BaseModelOutput, attention_mask:TensorType):
+        return x.last_hidden_state
+
+
+class HFEncoder(nn.Module):
     """HuggingFace model adapter"""
 
     def __init__(
@@ -109,12 +118,18 @@ class HFTextEncoder(nn.Module):
                 self.transformer = create_func(model_args)
                 self.transformer = self.transformer.encoder
             else:
-                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                try:
+                    self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                except TypeError:
+                    self.transformer = create_func(model_args)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
 
-        if pooler_type is None:  # get default arch pooler
+        if hasattr(self.config, "image_size"):
+            self.image_size = to_2tuple(self.config.image_size)
+
+        if pooler_type is None: # get default arch pooler
             self.pooler = _POOLERS[(arch_dict[self.config.model_type]["pooler"])]()
         else:
             self.pooler = _POOLERS[pooler_type]()
@@ -131,11 +146,18 @@ class HFTextEncoder(nn.Module):
                 nn.GELU(),
                 nn.Linear(hidden_size, output_dim, bias=False),
             )
+        else:
+            raise ValueError('d_model != output_dim but no projection layer specified')
 
-    def forward(self, x: TensorType) -> TensorType:
-        attn_mask = (x != self.config.pad_token_id).long()
-        out = self.transformer(input_ids=x, attention_mask=attn_mask)
-        pooled_out = self.pooler(out, attn_mask)
+    def forward(self, x:TensorType) -> TensorType:
+        # TODO: find better way to determine if image or text encoder
+        if self.config.model_type.startswith("vit"):
+            out = self.transformer(pixel_values=x)
+            pooled_out = self.pooler(out, attention_mask=None)
+        else:
+            attn_mask = (x != self.config.pad_token_id).long()
+            out = self.transformer(input_ids=x, attention_mask=attn_mask)
+            pooled_out = self.pooler(out, attn_mask)
 
         return self.proj(pooled_out)
 

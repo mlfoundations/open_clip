@@ -27,6 +27,46 @@ except ImportError:
     hvd = None
 
 
+class HFDataset(Dataset):
+    def __init__(
+        self,
+        name,
+        subset,
+        split,
+        transforms=None,
+        img_key=None,
+        text_key=None,
+        tokenizer=None,
+    ):
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("Please install HF datasets: pip install datasets")
+
+        self.dataset = load_dataset(name, subset, split=split)
+        self.img_key = img_key
+        self.text_key = text_key
+        self.length = len(self.dataset)
+        self.transforms = transforms
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        example = {}
+        if self.img_key:
+            image = self.transforms(self.dataset[idx][self.img_key])
+            example['image'] = image
+        if self.text_key:
+            text = self.tokenize(
+                [str(self.dataset[idx][self.text_key])])[0]
+            example['text'] = text
+        return example
+
+
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
         logging.debug(f'Loading csv data from {input_filename}.')
@@ -43,9 +83,12 @@ class CsvDataset(Dataset):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        images = self.transforms(Image.open(str(self.images[idx])))
-        texts = self.tokenize([str(self.captions[idx])])[0]
-        return images, texts
+        image = self.transforms(Image.open(str(self.images[idx])))
+        text = self.tokenize([str(self.captions[idx])])[0]
+        return {
+            'image': image,
+            'text': text,
+         }
 
 
 class SharedEpoch:
@@ -212,6 +255,14 @@ def pytorch_worker_seed(increment=0):
     return wds.utils.pytorch_worker_seed()
 
 
+def wds_default_collate(batch):
+    image, text = zip(*batch)
+    return {
+        'image': torch.stack(image),
+        'text': torch.stack(text),
+    }
+
+
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
@@ -296,7 +347,7 @@ class ResampledShards2(IterableDataset):
             yield dict(url=self.rng.choice(self.urls))
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, collate_fn=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
@@ -313,7 +364,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
-    
+
     if resampled:
         pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
     else:
@@ -351,8 +402,12 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
         wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train),
+        *([wds.to_tuple("image", "text")] if collate_fn is None else []),
+        wds.batched(
+            args.batch_size,
+            partial=not is_train,
+            collation_fn=wds_default_collate if collate_fn is None else collate_fn,
+        ),
     ])
 
     dataset = wds.DataPipeline(*pipeline)
@@ -401,9 +456,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, collate_fn=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
+
     dataset = CsvDataset(
         input_filename,
         preprocess_fn,
@@ -423,6 +479,44 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
         num_workers=args.workers,
         pin_memory=True,
         sampler=sampler,
+        collate_fn=collate_fn,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
+def get_hf_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, collate_fn=None):
+    dataset_str = args.train_data if is_train else args.val_data
+    identifiers = dataset_str.split(':')
+    assert 1 <= len(identifiers) <= 2, f'Invalid dataset string: {dataset_str}'
+    dataset_name = identifiers[0]
+    subset = identifiers[1] if len(identifiers) == 2 else None
+    split = 'train' if is_train else 'validation'
+
+    dataset = HFDataset(
+        dataset_name,
+        subset,
+        split,
+        transforms=preprocess_fn,
+        img_key=args.hf_img_key,
+        caption_key=args.hf_caption_key,
+		tokenizer=tokenizer,
+    )
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        collate_fn=collate_fn,
         drop_last=is_train,
     )
     dataloader.num_samples = num_samples
@@ -448,10 +542,11 @@ class SyntheticDataset(Dataset):
     def __getitem__(self, idx):
         if self.transform is not None:
             image = self.transform(self.image)
+        # TODO(gmittal): make this usable like other datasets
         return image, self.preprocess_txt(self.caption)
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, collate_fn=None):
     image_size = preprocess_fn.transforms[0].size
     dataset = SyntheticDataset(
         transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
@@ -466,6 +561,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
         num_workers=args.workers,
         pin_memory=True,
         sampler=sampler,
+        collate_fn=collate_fn,
         drop_last=is_train,
     )
     dataloader.num_samples = num_samples
@@ -479,6 +575,8 @@ def get_dataset_fn(data_path, dataset_type):
         return get_wds_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
+    elif dataset_type == "hf":
+        return get_hf_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
     elif dataset_type == "auto":
@@ -492,19 +590,19 @@ def get_dataset_fn(data_path, dataset_type):
                 f"Tried to figure out dataset type, but failed for extension {ext}.")
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
-    
 
-def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
+
+def get_data(args, preprocess_fns, epoch=0, tokenizer=None, collate_fn=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer, collate_fn=collate_fn)
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-            args, preprocess_val, is_train=False, tokenizer=tokenizer)
+            args, preprocess_val, is_train=False, tokenizer=tokenizer, collate_fn=collate_fn)
 
     if args.imagenet_val is not None:
         data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")

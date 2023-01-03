@@ -52,7 +52,7 @@
 ## 2.4.0
 
 * Fix #211, missing RN50x64 config. Fix type of dropout param for ResNet models
-* Bring back LayerNorm impl that casts to input for non bf16/fp16 
+* Bring back LayerNorm impl that casts to input for non bf16/fp16
 * zero_shot.py: set correct tokenizer based on args
 * training/params.py: remove hf params and get them from model config
 
@@ -60,7 +60,7 @@
 
 * Implement grad checkpointing for hf model.
 * custom_text: True if hf_model_name is set
-* Disable hf tokenizer parallelism 
+* Disable hf tokenizer parallelism
 
 ## 2.3.0
 
@@ -69,7 +69,7 @@
 ## 2.2.0
 
 * Support for custom text tower
-* Add checksum verification for pretrained model weights 
+* Add checksum verification for pretrained model weights
 
 ## 2.1.0
 

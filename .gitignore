@@ -1,3 +1,4 @@
+cc_data
 logs/
 wandb/
 models/

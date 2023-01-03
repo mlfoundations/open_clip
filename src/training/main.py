@@ -27,6 +27,7 @@ except ImportError:
     hvd = None
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer
+from open_clip.flava_data import get_flava_collate
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -266,7 +267,11 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    tokenizer = get_tokenizer(args.model)
+    collate_fn = None
+    if args.model.startswith('flava'):
+        collate_fn = get_flava_collate(tokenizer)
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=tokenizer, collate_fn=collate_fn)
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
