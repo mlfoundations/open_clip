@@ -165,15 +165,19 @@ class AttentionalPooler(nn.Module):
             d_model: int,
             n_head: int = 8,
             n_queries: int = 256,
+            norm_layer: Callable = LayerNorm
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
         self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.ln_q = norm_layer(d_model)
+        self.ln_k = norm_layer(d_model)
 
-    def forward(self, k: torch.Tensor, v: torch.Tensor):
-        k, v = k.permute(1, 0, 2), v.permute(1, 0 ,2) # NLD -> LND
-        N = k.shape[1]
-        out = self.attn(self._repeat(self.query, N), k, v, need_weights=False)[0]
+    def forward(self, x: torch.Tensor):
+        x = self.ln_k(x).permute(1, 0, 2) # NLD -> LND
+        N = x.shape[1]
+        q = self.ln_q(self.query)
+        out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
         return out.permute(1, 0, 2) # LND -> NLD
 
     def _repeat(self, query, N):
@@ -325,6 +329,8 @@ class VisionTransformer(nn.Module):
             mlp_ratio: float,
             ls_init_value: float = None,
             global_average_pool: bool = False,
+            attentional_pool: bool = False,
+            n_queries: int = 256,
             output_dim: int = 512,
             patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
@@ -356,6 +362,9 @@ class VisionTransformer(nn.Module):
         )
 
         self.global_average_pool = global_average_pool
+        if attentional_pool:
+            assert not self.global_average_pool, "Can't set both global_average_pool and attentional_pool to True"
+            self.attentional_pooler = AttentionalPooler(width, heads, n_queries=n_queries, norm_layer=norm_layer)
         self.ln_post = norm_layer(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -436,18 +445,20 @@ class VisionTransformer(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
 
 
-        if not output_tokens:
-            if self.global_average_pool:
-                x = x.mean(dim=1)
-            else:
-                x = x[:, 0]
+        if hasattr(self, "attentional_pooler"):
+            x = self.attentional_pooler(x)
+            pooled, tokens = x[:, 0], x[:, 1:]
+        elif self.global_average_pool:
+            pooled, tokens = x.mean(dim=1), x
+        else:
+            pooled, tokens = x[:, 0], x[:, 1:]
 
-            x = self.ln_post(x)
+        pooled = self.ln_post(pooled)
 
-            if self.proj is not None:
-                x = x @ self.proj
+        if self.proj is not None:
+            pooled = pooled @ self.proj
 
-        return x
+        return (pooled, tokens) if output_tokens else pooled
 
 class TextTransformer(nn.Module):
 
@@ -558,15 +569,18 @@ class TextTransformer(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        if self.text_projection is not None:
-            x = x @ self.text_projection
 
         if hasattr(self, "embed_cls") and self.embed_cls:
-            return (x[:, -1], x[:, :-1]) if output_tokens else x[:, -1]
+            pooled = x[:, -1]
+            tokens = x[:, :-1]
+        else:
+            pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+            tokens = x
+            
+        if self.text_projection is not None:
+            pooled = pooled @ self.text_projection
         
-        pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
-
-        return (pooled, x) if output_tokens else pooled
+        return (pooled, tokens) if output_tokens else pooled
 
 
 class MultimodalTransformer(Transformer):
@@ -626,7 +640,7 @@ class MultimodalTransformer(Transformer):
         # pytorch uses additive attention mask; fill with -inf
         mask = torch.empty(self.context_length, self.context_length)
         mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
+        mask.triu_(1) # zero out the lower diagonal
         return mask
 
     def forward(self, image_embs, text_embs):
@@ -647,3 +661,7 @@ class MultimodalTransformer(Transformer):
         x = self.ln_final(x)
 
         return x
+    
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.transformer.grad_checkpointing = enable

@@ -4,7 +4,8 @@
         "image_size": 224,
         "layers": 12,
         "width": 768,
-        "patch_size": 32
+        "patch_size": 32,
+        "attentional_pool": true
     },
     "text_cfg": {
         "context_length": 76,
