@@ -540,15 +540,17 @@ class TextTransformer(nn.Module):
 
     def forward(self, text, output_tokens: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
+        seq_len = text.shape[1]
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         attn_mask = self.attn_mask
         if hasattr(self, "embed_cls") and self.embed_cls:
+            seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
             cls_mask = self.build_cls_mask(text, cast_dtype)
-            attn_mask = attn_mask.unsqueeze(0) + cls_mask
+            attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
 
-        x = x + self.positional_embedding.to(cast_dtype)        
+        x = x + self.positional_embedding[:seq_len].to(cast_dtype)        
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
