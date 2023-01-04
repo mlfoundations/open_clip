@@ -139,7 +139,7 @@ class HFTextEncoder(nn.Module):
 
         if output_tokens:
             seq_len = out.last_hidden_state.shape[1]
-            tokens = self.proj(
+            tokens = (
                 out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :] 
                 if type(self.pooler) == ClsPooler 
                 else out.last_hidden_state
