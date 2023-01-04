@@ -38,7 +38,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "csv", "synthetic", "auto", "textpair"],
         default="auto",
         help="Which type of dataset to process."
     )
@@ -64,6 +64,18 @@ def parse_args(args):
         "--csv-caption-key",
         type=str,
         default="title",
+        help="For csv-like datasets, the name of the key for the captions."
+    )
+    parser.add_argument(
+        "--csv-query-key",
+        type=str,
+        default="query",
+        help="For csv-like datasets, the name of the key for the image paths."
+    )
+    parser.add_argument(
+        "--csv-doc-key",
+        type=str,
+        default="doc",
         help="For csv-like datasets, the name of the key for the captions."
     )
     parser.add_argument(

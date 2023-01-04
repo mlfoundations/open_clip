@@ -28,9 +28,9 @@ except ImportError:
 
 
 class TextPairDataset(Dataset):
-    def __init__(self, input_filename, query_key, doc_key, sep="\t", tokenizer=None):
-        logging.debug(f'Loading csv data from {input_filename}.')
-        df = pd.read_csv(input_filename, sep=sep)
+    def __init__(self, input_filename, query_key, doc_key, tokenizer=None):
+        logging.debug(f'Loading parquet data from {input_filename}.')
+        df = pd.read_parquet(input_filename)
 
         self.docs = df[doc_key].tolist()
         self.queries = df[query_key].tolist()
@@ -50,11 +50,10 @@ class TextPairDataset(Dataset):
 def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
-    dataset = CsvDataset(
+    dataset = TextPairDataset(
         input_filename,
         query_key=args.csv_query_key,
         doc_key=args.csv_doc_key,
-        sep=args.csv_separator,
         tokenizer=tokenizer
     )
     num_samples = len(dataset)
