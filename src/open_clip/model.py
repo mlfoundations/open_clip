@@ -253,39 +253,39 @@ class TextTextCLIP(nn.Module):
     def __init__(
             self,
             embed_dim: int,
-            query_cfg: CLIPTextCfg,
-            doc_cfg: CLIPTextCfg,
+            tower_a_cfg: CLIPTextCfg,
+            tower_b_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
-        self.doc = _build_text_tower(embed_dim, doc_cfg, quick_gelu, cast_dtype)
-        self.query = _build_text_tower(embed_dim, query_cfg, quick_gelu, cast_dtype)
+        self.tower_a = _build_text_tower(embed_dim, tower_a_cfg, quick_gelu, cast_dtype)
+        self.tower_b = _build_text_tower(embed_dim, tower_b_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def lock_query_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.query.lock(unlocked_layers, freeze_layer_norm)
+    def lock_tower_a(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        self.tower_a.lock(unlocked_layers, freeze_layer_norm)
 
-    def lock_doc_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.doc.lock(unlocked_layers, freeze_layer_norm)
+    def lock_tower_b(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        self.tower_b.lock(unlocked_layers, freeze_layer_norm)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
-        self.doc.set_grad_checkpointing(enable)
-        self.query.set_grad_checkpointing(enable)
+        self.tower_a.set_grad_checkpointing(enable)
+        self.tower_b.set_grad_checkpointing(enable)
 
-    def encode_doc(self, text, normalize: bool = False):
-        features = self.doc(text)
+    def encode_text_a(self, text, normalize: bool = False):
+        features = self.tower_a(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def encode_query(self, text, normalize: bool = False):
-        features = self.query(text)
+    def encode_text_b(self, text, normalize: bool = False):
+        features = self.tower_b(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def forward(self, query, doc):
-        query_features = self.encode_query(query, normalize=True)
-        doc_features = self.encode_doc(doc, normalize=True)
-        return query_features, doc_features, self.logit_scale.exp()
+    def forward(self, text_a, text_b):
+        features_a = self.encode_text_a(text_a, normalize=True)
+        features_b = self.encode_text_b(text_b, normalize=True)
+        return features_a, features_b, self.logit_scale.exp()
 
 
 

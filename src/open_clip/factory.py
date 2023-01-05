@@ -41,7 +41,7 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')) or all(a in model_cfg for a in ('embed_dim', 'query_cfg', 'doc_cfg')):
+            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')) or all(a in model_cfg for a in ('embed_dim', 'tower_a_cfg', 'tower_b_cfg')):
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -74,8 +74,8 @@ def get_tokenizer(model_name):
     config = get_model_config(model_name)
     if 'text_cfg' in config.keys():
         key = 'text_cfg'
-    elif 'query_cfg' in config.keys():
-        key = 'query_cfg'
+    elif 'tower_a_cfg' in config.keys():
+        key = 'tower_a_cfg'
     tokenizer = HFTokenizer(config[key]['hf_tokenizer_name']) if 'hf_tokenizer_name' in config[key] else tokenize
     return tokenizer
 
@@ -156,10 +156,10 @@ def create_model(
         
         # switch to TextTextCLIP
         if text_to_text:
-            if 'hf_model_name' in model_cfg.get('doc_cfg', {}):
-                model_cfg['doc_cfg']['hf_model_pretrained'] = pretrained_hf
-            if 'hf_model_name' in model_cfg.get('query_cfg', {}):
-                model_cfg['query_cfg']['hf_model_pretrained'] = pretrained_hf
+            if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
+                model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
+            if 'hf_model_name' in model_cfg.get('tower_b_cfg', {}):
+                model_cfg['tower_b_cfg']['hf_model_pretrained'] = pretrained_hf
                 
                 model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:

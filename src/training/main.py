@@ -191,14 +191,14 @@ def main(args):
         model.lock_text_tower(
             unlocked_layers=args.lock_text_unlocked_layers,
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
-    if args.lock_doc:
-        model.lock_doc_tower(
-            unlocked_layers=args.lock_doc_unlocked_layers,
-            freeze_layer_norm=args.lock_doc_freeze_layer_norm)
-    if args.lock_query:
-        model.lock_query_tower(
-            unlocked_layers=args.lock_query_unlocked_layers,
-            freeze_layer_norm=args.lock_query_freeze_layer_norm)
+    if args.lock_tower_a:
+        model.lock_tower_a(
+            unlocked_layers=args.lock_tower_a_unlocked_layers,
+            freeze_layer_norm=args.lock_tower_a_freeze_layer_norm)
+    if args.lock_tower_b:
+        model.lock_tower_b(
+            unlocked_layers=args.lock_tower_b_unlocked_layers,
+            freeze_layer_norm=args.lock_tower_b_freeze_layer_norm)
 
     if args.grad_checkpointing:
         model.set_grad_checkpointing()

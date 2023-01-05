@@ -29,7 +29,7 @@ def test_inference_simple(model_type, pretrained=None):
     text_probs = (100.0 * doc_features @ query_features.T).softmax(dim=-1)
     print(text_probs)
 
-    '''
+'''    
 if __name__ == "__main__":
     
     #open_clip.factory._rescan_model_configs()
@@ -38,8 +38,6 @@ if __name__ == "__main__":
 
     main([
     '--save-frequency', '1',
-    '--zeroshot-frequency', '1',
-    '--dataset-type', "synthetic",
     '--train-num-samples', '16',
     '--warmup', '1',
     '--batch-size', '2',
@@ -51,5 +49,7 @@ if __name__ == "__main__":
     '--dataset-type', 'textpair', 
     '--train-data', 'text_pairs.parquet.gzip',
     '--text-to-text', 'True',
+    '--text-a-key', 'query', 
+    '--text-b-key', 'doc'
     ])
-    '''
+'''    

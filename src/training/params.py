@@ -67,16 +67,16 @@ def parse_args(args):
         help="For csv-like datasets, the name of the key for the captions."
     )
     parser.add_argument(
-        "--csv-query-key",
+        "--text-a-key",
         type=str,
-        default="query",
-        help="For csv-like datasets, the name of the key for the image paths."
+        default="text_a",
+        help="For text pair datasets, the name of the key for the texts a."
     )
     parser.add_argument(
-        "--csv-doc-key",
+        "--text-b-key",
         type=str,
-        default="doc",
-        help="For csv-like datasets, the name of the key for the captions."
+        default="text_b",
+        help="For text pair datasets, the name of the key for the texts b."
     )
     parser.add_argument(
         "--imagenet-val",
@@ -339,37 +339,37 @@ def parse_args(args):
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
-        "--lock-doc",
+        "--lock-tower-b",
         default=False,
         action='store_true',
         help="Lock full text tower by disabling gradients.",
     )
     parser.add_argument(
-        "--lock-doc-unlocked-layers",
+        "--lock-tower-b-unlocked-layers",
         type=int,
         default=0,
         help="Leave last n image tower layer groups unlocked.",
     )
     parser.add_argument(
-        "--lock-doc-freeze-layer-norm",
+        "--lock-tower-b-freeze-layer-norm",
         default=False,
         action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
-        "--lock-query",
+        "--lock-tower-a",
         default=False,
         action='store_true',
         help="Lock full text tower by disabling gradients.",
     )
     parser.add_argument(
-        "--lock-query-unlocked-layers",
+        "--lock-tower-a-unlocked-layers",
         type=int,
         default=0,
         help="Leave last n image tower layer groups unlocked.",
     )
     parser.add_argument(
-        "--lock-query-freeze-layer-norm",
+        "--lock-tower-a-freeze-layer-norm",
         default=False,
         action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",

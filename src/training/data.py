@@ -28,23 +28,23 @@ except ImportError:
 
 
 class TextPairDataset(Dataset):
-    def __init__(self, input_filename, query_key, doc_key, tokenizer=None):
+    def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
         logging.debug(f'Loading parquet data from {input_filename}.')
         df = pd.read_parquet(input_filename)
 
-        self.docs = df[doc_key].tolist()
-        self.queries = df[query_key].tolist()
+        self.text_a = df[text_a_key].tolist()
+        self.text_b = df[text_b_key].tolist()
         logging.debug('Done loading data.')
 
         self.tokenize = tokenizer
 
     def __len__(self):
-        return len(self.docs)
+        return len(self.text_a)
 
     def __getitem__(self, idx):
-        docs = self.tokenize([str(self.docs[idx])])[0]
-        queries = self.tokenize([str(self.queries[idx])])[0]
-        return docs, queries
+        texts_a = self.tokenize([str(self.text_a[idx])])[0]
+        texts_b = self.tokenize([str(self.text_b[idx])])[0]
+        return texts_a,texts_b
 
 
 def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
@@ -52,8 +52,8 @@ def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
     assert input_filename
     dataset = TextPairDataset(
         input_filename,
-        query_key=args.csv_query_key,
-        doc_key=args.csv_doc_key,
+        text_a_key=args.text_a_key,
+        text_b_key=args.text_b_key,
         tokenizer=tokenizer
     )
     num_samples = len(dataset)
