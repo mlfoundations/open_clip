@@ -14,7 +14,7 @@
     },
     "multimodal_cfg": {
         "context_length": 76,
-        "width": 512,
+        "width": 768,
         "heads": 8,
         "layers": 12,
         "latent_dim": 512

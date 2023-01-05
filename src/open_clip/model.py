@@ -33,6 +33,7 @@ class CLIPVisionCfg:
     global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
     attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
     n_queries: int = 256 # n_queries for attentional pooler
+    attn_pooler_heads: int = 8 # n heads for attentional_pooling
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -115,6 +116,7 @@ def _build_vision_tower(
             global_average_pool=vision_cfg.global_average_pool,
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
+            attn_pooler_heads=vision_cfg.attn_pooler_heads,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,

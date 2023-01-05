@@ -5,7 +5,8 @@
         "layers": 12,
         "width": 768,
         "patch_size": 32,
-        "attentional_pool": true
+        "attentional_pool": true,
+        "attn_pooler_heads": 8
     },
     "text_cfg": {
         "context_length": 76,

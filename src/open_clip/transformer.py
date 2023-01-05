@@ -163,15 +163,16 @@ class AttentionalPooler(nn.Module):
     def __init__(
             self,
             d_model: int,
+            context_dim: int,
             n_head: int = 8,
             n_queries: int = 256,
             norm_layer: Callable = LayerNorm
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
-        self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.attn = nn.MultiheadAttention(d_model, n_head, kdim=context_dim, vdim=context_dim)
         self.ln_q = norm_layer(d_model)
-        self.ln_k = norm_layer(d_model)
+        self.ln_k = norm_layer(context_dim)
 
     def forward(self, x: torch.Tensor):
         x = self.ln_k(x).permute(1, 0, 2) # NLD -> LND
@@ -331,6 +332,7 @@ class VisionTransformer(nn.Module):
             global_average_pool: bool = False,
             attentional_pool: bool = False,
             n_queries: int = 256,
+            attn_pooler_heads: int = 8,
             output_dim: int = 512,
             patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
@@ -363,10 +365,12 @@ class VisionTransformer(nn.Module):
 
         self.global_average_pool = global_average_pool
         if attentional_pool:
-            assert not self.global_average_pool, "Can't set both global_average_pool and attentional_pool to True"
-            self.attentional_pooler = AttentionalPooler(width, heads, n_queries=n_queries, norm_layer=norm_layer)
-        self.ln_post = norm_layer(width)
-        self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+            self.attn_pool = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=n_queries)
+            self.ln_post = norm_layer(output_dim)
+            self.proj = nn.Parameter(scale * torch.randn(output_dim, output_dim))
+        else:
+            self.ln_post = norm_layer(width)
+            self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         self.init_parameters()
 
@@ -445,15 +449,17 @@ class VisionTransformer(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
 
 
-        if hasattr(self, "attentional_pooler"):
-            x = self.attentional_pooler(x)
-            pooled, tokens = x[:, 0], x[:, 1:]
-        elif self.global_average_pool:
+        if hasattr(self, "attn_pool"):
+            x = self.attn_pool(x)
+            x = self.ln_post(x)
+
+        if self.global_average_pool:
             pooled, tokens = x.mean(dim=1), x
         else:
             pooled, tokens = x[:, 0], x[:, 1:]
 
-        pooled = self.ln_post(pooled)
+        if not hasattr(self, "attn_pool"):
+            pooled = self.ln_post(pooled)
 
         if self.proj is not None:
             pooled = pooled @ self.proj

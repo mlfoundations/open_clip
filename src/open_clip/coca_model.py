@@ -11,7 +11,6 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
-    AttentionalPooler,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 from .generation_utils import top_a, top_k, top_p
@@ -111,9 +110,6 @@ class CoCa(nn.Module):
             norm_layer(multimodal_cfg.width), nn.Linear(multimodal_cfg.width, vocab_size, bias=False)
         )
 
-        self.img_to_multimodal = nn.Linear(vision_cfg.width, multimodal_cfg.width, bias=False)
-        self.txt_to_multimodal = nn.Linear(text_cfg.width, multimodal_cfg.width, bias=False)
-
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
 
@@ -126,9 +122,6 @@ class CoCa(nn.Module):
         image_latent, tokens_embs = self.visual(images, output_tokens=True)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return (image_latent, tokens_embs) if return_tokens else image_latent
-
-    def _repeat(self, t, N):
-        return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
@@ -144,8 +137,6 @@ class CoCa(nn.Module):
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
         
-        image_embs = self.img_to_multimodal(image_embs)
-        token_embs = self.txt_to_multimodal(token_embs)
         token_embs = self.text.decoder(image_embs, token_embs)
         logits = self.to_logits(token_embs)
         if output_dict:
