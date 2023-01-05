@@ -671,4 +671,4 @@ class MultimodalTransformer(Transformer):
     
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
+        self.grad_checkpointing = enable
