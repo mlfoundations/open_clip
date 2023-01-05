@@ -3,6 +3,7 @@
     "multimodal_cfg": {
         "width": 768,
         "context_length": 76,
+        "vocab_size": 64000,
         "mlp_ratio": 4,
         "layers": 12,
         "dim_head": 64,
