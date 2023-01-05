@@ -565,7 +565,6 @@ class TextTransformer(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
@@ -573,7 +572,9 @@ class TextTransformer(nn.Module):
         if hasattr(self, "embed_cls") and self.embed_cls:
             pooled = x[:, -1]
             tokens = x[:, :-1]
+            pooled = self.ln_final(pooled)
         else:
+            x = self.ln_final(x)
             pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
             tokens = x
             
