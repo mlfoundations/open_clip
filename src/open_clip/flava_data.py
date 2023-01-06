@@ -4,13 +4,13 @@ from transformers import DataCollatorForLanguageModeling
 from .tokenizer import HFTokenizer
 
 
-def get_flava_collate(hf_tokenizer):
-    assert isinstance(hf_tokenizer, HFTokenizer)
+def get_flava_collate(hf_tokenizer, mlm_prob=0.15, itm_prob=0.1):
+    assert isinstance(hf_tokenizer, HFTokenizer), 'tokenizer must be HFTokenizer'
     tokenizer = hf_tokenizer.tokenizer
     mlm_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=True,
-        mlm_probability=0.15,
+        mlm_probability=mlm_prob,
     )
     pad_token_id = tokenizer.pad_token_id
 
@@ -28,7 +28,6 @@ def get_flava_collate(hf_tokenizer):
         }
 
         # ITM
-        itm_prob = 0.1
         itm_labels = torch.bernoulli(torch.ones(len(image)) * (1 - itm_prob))
         negative_text_idx = (torch.where(itm_labels == 0)[0] + 1) % len(text)
 

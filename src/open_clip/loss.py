@@ -118,7 +118,7 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
             ) / 2
-        return total_loss, {}
+        return total_loss
 
 
 class MLMLoss(nn.Module):
@@ -138,8 +138,7 @@ class MLMLoss(nn.Module):
         masked_logits = logits[masked_idx]
         masked_labels = labels[masked_idx]
 
-        ce = F.cross_entropy(masked_logits, masked_labels)
-        return ce, {}
+        return F.cross_entropy(masked_logits, masked_labels, ignore_index=self.ignore_index)
 
 
 class ITMLoss(nn.Module):
@@ -150,17 +149,28 @@ class ITMLoss(nn.Module):
     def forward(self, itm_logits, itm_labels):
         itm_logits = itm_logits.view(-1)
         itm_labels = itm_labels.view(-1)
-        bce = F.binary_cross_entropy_with_logits(itm_logits, itm_labels)
-        return bce, {}
+        return F.binary_cross_entropy_with_logits(itm_logits, itm_labels)
 
 
 class FlavaLoss(ClipLoss):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        contrastive_loss_weight,
+        itm_loss_weight,
+        mlm_loss_weight,
+        mae_loss_weight,
+        *args,
+        **kwargs):
         super().__init__(*args, **kwargs)
 
         self.mlm_loss = MLMLoss()
         self.itm_loss = ITMLoss()
+
+        self.contrastive_loss_weight = contrastive_loss_weight
+        self.itm_loss_weight = itm_loss_weight
+        self.mlm_loss_weight = mlm_loss_weight
+        self.mae_loss_weight = mae_loss_weight
 
     def forward(
         self,
@@ -174,11 +184,17 @@ class FlavaLoss(ClipLoss):
         itm_labels,
         mm_masked_logits,
     ):
-        gc_loss, _ = super().forward(image_features, text_features, logit_scale)
-        # mlm_loss, _ = self.mlm_loss(text_masked_logits, text_masked_labels)
-        itm_loss, _ = self.itm_loss(itm_logits, itm_labels)
-        mm_mlm_loss, _ = self.mlm_loss(mm_masked_logits, text_masked_labels)
+        clip_loss = super().forward(image_features, text_features, logit_scale)
+        itm_loss = self.itm_loss(itm_logits, itm_labels)
+        mm_mlm_loss = self.mlm_loss(mm_masked_logits, text_masked_labels)
+        # TODO: add MAE loss
 
-        # TODO: make loss weights configurable
-        total_loss = gc_loss + itm_loss + mm_mlm_loss #mlm_loss# + itm_loss# + mm_mlm_loss
-        return total_loss, {'gc': gc_loss, 'itm': itm_loss, 'mm_mlm': mm_mlm_loss}#'mlm': mlm_loss}#, 'itm': itm_loss}#, 'mm_mlm': mm_mlm_loss}
+        clip_loss = self.contrastive_loss_weight * clip_loss
+        itm_loss = self.itm_loss_weight * itm_loss
+        mm_mlm_loss = self.mlm_loss_weight * mm_mlm_loss
+
+        return {
+            "contrastive_loss": clip_loss,
+            "itm_loss": itm_loss,
+            "mlm_loss": mm_mlm_loss,
+        }

@@ -13,6 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .flava_model import FLAVA
+from .loss import ClipLoss, FlavaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
 from .transform import image_transform
@@ -195,6 +196,29 @@ def create_model(
             model = torch.jit.script(model)
 
     return model
+
+
+def create_loss(args):
+    if "flava" in args.model.lower():
+        return FlavaLoss(
+            contrastive_loss_weight=args.flava_contrastive_loss_weight,
+            itm_loss_weight=args.flava_itm_loss_weight,
+            mlm_loss_weight=args.flava_mlm_loss_weight,
+            mae_loss_weight=args.flava_mae_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod)
+
+    return ClipLoss(
+        local_loss=args.local_loss,
+        gather_with_grad=args.gather_with_grad,
+        cache_labels=True,
+        rank=args.rank,
+        world_size=args.world_size,
+        use_horovod=args.horovod)
 
 
 def create_model_and_transforms(

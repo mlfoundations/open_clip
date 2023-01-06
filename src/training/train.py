@@ -13,7 +13,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import ClipLoss, FlavaLoss, get_cast_dtype
+from open_clip import get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -55,6 +55,8 @@ class Batch(dict):
             if isinstance(v, torch.Tensor):
                 dtype = dtypes.get(k, v.dtype)
                 self[k] = v.to(device=device, non_blocking=non_blocking, dtype=dtype)
+            elif isinstance(v, dict):
+                self[k] = Batch(v).to(device=device, non_blocking=non_blocking, dtypes=dtypes)
         return self
 
 
@@ -72,21 +74,12 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
+def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
-    is_flava = args.model.startswith('flava')
 
     model.train()
-    loss_cls = FlavaLoss if is_flava else ClipLoss
-    loss = loss_cls(
-        local_loss=args.local_loss,
-        gather_with_grad=args.gather_with_grad,
-        cache_labels=True,
-        rank=args.rank,
-        world_size=args.world_size,
-        use_horovod=args.horovod)
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
@@ -94,9 +87,10 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
     if args.accum_freq > 1:
+        assert not args.model.startswith('flava'), 'FLAVA does not support gradient accumulation'
         accum_images, accum_texts, accum_image_features, accum_text_features = [], [], [], []
 
-    loss_m = AverageMeter()
+    losses_m = {}
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
@@ -115,9 +109,15 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         if args.accum_freq == 1:
             with autocast():
-                output = model(**batch)
-                assert isinstance(output, dict)
-                total_loss, aux = loss(**output)
+                model_out = model(**batch)
+                assert isinstance(model_out, dict)
+                losses = loss(**model_out)
+                if isinstance(losses, dict):
+                    total_loss = sum(losses.values())
+                    losses["loss"] = total_loss
+                else:
+                    total_loss = losses
+                    losses = {"loss": losses}
 
             backward(total_loss, scaler)
         else:
@@ -192,34 +192,43 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
-        if is_master(args) and (i_accum % args.log_every_n_steps or batch_count == num_batches_per_epoch):
-            batch_size = len(images)
+        if is_master(args) and ((i_accum % args.log_every_n_steps) == 0 or batch_count == num_batches_per_epoch):
+            batch_size = batch.size()
             num_samples = batch_count * batch_size * args.accum_freq * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
             # NOTE loss is coarsely sampled, just master node and per log update
-            logit_scale = output['logit_scale']
-            loss_m.update(total_loss.item(), batch_size)
+            for key, val in losses.items():
+                if key not in losses_m:
+                    losses_m[key] = AverageMeter()
+                losses_m[key].update(val.item(), batch_size)
+            logit_scale = model_out['logit_scale']
             logit_scale_scalar = logit_scale.item()
+            loss_log = " ".join(
+                [
+                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
+                    for loss_name, loss_m in losses_m.items()
+                ]
+            )
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
-                f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq * args.batch_size * args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f}"
+                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
             log_data = {
-                "loss": loss_m.val,
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
                 "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }
+            log_data.update({name:val.val for name,val in losses_m.items()})
+
             for name, val in log_data.items():
                 name = "train/" + name
                 if tb_writer is not None:
