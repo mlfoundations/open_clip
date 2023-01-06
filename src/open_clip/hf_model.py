@@ -79,7 +79,6 @@ class ClsPooler(nn.Module):
 
         return x.last_hidden_state[:, self.cls_token_position, :]
 
-
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
 
@@ -90,7 +89,8 @@ class HFTextEncoder(nn.Module):
             config: PretrainedConfig = None,
             pooler_type: str = None,
             proj: str = None,
-            pretrained: bool = True):
+            pretrained: bool = True
+        ):
         super().__init__()
 
         self.output_dim = output_dim
@@ -113,11 +113,10 @@ class HFTextEncoder(nn.Module):
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
-
         if pooler_type is None:  # get default arch pooler
-            self.pooler = _POOLERS[(arch_dict[self.config.model_type]["pooler"])]()
-        else:
-            self.pooler = _POOLERS[pooler_type]()
+            pooler_type = (arch_dict[self.config.model_type]["pooler"])
+        
+        self.pooler = _POOLERS[pooler_type]()
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
         if (d_model == output_dim) and (proj is None):  # do we always need a proj?
@@ -132,12 +131,22 @@ class HFTextEncoder(nn.Module):
                 nn.Linear(hidden_size, output_dim, bias=False),
             )
 
-    def forward(self, x: TensorType) -> TensorType:
+    def forward(self, x: TensorType, output_tokens=False) -> TensorType:
         attn_mask = (x != self.config.pad_token_id).long()
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
         pooled_out = self.pooler(out, attn_mask)
+        projected = self.proj(pooled_out)
 
-        return self.proj(pooled_out)
+        if output_tokens:
+            seq_len = out.last_hidden_state.shape[1]
+            tokens = (
+                out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :] 
+                if type(self.pooler) == ClsPooler 
+                else out.last_hidden_state
+            )
+            return projected, tokens
+        
+        return projected
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         if not unlocked_layers:  # full freezing
