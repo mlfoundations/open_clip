@@ -85,7 +85,7 @@ class ClipLoss(nn.Module):
         self.prev_num_logits = 0
         self.labels = {}
 
-    def forward(self, image_features, text_features, logit_scale):
+    def forward(self, image_features, text_features, logit_scale, output_dict=False):
         device = image_features.device
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
@@ -118,7 +118,8 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
             ) / 2
-        return total_loss
+        
+        return {"contrastive_loss": total_loss} if output_dict else total_loss
 
 
 class CoCaLoss(ClipLoss):
@@ -147,7 +148,7 @@ class CoCaLoss(ClipLoss):
         self.caption_loss_weight = caption_loss_weight
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
-    def forward(self, image_features, text_features, logits, labels, logit_scale):
+    def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
@@ -157,4 +158,7 @@ class CoCaLoss(ClipLoss):
         )
         caption_loss = caption_loss * self.caption_loss_weight
 
-        return clip_loss + caption_loss
+        if output_dict:
+            return {"contrastive_loss":clip_loss, "caption_loss":caption_loss}
+
+        return clip_loss, caption_loss

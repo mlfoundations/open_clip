@@ -1,0 +1,23 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 32
+    },
+    "text_cfg": {
+        "hf_model_name": "roberta-base",
+        "hf_tokenizer_name": "roberta-base",
+        "proj": "linear",
+        "width": 768
+    },
+    "multimodal_cfg": {
+        "context_length": 76,
+        "width": 768,
+        "heads": 8,
+        "layers": 12,
+        "latent_dim": 512
+    },
+    "custom_text": true
+}

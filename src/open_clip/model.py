@@ -31,6 +31,9 @@ class CLIPVisionCfg:
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
     global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
+    attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
+    n_queries: int = 256 # n_queries for attentional pooler
+    attn_pooler_heads: int = 8 # n heads for attentional_pooling
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -51,6 +54,8 @@ class CLIPTextCfg:
     hf_model_pretrained: bool = True
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
+    embed_cls: bool = False
+    pad_id: int = 0
 
 
 def get_cast_dtype(precision: str):
@@ -109,6 +114,9 @@ def _build_vision_tower(
             ls_init_value=vision_cfg.ls_init_value,
             patch_dropout=vision_cfg.patch_dropout,
             global_average_pool=vision_cfg.global_average_pool,
+            attentional_pool=vision_cfg.attentional_pool,
+            n_queries=vision_cfg.n_queries,
+            attn_pooler_heads=vision_cfg.attn_pooler_heads,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
@@ -146,6 +154,8 @@ def _build_text_tower(
             layers=text_cfg.layers,
             ls_init_value=text_cfg.ls_init_value,
             output_dim=embed_dim,
+            embed_cls=text_cfg.embed_cls,
+            pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
@@ -202,9 +212,15 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text):
+    def forward(self, image, text, output_dict=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        if output_dict:
+            return {
+                "image_features":image_features, 
+                "text_features":text_features,
+                "logit_scale":self.logit_scale.exp()
+            }
         return image_features, text_features, self.logit_scale.exp()
 
 
@@ -242,9 +258,15 @@ class CustomTextCLIP(nn.Module):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def forward(self, image, text):
+    def forward(self, image, text, output_dict=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        if output_dict:
+            return {
+                "image_features":image_features, 
+                "text_features":text_features,
+                "logit_scale":self.logit_scale.exp()
+            }
         return image_features, text_features, self.logit_scale.exp()
 
 

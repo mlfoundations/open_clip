@@ -11,7 +11,6 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
-    AttentionalPooler,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 from .generation_utils import top_a, top_k, top_p
@@ -22,34 +21,50 @@ class MultimodalCfg(CLIPTextCfg):
     dim_head: int = 64
     heads: int = 8
     n_queries: int = 256
-    dim_latents: int = None
+    attn_pooler_heads: int = 8
+    latent_dim: int = 512
 
+class CoCaEncoderDecoder(nn.Module):
+    def __init__(self, encoder, decoder) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+    
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.encoder.set_grad_checkpointing(enable)
+        self.decoder.set_grad_checkpointing(enable)
 
-def _build_input_dependent_text_tower(
-    embed_dim: int,
-    multimodal_cfg: MultimodalCfg,
+def _build_encoder_decoder_tower(
+    embed_dim,
+    multimodal_cfg,
+    text_cfg,
     quick_gelu: bool = False,
     cast_dtype: Optional[torch.dtype] = None,
-    multimodal:bool = True
 ):
 
-    if not multimodal:
-        return _build_text_tower(
-            embed_dim=embed_dim,
-            text_cfg=multimodal_cfg,
-            quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype
-        )
-
-    if isinstance(multimodal_cfg, dict):
-        multimodal_cfg = MultimodalCfg(**multimodal_cfg)
+    multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+    text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
+        
+    encoder = _build_text_tower(
+        multimodal_cfg.latent_dim, 
+        text_cfg=text_cfg, 
+        quick_gelu=quick_gelu, 
+        cast_dtype=cast_dtype
+    )
+    
+    vocab_size = (
+        encoder.config.vocab_size # for hf models
+        if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
+        else multimodal_cfg.vocab_size
+    )
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
 
-    text = MultimodalTransformer(
+    decoder = MultimodalTransformer(
         context_length=multimodal_cfg.context_length,
         width=multimodal_cfg.width,
         heads=multimodal_cfg.heads,
@@ -59,10 +74,9 @@ def _build_input_dependent_text_tower(
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
-
-    return text, multimodal_cfg
-
-
+    
+    return CoCaEncoderDecoder(encoder, decoder), multimodal_cfg, vocab_size
+ 
 class CoCa(nn.Module):
     def __init__(
         self,
@@ -70,12 +84,14 @@ class CoCa(nn.Module):
         multimodal_cfg: MultimodalCfg,
         text_cfg: CLIPTextCfg,
         vision_cfg: CLIPVisionCfg,
-        n_queries: int = 256,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        pad_id: int = 0
     ):
         super().__init__()
-
+        multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+        text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
+        vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
         norm_layer = (
             LayerNormFp32
@@ -83,130 +99,63 @@ class CoCa(nn.Module):
             else LayerNorm
         )
 
-        text = _build_input_dependent_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, multimodal=False)
-        self.transformer = text.transformer
-        self.vocab_size = text.vocab_size
-        self.token_embedding = text.token_embedding
-        self.positional_embedding = text.positional_embedding
-        self.ln_final = text.ln_final
-        self.text_projection = text.text_projection
-        self.register_buffer("attn_mask", text.attn_mask, persistent=False)
-        self.context_length = self.positional_embedding.shape[0] - 1
-
-        self.cls_token = nn.Parameter(torch.randn(embed_dim))
+        self.text, multimodal_cfg, vocab_size = _build_encoder_decoder_tower(
+            embed_dim, multimodal_cfg, text_cfg, quick_gelu, cast_dtype
+        )
         self.visual = _build_vision_tower(
-            embed_dim, vision_cfg, quick_gelu, cast_dtype
+            multimodal_cfg.latent_dim, vision_cfg, quick_gelu, cast_dtype
         )
-        self.heads = text_cfg["heads"]
-
-        self.multimodal_decoder, multimodal_cfg = _build_input_dependent_text_tower(
-            embed_dim, multimodal_cfg, quick_gelu, cast_dtype
-        )
-
-        self.img_attn_pool = AttentionalPooler(
-            multimodal_cfg.width, multimodal_cfg.heads, n_queries=n_queries + 1
-        )
-
-        self.img_attn_pool_norm = norm_layer(embed_dim)
-
-        self.dim_latents = multimodal_cfg.dim_latents if multimodal_cfg.dim_latents else multimodal_cfg.width
-        self.to_text_latent = nn.Linear(embed_dim, self.dim_latents, bias=False)
 
         self.to_logits = nn.Sequential(
-            norm_layer(embed_dim), nn.Linear(embed_dim, self.vocab_size, bias=False)
+            norm_layer(multimodal_cfg.width), nn.Linear(multimodal_cfg.width, vocab_size, bias=False)
         )
 
-        # tie embedding weights and projection
-        self.to_logits[-1].weight = self.token_embedding.weight
-
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-        self.pad_id = 0
+        self.pad_id = pad_id
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
-        self.transformer.grad_checkpointing = enable
-        self.multimodal_decoder.grad_checkpointing = enable
+        self.text.set_grad_checkpointing(enable)
 
     def encode_image(self, images, normalize=True, return_tokens=False):
-        x = self.visual(images, output_tokens=True)
-
-        if hasattr(self.visual, "ln_post"):
-            x = self.visual.ln_post(x)
-
-        if hasattr(self.visual, "proj") and self.visual.proj is not None:
-            x = x @ self.visual.proj
-
-        x = self.img_attn_pool(x, x)
-        x = self.img_attn_pool_norm(x)
-
-        image_latent = x[:, 0]
+        image_latent, tokens_embs = self.visual(images, output_tokens=True)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-
-        return (image_latent, x[:, 1:]) if return_tokens else image_latent
-
-    def _repeat(self, t, N):
-        return t.reshape(1, 1, -1).repeat(N, 1, 1)
-
-    def _build_cls_mask(self, text, cast_dtype):
-        cls_mask = (text != self.pad_id).unsqueeze(1)
-        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
-        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
-        additive_mask.fill_(0)
-        additive_mask.masked_fill_(~cls_mask, float("-inf"))
-        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
-        return additive_mask
+        return (image_latent, tokens_embs) if return_tokens else image_latent
 
     def encode_text(self, text, normalize=True, return_tokens=False):
         text = text[:, :-1] # make space for CLS token
-        cast_dtype = self.transformer.get_cast_dtype()
-        seq_len = text.shape[1]
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        x = torch.cat(
-            [
-                x + self.positional_embedding[:seq_len, :].to(cast_dtype), 
-                self._repeat(self.cls_token + self.positional_embedding[-1, :], x.shape[0])
-            ], 
-            dim=1
-        )
-        seq_len += 1 # seq is 1 longer as we added CLS
-        attn_mask = self.attn_mask[None, :seq_len, :seq_len].expand(
-            text.shape[0] * self.heads, seq_len, seq_len
-        )
-        cls_mask = self._build_cls_mask(text, cast_dtype)
-        
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask + cls_mask)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-
-        x = x[torch.arange(x.shape[0]), :] @ self.text_projection
-
-        cls_emb = x[torch.arange(x.shape[0]), -1]
-        token_emb = x[torch.arange(x.shape[0]), :-1]
-
-        cls_emb = self.ln_final(cls_emb)
-        text_latent = self.to_text_latent(cls_emb)
+        text_latent, token_emb = self.text.encoder(text, output_tokens=True)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text):
-        labels = text[:, 1:]
+    def forward(self, image, text, output_dict=False):
 
-        text_latents, text_tokens = self.encode_text(text, return_tokens=True)
-        image_latents, image_tokens = self.encode_image(image, return_tokens=True)
+        text_latent, token_embs = self.encode_text(text, return_tokens=True)
+        image_latent, image_embs = self.encode_image(image, return_tokens=True)
+        
+        # TODO: add assertion to avoid bugs?
+        labels = text[:, -token_embs.shape[1]:]
+        
+        token_embs = self.text.decoder(image_embs, token_embs)
+        logits = self.to_logits(token_embs)
+        if output_dict:
+            return {
+                "image_features":image_latent,
+                "text_features":text_latent,
+                "logits":logits,
+                "labels":labels,
+                "logit_scale":self.logit_scale.exp()
+            }
 
-        text_tokens = self.multimodal_decoder(image_tokens, text_tokens)
-        logits = self.to_logits(text_tokens)
-
-        return image_latents, text_latents, logits, labels, self.logit_scale.exp()
+        return image_latent, text_latent, logits, labels, self.logit_scale.exp()
 
     def generate(
         self,
         image,
         text,
         seq_len,
-        max_seq_len=None,
+        max_seq_len=77,
         mask_prob = 0.0,
         temperature = 1.,
         filter_logits_fn = top_k,
@@ -216,9 +165,6 @@ class CoCa(nn.Module):
         ):
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
-
-        if max_seq_len is None:
-            max_seq_len = self.context_length
 
         was_training = self.training
         num_dims = len(text.shape)
