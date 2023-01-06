@@ -302,6 +302,8 @@ def main(args):
                 # this doesn't exist in older PyTorch, arg only added if enabled
                 ddp_args['static_graph'] = True
         elif args.distributed_engine == 'fsdp':
+            print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             mp = MixedPrecision(
                 # param_dtype=torch.bfloat16,
                 reduce_dtype=torch.bfloat16,
@@ -310,13 +312,13 @@ def main(args):
             wrapper_kwargs = dict(
                 mixed_precision=mp,
                 limit_all_gathers=True,
-		        auto_wrap_policy=partial(
-                    transformer_auto_wrap_policy,
-                    transformer_layer_cls={
-                        VisionTransformer,
-                        TextTransformer,
-                        CLIP,
-                    },
+                auto_wrap_policy=partial(
+                   transformer_auto_wrap_policy,
+                   transformer_layer_cls={
+                       VisionTransformer,
+                       TextTransformer,
+                       CLIP,
+                   },
                 ),
             )
             model = FSDP(model, device_id=device, **wrapper_kwargs)
