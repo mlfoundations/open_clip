@@ -106,10 +106,17 @@ def parse_args(args):
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
+    parser.add_argument("--text-lr", type=float, default=None, help="Learning rate of text tower.")
+    parser.add_argument("--visual-lr", type=float, default=None, help="Learning rate of image tower.")
     parser.add_argument("--beta1", type=float, default=None, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
     parser.add_argument("--eps", type=float, default=None, help="Adam epsilon.")
     parser.add_argument("--wd", type=float, default=0.2, help="Weight decay.")
+    parser.add_argument("--text-wd", type=float, default=None, help="Weight decay of text tower.")
+    parser.add_argument("--visual-wd", type=float, default=None, help="Weight decay of image tower.")
+    parser.add_argument("--ld", type=float, default=1.0, help="Learning rate Layer decay.")
+    parser.add_argument("--text-ld", type=float, default=None, help="Learning rate Layer decay of text tower.")
+    parser.add_argument("--visual-ld", type=float, default=None, help="Learning rate Layer decay of image tower.")
     parser.add_argument(
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
     )

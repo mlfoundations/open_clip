@@ -162,3 +162,8 @@ class HFTextEncoder(nn.Module):
 
     def init_parameters(self):
         pass
+
+    def get_num_layers(self):
+        encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
+        layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])
+        return len(layer_list)
