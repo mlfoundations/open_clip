@@ -185,13 +185,13 @@ class CoCa(nn.Module):
         _, t = text.shape
         self.eval()
         out = text
-        image_latent, image_emb = self.encode_image(image, return_tokens=True)
+        image_latent, image_embs = self.encode_image(image, return_tokens=True)
 
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
 
             # TODO: adjust for dict output
-            logits = self(image, x, image_latent=image_latent, image_emb=image_emb)[2][:, -1]
+            logits = self(image, x, image_latent=image_latent, image_embs=image_embs)[2][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -264,7 +264,7 @@ class CoCa(nn.Module):
         ):
         device = image_inputs.device
         image_inputs = image_inputs.repeat(num_beams, 1, 1, 1)
-        image_latent, image_emb = self.encode_image(image_inputs, return_token=True)
+        image_latent, image_embs = self.encode_image(image_inputs, return_token=True)
 
         input_ids = torch.ones((num_beams, 1), device=device, dtype=torch.long)
         input_ids = input_ids * sot_token_id
@@ -364,7 +364,7 @@ class CoCa(nn.Module):
                            model_inputs['text'],
                            attn_mask[:cur_len, :cur_len],
                            image_latent=image_latent,
-                           image_emb=image_emb,
+                           image_embs=image_embs,
                            output_dict=True)
 
             if synced_gpus and this_peer_finished:
