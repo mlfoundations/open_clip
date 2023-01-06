@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from multiprocessing import Value
 
-import braceexpand
 import numpy as np
 import pandas as pd
 import torch
@@ -73,8 +72,8 @@ class DataInfo:
 
 
 def get_dataset_size(shards):
-    shards_list = list(braceexpand.braceexpand(shards))
-    dir_path = os.path.dirname(shards)
+    shards_list = wds.shardlists.expand_urls(shards)
+    dir_path = os.path.dirname(shards_list[0])
     sizes_filename = os.path.join(dir_path, 'sizes.json')
     len_filename = os.path.join(dir_path, '__len__')
     if os.path.exists(sizes_filename):
@@ -152,8 +151,8 @@ def count_samples(dataloader):
 
 def filter_no_caption_or_no_image(sample):
     has_caption = ('txt' in sample)
-    has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample)
-    return has_caption and has_image 
+    has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
+    return has_caption and has_image
 
 
 def log_and_continue(exn):
@@ -349,7 +348,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg", text="txt"),
+        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
         wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train),
