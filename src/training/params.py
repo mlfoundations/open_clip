@@ -332,6 +332,12 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
+    parser.add_argument(
+        "--blur_field",
+        type=str,
+        default=None,
+        help="Bounding box to blur field in webdataset json."
+    )
 
 
     args = parser.parse_args(args)

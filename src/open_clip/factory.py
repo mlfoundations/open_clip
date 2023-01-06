@@ -203,6 +203,7 @@ def create_model_and_transforms(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        blur_field: Optional[str] = None,
 ):
     model = create_model(
         model_name,
@@ -224,13 +225,15 @@ def create_model_and_transforms(
         model.visual.image_size,
         is_train=True,
         mean=image_mean,
-        std=image_std
+        std=image_std,
+        blur_field=blur_field
     )
     preprocess_val = image_transform(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,
-        std=image_std
+        std=image_std,
+        blur_field=blur_field
     )
 
     return model, preprocess_train, preprocess_val
@@ -248,6 +251,7 @@ def create_model_from_pretrained(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        blur_field: Optional[str] = None,
 ):
     if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
         raise RuntimeError(
@@ -274,7 +278,8 @@ def create_model_from_pretrained(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,
-        std=image_std
+        std=image_std,
+        blur_field=blur_field
     )
 
     return model, preprocess

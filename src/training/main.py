@@ -175,6 +175,7 @@ def main(args):
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        blur_field=args.blur_field,
     )
     random_seed(args.seed, args.rank)
 

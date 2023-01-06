@@ -348,7 +348,27 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+    ])
+
+    if args.blur_field is not None:
+        def create_image_json_tuple(sample):
+            for key in ["png", "jpg", "jpeg", "webp"]:
+                img = sample.get(key, None)
+                if img is not None:
+                    break
+            data = sample.get("json", None)
+            return {"img_with_json": (img, data)}
+
+        pipeline.extend([
+            wds.associate(create_image_json_tuple),
+            wds.rename(image="img_with_json", text="txt"),
+        ])
+    else:
+        pipeline.extend([
+            wds.rename(image="png;jpg;jpeg;webp", text="txt"),
+        ])
+
+    pipeline.extend([
         wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train),
