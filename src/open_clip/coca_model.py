@@ -359,11 +359,13 @@ class CoCa(nn.Module):
             # do one decoder step on all beams of all sentences in batch
             model_inputs = prepare_inputs_for_generation(input_ids=input_ids, image_inputs=image_inputs)
             # logits = self(image, x, attn_mask=self.attn_mask[:x_seq_len, :x_seq_len])[2][:, -1]
-            outputs = self.forward_return_dict(model_inputs['images'],
-                                               model_inputs['text'],
-                                               attn_mask[:cur_len, :cur_len],
-                                               image_latent=image_latent,
-                                               image_emb=image_emb)
+
+            outputs = self(model_inputs['images'],
+                           model_inputs['text'],
+                           attn_mask[:cur_len, :cur_len],
+                           image_latent=image_latent,
+                           image_emb=image_emb,
+                           output_dict=True)
 
             if synced_gpus and this_peer_finished:
                 cur_len = cur_len + 1
