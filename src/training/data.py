@@ -27,46 +27,6 @@ except ImportError:
     hvd = None
 
 
-class HFDataset(Dataset):
-    def __init__(
-        self,
-        name,
-        subset,
-        split,
-        transforms=None,
-        img_key=None,
-        text_key=None,
-        tokenizer=None,
-    ):
-        try:
-            from datasets import load_dataset
-        except ImportError:
-            raise ImportError("Please install HF datasets: pip install datasets")
-
-        self.dataset = load_dataset(name, subset, split=split)
-        self.img_key = img_key
-        self.text_key = text_key
-        self.length = len(self.dataset)
-        self.transforms = transforms
-        logging.debug('Done loading data.')
-
-        self.tokenize = tokenizer
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, idx):
-        example = {}
-        if self.img_key:
-            image = self.transforms(self.dataset[idx][self.img_key])
-            example['image'] = image
-        if self.text_key:
-            text = self.tokenize(
-                [str(self.dataset[idx][self.text_key])])[0]
-            example['text'] = text
-        return example
-
-
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
         logging.debug(f'Loading csv data from {input_filename}.')
@@ -488,43 +448,6 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, coll
     return DataInfo(dataloader, sampler)
 
 
-def get_hf_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, collate_fn=None):
-    dataset_str = args.train_data if is_train else args.val_data
-    identifiers = dataset_str.split(':')
-    assert 1 <= len(identifiers) <= 2, f'Invalid dataset string: {dataset_str}'
-    dataset_name = identifiers[0]
-    subset = identifiers[1] if len(identifiers) == 2 else None
-    split = 'train' if is_train else 'validation'
-
-    dataset = HFDataset(
-        dataset_name,
-        subset,
-        split,
-        transforms=preprocess_fn,
-        img_key=args.hf_img_key,
-        caption_key=args.hf_caption_key,
-		tokenizer=tokenizer,
-    )
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        collate_fn=collate_fn,
-        drop_last=is_train,
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-
-    return DataInfo(dataloader, sampler)
-
-
 class SyntheticDataset(Dataset):
 
     def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer=None):
@@ -575,8 +498,6 @@ def get_dataset_fn(data_path, dataset_type):
         return get_wds_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
-    elif dataset_type == "hf":
-        return get_hf_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
     elif dataset_type == "auto":
