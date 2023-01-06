@@ -16,9 +16,9 @@ def get_flava_collate(hf_tokenizer, mlm_prob=0.15, itm_prob=0.1):
 
     def collate(example_list):
         image_list, text_list = [], []
-        for d in example_list:
-            image_list.append(d["image"])
-            text_list.append(d["text"])
+        for example in example_list:
+            image_list.append(example["image"])
+            text_list.append(example["text"])
 
         image = torch.stack(image_list)
         text = torch.stack(text_list)
