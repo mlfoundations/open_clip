@@ -185,8 +185,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        #with torch.no_grad():
-        #    unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        if args.distributed_engine == 'fsdp':
+            model(image=None, text=None, clamp_logit_scale_to=math.log(100))
+        else:
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -250,7 +253,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
 def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
-    if not is_master(args):
+    if not is_master(args) and args.distributed_engine != 'fsdp':
         return metrics
     device = torch.device(args.device)
     model.eval()

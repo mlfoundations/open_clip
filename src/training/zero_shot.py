@@ -6,6 +6,28 @@ from tqdm import tqdm
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from .precision import get_autocast
+from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
+
+
+def zero_shot_classifier(model, classnames, templates, args):
+    tokenizer = get_tokenizer(args.model)
+    with torch.no_grad():
+        zeroshot_weights = []
+        for classname in tqdm(classnames):
+            texts = [template(classname) for template in templates]  # format with class
+            texts = tokenizer(texts).to(args.device)  # tokenize
+            if args.distributed and not args.horovod:
+                if args.distributed_engine == 'fsdp':
+                    _, class_embeddings, _ = model(image=None, text=texts)
+                else:
+                    class_embeddings = model.module.encode_text(texts)
+            else:
+                class_embeddings = model.encode_text(texts)
+            class_embedding = F.normalize(class_embeddings, dim=-1).mean(dim=0)
+            class_embedding /= class_embedding.norm()
+            zeroshot_weights.append(class_embedding)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(args.device)
+    return zeroshot_weights
 
 
 def accuracy(output, target, topk=(1,)):
@@ -26,8 +48,14 @@ def run(model, classifier, dataloader, args):
 
             with autocast():
                 # predict
-                output = model(image=images)
-                image_features = output['image_features'] if isinstance(output, dict) else output[0]
+                if args.distributed and not args.horovod:
+                    if args.distributed_engine == 'fsdp':
+                        image_features, _, _ = model(image=images, text=None)
+                    else:
+                        image_features = model.module.encode_image(images)
+                else:
+                    image_features = model.encode_image(images)
+                image_features = F.normalize(image_features, dim=-1)
                 logits = 100. * image_features @ classifier
 
             # measure accuracy
