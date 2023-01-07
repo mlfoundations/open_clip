@@ -14,7 +14,7 @@ from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 try:
     import wandb
 except ImportError:
@@ -227,7 +227,7 @@ def main(args):
         args.model,
         args.pretrained,
         precision=args.precision,
-        device=device,
+        device='cpu' if args.fsdp_init_on_cpu else device,
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
@@ -318,15 +318,16 @@ def main(args):
             wrapper_kwargs = dict(
                 mixed_precision=mp,
                 limit_all_gathers=True,
-                
-                #auto_wrap_policy=partial(
-                #   transformer_auto_wrap_policy,
-                #   transformer_layer_cls={
-                #       VisionTransformer,
-                #       TextTransformer,
-                #       CLIP,
-                #   },
-                #),
+                cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+                auto_wrap_policy=partial(
+                   transformer_auto_wrap_policy,
+                   transformer_layer_cls={
+                       VisionTransformer,
+                       TextTransformer,
+                       CLIP,
+                   },
+                ),
+                device_id=None if args.fsdp_init_on_cpu else device,
             )
 
             # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
@@ -336,7 +337,7 @@ def main(args):
             #model.visual = FSDP(model.visual, device_id=device)
             #model.text_projection = FSDP(model.text_projection) ???
             #model.ln_final = FSDP(model.ln_final, device_id=device)
-            model = FSDP(model, device_id=device, **wrapper_kwargs)
+            model = FSDP(model, **wrapper_kwargs)
             print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
@@ -348,7 +349,7 @@ def main(args):
                 )
                 non_reentrant_wrapper = partial(
                     checkpoint_wrapper,
-                    offload_to_cpu=False,
+                    offload_to_cpu=args.fsdp_cpu_offload,
                     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
                 )
                 check_fn = lambda submodule: isinstance(submodule, ResidualAttentionBlock)
