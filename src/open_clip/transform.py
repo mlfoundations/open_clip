@@ -25,6 +25,7 @@ class BoundingBoxBlurrer(nn.Module):
         self.blur_field = blur_field
 
     def forward(self, item):
+        # If no blur field is specified, then skip this transform.
         if self.blur_field is None:
             return item
 
