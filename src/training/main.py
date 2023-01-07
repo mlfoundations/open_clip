@@ -292,6 +292,7 @@ def main(args):
         wandb.init(
             project=args.wandb_project_name,
             name=args.name,
+            id=args.name,
             notes=args.wandb_notes,
             tags=[],
             resume='auto',
