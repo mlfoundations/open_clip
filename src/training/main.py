@@ -317,14 +317,14 @@ def main(args):
             )
             wrapper_kwargs = dict(
                 mixed_precision=mp,
-                limit_all_gathers=True,
+                limit_all_gathers=args.fsdp_limit_allgathers,
                 cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
                 auto_wrap_policy=partial(
                    transformer_auto_wrap_policy,
                    transformer_layer_cls={
                        VisionTransformer,
                        TextTransformer,
-                       CLIP,
+                       ResidualAttentionBlock,
                    },
                 ),
                 device_id=None if args.fsdp_init_on_cpu else device,

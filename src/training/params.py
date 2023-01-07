@@ -375,6 +375,11 @@ def parse_args(args):
         action="store_true",
     )
     parser.add_argument(
+        "--fsdp-limit-allgathers",
+        default=False,
+        action="store_true",
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",
