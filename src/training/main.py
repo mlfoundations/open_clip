@@ -294,6 +294,7 @@ def main(args):
                 f.write(f"{name}: {val}\n")
 
     if args.distributed and not args.horovod:
+
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if args.distributed_engine == 'ddp':
@@ -303,7 +304,10 @@ def main(args):
                 ddp_args['static_graph'] = True
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
         elif args.distributed_engine == 'fsdp':
-
+            from torch.distributed.fsdp.wrap import (
+                enable_wrap,
+                wrap,
+            )
             print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             mp = MixedPrecision(
@@ -315,15 +319,23 @@ def main(args):
                 mixed_precision=mp,
                 limit_all_gathers=True,
                 
-                auto_wrap_policy=partial(
-                   transformer_auto_wrap_policy,
-                   transformer_layer_cls={
-                       VisionTransformer,
-                       TextTransformer,
-                       CLIP,
-                   },
-                ),
+                #auto_wrap_policy=partial(
+                #   transformer_auto_wrap_policy,
+                #   transformer_layer_cls={
+                #       VisionTransformer,
+                #       TextTransformer,
+                #       CLIP,
+                #   },
+                #),
             )
+
+            # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
+            #model.transformer = FSDP(model.transformer, device_id=device)
+            #model.token_embedding = FSDP(model.token_embedding, device_id=device)
+            #model.tp = FSDP(model.tp, device_id=device)
+            #model.visual = FSDP(model.visual, device_id=device)
+            #model.text_projection = FSDP(model.text_projection) ???
+            #model.ln_final = FSDP(model.ln_final, device_id=device)
             model = FSDP(model, device_id=device, **wrapper_kwargs)
             print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
