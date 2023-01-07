@@ -154,6 +154,12 @@ def filter_no_caption_or_no_image(sample):
     has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
     return has_caption and has_image
 
+def _add_json_to_image(data):
+    for sample in data:
+        img = sample.get("image", None)
+        metadata = sample.get("json", None)
+        sample.update({"image": (img, metadata)})
+        yield sample
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
@@ -348,24 +354,12 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
+        wds.rename(image="png;jpg;jpeg;webp", text="txt"),
     ])
 
     if args.blur_field is not None:
-        def create_image_json_tuple(sample):
-            for key in ["png", "jpg", "jpeg", "webp"]:
-                img = sample.get(key, None)
-                if img is not None:
-                    break
-            data = sample.get("json", None)
-            return {"img_with_json": (img, data)}
-
         pipeline.extend([
-            wds.associate(create_image_json_tuple),
-            wds.rename(image="img_with_json", text="txt"),
-        ])
-    else:
-        pipeline.extend([
-            wds.rename(image="png;jpg;jpeg;webp", text="txt"),
+            _add_json_to_image
         ])
 
     pipeline.extend([

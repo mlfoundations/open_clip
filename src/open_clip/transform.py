@@ -9,14 +9,19 @@ import torchvision.transforms.functional as F
 from torchvision.transforms import Normalize, Compose, RandomResizedCrop, InterpolationMode, ToTensor, Resize, \
     CenterCrop
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
 
 class BoundingBoxBlurrer(nn.Module):
-    
+    """Class that performs blurring on bounding boxes of an image.
+
+    Derived from:
+    https://github.com/princetonvisualai/imagenet-face-obfuscation/blob/main/experiments/blurring.py
+    """
     def __init__(self, blur_field) -> None:
+        super().__init__()
         self.blur_field = blur_field
 
     def forward(self, item):
@@ -32,10 +37,10 @@ class BoundingBoxBlurrer(nn.Module):
 
         if isinstance(img, torch.Tensor):
             height, width = img.shape[:2]
+            mask = torch.zeros((height, width), dtype=torch.float32)
         else:
             width, height = img.size
-
-        mask = torch.zeros((height, width), dtype=torch.float32)
+            mask = Image.new(mode="L", size=img.size)
 
         # Incorporate max diagonal from ImageNet code.
         max_diagonal = 0
@@ -64,19 +69,24 @@ class BoundingBoxBlurrer(nn.Module):
             adjusted_bbox[2] = np.clip(adjusted_bbox[2], 0, width - 1)
             adjusted_bbox[3] = np.clip(adjusted_bbox[3], 0, height - 1)
 
-            mask[adjusted_bbox[1] : adjusted_bbox[3], adjusted_bbox[0] : adjusted_bbox[2], ...] = 1.0
+            if isinstance(img, torch.Tensor):
+                mask[adjusted_bbox[1] : adjusted_bbox[3], adjusted_bbox[0] : adjusted_bbox[2], ...] = 1.0
+            else:
+                draw = ImageDraw.Draw(mask)
+                draw.rectangle(adjusted_bbox, fill=255)
 
         sigma = 0.1 * max_diagonal
         ksize = int(2 * np.ceil(4 * sigma)) + 1
-        blurred_img = F.gaussian_blur(img, kernel_size=ksize, sigma=sigma)
-        blurred_mask = F.gaussian_blur(mask, kernel_size=ksize, sigma=sigma)
 
         if isinstance(img, torch.Tensor):
+            blurred_img = F.gaussian_blur(img, kernel_size=ksize, sigma=sigma)
+            blurred_mask = F.gaussian_blur(mask.unsqueeze(0), kernel_size=ksize, sigma=sigma)
             result = img.float() * (1 - blurred_mask) + blurred_img.float() * blurred_mask
             if img.dtype == torch.uint8:
                 result = result.type(torch.uint8)
         else:
-            blurred_mask = F.to_pil_image(blurred_mask)
+            blurred_img = img.filter(ImageFilter.GaussianBlur(sigma))
+            blurred_mask = mask.filter(ImageFilter.GaussianBlur(sigma))
             result = Image.composite(blurred_img, img, blurred_mask)
         return result
 
