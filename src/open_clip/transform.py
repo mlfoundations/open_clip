@@ -144,26 +144,25 @@ def image_transform(
         image_size = image_size[0]
 
     normalize = Normalize(mean=mean, std=std)
+    transforms = [BoundingBoxBlurrer(blur_field=blur_field)] if blur_field is not None else []
     if is_train:
-        return Compose([
-            BoundingBoxBlurrer(blur_field=blur_field),
+        transforms.extend([
             RandomResizedCrop(image_size, scale=(0.9, 1.0), interpolation=InterpolationMode.BICUBIC),
             _convert_to_rgb,
             ToTensor(),
             normalize,
         ])
+        return Compose(transforms)
     else:
         if resize_longest_max:
-            transforms = [
-                BoundingBoxBlurrer(blur_field=blur_field),
-                ResizeMaxSize(image_size, fill=fill_color)
-            ]
+            transforms.extend([
+                ResizeMaxSize(image_size, fill=fill_color),
+            ])
         else:
-            transforms = [
-                BoundingBoxBlurrer(blur_field=blur_field),
+            transforms.extend([
                 Resize(image_size, interpolation=InterpolationMode.BICUBIC),
                 CenterCrop(image_size),
-            ]
+            ])
         transforms.extend([
             _convert_to_rgb,
             ToTensor(),
