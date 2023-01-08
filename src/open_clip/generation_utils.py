@@ -2,6 +2,19 @@ from math import ceil
 import torch
 from torch import nn
 import torch.nn.functional as F
+from transformers import StoppingCriteriaList, MaxLengthCriteria
+
+def validate_stopping_criteria(stopping_criteria: StoppingCriteriaList, max_length: int):
+    found = False
+    for stopping_criterium in stopping_criteria:
+        if isinstance(stopping_criterium, MaxLengthCriteria):
+            found = True
+            if stopping_criterium.max_length != max_length:
+                warnings.warn(
+                    "You set different `max_length` for stopping criteria and `max_length` parameter", UserWarning
+                )
+    if not found:
+        stopping_criteria.append(MaxLengthCriteria(max_length=max_length))
 
 def torch_int_div(tensor1, tensor2):
     """

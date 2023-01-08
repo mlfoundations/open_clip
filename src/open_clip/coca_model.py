@@ -16,7 +16,7 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation, torch_int_div
 from transformers import BeamSearchScorer, LogitsProcessorList, HammingDiversityLogitsProcessor, \
                             MinLengthLogitsProcessor,StoppingCriteriaList
-from transformers.generation_stopping_criteria import validate_stopping_criteria
+from .generation_utils import validate_stopping_criteria
 import os
 import gc
 import warnings
