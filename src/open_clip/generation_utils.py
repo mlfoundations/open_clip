@@ -3,6 +3,15 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+def torch_int_div(tensor1, tensor2):
+    """
+    A function that performs integer division across different versions of PyTorch.
+    """
+    if is_torch_less_than_1_8:
+        return tensor1 // tensor2
+    else:
+        return torch.div(tensor1, tensor2, rounding_mode="floor")
+
 def exists(val):
     return val is not None
 
