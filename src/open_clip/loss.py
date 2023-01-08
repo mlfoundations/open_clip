@@ -161,4 +161,4 @@ class CoCaLoss(ClipLoss):
         if output_dict:
             return {"contrastive_loss":clip_loss, "caption_loss":caption_loss}
 
-        return clip_loss, caption_loss
+        return clip_loss + caption_loss
