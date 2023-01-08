@@ -309,6 +309,9 @@ def main(args):
                 wrap,
             )
             print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
+            #print(f"Before FSTP TEXT parameter num: {sum(p.numel() for p in model.transformer.parameters())}")
+
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             mp = MixedPrecision(
                 #param_dtype=torch.bfloat16,
@@ -327,7 +330,7 @@ def main(args):
                        ResidualAttentionBlock,
                    },
                 ),
-                device_id=None if args.fsdp_init_on_cpu else device,
+                device_id=device,
             )
 
             # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
