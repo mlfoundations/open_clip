@@ -159,6 +159,7 @@ class Attention(nn.Module):
         x = self.out_drop(x)
         return x
 
+
 class AttentionalPooler(nn.Module):
     def __init__(
             self,
@@ -175,11 +176,11 @@ class AttentionalPooler(nn.Module):
         self.ln_k = norm_layer(context_dim)
 
     def forward(self, x: torch.Tensor):
-        x = self.ln_k(x).permute(1, 0, 2) # NLD -> LND
+        x = self.ln_k(x).permute(1, 0, 2)  # NLD -> LND
         N = x.shape[1]
         q = self.ln_q(self.query)
         out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
-        return out.permute(1, 0, 2) # LND -> NLD
+        return out.permute(1, 0, 2)  # LND -> NLD
 
     def _repeat(self, query, N):
         return query.unsqueeze(1).repeat(1, N, 1)
@@ -214,13 +215,12 @@ class ResidualAttentionBlock(nn.Module):
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def attention(
-        self,
-        q_x: torch.Tensor,
-        k_x: Optional[torch.Tensor] = None,
-        v_x: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None
+            self,
+            q_x: torch.Tensor,
+            k_x: Optional[torch.Tensor] = None,
+            v_x: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None
     ):
-
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
@@ -230,12 +230,11 @@ class ResidualAttentionBlock(nn.Module):
         )[0]
 
     def forward(self,
-        q_x: torch.Tensor,
-        k_x: Optional[torch.Tensor] = None,
-        v_x: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None
-    ):
-
+                q_x: torch.Tensor,
+                k_x: Optional[torch.Tensor] = None,
+                v_x: Optional[torch.Tensor] = None,
+                attn_mask: Optional[torch.Tensor] = None
+                ):
         k_x = self.ln_1_kv(k_x) if k_x is not None else None
         v_x = self.ln_1_kv(v_x) if v_x is not None else None
 
@@ -318,6 +317,7 @@ class Transformer(nn.Module):
             else:
                 x = r(x, attn_mask=attn_mask)
         return x
+
 
 class VisionTransformer(nn.Module):
     def __init__(
@@ -448,7 +448,6 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-
         if hasattr(self, "attn_pool"):
             x = self.attn_pool(x)
             x = self.ln_post(x)
@@ -465,6 +464,7 @@ class VisionTransformer(nn.Module):
             pooled = pooled @ self.proj
 
         return (pooled, tokens) if output_tokens else pooled
+
 
 class TextTransformer(nn.Module):
 
@@ -487,7 +487,7 @@ class TextTransformer(nn.Module):
         self.vocab_size = vocab_size
         self.width = width
         self.output_dim = output_dim
-        
+
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
         if embed_cls:
             self.embed_cls = embed_cls
@@ -495,8 +495,7 @@ class TextTransformer(nn.Module):
             self.heads = heads
             self.pad_id = pad_id
             self.context_length += 1
-            
-            
+
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, width))
         self.transformer = Transformer(
@@ -508,7 +507,7 @@ class TextTransformer(nn.Module):
             norm_layer=norm_layer,
         )
         self.ln_final = norm_layer(width)
-        
+
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.init_parameters()
@@ -542,7 +541,7 @@ class TextTransformer(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
-    
+
     def build_cls_mask(self, text, cast_dtype):
         cls_mask = (text != self.pad_id).unsqueeze(1)
         cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
@@ -567,7 +566,7 @@ class TextTransformer(nn.Module):
             cls_mask = self.build_cls_mask(text, cast_dtype)
             attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
 
-        x = x + self.positional_embedding[:seq_len].to(cast_dtype)        
+        x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
@@ -583,10 +582,10 @@ class TextTransformer(nn.Module):
             x = self.ln_final(x)
             pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
             tokens = x
-            
+
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
-        
+
         return (pooled, tokens) if output_tokens else pooled
 
 
@@ -616,7 +615,8 @@ class MultimodalTransformer(Transformer):
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
             ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer, is_cross_attention=True)
+                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer,
+                is_cross_attention=True)
             for _ in range(layers)
         ])
 
@@ -647,7 +647,7 @@ class MultimodalTransformer(Transformer):
         # pytorch uses additive attention mask; fill with -inf
         mask = torch.empty(self.context_length, self.context_length)
         mask.fill_(float("-inf"))
-        mask.triu_(1) # zero out the lower diagonal
+        mask.triu_(1)  # zero out the lower diagonal
         return mask
 
     def forward(self, image_embs, text_embs):
@@ -668,7 +668,7 @@ class MultimodalTransformer(Transformer):
         x = self.ln_final(x)
 
         return x
-    
+
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
