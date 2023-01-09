@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from multiprocessing import Value
 
-import braceexpand
 import numpy as np
 import pandas as pd
 import torch
@@ -121,8 +120,8 @@ class DataInfo:
 
 
 def get_dataset_size(shards):
-    shards_list = list(braceexpand.braceexpand(shards))
-    dir_path = os.path.dirname(shards)
+    shards_list = wds.shardlists.expand_urls(shards)
+    dir_path = os.path.dirname(shards_list[0])
     sizes_filename = os.path.join(dir_path, 'sizes.json')
     len_filename = os.path.join(dir_path, '__len__')
     if os.path.exists(sizes_filename):

@@ -1,3 +1,7 @@
+## 2.9.2
+
+* Fix braceexpand memory explosion for complex webdataset urls
+
 ## 2.9.1
 
 * Fix release
