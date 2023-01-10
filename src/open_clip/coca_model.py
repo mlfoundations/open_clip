@@ -489,4 +489,4 @@ class CoCa(nn.Module):
             max_length=stopping_criteria.max_length,
             beam_indices=final_beam_indices,
         )
-        return sequence_outputs['sequences'][0]
+        return sequence_outputs['sequences']
