@@ -148,7 +148,7 @@ class CoCaLoss(ClipLoss):
         self.caption_loss_weight = caption_loss_weight
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
-    def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False, past_key_values=None):
+    def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 

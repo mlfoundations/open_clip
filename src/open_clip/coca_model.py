@@ -136,7 +136,7 @@ class CoCa(nn.Module):
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return (text_latent, token_emb) if return_tokens else text_latent
 
-    def forward(self, image, text, output_dict=False, image_latent=None, image_embs=None, past_key_values=None):
+    def forward(self, image, text, output_dict=False, image_latent=None, image_embs=None):
 
         text_latent, token_embs = self.encode_text(text, return_tokens=True)
         if image_latent is None or image_embs is None:
@@ -153,8 +153,7 @@ class CoCa(nn.Module):
                 "text_features": text_latent,
                 "logits": logits,
                 "labels": labels,
-                "logit_scale": self.logit_scale.exp(),
-                "past_key_values": past_key_values
+                "logit_scale": self.logit_scale.exp()
             }
 
         return image_latent, text_latent, logits, labels, self.logit_scale.exp()
@@ -365,6 +364,7 @@ class CoCa(nn.Module):
                            image_latent=image_latent,
                            image_embs=image_embs,
                            output_dict=True)
+            outputs["past_key_values"] = None
 
             if synced_gpus and this_peer_finished:
                 cur_len = cur_len + 1
