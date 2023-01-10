@@ -295,7 +295,7 @@ def main(args):
             id=args.name,
             notes=args.wandb_notes,
             tags=[],
-            resume='auto',
+            resume='auto' if args.resume == "latest" else None,
             config=vars(args),
         )
         if args.debug:
