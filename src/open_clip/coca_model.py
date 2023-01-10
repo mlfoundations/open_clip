@@ -261,7 +261,7 @@ class CoCa(nn.Module):
         **kwargs,
         ):
         device = image_inputs.device
-        image_inputs = image_inputs.repeat(num_beams, 1, 1, 1)
+        image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
         image_latent, image_embs = self.encode_image(image_inputs, return_token=True)
 
         input_ids = torch.ones((num_beams, 1), device=device, dtype=torch.long)
