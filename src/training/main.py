@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import re
+import subprocess
 import sys
 import random
 from datetime import datetime
@@ -50,9 +51,16 @@ def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
-def get_latest_checkpoint(path: str):
+def get_latest_checkpoint(path: str, remote : bool):
     # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
-    checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+    if remote:
+        result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print(result)
+        if result.returncode == 1:
+            return None
+        checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
+    else:
+        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
     if checkpoints:
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
@@ -122,23 +130,33 @@ def main(args):
 
     if resume_latest:
         resume_from = None
+        checkpoint_path = args.checkpoint_path
+        # If using remote_sync, need to check the remote instead of the local checkpoints folder.
+        if args.remote_sync is not None:
+            checkpoint_path = os.path.join(args.remote_sync, args.name, "checkpoints")
+            if args.save_most_recent:
+                print('Error. Cannot use save-most-recent with remote_sync and resume latest.')
+                return -1
+            if args.remote_sync_protocol != 's3':
+                print('Error. Sync protocol not supported when using resume latest.')
+                return -1
         if is_master(args):
             # Checking for existing checkpoint via master rank only. It is possible for
             # different rank processes to see different files if a shared file-system is under
             # stress, however it's very difficult to fully work around such situations.
             if args.save_most_recent:
                 # if --save-most-recent flag is set, look for latest at a fixed filename
-                resume_from = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
                 if not os.path.exists(resume_from):
                     # If no latest checkpoint has been saved yet, don't try to resume
                     resume_from = None
             else:
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
-                resume_from = get_latest_checkpoint(args.checkpoint_path)
+                resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
             if resume_from:
                 logging.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
-                logging.info(f'No latest resume checkpoint found in {args.checkpoint_path}.')
+                logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
         if args.distributed:
             # sync found checkpoint path to all ranks
             resume_from = broadcast_object(args, resume_from)
