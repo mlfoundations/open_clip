@@ -175,7 +175,7 @@ class CLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
-            output_dict = False
+            output_dict = True
     ):
         super().__init__()
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
@@ -240,7 +240,7 @@ class CustomTextCLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False
+            output_dict: bool = True
     ):
         super().__init__()
         if output_dict:
