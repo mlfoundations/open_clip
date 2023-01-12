@@ -11,7 +11,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 def test_inference_simple(model_type, pretrained):
     model, _, preprocess = open_clip.create_model_and_transforms(model_type, pretrained=pretrained, jit=False)
     tokenizer = get_tokenizer(model_type)
-    tokenizer = get_tokenizer(model_type)
 
     current_dir = os.path.dirname(os.path.realpath(__file__))
 
