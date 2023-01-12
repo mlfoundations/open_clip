@@ -51,6 +51,7 @@ def backward(total_loss, scaler):
     else:
         total_loss.backward()
 
+
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
@@ -274,7 +275,6 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                         cumulative_gen_loss += gen_loss * batch_size
                         logging.info(
                             f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
-
 
             val_metrics = get_clip_metrics(
                 image_features=torch.cat(all_image_features),
