@@ -82,4 +82,24 @@ def test_inference_with_data(
     y_image = util_test.inference_image(model, preprocess_val, input_image)
     assert (y_image == gt_image).all(), f"image output differs @ {input_image_path}"
 
+# coca missing for potential bug in pytorch 
+# https://github.com/pytorch/pytorch/issues/92073
+models_to_jit_test = {"ViT-B-32"}
 
+
+@pytest.mark.parametrize('model_name', models_to_jit_test)
+def test_jit_inference_with_data(
+        model_name,
+        pretrained = None,
+        pretrained_hf = False,
+        precision = 'fp32',
+        force_quick_gelu = False,
+    ):
+    test_inference_with_data(
+        model_name,
+        pretrained = pretrained,
+        pretrained_hf = pretrained_hf,
+        precision = precision,
+        jit = True,
+        force_quick_gelu = force_quick_gelu,
+    )

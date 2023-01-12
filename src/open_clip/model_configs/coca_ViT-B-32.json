@@ -6,7 +6,8 @@
         "width": 768,
         "patch_size": 32,
         "attentional_pool": true,
-        "attn_pooler_heads": 8
+        "attn_pooler_heads": 8,
+        "output_tokens": true
     },
     "text_cfg": {
         "context_length": 76,
@@ -14,7 +15,8 @@
         "width": 512,
         "heads": 8,
         "layers": 12,
-        "embed_cls": true
+        "embed_cls": true,
+        "output_tokens": true
     },
     "multimodal_cfg": {
         "context_length": 76,

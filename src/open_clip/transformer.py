@@ -182,7 +182,7 @@ class AttentionalPooler(nn.Module):
         out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
         return out.permute(1, 0, 2)  # LND -> NLD
 
-    def _repeat(self, query, N):
+    def _repeat(self, query: torch.Tensor, N: int):
         return query.unsqueeze(1).repeat(1, N, 1)
 
 
@@ -230,13 +230,14 @@ class ResidualAttentionBlock(nn.Module):
         )[0]
 
     def forward(self,
-                q_x: torch.Tensor,
-                k_x: Optional[torch.Tensor] = None,
-                v_x: Optional[torch.Tensor] = None,
-                attn_mask: Optional[torch.Tensor] = None
-                ):
-        k_x = self.ln_1_kv(k_x) if k_x is not None else None
-        v_x = self.ln_1_kv(v_x) if v_x is not None else None
+        q_x: torch.Tensor,
+        k_x: Optional[torch.Tensor] = None,
+        v_x: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
+    ):
+
+        k_x = self.ln_1_kv(k_x) if k_x is not None and hasattr(self, "ln_1_kv") else None
+        v_x = self.ln_1_kv(v_x) if v_x is not None and hasattr(self, "ln_1_kv") else None
 
         x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
@@ -337,8 +338,11 @@ class VisionTransformer(nn.Module):
             patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            output_tokens: bool = False
     ):
         super().__init__()
+        if output_tokens:
+            self.output_tokens = output_tokens
         self.image_size = to_2tuple(image_size)
         self.patch_size = to_2tuple(patch_size)
         self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
@@ -431,7 +435,7 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
-    def forward(self, x: torch.Tensor, output_tokens: bool = False):
+    def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -463,7 +467,12 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        return (pooled, tokens) if output_tokens else pooled
+        # return (pooled, tokens) if output_tokens else pooled
+        if hasattr(self, "output_tokens"):
+            return pooled, tokens
+
+        return pooled
+
 
 
 class TextTransformer(nn.Module):
@@ -481,8 +490,11 @@ class TextTransformer(nn.Module):
             norm_layer: Callable = LayerNorm,
             embed_cls: bool = False,
             pad_id: int = 0,
+            output_tokens: bool = False
     ):
         super().__init__()
+        if output_tokens:
+            self.output_tokens = output_tokens
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -542,19 +554,19 @@ class TextTransformer(nn.Module):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def build_cls_mask(self, text, cast_dtype):
+    def build_cls_mask(self, text: torch.Tensor, cast_dtype: Optional[torch.dtype]):
         cls_mask = (text != self.pad_id).unsqueeze(1)
-        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
-        additive_mask = torch.empty(*cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
-        additive_mask.fill_(0)
+        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=1.0)
+        additive_mask = torch.empty(cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
+        additive_mask.fill_(0.0)
         additive_mask.masked_fill_(~cls_mask, float("-inf"))
         additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
         return additive_mask
 
-    def _repeat(self, t, N):
+    def _repeat(self, t: torch.Tensor, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text, output_tokens: bool = False):
+    def forward(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -586,7 +598,10 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        return (pooled, tokens) if output_tokens else pooled
+        if hasattr(self, "output_tokens"):
+            return pooled, tokens
+
+        return pooled
 
 
 class MultimodalTransformer(Transformer):

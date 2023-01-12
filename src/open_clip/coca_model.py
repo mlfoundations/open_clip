@@ -126,7 +126,7 @@ class CoCa(nn.Module):
         self.text.set_grad_checkpointing(enable)
 
     def encode_image(self, images, normalize=True, return_tokens=False):
-        image_latent, tokens_embs = self.visual(images, output_tokens=True)
+        image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return (image_latent, tokens_embs) if return_tokens else image_latent
 
