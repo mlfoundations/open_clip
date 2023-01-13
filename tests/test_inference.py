@@ -7,6 +7,12 @@ import util_test
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
+if hasattr(torch._C, '_jit_set_profiling_executor'):
+    # legacy executor is too slow to compile large models for unit tests
+    # no need for the fusion performance here
+    torch._C._jit_set_profiling_executor(True)
+    torch._C._jit_set_profiling_mode(False)
+
 models_to_test = set(open_clip.list_models())
 
 # testing excemptions
@@ -32,17 +38,26 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
         models_to_test = set(f.read().splitlines()).intersection(models_to_test)
     print(f"Selected models from {external_model_list}: {models_to_test}")
 
+# TODO: add "coca_ViT-B-32" onece https://github.com/pytorch/pytorch/issues/92073 gets fixed
 models_to_test = list(models_to_test)
 models_to_test.sort()
+models_to_jit_test = {"ViT-B-32", "timm-convnext_base"}
 
+models_to_test_fully = []
+for model_name in models_to_test:
+    models_to_test_fully.append((model_name, False))
+    if model_name in models_to_jit_test:
+        models_to_test_fully.append((model_name, True))
+        
+    
 @pytest.mark.regression_test
-@pytest.mark.parametrize('model_name', models_to_test)
+@pytest.mark.parametrize("model_name,jit", models_to_test_fully)
 def test_inference_with_data(
         model_name,
+        jit,
         pretrained = None,
         pretrained_hf = False,
         precision = 'fp32',
-        jit = False,
         force_quick_gelu = False,
 ):
     util_test.seed_all()

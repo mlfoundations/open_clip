@@ -5,7 +5,7 @@ Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (
 from dataclasses import dataclass
 import logging
 import math
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Dict
 
 import numpy as np
 import torch
@@ -39,6 +39,7 @@ class CLIPVisionCfg:
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
     timm_proj_bias: bool = False  # enable bias final projection
+    output_tokens: bool = False
 
 
 @dataclass
@@ -56,6 +57,7 @@ class CLIPTextCfg:
     pooler_type: str = 'mean_pooler'
     embed_cls: bool = False
     pad_id: int = 0
+    output_tokens: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -116,6 +118,7 @@ def _build_vision_tower(
             global_average_pool=vision_cfg.global_average_pool,
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
+            output_tokens=vision_cfg.output_tokens,
             attn_pooler_heads=vision_cfg.attn_pooler_heads,
             output_dim=embed_dim,
             act_layer=act_layer,
@@ -140,7 +143,8 @@ def _build_text_tower(
             output_dim=embed_dim,
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
-            pretrained=text_cfg.hf_model_pretrained
+            pretrained=text_cfg.hf_model_pretrained,
+            output_tokens=text_cfg.output_tokens,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -156,6 +160,7 @@ def _build_text_tower(
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
             pad_id=text_cfg.pad_id,
+            output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
@@ -212,7 +217,7 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text, output_dict=False):
+    def forward(self, image, text, output_dict:bool=False) -> Union[Dict[str, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         if output_dict:
