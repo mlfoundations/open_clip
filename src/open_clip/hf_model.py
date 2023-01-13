@@ -135,7 +135,7 @@ class HFTextEncoder(nn.Module):
                 nn.Linear(hidden_size, output_dim, bias=False),
             )
 
-    def forward(self, x: TensorType) -> Union[Tuple[TensorType, TensorType], Tuple[TensorType]]:
+    def forward(self, x: TensorType):
         attn_mask = (x != self.config.pad_token_id).long()
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
         pooled_out = self.pooler(out, attn_mask)
