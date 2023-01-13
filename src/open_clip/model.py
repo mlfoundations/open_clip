@@ -217,7 +217,7 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text, output_dict:bool=False):
+    def forward(self, image, text, output_dict:bool=False) -> Union[Dict[str, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         if output_dict:
