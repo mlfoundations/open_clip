@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Optional, Sequence, Union, Tuple, List
+from typing import Callable, Optional, Sequence
 
 import torch
 from torch import nn
@@ -434,7 +434,7 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
-    def forward(self, x: torch.Tensor): # -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -563,7 +563,7 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text): # -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+    def forward(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
