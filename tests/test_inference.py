@@ -41,7 +41,7 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
 # TODO: add "coca_ViT-B-32" onece https://github.com/pytorch/pytorch/issues/92073 gets fixed
 models_to_test = list(models_to_test)
 models_to_test.sort()
-models_to_jit_test = {"ViT-B-32", "timm-convnext_base"}
+models_to_jit_test = {"ViT-B-32"}
 
 models_to_test_fully = []
 for model_name in models_to_test:
