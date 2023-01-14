@@ -1,0 +1,13 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "model_name": "ViT-B-32",
+        "pretrained": "laion2b_s34b_b79k"
+    },
+    "text_cfg": {
+        "hf_model_name": "bert-base-uncased",
+        "hf_tokenizer_name": "bert-base-uncased",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}
