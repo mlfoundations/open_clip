@@ -9,26 +9,11 @@ def validate_stopping_criteria(stopping_criteria: StoppingCriteriaList, max_leng
     for stopping_criterium in stopping_criteria:
         if isinstance(stopping_criterium, MaxLengthCriteria):
             found = True
-            if stopping_criterium.max_length != max_length:
-                warnings.warn(
-                    "You set different `max_length` for stopping criteria and `max_length` parameter", UserWarning
-                )
     if not found:
         stopping_criteria.append(MaxLengthCriteria(max_length=max_length))
 
-def torch_int_div(tensor1, tensor2):
-    """
-    A function that performs integer division across different versions of PyTorch.
-    """
-    if is_torch_less_than_1_8:
-        return tensor1 // tensor2
-    else:
-        return torch.div(tensor1, tensor2, rounding_mode="floor")
-
 def exists(val):
     return val is not None
-
-# nucleus
 
 def top_p(logits, thres = 0.9):
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
@@ -41,16 +26,12 @@ def top_p(logits, thres = 0.9):
     sorted_logits[sorted_indices_to_remove] = float('-inf')
     return sorted_logits.scatter(1, sorted_indices, sorted_logits)
 
-# topk
-
 def top_k(logits, thres = 0.9):
     k = ceil((1 - thres) * logits.shape[-1])
     val, ind = torch.topk(logits, k)
     probs = torch.full_like(logits, float('-inf'))
     probs.scatter_(1, ind, val)
     return probs
-
-# top_a
 
 def top_a(logits, min_p_pow=2.0, min_p_ratio=0.02):
     probs = F.softmax(logits, dim=-1)
@@ -59,7 +40,7 @@ def top_a(logits, min_p_pow=2.0, min_p_ratio=0.02):
     logits[probs >= limit] = 1
     return logits
 
-
+# prep for adding past_key_values 
 def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
     token_type_ids = kwargs.get("token_type_ids", None)
     # only last token for inputs_ids if past is defined in kwargs
