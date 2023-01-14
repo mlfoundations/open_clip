@@ -57,7 +57,6 @@ class CLIPTextCfg:
     pooler_type: str = 'mean_pooler'
     embed_cls: bool = False
     pad_id: int = 0
-    output_tokens: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -118,7 +117,6 @@ def _build_vision_tower(
             global_average_pool=vision_cfg.global_average_pool,
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
-            output_tokens=vision_cfg.output_tokens,
             attn_pooler_heads=vision_cfg.attn_pooler_heads,
             output_dim=embed_dim,
             act_layer=act_layer,
@@ -144,7 +142,6 @@ def _build_text_tower(
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
-            output_tokens=text_cfg.output_tokens,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -160,7 +157,6 @@ def _build_text_tower(
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
             pad_id=text_cfg.pad_id,
-            output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
@@ -263,7 +259,7 @@ class CustomTextCLIP(nn.Module):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def forward(self, image, text, output_dict=False):
+    def forward(self, image, text, output_dict=False) -> Union[Dict[str, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         if output_dict:
