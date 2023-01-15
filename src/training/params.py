@@ -125,6 +125,15 @@ def parse_args(args):
         help="Use this flag to skip the learning rate decay.",
     )
     parser.add_argument(
+        "--lr-scheduler",
+        type=str,
+        default='cosine-annealing',
+        help="LR scheduler. Options: cosine-annealing (cosine schedule, default), const-lr (constant lr), const-lr-cooldown (constant lr followed by a cooldown)",
+    )
+    parser.add_argument("--end-lr", type=float, default=0.0, help="End learning rate for cooldown schedule. Default: 0")
+    parser.add_argument("--power-lr", type=float, default=1.0, help="Power for polynomial cooldown schedule. Default: 1.0 (implementing simple linear decay)")
+    parser.add_argument("--cooldown-epochs", type=int, default=None, help="Epochs to perform cooldown for cooldown schedule. Will start performing cooldown from total_epochs - cooldown_epochs on.")    
+    parser.add_argument(
         "--save-frequency", type=int, default=1, help="How often to save checkpoints."
     )
     parser.add_argument(

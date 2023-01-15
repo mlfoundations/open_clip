@@ -32,6 +32,8 @@ from training.distributed import is_master, init_distributed_device, broadcast_o
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr
+from training.scheduler import const_lr
+from training.scheduler import const_lr_cooldown
 from training.train import train_one_epoch, evaluate
 
 
@@ -273,7 +275,16 @@ def main(args):
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        if args.lr_scheduler == "cosine-annealing":
+            scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const-lr":
+            scheduler = const_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const-lr-cooldown":
+            assert args.cooldown_epochs is not None, "Please specify the number of cooldown epochs for this lr schedule."
+            cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.cooldown_epochs
+            scheduler = const_lr_cooldown(optimizer, args.lr, args.warmup, cooldown_steps, args.power_lr, args.end_lr, total_steps)
+        else:
+            print(f"Unknown scheduler, {args.lr_scheduler}")
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
