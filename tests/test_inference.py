@@ -98,7 +98,7 @@ def test_inference_with_data(
     
     if not jit:
         model_out = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
-        if type(model) != open_clip.CLIP:
+        if type(model) not in [open_clip.CLIP, open_clip.CustomTextCLIP]:
             assert type(model_out) == dict
         else:
             model.output_dict = True
