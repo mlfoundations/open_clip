@@ -230,11 +230,11 @@ class ResidualAttentionBlock(nn.Module):
         )[0]
 
     def forward(self,
-                q_x: torch.Tensor,
-                k_x: Optional[torch.Tensor] = None,
-                v_x: Optional[torch.Tensor] = None,
-                attn_mask: Optional[torch.Tensor] = None
-                ):
+            q_x: torch.Tensor,
+            k_x: Optional[torch.Tensor] = None,
+            v_x: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None
+        ):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
 

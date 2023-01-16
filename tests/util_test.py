@@ -33,6 +33,24 @@ def inference_image(model, preprocess_val, batches):
             x = torch.stack([preprocess_val(img) for img in x])
             y.append(model.encode_image(x))
         return torch.stack(y)
+    
+def forward_model(model, model_name, preprocess_val, image_batch, text_batch):
+    y = []
+    tokenizer = open_clip.get_tokenizer(model_name)
+    with torch.no_grad():
+        for x_im, x_txt in zip(image_batch, text_batch):
+            x_im = torch.stack([preprocess_val(im) for im in x_im])
+            x_txt = tokenizer(x_txt)
+        y.append(model(x_im, x_txt))
+    if type(y[0]) == dict:
+        out = {}
+        for key in y[0].keys():
+            out[key] = torch.stack([batch_out[key] for batch_out in y])
+    else:
+        out = []
+        for i in range(len(y[0])):
+            out.append(torch.stack([batch_out[i] for batch_out in y]))
+    return out
 
 def random_image_batch(batch_size, size):
     h, w = size

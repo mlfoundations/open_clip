@@ -87,9 +87,17 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts, output_dict=True)
+                model_out = model(images, texts)
+                # for clip if it does not output_dict
+                if not model.output_dict:
+                    model_out = {
+                        "image_features":model_out[0], 
+                        "text_features":model_out[1],
+                        "logit_scale":model_out[2]
+                    }
                 logit_scale = model_out["logit_scale"]
                 losses = loss(**model_out, output_dict=True)
+
                 total_loss = sum(losses.values())
                 losses["loss"] = total_loss
 
@@ -98,7 +106,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
+                    # for clip if it does not output_dict
+                    if not model.output_dict:
+                        model_out = {
+                            "image_features":model_out[0], 
+                            "text_features":model_out[1],
+                            "logit_scale":model_out[2]
+                        }
                     model_out.pop("logit_scale")
                     for key, val in model_out.items():
                         if key in accum_features:
@@ -123,6 +138,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 texts = accum_texts[j]
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
+                    # for clip if it does not output_dict
+                    if not model_out.output_dict:
+                        model_out = {
+                            "image_features":model_out[0], 
+                            "text_features":model_out[1],
+                            "logit_scale":model_out[2]
+                        }
                     logit_scale = model_out.pop("logit_scale")
                     for key, val in accum_features:
                         accumulated = accum_features[key]
@@ -244,6 +266,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
+                    # for clip if it does not output_dict
+                    if not model.output_dict:
+                        model_out = {
+                            "image_features":model_out[0], 
+                            "text_features":model_out[1],
+                            "logit_scale":model_out[2]
+                        }
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]

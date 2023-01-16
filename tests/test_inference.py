@@ -42,7 +42,7 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
 models_to_test = list(models_to_test)
 models_to_test.sort()
 models_to_jit_test = {"ViT-B-32"}
-
+models_to_test = {"ViT-B-32", "coca_ViT-B-32", "coca_roberta-ViT-B-32"}
 models_to_test_fully = []
 for model_name in models_to_test:
     models_to_test_fully.append((model_name, False))
@@ -96,5 +96,16 @@ def test_inference_with_data(
     gt_image = torch.load(gt_image_path)
     y_image = util_test.inference_image(model, preprocess_val, input_image)
     assert (y_image == gt_image).all(), f"image output differs @ {input_image_path}"
+    
+    if not jit:
+        model_out = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
+        if type(model) != open_clip.CLIP:
+            assert type(model_out) == dict
+        else:
+            model.output_dict = True
+            model_out_dict = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
+            model_out_dict["image_features"] == model_out[0]
+            model_out_dict["text_features"] == model_out[1]
+            model_out_dict["logit_scale"] == model_out[2]
 
 

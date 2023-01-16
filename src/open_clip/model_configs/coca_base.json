@@ -26,5 +26,5 @@
         "width": 768,
         "embed_cls": true
     },
-    "custom_text": "True"
+    "custom_text": true
 }
