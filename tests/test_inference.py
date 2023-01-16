@@ -124,9 +124,9 @@ def test_inference_with_data(
         else:
             model.output_dict = True
             model_out_dict = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
-            model_out_dict["image_features"] == model_out[0]
-            model_out_dict["text_features"] == model_out[1]
-            model_out_dict["logit_scale"] == model_out[2]
+            assert (model_out_dict["image_features"] == model_out[0]).all()
+            assert (model_out_dict["text_features"] == model_out[1]).all()
+            assert (model_out_dict["logit_scale"] == model_out[2]).all()
             model.output_dict = False
     else:
         model, _, preprocess_val = open_clip.create_model_and_transforms(
