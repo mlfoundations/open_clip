@@ -118,6 +118,7 @@ def test_inference_with_data(
     assert (y_image == gt_image).all(), f"image output differs @ {input_image_path}"
     
     if not jit:
+        model.eval()
         model_out = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
         if type(model) not in [open_clip.CLIP, open_clip.CustomTextCLIP]:
             assert type(model_out) == dict
@@ -127,7 +128,7 @@ def test_inference_with_data(
             assert (model_out_dict["image_features"] == model_out[0]).all()
             assert (model_out_dict["text_features"] == model_out[1]).all()
             assert (model_out_dict["logit_scale"] == model_out[2]).all()
-            model.output_dict = False
+            model.output_dict = None
     else:
         model, _, preprocess_val = open_clip.create_model_and_transforms(
             model_name,
