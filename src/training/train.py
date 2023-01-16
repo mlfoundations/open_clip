@@ -13,7 +13,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import get_cast_dtype
+from open_clip import get_cast_dtype, CLIP, CustomTextCLIP
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -37,6 +37,8 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+def is_clip(model):
+    return type(model) in [CLIP, CustomTextCLIP]
 
 def unwrap_model(model):
     if hasattr(model, 'module'):
@@ -89,7 +91,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             with autocast():
                 model_out = model(images, texts)
                 # for clip if it does not output_dict
-                if not model.output_dict:
+                if is_clip(model) and not model.output_dict:
                     model_out = {
                         "image_features":model_out[0], 
                         "text_features":model_out[1],
@@ -108,7 +110,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 with autocast():
                     model_out = model(images, texts)
                     # for clip if it does not output_dict
-                    if not model.output_dict:
+                    if is_clip(model) and not model.output_dict:
                         model_out = {
                             "image_features":model_out[0], 
                             "text_features":model_out[1],
@@ -267,7 +269,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
-                    if not model.output_dict:
+                    if is_clip(model) and not model.output_dict:
                         model_out = {
                             "image_features":model_out[0], 
                             "text_features":model_out[1],

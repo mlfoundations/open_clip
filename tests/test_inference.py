@@ -41,14 +41,35 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
 # TODO: add "coca_ViT-B-32" onece https://github.com/pytorch/pytorch/issues/92073 gets fixed
 models_to_test = list(models_to_test)
 models_to_test.sort()
+models_to_test = [(model_name, False) for model_name in models_to_test]
+
 models_to_jit_test = {"ViT-B-32"}
-models_to_test_fully = []
-for model_name in models_to_test:
-    models_to_test_fully.append((model_name, False))
-    if model_name in models_to_jit_test:
-        models_to_test_fully.append((model_name, True))
+models_to_jit_test = list(models_to_jit_test)
+models_to_jit_test = [(model_name, True) for model_name in models_to_jit_test]
+models_to_test_fully = models_to_test + models_to_jit_test
+
+
+class TestWrapper(torch.nn.Module):
+        def __init__(self, model, model_name, output_dict=True) -> None:
+            super().__init__()
+            self.model = model
+            self.output_dict = None
+            if output_dict:
+                self.output_dict = output_dict
+            if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP]:
+                self.model.output_dict = self.output_dict
+            config = open_clip.get_model_config(model_name)
+            self.head = torch.nn.Linear(config["embed_dim"], 2)
         
-    
+        def forward(self, image, text):
+            output_dict = self.output_dict
+            x = self.model(image, text)
+            if output_dict is not None:
+                out = self.head(x["image_features"])
+            else:
+                out = self.head(x[0])
+            return {"test_output": out}
+
 @pytest.mark.regression_test
 @pytest.mark.parametrize("model_name,jit", models_to_test_fully)
 def test_inference_with_data(
@@ -106,5 +127,27 @@ def test_inference_with_data(
             model_out_dict["image_features"] == model_out[0]
             model_out_dict["text_features"] == model_out[1]
             model_out_dict["logit_scale"] == model_out[2]
+            model.output_dict = False
+    else:
+        model, _, preprocess_val = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained = pretrained,
+            precision = precision,
+            jit = False,
+            force_quick_gelu = force_quick_gelu,
+            pretrained_hf = pretrained_hf
+        )
+        
+        test_model = TestWrapper(model, model_name, output_dict=False)
+        test_model = torch.jit.script(test_model)
+        model_out = util_test.forward_model(test_model, model_name, preprocess_val, input_image, input_text)
+        assert model_out["test_output"].shape[-1] == 2
+
+        test_model = TestWrapper(model, model_name, output_dict=True)
+        test_model = torch.jit.script(test_model)
+        model_out = util_test.forward_model(test_model, model_name, preprocess_val, input_image, input_text)
+        assert model_out["test_output"].shape[-1] == 2
+        
+    
 
 
