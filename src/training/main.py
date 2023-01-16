@@ -162,6 +162,9 @@ def main(args):
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
 
+    if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
+        # arg is nargs, single (square) image size list -> int
+        args.force_image_size = force_image_size[0]
     random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
@@ -172,9 +175,11 @@ def main(args):
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
+        force_image_size=args.force_image_size,
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        aug_cfg=args.aug_cfg,
     )
     random_seed(args.seed, args.rank)
 
