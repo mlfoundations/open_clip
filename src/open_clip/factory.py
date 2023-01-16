@@ -254,10 +254,10 @@ def create_model_from_pretrained(
         jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
+        force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         return_transform: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
-        image_size: Optional[Union[int, Tuple[int, int]]] = None,
         cache_dir: Optional[str] = None,
 ):
     if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
@@ -273,6 +273,7 @@ def create_model_from_pretrained(
         jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
+        force_image_size=force_image_size,
         cache_dir=cache_dir,
     )
 
