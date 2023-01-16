@@ -42,7 +42,6 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
 models_to_test = list(models_to_test)
 models_to_test.sort()
 models_to_jit_test = {"ViT-B-32"}
-models_to_test = {"ViT-B-32", "coca_ViT-B-32", "coca_roberta-ViT-B-32"}
 models_to_test_fully = []
 for model_name in models_to_test:
     models_to_test_fully.append((model_name, False))
