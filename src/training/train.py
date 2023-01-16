@@ -141,7 +141,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
-                    if not model_out.output_dict:
+                    if is_clip(model) and not model_out.output_dict:
                         model_out = {
                             "image_features":model_out[0], 
                             "text_features":model_out[1],
