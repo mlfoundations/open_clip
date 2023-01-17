@@ -282,8 +282,7 @@ def main(args):
             cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.lr_cooldown_epochs
             scheduler = const_lr_cooldown(optimizer, args.lr, args.warmup, cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end, total_steps)
         else:
-            logging.error(f'Error - unknown scheduler, {args.lr_scheduler}. Please use a lr scheduler of known type.')
-            logging.error('(Current available options are: cosine, const, const-cooldown.)')
+            logging.error(f'Unknown scheduler, {args.lr_scheduler}. Current available options are: cosine, const, const-cooldown.')
             exit(1)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
