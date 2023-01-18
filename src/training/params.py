@@ -105,6 +105,10 @@ def parse_args(args):
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
+    parser.add_argument(
+        "--epochs-cooldown", type=int, default=None,
+        help="When scheduler w/ cooldown used, perform cooldown from total_epochs - cooldown_epochs onwards."
+    )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
     parser.add_argument("--beta1", type=float, default=None, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
@@ -123,6 +127,20 @@ def parse_args(args):
         action="store_true",
         default=False,
         help="Use this flag to skip the learning rate decay.",
+    )
+    parser.add_argument(
+        "--lr-scheduler",
+        type=str,
+        default='cosine',
+        help="LR scheduler. One of: 'cosine', 'const' (constant), 'const-cooldown' (constant w/ cooldown). Default: cosine",
+    )
+    parser.add_argument(
+        "--lr-cooldown-end", type=float, default=0.0,
+        help="End learning rate for cooldown schedule. Default: 0"
+    )
+    parser.add_argument(
+        "--lr-cooldown-power", type=float, default=1.0,
+        help="Power for polynomial cooldown schedule. Default: 1.0 (linear decay)"
     )
     parser.add_argument(
         "--save-frequency", type=int, default=1, help="How often to save checkpoints."

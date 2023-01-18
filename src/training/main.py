@@ -31,7 +31,7 @@ from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
 from training.params import parse_args
-from training.scheduler import cosine_lr
+from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from training.train import train_one_epoch, evaluate
 
 
@@ -273,7 +273,21 @@ def main(args):
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        if args.lr_scheduler == "cosine":
+            scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const":
+            scheduler = const_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const-cooldown":
+            assert args.epochs_cooldown is not None,\
+                "Please specify the number of cooldown epochs for this lr schedule."
+            cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs_cooldown
+            scheduler = const_lr_cooldown(
+                optimizer, args.lr, args.warmup, total_steps,
+                cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end)
+        else:
+            logging.error(
+                f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
+            exit(1)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
