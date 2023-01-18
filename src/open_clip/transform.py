@@ -81,7 +81,7 @@ def image_transform(
     normalize = Normalize(mean=mean, std=std)
     if is_train:
         aug_cfg_dict = {k: v for k, v in asdict(aug_cfg).items() if v is not None}
-        use_timm = aug_cfg_dict.get('use_timm', False)
+        use_timm = aug_cfg_dict.pop('use_timm', False)
         if use_timm:
             from timm.data import create_transform  # timm can still be optional
             if isinstance(model.visual.image_size, (tuple, list)):
