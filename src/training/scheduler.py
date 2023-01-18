@@ -21,7 +21,7 @@ def const_lr(optimizer, base_lr, warmup_length, steps):
     return _lr_adjuster
 
 
-def const_lr_cooldown(optimizer, base_lr, warmup_length, cooldown_steps, power, end_lr, steps):
+def const_lr_cooldown(optimizer, base_lr, warmup_length, steps, cooldown_steps, cooldown_power=1.0, cooldown_end_lr=0.):
     def _lr_adjuster(step):
         start_cooldown_step = steps - cooldown_steps
         if step < warmup_length:
@@ -33,8 +33,8 @@ def const_lr_cooldown(optimizer, base_lr, warmup_length, cooldown_steps, power, 
                 e = step - start_cooldown_step
                 es = steps - start_cooldown_step
                 # linear decay if power == 1; polynomial decay otherwise;
-                decay = (1 - (e/es)) ** power
-                lr = decay * (base_lr - end_lr) + end_lr
+                decay = (1 - (e/es)) ** cooldown_power
+                lr = decay * (base_lr - cooldown_end_lr) + cooldown_end_lr
         assign_learning_rate(optimizer, lr)
         return lr
     return _lr_adjuster

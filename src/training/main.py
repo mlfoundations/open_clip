@@ -278,12 +278,15 @@ def main(args):
         elif args.lr_scheduler == "const":
             scheduler = const_lr(optimizer, args.lr, args.warmup, total_steps)
         elif args.lr_scheduler == "const-cooldown":
-            assert args.lr_cooldown_epochs is not None, "Please specify the number of cooldown epochs for this lr schedule."
-            cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.lr_cooldown_epochs
-            scheduler = const_lr_cooldown(optimizer, args.lr, args.warmup, cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end, total_steps)
+            assert args.epochs_cooldown is not None,\
+                "Please specify the number of cooldown epochs for this lr schedule."
+            cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs_cooldown
+            scheduler = const_lr_cooldown(
+                optimizer, args.lr, args.warmup, total_steps,
+                cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end)
         else:
-            logging.error(f'Error - unknown scheduler, {args.lr_scheduler}. Please use a lr scheduler of known type.')
-            logging.error('(Current available options are: cosine, const, const-cooldown.)')
+            logging.error(
+                f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
