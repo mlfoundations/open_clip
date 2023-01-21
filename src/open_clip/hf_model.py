@@ -9,8 +9,6 @@ import torch
 import torch.nn as nn
 from torch import TensorType
 
-from typing import Tuple, Union, List
-
 try:
     import transformers
     from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
