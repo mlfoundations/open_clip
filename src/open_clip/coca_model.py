@@ -90,12 +90,8 @@ class CoCa(nn.Module):
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
-            output_dict: bool = False
     ):
         super().__init__()
-        self.output_dict = None
-        if output_dict:
-            self.output_dict = output_dict
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
@@ -155,7 +151,6 @@ class CoCa(nn.Module):
 
         token_embs = self.text.decoder(image_embs, token_embs)
         logits = self.to_logits(token_embs)
-        output_dict = self.output_dict
         return {
             "image_features": image_latent,
             "text_features": text_latent,
