@@ -337,8 +337,12 @@ class VisionTransformer(nn.Module):
             patch_dropout: float = 0.,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            output_tokens: bool = False
     ):
         super().__init__()
+        self.output_tokens = None
+        if output_tokens:
+            self.output_tokens = output_tokens
         self.image_size = to_2tuple(image_size)
         self.patch_size = to_2tuple(patch_size)
         self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
@@ -430,12 +434,8 @@ class VisionTransformer(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
-        
-    def forward(self, x: torch.Tensor):
-        pooled, _ = self.encode_with_tokens(x)
-        return pooled
 
-    def encode_with_tokens(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -467,7 +467,10 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        return pooled, tokens
+        if self.output_tokens is not None:
+            return pooled, tokens
+        
+        return pooled
 
 
 class TextTransformer(nn.Module):
@@ -485,8 +488,12 @@ class TextTransformer(nn.Module):
             norm_layer: Callable = LayerNorm,
             embed_cls: bool = False,
             pad_id: int = 0,
+            output_tokens: bool = False
     ):
         super().__init__()
+        self.output_tokens = None
+        if output_tokens:
+            self.output_tokens = output_tokens
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -559,10 +566,6 @@ class TextTransformer(nn.Module):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
     
     def forward(self, text):
-        pooled, _ = self.encode_with_tokens(text)
-        return pooled
-
-    def encode_with_tokens(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -594,7 +597,10 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        return pooled, tokens
+        if self.output_tokens is not None:
+            return pooled, tokens
+        
+        return pooled
 
 
 class MultimodalTransformer(Transformer):

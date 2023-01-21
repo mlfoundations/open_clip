@@ -126,13 +126,13 @@ class CoCa(nn.Module):
         self.text.set_grad_checkpointing(enable)
 
     def _encode_image(self, images, normalize=True):
-        image_latent, tokens_embs = self.visual.encode_with_tokens(images)
+        image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
     def _encode_text(self, text, normalize=True):
         text = text[:, :-1] # make space for CLS token
-        text_latent, token_emb = self.text.encoder.encode_with_tokens(text)
+        text_latent, token_emb = self.text.encoder(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
     

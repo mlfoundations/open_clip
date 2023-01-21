@@ -50,25 +50,25 @@ models_to_test_fully = models_to_test + models_to_jit_test
 
 
 class TestWrapper(torch.nn.Module):
-        def __init__(self, model, model_name, output_dict=True) -> None:
-            super().__init__()
-            self.model = model
-            self.output_dict = None
-            if output_dict:
-                self.output_dict = output_dict
-            if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP]:
-                self.model.output_dict = self.output_dict
-            config = open_clip.get_model_config(model_name)
-            self.head = torch.nn.Linear(config["embed_dim"], 2)
-        
-        def forward(self, image, text):
-            output_dict = self.output_dict
-            x = self.model(image, text)
-            if output_dict is not None:
-                out = self.head(x["image_features"])
-            else:
-                out = self.head(x[0])
-            return {"test_output": out}
+    def __init__(self, model, model_name, output_dict=True) -> None:
+        super().__init__()
+        self.model = model
+        self.output_dict = None
+        if output_dict:
+            self.output_dict = output_dict
+        if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP]:
+            self.model.output_dict = self.output_dict
+        config = open_clip.get_model_config(model_name)
+        self.head = torch.nn.Linear(config["embed_dim"], 2)
+
+    def forward(self, image, text):
+        output_dict = self.output_dict
+        x = self.model(image, text)
+        if output_dict is not None:
+            out = self.head(x["image_features"])
+        else:
+            out = self.head(x[0])
+        return {"test_output": out}
 
 @pytest.mark.regression_test
 @pytest.mark.parametrize("model_name,jit", models_to_test_fully)

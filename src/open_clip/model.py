@@ -57,6 +57,7 @@ class CLIPTextCfg:
     pooler_type: str = 'mean_pooler'
     embed_cls: bool = False
     pad_id: int = 0
+    output_tokens: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -118,6 +119,7 @@ def _build_vision_tower(
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
             attn_pooler_heads=vision_cfg.attn_pooler_heads,
+            output_tokens=vision_cfg.output_tokens,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
@@ -142,6 +144,7 @@ def _build_text_tower(
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
+            output_tokens=text_cfg.output_tokens
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -156,6 +159,7 @@ def _build_text_tower(
             ls_init_value=text_cfg.ls_init_value,
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
+            output_tokens=text_cfg.output_tokens,
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
