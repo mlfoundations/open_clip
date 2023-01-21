@@ -1,4 +1,5 @@
 import argparse
+import ast
 
 
 def get_default_params(model_name):
@@ -8,6 +9,18 @@ def get_default_params(model_name):
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.98, "eps": 1.0e-6}
     else:
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.999, "eps": 1.0e-8}
+
+
+class ParseKwargs(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        kw = {}
+        for value in values:
+            key, value = value.split('=')
+            try:
+                kw[key] = ast.literal_eval(value)
+            except ValueError:
+                kw[key] = str(value)  # fallback to string (avoid need to escape on command line)
+        setattr(namespace, self.dest, kw)
 
 
 def parse_args(args):
@@ -105,6 +118,10 @@ def parse_args(args):
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
+    parser.add_argument(
+        "--epochs-cooldown", type=int, default=None,
+        help="When scheduler w/ cooldown used, perform cooldown from total_epochs - cooldown_epochs onwards."
+    )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
     parser.add_argument("--beta1", type=float, default=None, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
@@ -123,6 +140,20 @@ def parse_args(args):
         action="store_true",
         default=False,
         help="Use this flag to skip the learning rate decay.",
+    )
+    parser.add_argument(
+        "--lr-scheduler",
+        type=str,
+        default='cosine',
+        help="LR scheduler. One of: 'cosine', 'const' (constant), 'const-cooldown' (constant w/ cooldown). Default: cosine",
+    )
+    parser.add_argument(
+        "--lr-cooldown-end", type=float, default=0.0,
+        help="End learning rate for cooldown schedule. Default: 0"
+    )
+    parser.add_argument(
+        "--lr-cooldown-power", type=float, default=1.0,
+        help="Power for polynomial cooldown schedule. Default: 1.0 (linear decay)"
     )
     parser.add_argument(
         "--save-frequency", type=int, default=1, help="How often to save checkpoints."
@@ -193,6 +224,7 @@ def parse_args(args):
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=None, metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
         default=False,
@@ -210,6 +242,10 @@ def parse_args(args):
         default=False,
         action="store_true",
         help="enable full distributed gradient for feature gather"
+    )
+    parser.add_argument(
+        '--force-image-size', type=int, nargs='+', default=None,
+        help='Override default image size'
     )
     parser.add_argument(
         "--force-quick-gelu",
@@ -333,6 +369,30 @@ def parse_args(args):
         help="Log every n steps to tensorboard/console/wandb.",
     )
     parser.add_argument(
+        "--remote-sync",
+        type=str,
+        default=None,
+        help="Optinoally sync with a remote path specified by this arg",
+    )
+    parser.add_argument(
+        "--remote-sync-frequency",
+        type=int,
+        default=300,
+        help="How frequently to sync to a remote directly if --remote-sync is not None.",
+    )
+    parser.add_argument(
+        "--remote-sync-protocol",
+        choices=["s3", "fsspec"],
+        default="s3",
+        help="How to do the remote sync backup if --remote-sync is not None.",
+    )
+    parser.add_argument(
+        "--delete-previous-checkpoint",
+        default=False,
+        action="store_true",
+        help="If true, delete previous checkpoint after storing a new one."
+    )
+    parser.add_argument(
         "--coca-caption-loss-weight",
         type=float,
         default=2.0,
@@ -344,7 +404,6 @@ def parse_args(args):
         default=1.0,
         help="Weight assigned to contrastive loss when training CoCa."
     )
-
 
     args = parser.parse_args(args)
 

@@ -39,6 +39,8 @@ class CLIPVisionCfg:
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
     timm_proj_bias: bool = False  # enable bias final projection
+    timm_drop: float = 0.  # head dropout
+    timm_drop_path: Optional[float] = None  # backbone stochastic depth
     output_tokens: bool = False
 
 
@@ -90,6 +92,8 @@ def _build_vision_tower(
             pool=vision_cfg.timm_pool,
             proj=vision_cfg.timm_proj,
             proj_bias=vision_cfg.timm_proj_bias,
+            drop=vision_cfg.timm_drop,
+            drop_path=vision_cfg.timm_drop_path,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size
         )
@@ -407,7 +411,7 @@ def trace_model(model, batch_size=256, device=torch.device('cpu')):
     return model
 
 
-def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_dim=1):
+def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialias: bool = True):
     # Rescale the grid of position embeddings when loading from state_dict
     old_pos_embed = state_dict.get('visual.positional_embedding', None)
     if old_pos_embed is None or not hasattr(model.visual, 'grid_size'):
@@ -430,7 +434,8 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_dim=
         pos_emb_img,
         size=grid_size,
         mode=interpolation,
-        align_corners=True,
+        antialias=antialias,
+        align_corners=False,
     )
     pos_emb_img = pos_emb_img.permute(0, 2, 3, 1).reshape(1, grid_size[0] * grid_size[1], -1)[0]
     if pos_emb_tok is not None:
