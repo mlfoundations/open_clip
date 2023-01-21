@@ -40,6 +40,13 @@ class AverageMeter(object):
 def is_clip(model):
     return type(model) in [CLIP, CustomTextCLIP]
 
+def postprocess_clip_output(model_out):
+    return {
+        "image_features": model_out[0],
+        "text_features": model_out[1],
+        "logit_scale": model_out[2]
+    }
+
 def unwrap_model(model):
     if hasattr(model, 'module'):
         return model.module
@@ -92,11 +99,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 model_out = model(images, texts)
                 # for clip if it does not output_dict
                 if is_clip(model) and not model.output_dict:
-                    model_out = {
-                        "image_features":model_out[0], 
-                        "text_features":model_out[1],
-                        "logit_scale":model_out[2]
-                    }
+                    model_out = postprocess_clip_output(model_out)
                 logit_scale = model_out["logit_scale"]
                 losses = loss(**model_out, output_dict=True)
 
@@ -111,11 +114,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                     model_out = model(images, texts)
                     # for clip if it does not output_dict
                     if is_clip(model) and not model.output_dict:
-                        model_out = {
-                            "image_features":model_out[0], 
-                            "text_features":model_out[1],
-                            "logit_scale":model_out[2]
-                        }
+                        model_out = postprocess_clip_output(model_out)
                     model_out.pop("logit_scale")
                     for key, val in model_out.items():
                         if key in accum_features:
@@ -142,11 +141,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
                     if is_clip(model) and not model_out.output_dict:
-                        model_out = {
-                            "image_features":model_out[0], 
-                            "text_features":model_out[1],
-                            "logit_scale":model_out[2]
-                        }
+                        model_out = postprocess_clip_output(model_out)
                     logit_scale = model_out.pop("logit_scale")
                     for key, val in accum_features:
                         accumulated = accum_features[key]
@@ -270,11 +265,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
                     if is_clip(model) and not model.output_dict:
-                        model_out = {
-                            "image_features":model_out[0], 
-                            "text_features":model_out[1],
-                            "logit_scale":model_out[2]
-                        }
+                        model_out = postprocess_clip_output(model_out)
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]

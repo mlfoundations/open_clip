@@ -5,7 +5,7 @@ Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (
 from dataclasses import dataclass
 import logging
 import math
-from typing import Optional, Tuple, Union, Dict
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
