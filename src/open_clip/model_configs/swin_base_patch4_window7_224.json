@@ -1,7 +1,7 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 640,
     "vision_cfg": {
-        "timm_model_name": "vit_medium_patch16_gap_256",
+        "timm_model_name": "swin_base_patch4_window7_224",
         "timm_model_pretrained": false,
         "timm_pool": "",
         "timm_proj": "linear",
@@ -10,8 +10,8 @@
     "text_cfg": {
         "context_length": 77,
         "vocab_size": 49408,
-        "width": 512,
-        "heads": 8,
+        "width": 640,
+        "heads": 10,
         "layers": 12
     }
 }

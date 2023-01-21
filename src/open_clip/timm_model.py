@@ -39,13 +39,18 @@ class TimmModel(nn.Module):
             proj='linear',
             proj_bias=False,
             drop=0.,
-            pretrained=False):
+            drop_path=None,
+            pretrained=False,
+    ):
         super().__init__()
         if timm is None:
             raise RuntimeError("Please `pip install timm` to use timm models.")
 
         self.image_size = to_2tuple(image_size)
-        self.trunk = timm.create_model(model_name, pretrained=pretrained)
+        timm_kwargs = {}
+        if drop_path is not None:
+            timm_kwargs['drop_path_rate'] = drop_path
+        self.trunk = timm.create_model(model_name, pretrained=pretrained, **timm_kwargs)
         feat_size = self.trunk.default_cfg.get('pool_size', None)
         feature_ndim = 1 if not feat_size else 2
         if pool in ('abs_attn', 'rot_attn'):
@@ -73,7 +78,7 @@ class TimmModel(nn.Module):
             head_layers['drop'] = nn.Dropout(drop)
             head_layers['proj'] = nn.Linear(prev_chs, embed_dim, bias=proj_bias)
         elif proj == 'mlp':
-            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=drop, bias=(True, proj_bias))
+            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=(drop, 0), bias=(True, proj_bias))
 
         self.head = nn.Sequential(head_layers)
 
