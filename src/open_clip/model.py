@@ -39,6 +39,7 @@ class CLIPVisionCfg:
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
     timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
     timm_proj_bias: bool = False  # enable bias final projection
+    output_tokens: bool = False
 
 
 @dataclass
@@ -56,6 +57,7 @@ class CLIPTextCfg:
     pooler_type: str = 'mean_pooler'
     embed_cls: bool = False
     pad_id: int = 0
+    output_tokens: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -117,6 +119,7 @@ def _build_vision_tower(
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
             attn_pooler_heads=vision_cfg.attn_pooler_heads,
+            output_tokens=vision_cfg.output_tokens,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
@@ -140,7 +143,8 @@ def _build_text_tower(
             output_dim=embed_dim,
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
-            pretrained=text_cfg.hf_model_pretrained
+            pretrained=text_cfg.hf_model_pretrained,
+            output_tokens=text_cfg.output_tokens
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -155,6 +159,7 @@ def _build_text_tower(
             ls_init_value=text_cfg.ls_init_value,
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
+            output_tokens=text_cfg.output_tokens,
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
@@ -170,8 +175,12 @@ class CLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False
     ):
         super().__init__()
+        self.output_dict = None
+        if output_dict:
+            self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
@@ -212,10 +221,11 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text, output_dict=False):
+    def forward(self, image, text, output_dict:bool=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if output_dict:
+        output_dict = self.output_dict
+        if output_dict is not None:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
@@ -232,8 +242,12 @@ class CustomTextCLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False
     ):
         super().__init__()
+        self.output_dict = None
+        if output_dict:
+            self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -261,7 +275,8 @@ class CustomTextCLIP(nn.Module):
     def forward(self, image, text, output_dict=False):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if output_dict:
+        output_dict = self.output_dict
+        if output_dict is not None:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,

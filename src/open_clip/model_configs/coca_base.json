@@ -16,7 +16,8 @@
         "image_size": 288,
         "layers": 12,
         "width": 768,
-        "patch_size": 18
+        "patch_size": 18,
+        "output_tokens": true
     },
     "text_cfg": {
         "context_length": 76,
@@ -24,7 +25,8 @@
         "layers": 12,
         "heads": 12,
         "width": 768,
-        "embed_cls": true
+        "embed_cls": true,
+        "output_tokens": true
     },
-    "custom_text": "True"
+    "custom_text": true
 }
