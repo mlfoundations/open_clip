@@ -8,4 +8,5 @@ pandas
 braceexpand
 huggingface_hub
 transformers
+timm
 fsspec

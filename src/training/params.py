@@ -1,4 +1,5 @@
 import argparse
+import ast
 
 
 def get_default_params(model_name):
@@ -8,6 +9,18 @@ def get_default_params(model_name):
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.98, "eps": 1.0e-6}
     else:
         return {"lr": 5.0e-4, "beta1": 0.9, "beta2": 0.999, "eps": 1.0e-8}
+
+
+class ParseKwargs(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        kw = {}
+        for value in values:
+            key, value = value.split('=')
+            try:
+                kw[key] = ast.literal_eval(value)
+            except ValueError:
+                kw[key] = str(value)  # fallback to string (avoid need to escape on command line)
+        setattr(namespace, self.dest, kw)
 
 
 def parse_args(args):
@@ -211,6 +224,7 @@ def parse_args(args):
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=None, metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
         default=False,
@@ -228,6 +242,10 @@ def parse_args(args):
         default=False,
         action="store_true",
         help="enable full distributed gradient for feature gather"
+    )
+    parser.add_argument(
+        '--force-image-size', type=int, nargs='+', default=None,
+        help='Override default image size'
     )
     parser.add_argument(
         "--force-quick-gelu",

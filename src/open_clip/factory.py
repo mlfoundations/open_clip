@@ -5,7 +5,7 @@ import pathlib
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
@@ -14,7 +14,7 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
     resize_pos_embed, get_cast_dtype
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
-from .transform import image_transform
+from .transform import image_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
 
@@ -106,6 +106,7 @@ def create_model(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
+        force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
@@ -139,6 +140,10 @@ def create_model(
             # override the default patch dropout value
             model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
 
+        if force_image_size is not None:
+            # override model config's image size
+            model_cfg["vision_cfg"]["image_size"] = force_image_size
+
         if pretrained_image:
             if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
                 # pretrained weight loading for timm models set via vision_cfg
@@ -147,10 +152,11 @@ def create_model(
                 assert False, 'pretrained image towers currently only supported for timm models'
 
         cast_dtype = get_cast_dtype(precision)
-        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
+        is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         if custom_text:
-            if 'hf_model_name' in model_cfg.get('text_cfg', {}):
+            if is_hf_model:
                 model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
@@ -198,10 +204,12 @@ def create_model_and_transforms(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
+        force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
+        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
 ):
     model = create_model(
@@ -213,6 +221,7 @@ def create_model_and_transforms(
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_patch_dropout=force_patch_dropout,
+        force_image_size=force_image_size,
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
@@ -224,13 +233,14 @@ def create_model_and_transforms(
         model.visual.image_size,
         is_train=True,
         mean=image_mean,
-        std=image_std
+        std=image_std,
+        aug_cfg=aug_cfg,
     )
     preprocess_val = image_transform(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,
-        std=image_std
+        std=image_std,
     )
 
     return model, preprocess_train, preprocess_val
@@ -244,6 +254,7 @@ def create_model_from_pretrained(
         jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
+        force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         return_transform: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
@@ -262,6 +273,7 @@ def create_model_from_pretrained(
         jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
+        force_image_size=force_image_size,
         cache_dir=cache_dir,
     )
 
@@ -274,7 +286,7 @@ def create_model_from_pretrained(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,
-        std=image_std
+        std=image_std,
     )
 
     return model, preprocess
