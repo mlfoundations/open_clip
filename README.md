@@ -258,7 +258,18 @@ python -m training.main \
 ```
 
 ### Training CoCa:
-Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through specifying a CoCa config using the ```--model``` parameter of the training script. Currently available configs are "coca_base", "coca_ViT-B-32", and "coca_roberta-ViT-B-32" (which uses RoBERTa as the text encoder).
+Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through specifying a CoCa config using the ```--model``` parameter of the training script. Currently available configs are "coca_base", "coca_ViT-B-32", and "coca_roberta-ViT-B-32" (which uses RoBERTa as the text encoder). CoCa configs are different from CLIP configs because they have an additional "multimodal_cfg" component which specifies parameters for the text decoder. Here's an example from the coca_ViT-B-32 config:
+```json
+"multimodal_cfg": {
+	"context_length": 76,
+	"vocab_size": 49408,
+	"width": 512,
+	"heads": 8,
+	"layers": 12,
+	"latent_dim": 512,
+	"attn_pooler_heads": 8
+}
+```
 
 ### Training with pre-trained language models as text encoder:
 
