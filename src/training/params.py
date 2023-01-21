@@ -118,6 +118,10 @@ def parse_args(args):
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
     )
+    parser.add_argument(
+        "--epochs-cooldown", type=int, default=None,
+        help="When scheduler w/ cooldown used, perform cooldown from total_epochs - cooldown_epochs onwards."
+    )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
     parser.add_argument("--beta1", type=float, default=None, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
@@ -136,6 +140,20 @@ def parse_args(args):
         action="store_true",
         default=False,
         help="Use this flag to skip the learning rate decay.",
+    )
+    parser.add_argument(
+        "--lr-scheduler",
+        type=str,
+        default='cosine',
+        help="LR scheduler. One of: 'cosine', 'const' (constant), 'const-cooldown' (constant w/ cooldown). Default: cosine",
+    )
+    parser.add_argument(
+        "--lr-cooldown-end", type=float, default=0.0,
+        help="End learning rate for cooldown schedule. Default: 0"
+    )
+    parser.add_argument(
+        "--lr-cooldown-power", type=float, default=1.0,
+        help="Power for polynomial cooldown schedule. Default: 1.0 (linear decay)"
     )
     parser.add_argument(
         "--save-frequency", type=int, default=1, help="How often to save checkpoints."
@@ -350,8 +368,30 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
-
-
+    parser.add_argument(
+        "--remote-sync",
+        type=str,
+        default=None,
+        help="Optinoally sync with a remote path specified by this arg",
+    )
+    parser.add_argument(
+        "--remote-sync-frequency",
+        type=int,
+        default=300,
+        help="How frequently to sync to a remote directly if --remote-sync is not None.",
+    )
+    parser.add_argument(
+        "--remote-sync-protocol",
+        choices=["s3", "fsspec"],
+        default="s3",
+        help="How to do the remote sync backup if --remote-sync is not None.",
+    )
+    parser.add_argument(
+        "--delete-previous-checkpoint",
+        default=False,
+        action="store_true",
+        help="If true, delete previous checkpoint after storing a new one."
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

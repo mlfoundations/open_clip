@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import re
+import subprocess
 import sys
 import random
 from datetime import datetime
@@ -31,8 +32,9 @@ from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
 from training.params import parse_args
-from training.scheduler import cosine_lr
+from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from training.train import train_one_epoch, evaluate
+from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -49,9 +51,16 @@ def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
-def get_latest_checkpoint(path: str):
+def get_latest_checkpoint(path: str, remote : bool):
     # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
-    checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+    if remote:
+        result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print(result)
+        if result.returncode == 1:
+            return None
+        checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
+    else:
+        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
     if checkpoints:
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
@@ -121,23 +130,33 @@ def main(args):
 
     if resume_latest:
         resume_from = None
+        checkpoint_path = args.checkpoint_path
+        # If using remote_sync, need to check the remote instead of the local checkpoints folder.
+        if args.remote_sync is not None:
+            checkpoint_path = os.path.join(args.remote_sync, args.name, "checkpoints")
+            if args.save_most_recent:
+                print('Error. Cannot use save-most-recent with remote_sync and resume latest.')
+                return -1
+            if args.remote_sync_protocol != 's3':
+                print('Error. Sync protocol not supported when using resume latest.')
+                return -1
         if is_master(args):
             # Checking for existing checkpoint via master rank only. It is possible for
             # different rank processes to see different files if a shared file-system is under
             # stress, however it's very difficult to fully work around such situations.
             if args.save_most_recent:
                 # if --save-most-recent flag is set, look for latest at a fixed filename
-                resume_from = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
                 if not os.path.exists(resume_from):
                     # If no latest checkpoint has been saved yet, don't try to resume
                     resume_from = None
             else:
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
-                resume_from = get_latest_checkpoint(args.checkpoint_path)
+                resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
             if resume_from:
                 logging.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
-                logging.info(f'No latest resume checkpoint found in {args.checkpoint_path}.')
+                logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
         if args.distributed:
             # sync found checkpoint path to all ranks
             resume_from = broadcast_object(args, resume_from)
@@ -145,6 +164,29 @@ def main(args):
 
     if args.copy_codebase:
         copy_codebase(args)
+
+    # start the sync proces if remote-sync is not None
+    remote_sync_process = None
+    if is_master(args) and args.remote_sync is not None:
+        # first make sure it works
+        result = remote_sync(
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
+        if result:
+            logging.info('remote sync successful.')
+        else:
+            logging.info('Error: remote sync failed. Exiting.')
+            return -1
+        # if all looks good, start a process to do this every args.remote_sync_frequency seconds
+        remote_sync_process = start_sync_process(
+            args.remote_sync_frequency,
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
+        remote_sync_process.start()
 
     if args.precision == 'fp16':
         logging.warning(
@@ -252,7 +294,7 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        checkpoint = torch.load(args.resume, map_location='cpu')
+        checkpoint = pt_load(args.resume, map_location='cpu')
         if 'epoch' in checkpoint:
             # resuming a train checkpoint w/ epoch and optimizer state
             start_epoch = checkpoint["epoch"]
@@ -278,7 +320,21 @@ def main(args):
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        if args.lr_scheduler == "cosine":
+            scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const":
+            scheduler = const_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.lr_scheduler == "const-cooldown":
+            assert args.epochs_cooldown is not None,\
+                "Please specify the number of cooldown epochs for this lr schedule."
+            cooldown_steps = (data["train"].dataloader.num_batches // args.accum_freq) * args.epochs_cooldown
+            scheduler = const_lr_cooldown(
+                optimizer, args.lr, args.warmup, total_steps,
+                cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end)
+        else:
+            logging.error(
+                f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
+            exit(1)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
@@ -340,6 +396,11 @@ def main(args):
                     checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
+            if args.delete_previous_checkpoint:
+                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                if os.path.exists(previous_checkpoint):
+                    os.remove(previous_checkpoint)
+
             if args.save_most_recent:
                 # try not to corrupt the latest checkpoint if save fails
                 tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
@@ -350,6 +411,20 @@ def main(args):
     if args.wandb and is_master(args):
         wandb.finish()
 
+    # run a final sync.
+    if remote_sync_process is not None:
+        logging.info('Final remote sync.')
+        remote_sync_process.terminate()
+        result = remote_sync(
+            os.path.join(args.logs, args.name), 
+            os.path.join(args.remote_sync, args.name), 
+            args.remote_sync_protocol
+        )
+        if result:
+            logging.info('Final remote sync successful.')
+        else:
+            logging.info('Final remote sync failed.')
+    
 
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
