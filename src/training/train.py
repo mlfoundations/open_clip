@@ -7,6 +7,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.nn.parallel.distributed import DistributedDataParallel
 
 try:
     import wandb
@@ -98,7 +99,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             with autocast():
                 model_out = model(images, texts)
                 # for clip if it does not output_dict
-                if is_clip(model) and not model.output_dict:
+                module = model.module if type(model) == DistributedDataParallel else model
+                if is_clip(module) and not module.output_dict:
                     model_out = postprocess_clip_output(model_out)
                 logit_scale = model_out["logit_scale"]
                 losses = loss(**model_out, output_dict=True)
@@ -113,7 +115,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 with autocast():
                     model_out = model(images, texts)
                     # for clip if it does not output_dict
-                    if is_clip(model) and not model.output_dict:
+                    module = model.module if type(model) == DistributedDataParallel else model
+                    if is_clip(module) and not module.output_dict:
                         model_out = postprocess_clip_output(model_out)
                     model_out.pop("logit_scale")
                     for key, val in model_out.items():
@@ -140,7 +143,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
-                    if is_clip(model) and not model_out.output_dict:
+                    module = model.module if type(model) == DistributedDataParallel else model
+                    if is_clip(module) and not model.output_dict:
                         model_out = postprocess_clip_output(model_out)
                     logit_scale = model_out.pop("logit_scale")
                     for key, val in accum_features:
@@ -264,7 +268,8 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 with autocast():
                     model_out = model(images, texts, output_dict=True)
                     # for clip if it does not output_dict
-                    if is_clip(model) and not model.output_dict:
+                    module = model.module if type(model) == DistributedDataParallel else model
+                    if is_clip(module) and not module.output_dict:
                         model_out = postprocess_clip_output(model_out)
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
