@@ -27,7 +27,7 @@ export PYTHONPATH="$PYTHONPATH:/admin/home-mitchellw/open_clip/src"
 
 EXP_NAME="test-B-32-laion5b-lr1e-3-bs90k"
 
-/opt/slurm/sbin/srun --comment laion --cpu_bind=v --accel-bind=gn python -m training.main \
+srun --comment laion --cpu_bind=v --accel-bind=gn python -m training.main \
     --save-frequency 1 \
     --train-data="pipe:aws s3 cp s3://s-datasets/laion5b/{laion2B-data/{000000..231349}.tar,laion2B-multi-data/{000000..226687}.tar,laion1B-nolang-data/{000000..127231}.tar} -" \
     --train-num-samples 135646078 \
