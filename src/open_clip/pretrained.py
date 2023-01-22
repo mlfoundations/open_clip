@@ -108,6 +108,7 @@ _VITB16 = dict(
     # laion400m_64k=_pcfg(
     #     url="",
     #     mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+    laion2b_s34b_b88k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-laion2B-s34B-b88K/'),
 )
 
 _VITB16_PLUS_240 = dict(
@@ -154,6 +155,22 @@ _xlmRobertaLargeFrozenViTH14 = dict(
     frozen_laion5b_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-H-14-frozen-xlm-roberta-large-laion5B-s13B-b90k/'),
 )
 
+_convnext_base = dict(
+    laion400m_s13b_b51k=_pcfg(hf_hub='convnext_base-laion400M-s13B-b51K'),
+)
+
+_convnext_base_w = dict(
+    laion2b_s13b_b82k=_pcfg(hf_hub='laion/CLIP-convnext_base_w-laion2B-s13B-b82K/'),
+    laion2b_s13b_b82k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_base_w-laion2B-s13B-b82K-augreg/'),
+    laion_aesthetic_s13b_b82k=_pcfg(hf_hub='laion/CLIP-convnext_base_w-laion_aesthetic-s13B-b82K/'),
+)
+
+_convnext_base_w_320 = dict(
+    laion_aesthetic_s13b_b82k=_pcfg(hf_hub='laion/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K/'),
+    laion_aesthetic_s13b_b82k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K-augreg/'),
+)
+
+
 _PRETRAINED = {
     "RN50": _RN50,
     "RN50-quickgelu": _RN50_quickgelu,
@@ -173,7 +190,15 @@ _PRETRAINED = {
     "roberta-ViT-B-32": _robertaViTB32,
     "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
     "xlm-roberta-large-ViT-H-14": _xlmRobertaLargeFrozenViTH14,
+    "convnext_base": _convnext_base,
+    "convnext_base_w": _convnext_base_w,
+    "convnext_base_w_320": _convnext_base_w_320,
 }
+
+
+def _clean_tag(tag: str):
+    # normalize pretrained tags
+    return tag.lower().replace('-', '_')
 
 
 def list_pretrained(as_str: bool = False):
@@ -186,6 +211,7 @@ def list_pretrained(as_str: bool = False):
 def list_pretrained_models_by_tag(tag: str):
     """ return all models having the specified pretrain tag """
     models = []
+    tag = _clean_tag(tag)
     for k in _PRETRAINED.keys():
         if tag in _PRETRAINED[k]:
             models.append(k)
@@ -203,18 +229,18 @@ def list_pretrained_tags_by_model(model: str):
 def is_pretrained_cfg(model: str, tag: str):
     if model not in _PRETRAINED:
         return False
-    return tag.lower() in _PRETRAINED[model]
+    return _clean_tag(tag) in _PRETRAINED[model]
 
 
 def get_pretrained_cfg(model: str, tag: str):
     if model not in _PRETRAINED:
         return {}
     model_pretrained = _PRETRAINED[model]
-    return model_pretrained.get(tag.lower(), {})
+    return model_pretrained.get(_clean_tag(tag), {})
 
 
 def get_pretrained_url(model: str, tag: str):
-    cfg = get_pretrained_cfg(model, tag)
+    cfg = get_pretrained_cfg(model, _clean_tag(tag))
     return cfg.get('url', '')
 
 

@@ -1,3 +1,7 @@
+## 2.9.3
+
+* Fix wandb collapsing multiple parallel runs into a single one
+
 ## 2.9.2
 
 * Fix braceexpand memory explosion for complex webdataset urls

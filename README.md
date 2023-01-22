@@ -257,6 +257,20 @@ python -m training.main \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
 
+### Training CoCa:
+Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through specifying a CoCa config using the ```--model``` parameter of the training script. Currently available configs are "coca_base", "coca_ViT-B-32", and "coca_roberta-ViT-B-32" (which uses RoBERTa as the text encoder). CoCa configs are different from CLIP configs because they have an additional "multimodal_cfg" component which specifies parameters for the multimodal text decoder. Here's an example from the coca_ViT-B-32 config:
+```json
+"multimodal_cfg": {
+	"context_length": 76,
+	"vocab_size": 49408,
+	"width": 512,
+	"heads": 8,
+	"layers": 12,
+	"latent_dim": 512,
+	"attn_pooler_heads": 8
+}
+```
+
 ### Training with pre-trained language models as text encoder:
 
 If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
@@ -500,6 +514,23 @@ There is some additional GPU memory required --- the features and data from all 
 There are also `m` loss computations instead of the usual 1.
 
 For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+
+### Support for remote loading/training
+
+It is always possible to resume directly from a remote file, e.g., a file in an s3 bucket. Just set `--resume s3://<path-to-checkpoint> `.
+This will work with any filesystem supported by `fsspec`.
+
+It is also possible to train `open_clip` models while continuously backing up to s3. This can help to avoid slow local file systems.
+
+Say that your node has a local ssd `/scratch`, an s3 bucket `s3://<path-to-bucket>`.
+
+In that case, set `--logs /scratch` and `--remote-sync s3://<path-to-bucket>`. Then, a background process will sync `/scratch/<run-name>` to `s3://<path-to-bucket>/<run-name>`. After syncing, the background process will sleep for `--remote-sync-frequency` seconds, which defaults to 5 minutes.
+
+There is also experimental support for syncing to other remote file systems, not just s3. To do so, specify `--remote-sync-protocol fsspec`. However, this is currently very slow and not recommended.
+
+Also, to optionally avoid saving too many checkpoints locally when using these features, you can use `--delete-previous-checkpoint` which deletes the previous checkpoint after saving a new one.
+
+Note: if you are using this feature with `--resume latest`, there are a few warnings. First, use with `--save-most-recent` is not supported. Second, only `s3` is supported. Finally, since the sync happens in the background, it is possible that the most recent checkpoint may not be finished syncing to the remote.
 
 ## Scaling trends
 

@@ -19,6 +19,7 @@ from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsP
 from .generation_utils import validate_stopping_criteria
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union, Dict
 
+
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
     mlp_ratio: int = 4
@@ -28,37 +29,38 @@ class MultimodalCfg(CLIPTextCfg):
     attn_pooler_heads: int = 8
     latent_dim: int = 512
 
+
 class CoCaEncoderDecoder(nn.Module):
     def __init__(self, encoder, decoder) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
-    
+
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.encoder.set_grad_checkpointing(enable)
         self.decoder.set_grad_checkpointing(enable)
 
-def _build_encoder_decoder_tower(
-    embed_dim,
-    multimodal_cfg,
-    text_cfg,
-    quick_gelu: bool = False,
-    cast_dtype: Optional[torch.dtype] = None,
-):
 
+def _build_encoder_decoder_tower(
+        embed_dim,
+        multimodal_cfg,
+        text_cfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
-        
+
     encoder = _build_text_tower(
-        multimodal_cfg.latent_dim, 
-        text_cfg=text_cfg, 
-        quick_gelu=quick_gelu, 
+        multimodal_cfg.latent_dim,
+        text_cfg=text_cfg,
+        quick_gelu=quick_gelu,
         cast_dtype=cast_dtype
     )
-    
+
     vocab_size = (
-        encoder.config.vocab_size # for hf models
+        encoder.config.vocab_size  # for hf models
         if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
         else multimodal_cfg.vocab_size
     )
@@ -78,19 +80,20 @@ def _build_encoder_decoder_tower(
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
-    
+
     return CoCaEncoderDecoder(encoder, decoder), multimodal_cfg, vocab_size
- 
+
+
 class CoCa(nn.Module):
     def __init__(
-        self,
-        embed_dim,
-        multimodal_cfg: MultimodalCfg,
-        text_cfg: CLIPTextCfg,
-        vision_cfg: CLIPVisionCfg,
-        quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None,
-        pad_id: int = 0
+            self,
+            embed_dim,
+            multimodal_cfg: MultimodalCfg,
+            text_cfg: CLIPTextCfg,
+            vision_cfg: CLIPVisionCfg,
+            quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+            pad_id: int = 0,
     ):
         super().__init__()
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
@@ -122,10 +125,12 @@ class CoCa(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
-    def encode_image(self, images, normalize=True, return_tokens=False):
-        image_latent, tokens_embs = self.visual(images, output_tokens=True)
+    def encode_image(self, images, normalize=True):
+        image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        return (image_latent, tokens_embs) if return_tokens else image_latent
+        if getattr(self.visual, "output_tokens", False):
+            return image_latent, tokens_embs
+        return image_latent
 
     def encode_text(self, text, normalize=True, return_tokens=False, add_cls=True):
         text = text[:, :-1] if add_cls else text # make space for CLS token
@@ -139,11 +144,13 @@ class CoCa(nn.Module):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self.encode_image(image, return_tokens=True)
 
+
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
-        
+
         token_embs = self.text.decoder(image_embs, token_embs)
         logits = self.to_logits(token_embs)
+        
         if output_dict:
             return {
                 "image_features": image_latent,
@@ -156,18 +163,18 @@ class CoCa(nn.Module):
         return image_latent, text_latent, logits, labels, self.logit_scale.exp()
 
     def generate(
-        self,
-        image,
-        text,
-        seq_len,
-        max_seq_len=77,
-        mask_prob = 0.0,
-        temperature = 1.,
-        filter_logits_fn = top_k,
-        filter_thres = 0.9,
-        min_p_pow = 2.0,
-        min_p_ratio = 0.02,
-        ):
+            self,
+            image,
+            text,
+            seq_len,
+            max_seq_len=77,
+            mask_prob=0.0,
+            temperature=1.,
+            filter_logits_fn=top_k,
+            filter_thres=0.9,
+            min_p_pow=2.0,
+            min_p_ratio=0.02,
+    ):
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
 

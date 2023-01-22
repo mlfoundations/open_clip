@@ -5,6 +5,7 @@ from torch.nn import functional as F
 try:
     import torch.distributed.nn
     from torch import distributed as dist
+
     has_distributed = True
 except ImportError:
     has_distributed = False
@@ -115,25 +116,25 @@ class ClipLoss(nn.Module):
             labels = self.labels[device]
 
         total_loss = (
-            F.cross_entropy(logits_per_image, labels) +
-            F.cross_entropy(logits_per_text, labels)
-            ) / 2
-        
+                             F.cross_entropy(logits_per_image, labels) +
+                             F.cross_entropy(logits_per_text, labels)
+                     ) / 2
+
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
 
 class CoCaLoss(ClipLoss):
     def __init__(
-        self,
-        caption_loss_weight,
-        clip_loss_weight,
-        pad_id=0, # pad_token for open_clip custom tokenizer
-        local_loss=False,
-        gather_with_grad=False,
-        cache_labels=False,
-        rank=0,
-        world_size=1,
-        use_horovod=False,
+            self,
+            caption_loss_weight,
+            clip_loss_weight,
+            pad_id=0,  # pad_token for open_clip custom tokenizer
+            local_loss=False,
+            gather_with_grad=False,
+            cache_labels=False,
+            rank=0,
+            world_size=1,
+            use_horovod=False,
     ):
         super().__init__(
             local_loss=local_loss,
@@ -159,6 +160,6 @@ class CoCaLoss(ClipLoss):
         caption_loss = caption_loss * self.caption_loss_weight
 
         if output_dict:
-            return {"contrastive_loss":clip_loss, "caption_loss":caption_loss}
+            return {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
 
         return clip_loss, caption_loss
