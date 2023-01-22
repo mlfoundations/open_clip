@@ -132,7 +132,7 @@ class CoCa(nn.Module):
         text = text[:, :-1] # make space for CLS token
         text_latent, token_embs = self.text.encoder(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        if getattr(self.text.encoder.output_tokens, "output_tokens", False):
+        if getattr(self.text.encoder, "output_tokens", False):
             return text_latent, token_embs
         return text_latent
     
