@@ -71,7 +71,7 @@ def pt_load(file_path, map_location=None):
         logging.info('Loading remote checkpoint, which may take a bit.')
     of = fsspec.open(file_path, "rb")
     with of as f:
-        out = torch.load(f)
+        out = torch.load(f, map_location=map_location)
     return out
 
 def check_exists(file_path):
