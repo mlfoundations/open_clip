@@ -228,8 +228,7 @@ class CLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        output_dict = self.output_dict
-        if output_dict is not None:
+        if self.output_dict is not None:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
@@ -279,8 +278,7 @@ class CustomTextCLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        output_dict = self.output_dict
-        if output_dict is not None:
+        if self.output_dict is not None:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
