@@ -124,7 +124,7 @@ class CoCa(nn.Module):
     def encode_image(self, images, normalize=True):
         image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        if getattr(self.visual, "output_tokens", False):
+        if getattr(self.visual, "output_tokens", None) is not None:
             return image_latent, tokens_embs
         return image_latent
 
@@ -132,7 +132,7 @@ class CoCa(nn.Module):
         text = text[:, :-1] # make space for CLS token
         text_latent, token_embs = self.text.encoder(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        if getattr(self.text.encoder.output_tokens, "output_tokens", False):
+        if getattr(self.text.encoder.output_tokens, "output_tokens", None) is not None:
             return text_latent, token_embs
         return text_latent
     
