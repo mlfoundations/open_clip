@@ -200,7 +200,7 @@ def create_model(
                     f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
-        else:
+        elif model_name.startswith(hf_hub_prefix):
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
             load_checkpoint(model, checkpoint_path)
 
