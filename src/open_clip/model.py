@@ -172,6 +172,7 @@ def _build_text_tower(
 
 
 class CLIP(nn.Module):
+    output_dict: torch.jit.Final[bool]
     def __init__(
             self,
             embed_dim: int,
@@ -182,9 +183,7 @@ class CLIP(nn.Module):
             output_dict: bool = False
     ):
         super().__init__()
-        self.output_dict = None
-        if output_dict:
-            self.output_dict = output_dict
+        self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
@@ -228,7 +227,7 @@ class CLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if self.output_dict is not None:
+        if self.output_dict:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
@@ -238,6 +237,7 @@ class CLIP(nn.Module):
 
 
 class CustomTextCLIP(nn.Module):
+    output_dict: torch.jit.Final[bool]
     def __init__(
             self,
             embed_dim: int,
@@ -248,9 +248,7 @@ class CustomTextCLIP(nn.Module):
             output_dict: bool = False
     ):
         super().__init__()
-        self.output_dict = None
-        if output_dict:
-            self.output_dict = output_dict
+        self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -278,7 +276,7 @@ class CustomTextCLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if self.output_dict is not None:
+        if self.output_dict:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
