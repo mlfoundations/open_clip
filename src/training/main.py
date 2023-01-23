@@ -78,21 +78,20 @@ def main(args):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
-    args.model = args.model.replace('/', '-')
-
     # fully initialize distributed device environment
     device = init_distributed_device(args)
 
     # get the name of the experiments
     if args.name is None:
-        date_str = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+        # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
+        model_name_safe = args.model.replace('/', '-')
+        date_str = datetime.now().strftime("%Y_%m_%d`-%H_%M_%S")
         if args.distributed:
             # sync date_str from master to all ranks
             date_str = broadcast_object(args, date_str)
         args.name = '-'.join([
             date_str,
-            f"model_{args.model}",
+            f"model_{model_name_safe}",
             f"lr_{args.lr}",
             f"b_{args.batch_size}",
             f"j_{args.workers}",
