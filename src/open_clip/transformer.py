@@ -320,6 +320,7 @@ class Transformer(nn.Module):
 
 
 class VisionTransformer(nn.Module):
+    output_tokens: torch.jit.Final[bool]
     def __init__(
             self,
             image_size: int,
@@ -340,9 +341,7 @@ class VisionTransformer(nn.Module):
             output_tokens: bool = False
     ):
         super().__init__()
-        self.output_tokens = None
-        if output_tokens:
-            self.output_tokens = output_tokens
+        self.output_tokens = output_tokens
         self.image_size = to_2tuple(image_size)
         self.patch_size = to_2tuple(patch_size)
         self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
@@ -467,14 +466,14 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        if self.output_tokens is not None:
+        if self.output_tokens:
             return pooled, tokens
         
         return pooled
 
 
 class TextTransformer(nn.Module):
-
+    output_tokens: torch.jit.Final[bool]
     def __init__(
             self,
             context_length: int = 77,
@@ -491,9 +490,7 @@ class TextTransformer(nn.Module):
             output_tokens: bool = False
     ):
         super().__init__()
-        self.output_tokens = None
-        if output_tokens:
-            self.output_tokens = output_tokens
+        self.output_tokens = output_tokens
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -597,7 +594,7 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        if self.output_tokens is not None:
+        if self.output_tokens:
             return pooled, tokens
         
         return pooled
