@@ -182,7 +182,7 @@ class CLIP(nn.Module):
             output_dict: bool = False
     ):
         super().__init__()
-        self.output_dict = None
+        self.output_dict = False
         if output_dict:
             self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
@@ -228,7 +228,7 @@ class CLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if self.output_dict is not None:
+        if self.output_dict:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
@@ -248,7 +248,7 @@ class CustomTextCLIP(nn.Module):
             output_dict: bool = False
     ):
         super().__init__()
-        self.output_dict = None
+        self.output_dict = False
         if output_dict:
             self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
@@ -278,7 +278,7 @@ class CustomTextCLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        if self.output_dict is not None:
+        if self.output_dict:
             return {
                 "image_features":image_features, 
                 "text_features":text_features,
