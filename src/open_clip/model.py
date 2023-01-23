@@ -176,8 +176,9 @@ class CLIP(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
-
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        
+        # Num Nested Dims in MRL -- hard coding to 4
+        self.logit_scale = nn.Parameter(torch.ones([4]) * np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
