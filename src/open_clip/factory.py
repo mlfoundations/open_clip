@@ -18,6 +18,7 @@ from .transform import image_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
 
+HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
 
@@ -71,9 +72,8 @@ def get_model_config(model_name):
 
 
 def get_tokenizer(model_name):
-    hf_hub_prefix = 'hf-hub:'
-    if model_name.startswith(hf_hub_prefix):
-        tokenizer = HFTokenizer(model_name[len(hf_hub_prefix):])
+    if model_name.startswith(HF_HUB_PREFIX):
+        tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
     else:
         config = get_model_config(model_name)
         tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
@@ -115,16 +115,14 @@ def create_model(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
 ):
-    hf_hub_prefix = 'hf-hub:'
-    if model_name.startswith(hf_hub_prefix):
-        model_id = model_name[len(hf_hub_prefix):]
-
+    has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
+    if has_hf_hub_prefix:
+        model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
         config_path = download_pretrained_from_hf(model_id, filename='open_clip_config.json', cache_dir=cache_dir)
 
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-
         pretrained_cfg = config['preprocess_cfg']
         model_cfg = config['model_cfg']
     else:
@@ -200,7 +198,7 @@ def create_model(
                     f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
-        elif model_name.startswith(hf_hub_prefix):
+        elif has_hf_hub_prefix:
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
             load_checkpoint(model, checkpoint_path)
 
