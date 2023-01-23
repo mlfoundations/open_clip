@@ -81,7 +81,7 @@ class ClsPooler(nn.Module):
 
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
-
+    output_tokens: torch.jit.Final[bool]
     def __init__(
             self,
             model_name_or_path: str,
@@ -93,9 +93,7 @@ class HFTextEncoder(nn.Module):
             output_tokens: bool = False
         ):
         super().__init__()
-        self.output_tokens = None
-        if output_tokens:
-            self.output_tokens = output_tokens
+        self.output_tokens = output_tokens
         self.output_dim = output_dim
 
         # TODO: find better way to get this information
@@ -147,7 +145,7 @@ class HFTextEncoder(nn.Module):
             else out.last_hidden_state
         )
         
-        if self.output_tokens is not None:
+        if self.output_tokens:
             return projected, tokens
         return projected
 
