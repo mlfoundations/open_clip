@@ -94,6 +94,7 @@ class CoCa(nn.Module):
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
+            output_dict=False
     ):
         super().__init__()
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
@@ -119,6 +120,7 @@ class CoCa(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
+        self.output_dict = output_dict
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
