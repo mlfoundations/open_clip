@@ -13,7 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .openai import load_openai_model
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
+from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
@@ -71,8 +71,12 @@ def get_model_config(model_name):
 
 
 def get_tokenizer(model_name):
-    config = get_model_config(model_name)
-    tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+    hf_hub_prefix = 'hf-hub:'
+    if model_name.startswith(hf_hub_prefix):
+        tokenizer = HFTokenizer(model_name[len(hf_hub_prefix):])
+    else:
+        config = get_model_config(model_name)
+        tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
     return tokenizer
 
 
@@ -111,7 +115,24 @@ def create_model(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
 ):
-    model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+    hf_hub_prefix = 'hf-hub:'
+    if model_name.startswith(hf_hub_prefix):
+        model_id = model_name[len(hf_hub_prefix):]
+
+        checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
+        config_path = download_pretrained_from_hf(model_id, filename='open_clip_config.json', cache_dir=cache_dir)
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        pretrained_cfg = config['preprocess_cfg']
+        model_cfg = config['model_cfg']
+    else:
+        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+        checkpoint_path = None
+        pretrained_cfg = {}
+        model_cfg = None
+
     if isinstance(device, str):
         device = torch.device(device)
 
@@ -125,7 +146,7 @@ def create_model(
             cache_dir=cache_dir,
         )
     else:
-        model_cfg = get_model_config(model_name)
+        model_cfg = model_cfg or get_model_config(model_name)
         if model_cfg is not None:
             logging.info(f'Loaded {model_name} model config.')
         else:
@@ -162,7 +183,6 @@ def create_model(
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
-        pretrained_cfg = {}
         if pretrained:
             checkpoint_path = ''
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
@@ -180,6 +200,9 @@ def create_model(
                     f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
+        else:
+            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
+            load_checkpoint(model, checkpoint_path)
 
         model.to(device=device)
         if precision in ("fp16", "bf16"):

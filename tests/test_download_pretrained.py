@@ -1,3 +1,6 @@
+import requests
+import torch
+from PIL import Image
 import hashlib
 import tempfile
 import unittest
@@ -8,6 +11,7 @@ from unittest.mock import patch
 from urllib3 import HTTPResponse
 from urllib3._collections import HTTPHeaderDict
 
+import open_clip
 from open_clip.pretrained import download_pretrained_from_url
 
 
@@ -87,3 +91,21 @@ class DownloadPretrainedTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r'checksum does not not match'):
                 download_pretrained_from_url(url, root)
         urllib.request.urlopen.assert_called_once()
+
+    @patch('open_clip.pretrained.urllib')
+    def test_download_pretrained_from_hfh(self, urllib):
+        model, _, preprocess = open_clip.create_model_and_transforms('hf-hub:hf-internal-testing/tiny-open-clip-model')
+        tokenizer = open_clip.get_tokenizer('hf-hub:hf-internal-testing/tiny-open-clip-model')
+        img_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/coco_sample.png"
+        image = preprocess(Image.open(requests.get(img_url, stream=True).raw)).unsqueeze(0)
+        text = tokenizer(["a diagram", "a dog", "a cat"])
+
+        with torch.no_grad():
+            image_features = model.encode_image(image)
+            text_features = model.encode_text(text)
+            image_features /= image_features.norm(dim=-1, keepdim=True)
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+            text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+
+        self.assertTrue(torch.allclose(text_probs, torch.tensor([[0.0597, 0.6349, 0.3053]]), 1e-3))
