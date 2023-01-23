@@ -17,8 +17,9 @@ We have trained:
   * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) on LAION-400M achieving an accuracy of **69.2%**
   * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
-  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The best in1k zero-shot for released, open-source weights thus far.
+  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
   * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced schedule, same samples seen as 400M models.
+  * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -481,6 +482,7 @@ Future trained models will use nn.GELU.
  ('ViT-L-14-336', 'openai'),
  ('ViT-H-14', 'laion2b_s32b_b79k'),
  ('ViT-g-14', 'laion2b_s12b_b42k'),
+ ('ViT-bigG-14', 'laion2b_s39b_b160k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
  ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),]
