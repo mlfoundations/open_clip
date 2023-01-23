@@ -132,17 +132,19 @@ class CoCa(nn.Module):
             return image_latent, tokens_embs
         return image_latent
 
-    def encode_text(self, text, normalize=True, return_tokens=False, add_cls=True):
+    def encode_text(self, text, normalize=True, add_cls=True):
         text = text[:, :-1] if add_cls else text # make space for CLS token
-        text_latent, token_emb = self.text.encoder(text, output_tokens=True)
+        text_latent, token_emb = self.text.encoder(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        return (text_latent, token_emb) if return_tokens else text_latent
+        if getattr(self.text.encoder, "output_tokens", False):
+            return text_latent, token_emb
+        return text_latent
 
     def forward(self, image, text, output_dict=False, image_latent=None, image_embs=None, add_cls=True):
 
-        text_latent, token_embs = self.encode_text(text, return_tokens=True, add_cls=add_cls)
+        text_latent, token_embs = self.encode_text(text, add_cls=add_cls)
         if image_latent is None or image_embs is None:
-            image_latent, image_embs = self.encode_image(image, return_tokens=True)
+            image_latent, image_embs = self.encode_image(image)
 
 
         # TODO: add assertion to avoid bugs?
