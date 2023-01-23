@@ -136,7 +136,7 @@ class CoCa(nn.Module):
             return text_latent, token_embs
         return text_latent
     
-    def forward(self, image, text, output_dict=False):
+    def forward(self, image, text):
 
         text_latent, token_embs = self.encode_text(text)
         image_latent, image_embs = self.encode_image(image)
