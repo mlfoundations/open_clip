@@ -637,6 +637,7 @@ class MultimodalTransformer(Transformer):
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
         self.ln_final = norm_layer(width)
+        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
     def init_parameters(self):
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
@@ -680,6 +681,9 @@ class MultimodalTransformer(Transformer):
 
         x = text_embs.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
+
+        if self.text_projection is not None:
+            x = x @ self.text_projection
 
         return x
 
