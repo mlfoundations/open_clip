@@ -23,8 +23,7 @@ def inference_text(model, model_name, batches):
     with torch.no_grad():
         for x in batches:
             x = tokenizer(x)
-            out = model.encode_text(x)
-            y.append(out[0] if isinstance(out, tuple) else out)
+            y.append(model.encode_text(x))
         return torch.stack(y)
 
 def inference_image(model, preprocess_val, batches):
@@ -32,8 +31,7 @@ def inference_image(model, preprocess_val, batches):
     with torch.no_grad():
         for x in batches:
             x = torch.stack([preprocess_val(img) for img in x])
-            out = model.encode_image(x)
-            y.append(out[0] if isinstance(out, tuple) else out)
+            y.append(model.encode_image(x))
         return torch.stack(y)
     
 def forward_model(model, model_name, preprocess_val, image_batch, text_batch):

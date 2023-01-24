@@ -121,25 +121,30 @@ class CoCa(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
-    def encode_image(self, images, normalize=True):
+    def _encode_image(self, images, normalize=True):
         image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        if getattr(self.visual, "output_tokens", False):
-            return image_latent, tokens_embs
-        return image_latent
+        return image_latent, tokens_embs
 
-    def encode_text(self, text, normalize=True):
+    def _encode_text(self, text, normalize=True):
         text = text[:, :-1] # make space for CLS token
-        text_latent, token_embs = self.text.encoder(text)
+        text_latent, token_emb = self.text.encoder(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        if getattr(self.text.encoder, "output_tokens", False):
-            return text_latent, token_embs
-        return text_latent
+        return text_latent, token_emb
     
-    def forward(self, image, text):
+    def encode_image(self, images, normalize=True):
+        image_latent, _ = self._encode_image(images, normalize=normalize)
+        return image_latent
+        
+    def encode_text(self, text, normalize=True):
+        text_latent, _ = self._encode_text(text, normalize=normalize)
+        return text_latent  
 
-        text_latent, token_embs = self.encode_text(text)
-        image_latent, image_embs = self.encode_image(image)
+
+    def forward(self, image, text, output_dict=False):
+
+        text_latent, token_embs = self._encode_text(text)
+        image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
