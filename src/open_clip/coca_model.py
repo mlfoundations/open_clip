@@ -95,7 +95,6 @@ class CoCa(nn.Module):
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
 
-        self.decoder_norm = norm_layer(multimodal_cfg.width)
         self.decoder_logits = nn.Linear(multimodal_cfg.width, vocab_size, bias=False)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
@@ -111,8 +110,8 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True, embed_cls=False):
-        text = text[:, :-1] if embed_cls else text # make space for CLS token
+    def _encode_text(self, text, normalize=True):
+        text = text[:, :-1] # make space for CLS token
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
@@ -121,21 +120,20 @@ class CoCa(nn.Module):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
         
-    def encode_text(self, text, normalize=True, embed_cls=False):
-        text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
+    def encode_text(self, text, normalize=True):
+        text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent  
 
 
-    def forward(self, image, text, embed_cls=True):
+    def forward(self, image, text):
 
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+        text_latent, token_embs = self._encode_text(text)
         image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
 
         token_embs = self.text_decoder(image_embs, token_embs)
-        token_embs = self.decoder_norm(token_embs)
         logits = self.decoder_logits(token_embs)
         return {
             "image_features": image_latent,
