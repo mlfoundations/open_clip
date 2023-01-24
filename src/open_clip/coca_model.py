@@ -90,7 +90,7 @@ class CoCa(nn.Module):
         self.visual = _build_vision_tower(
             multimodal_cfg.latent_dim, vision_cfg, quick_gelu, cast_dtype
         )
-        
+
         self.text_decoder = _build_text_decoder_tower(
             embed_dim, multimodal_cfg, quick_gelu, cast_dtype
         )
