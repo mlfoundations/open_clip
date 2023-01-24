@@ -171,7 +171,7 @@ class CoCa(nn.Module):
             x = out[:, -max_seq_len:]
 
             # TODO: adjust for dict output
-            logits = self(image, x, embed_cls=False)["logits"][:, -1]
+            logits = self(image, x)["logits"][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
