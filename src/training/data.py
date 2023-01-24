@@ -15,6 +15,7 @@ import torch
 import torchvision.datasets as datasets
 import webdataset as wds
 from PIL import Image
+from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
@@ -46,15 +47,44 @@ class TextPairDataset(Dataset):
         return texts_a,texts_b
 
 
+class HFTextPairDataset(Dataset):
+    def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
+        logging.debug(f'Loading parquet data from {input_filename}.')
+
+        self.dataset = load_dataset(input_filename)
+        self.text_a_key = text_a_key
+        self.text_b_key = text_b_key
+
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return len(self.text_a)
+
+    def __getitem__(self, idx):
+        texts_a = self.tokenize([str(self.dataset[self.text_a_key][idx])])[0]
+        texts_b = self.tokenize([str(self.dataset[self.text_b_key][idx])])[0]
+        return texts_a,texts_b
+
+
 def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
-    dataset = TextPairDataset(
-        input_filename,
-        text_a_key=args.text_a_key,
-        text_b_key=args.text_b_key,
-        tokenizer=tokenizer
-    )
+    if input_filename.endswith('.parquet'):
+        dataset = TextPairDataset(
+            input_filename,
+            text_a_key=args.text_a_key,
+            text_b_key=args.text_b_key,
+            tokenizer=tokenizer
+        )
+    else:
+        dataset = HFTextPairDataset(
+            input_filename,
+            text_a_key=args.text_a_key,
+            text_b_key=args.text_b_key,
+            tokenizer=tokenizer
+        )
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -72,6 +102,8 @@ def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
     dataloader.num_batches = len(dataloader)
 
     return DataInfo(dataloader, sampler)
+
+
 
 
 class CsvDataset(Dataset):
