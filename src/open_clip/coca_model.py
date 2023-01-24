@@ -92,10 +92,9 @@ class CoCa(nn.Module):
         )
 
         self.text_decoder = _build_text_decoder_tower(
-            embed_dim, multimodal_cfg, quick_gelu, cast_dtype
+            vocab_size, multimodal_cfg, quick_gelu, cast_dtype
         )
 
-        self.decoder_logits = nn.Linear(multimodal_cfg.width, vocab_size, bias=False)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
 
@@ -133,8 +132,7 @@ class CoCa(nn.Module):
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
 
-        token_embs = self.text_decoder(image_embs, token_embs)
-        logits = self.decoder_logits(token_embs)
+        logits = self.text_decoder(image_embs, token_embs)
         return {
             "image_features": image_latent,
             "text_features": text_latent,
