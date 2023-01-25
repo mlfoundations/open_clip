@@ -607,4 +607,29 @@ If you found this repository useful, please consider citing:
 }
 ```
 
+```bibtex
+@inproceedings{schuhmann2022laionb,
+  title={{LAION}-5B: An open large-scale dataset for training next generation image-text models},
+  author={Christoph Schuhmann and
+          Romain Beaumont and
+          Richard Vencu and
+          Cade W Gordon and
+          Ross Wightman and
+          Mehdi Cherti and
+          Theo Coombes and
+          Aarush Katta and
+          Clayton Mullis and
+          Mitchell Wortsman and
+          Patrick Schramowski and
+          Srivatsa R Kundurthy and
+          Katherine Crowson and
+          Ludwig Schmidt and
+          Robert Kaczmarczyk and
+          Jenia Jitsev},
+  booktitle={Thirty-sixth Conference on Neural Information Processing Systems Datasets and Benchmarks Track},
+  year={2022},
+  url={https://openreview.net/forum?id=M3Y74vmsMcY}
+}
+```
+
 [![DOI](https://zenodo.org/badge/390536799.svg)](https://zenodo.org/badge/latestdoi/390536799)
