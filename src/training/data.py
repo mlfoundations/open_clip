@@ -85,6 +85,7 @@ def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
             text_b_key=args.text_b_key,
             tokenizer=tokenizer
         )
+        
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None

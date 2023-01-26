@@ -381,10 +381,11 @@ def parse_args(args):
         help="Log every n steps to tensorboard/console/wandb.",
     )
     parser.add_argument(
-        "--text-to-text",
-        type=bool,
+        "--model_type",
+        type=str,
+        choices=["CLIP", "text_dual_encoder", "text_siamese_encoder"],
         default=False,
-        help="Train a TextTextCLIP model.",
+        help="Specify the model type",
     )
 
     args = parser.parse_args(args)

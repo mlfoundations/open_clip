@@ -289,6 +289,37 @@ class TextTextCLIP(nn.Module):
 
 
 
+
+class SiameseTextCLIP(nn.Module):
+    def __init__(
+            self,
+            embed_dim: int,
+            text_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        self.text_tower = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    def lock_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        self.text_tower.lock(unlocked_layers, freeze_layer_norm)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.text_tower.set_grad_checkpointing(enable)
+
+    def encode_text(self, text, normalize: bool = False):
+        features = self.text_tower(text)
+        return F.normalize(features, dim=-1) if normalize else features
+
+    def forward(self, text_a, text_b):
+        features_a = self.encode_text(text_a, normalize=True)
+        features_b = self.encode_text(text_b, normalize=True)
+        return features_a, features_b, self.logit_scale.exp()
+
+
+
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
     """Convert applicable model parameters to low-precision (bf16 or fp16)"""
 

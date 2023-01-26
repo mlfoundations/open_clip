@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
-from .model import CLIP, CustomTextCLIP, TextTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, CustomTextCLIP, TextTextCLIP, SiameseTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model
@@ -113,7 +113,7 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
-        text_to_text: Optional[bool] = False,
+        model_type: Optional[str] = "CLIP",
 ):
     model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
     if isinstance(device, str):
@@ -155,14 +155,19 @@ def create_model(
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or ('hf_model_name' in model_cfg.get('text_cfg', {}))
         
         # switch to TextTextCLIP
-        if text_to_text:
+        if model_type=="text_dual_encoder":
             if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
                 model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
             if 'hf_model_name' in model_cfg.get('tower_b_cfg', {}):
                 model_cfg['tower_b_cfg']['hf_model_pretrained'] = pretrained_hf
-                
-                model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
-        else:
+            model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+
+        elif model_type=="text_siamese_encoder":
+            if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
+                model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
+            model = SiameseTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+            
+        elif model_type=="CLIP":
             if custom_text:
                 if 'hf_model_name' in model_cfg.get('text_cfg', {}):
                     model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
@@ -218,7 +223,7 @@ def create_model_and_transforms(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
-        text_to_text: Optional[bool] = False,
+        model_type: Optional[str] = "CLIP",
 ):
     model = create_model(
         model_name,
@@ -232,10 +237,10 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
-        text_to_text=text_to_text,
+        model_type=model_type,
     )
 
-    if not text_to_text:
+    if model_type=="CLIP":
         image_mean = image_mean or getattr(model.visual, 'image_mean', None)
         image_std = image_std or getattr(model.visual, 'image_std', None)
         preprocess_train = image_transform(
@@ -269,7 +274,7 @@ def create_model_from_pretrained(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
-        text_to_text: Optional[bool] = False,
+        model_type: Optional[str] = "CLIP",
 ):
     if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
         raise RuntimeError(
@@ -285,13 +290,13 @@ def create_model_from_pretrained(
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         cache_dir=cache_dir,
-        text_to_text=text_to_text,
+        model_type=model_type,
     )
 
     if not return_transform:
         return model
 
-    if not text_to_text:
+    if model_type=="CLIP":
         image_mean = image_mean or getattr(model.visual, 'image_mean', None)
         image_std = image_std or getattr(model.visual, 'image_std', None)
         preprocess = image_transform(
