@@ -48,14 +48,10 @@ def top_a(logits, min_p_pow=2.0, min_p_ratio=0.02):
     logits[probs >= limit] = 1
     return logits
 
-# prep for adding past_key_values 
+
 def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
-    token_type_ids = kwargs.get("token_type_ids", None)
-    # only last token for inputs_ids if past is defined in kwargs
     if past:
         input_ids = input_ids[:, -1].unsqueeze(-1)
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids[:, -1].unsqueeze(-1)
 
     attention_mask = kwargs.get("attention_mask", None)
     position_ids = kwargs.get("position_ids", None)
@@ -70,8 +66,6 @@ def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
         "text": input_ids,
         "images": image_inputs,
         "past_key_values": past,
-        "use_cache": kwargs.get("use_cache"),
         "position_ids": position_ids,
         "attention_mask": attention_mask,
-        "token_type_ids": token_type_ids,
     }

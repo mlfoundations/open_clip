@@ -133,12 +133,12 @@ class CoCa(nn.Module):
     def forward(self, image, text):
 
         text_latent, token_embs = self._encode_text(text)
-        image_latent, image_embs = self._encode_image(image)
+        image_latent, image_emb = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
 
-        logits = self.text_decoder(image_embs, token_embs)
+        logits = self.text_decoder(image_emb, token_embs)
         return {
             "image_features": image_latent,
             "text_features": text_latent,
@@ -152,27 +152,21 @@ class CoCa(nn.Module):
             image,
             text,
             image_latent=None,
-            image_embs=None,
+            image_emb=None,
             normalize=True
         ):
 
-        text_latent, token_emb = self._encode_text(text)
+        text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        if image_latent is None or image_embs is None:
+        if image_latent is None or image_emb is None:
             image_latent, image_emb = self.encode_image(image)
 
-
-        # TODO: add assertion to avoid bugs?
-        labels = text[:, -token_embs.shape[1]:]
-
-        token_embs = self.text_decoder(image_emb, token_emb)
-        logits = self.to_logits(token_embs)
+        logits = self.text_decoder(image_emb, token_emb)
 
         return {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
-            "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
 
@@ -202,13 +196,13 @@ class CoCa(nn.Module):
         _, t = text.shape
         self.eval()
         out = text
-        image_latent, image_embs = self._encode_image(image)
+        image_latent, image_emb = self._encode_image(image)
 
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
 
             # TODO: adjust for dict output
-            logits = self.generation_forward(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, [-1], :]
+            logits = self.generation_forward(image, x, image_latent=image_latent, image_emb=image_emb)["logits"][:, [-1], :]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -273,7 +267,7 @@ class CoCa(nn.Module):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
         image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
-        image_latent, image_embs = self.encode_image(image_inputs, return_tokens=True)
+        image_latent, image_emb = self._encode_image(image_inputs)
 
         input_ids = torch.ones((batch_size * num_beams, 1), device=device, dtype=torch.long)
         input_ids = input_ids * sot_token_id
@@ -297,7 +291,6 @@ class CoCa(nn.Module):
         if max_length is not None:
             validate_stopping_criteria(stopping_criteria, max_length)
 
-        # TODO: where it gets config
         pad_token_id = pad_token_id if pad_token_id is not None else self.pad_id
         eos_token_id = eos_token_id if eos_token_id is not None else self.pad_id
 
@@ -319,14 +312,8 @@ class CoCa(nn.Module):
         beam_scores[:, ::num_sub_beams] = 0
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
-        this_peer_finished = False # used by synced_gpus only
         model_kwargs = {}
         while True:
-            if synced_gpus:
-                this_peer_finished_flag = torch.tensor(0.0 if this_peer_finished else 1.0).to(input_ids.device)
-                torch.distributed.all_reduce(this_peer_finished_flag, op=torch.distributed.ReduceOp.SUM)
-                if this_peer_finished_flag.item() == 0.0:
-                    break
 
             # predicted tokens in cur_len step
             current_tokens = torch.zeros(batch_size * num_beams, dtype=input_ids.dtype, device=device)
@@ -336,19 +323,12 @@ class CoCa(nn.Module):
 
             # do one decoder step on all beams of all sentences in batch
             model_inputs = prepare_inputs_for_generation(input_ids=input_ids, image_inputs=image_inputs)
-
-            outputs = self(
+            outputs = self.generation_forward(
                 model_inputs['images'],
                 model_inputs['text'],
                 image_latent=image_latent,
-                image_embs=image_embs,
-                output_dict=True,
-                add_cls=False
+                image_emb=image_emb
             )
-
-            if synced_gpus and this_peer_finished:
-                cur_len = cur_len + 1
-                continue
 
             for beam_group_idx in range(num_beam_groups):
                 group_start_idx = beam_group_idx * num_sub_beams
@@ -373,7 +353,7 @@ class CoCa(nn.Module):
                 )
                 next_token_scores = next_token_scores_processed + beam_scores[batch_group_indices].unsqueeze(-1)
                 next_token_scores = next_token_scores.expand_as(next_token_scores_processed)
-                
+
                 # reshape for beam search
                 next_token_scores = next_token_scores.view(batch_size, group_size * vocab_size)
 
@@ -408,7 +388,7 @@ class CoCa(nn.Module):
                 reordering_indices[batch_group_indices] = (
                     num_beams * torch.div(beam_idx, group_size, rounding_mode="floor") + group_start_idx + (beam_idx % group_size)
                 )
-                    
+
             input_ids = torch.cat([input_ids, current_tokens.unsqueeze(-1)], dim=-1)
 
             model_kwargs = self._update_model_kwargs_for_generation(
@@ -418,10 +398,8 @@ class CoCa(nn.Module):
             # increase cur_len
             cur_len = cur_len + 1
             if beam_scorer.is_done or stopping_criteria(input_ids, None):
-                if not synced_gpus:
-                    break
-                else:
-                    this_peer_finished = True
+                break
+
         final_beam_indices = sum(beam_indices, ()) if beam_indices is not None else None
         sequence_outputs = beam_scorer.finalize(
             input_ids,
