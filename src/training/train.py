@@ -14,7 +14,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import get_cast_dtype, CLIP, CustomTextCLIP
+from open_clip import get_cast_dtype, CLIP, CustomTextCLIP, CoCa
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -41,11 +41,23 @@ class AverageMeter(object):
 def is_clip(model):
     return type(model) in [CLIP, CustomTextCLIP]
 
+def is_coca(model):
+    return type(model) in [CoCa]
+
 def postprocess_clip_output(model_out):
     return {
         "image_features": model_out[0],
         "text_features": model_out[1],
         "logit_scale": model_out[2]
+    }
+
+def postprocess_coca_output(model_out):
+    return {
+        "image_features": model_out[0],
+        "text_features": model_out[1],
+        "logits": model_out[2],
+        "labels": model_out[3],
+        "logit_scale": model_out[4]
     }
 
 def unwrap_model(model):
@@ -102,6 +114,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 module = model.module if type(model) == DistributedDataParallel else model
                 if is_clip(module) and not module.output_dict:
                     model_out = postprocess_clip_output(model_out)
+                elif is_coca(module) and not module.output_dict:
+                    model_out = postprocess_coca_output(model_out)
+
                 logit_scale = model_out["logit_scale"]
                 losses = loss(**model_out, output_dict=True)
 
@@ -118,6 +133,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                     module = model.module if type(model) == DistributedDataParallel else model
                     if is_clip(module) and not module.output_dict:
                         model_out = postprocess_clip_output(model_out)
+                    elif is_coca(module) and not module.output_dict:
+                        model_out = postprocess_coca_output(model_out)
                     model_out.pop("logit_scale")
                     for key, val in model_out.items():
                         if key in accum_features:
@@ -141,11 +158,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 images = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     # for clip if it does not output_dict
                     module = model.module if type(model) == DistributedDataParallel else model
                     if is_clip(module) and not model.output_dict:
                         model_out = postprocess_clip_output(model_out)
+                    elif is_coca(module) and not module.output_dict:
+                        model_out = postprocess_coca_output(model_out)
                     logit_scale = model_out.pop("logit_scale")
                     for key, val in accum_features:
                         accumulated = accum_features[key]
@@ -266,11 +285,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     # for clip if it does not output_dict
                     module = model.module if type(model) == DistributedDataParallel else model
                     if is_clip(module) and not module.output_dict:
                         model_out = postprocess_clip_output(model_out)
+                    elif is_coca(module) and not module.output_dict:
+                        model_out = postprocess_coca_output(model_out)
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
