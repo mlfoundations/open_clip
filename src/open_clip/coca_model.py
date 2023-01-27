@@ -73,12 +73,6 @@ class CoCa(nn.Module):
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
-        norm_layer = (
-            LayerNormFp32
-            if cast_dtype in (torch.float16, torch.bfloat16)
-            else LayerNorm
-        )
-
         self.text = _build_text_tower(
             multimodal_cfg.latent_dim,
             text_cfg=text_cfg,
@@ -115,8 +109,8 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True):
-        text = text[:, :-1] # make space for CLS token
+    def _encode_text(self, text, normalize=True, add_cls=True):
+        text = text[:, :-1] if add_cls else text # make space for CLS token
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
@@ -125,8 +119,8 @@ class CoCa(nn.Module):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
-    def encode_text(self, text, normalize=True):
-        text_latent, _ = self._encode_text(text, normalize=normalize)
+    def encode_text(self, text, normalize=True, add_cls=True):
+        text_latent, _ = self._encode_text(text, normalize=normalize, add_cls=add_cls)
         return text_latent
 
 
@@ -156,8 +150,7 @@ class CoCa(nn.Module):
             normalize=True
         ):
 
-        text_latent, token_emb = self.text(text)
-        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
+        text_latent, token_emb = self._encode_text(text, add_cls=False)
         if image_latent is None or image_emb is None:
             image_latent, image_emb = self.encode_image(image)
 
@@ -199,10 +192,7 @@ class CoCa(nn.Module):
         image_latent, image_emb = self._encode_image(image)
 
         for _ in range(seq_len):
-            x = out[:, -max_seq_len:]
-
-            # TODO: adjust for dict output
-            logits = self.generation_forward(image, x, image_latent=image_latent, image_emb=image_emb)["logits"][:, [-1], :]
+            logits = self.generation_forward(image, out[:, -max_seq_len:], image_latent=image_latent, image_emb=image_emb)["logits"][:, -1, :]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -226,30 +216,6 @@ class CoCa(nn.Module):
         self.train(was_training)
         return out
 
-# TODO: check it works as usual
-# modified version of https://github.com/huggingface/transformers/blob/v4.21.3/src/transformers/generation_utils.py
-    def _update_model_kwargs_for_generation(self,
-            outputs, model_kwargs: Dict[str, Any], is_encoder_decoder: bool = False
-    ) -> Dict[str, Any]:
-        # update past
-        if "past_key_values" in outputs:
-            model_kwargs["past"] = outputs["past_key_values"]
-        elif "mems" in outputs:
-            model_kwargs["past"] = outputs.memes
-        elif "past_buckets_states" in outputs:
-            model_kwargs["past"] = outputs.past_buckets_states
-        else:
-            model_kwargs["past"] = None
-
-        # update attention mask
-        if not is_encoder_decoder:
-            if "attention_mask" in model_kwargs:
-                attention_mask = model_kwargs["attention_mask"]
-                model_kwargs["attention_mask"] = torch.cat(
-                    [attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1
-                )
-        return model_kwargs
-
     def generate_beamsearch(
             self,
             image_inputs,
@@ -261,8 +227,6 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
-            synced_gpus=False,
-            **kwargs,
         ):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
@@ -312,7 +276,6 @@ class CoCa(nn.Module):
         beam_scores[:, ::num_sub_beams] = 0
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
-        model_kwargs = {}
         while True:
 
             # predicted tokens in cur_len step
@@ -390,10 +353,6 @@ class CoCa(nn.Module):
                 )
 
             input_ids = torch.cat([input_ids, current_tokens.unsqueeze(-1)], dim=-1)
-
-            model_kwargs = self._update_model_kwargs_for_generation(
-                outputs, model_kwargs
-            )
 
             # increase cur_len
             cur_len = cur_len + 1
