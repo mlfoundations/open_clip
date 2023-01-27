@@ -1,16 +1,6 @@
 from math import ceil
 import torch
-from torch import nn
 import torch.nn.functional as F
-from transformers import StoppingCriteriaList, MaxLengthCriteria
-
-def validate_stopping_criteria(stopping_criteria: StoppingCriteriaList, max_length: int):
-    found = False
-    for stopping_criterium in stopping_criteria:
-        if isinstance(stopping_criterium, MaxLengthCriteria):
-            found = True
-    if not found:
-        stopping_criteria.append(MaxLengthCriteria(max_length=max_length))
 
 
 def exists(val):
@@ -38,7 +28,6 @@ def top_k(logits, thres=0.9):
     probs = torch.full_like(logits, float('-inf'))
     probs.scatter_(1, ind, val)
     return probs
-
 
 
 def top_a(logits, min_p_pow=2.0, min_p_ratio=0.02):

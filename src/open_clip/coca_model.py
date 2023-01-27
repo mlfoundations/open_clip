@@ -14,9 +14,8 @@ from .transformer import (
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
-from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList
+from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, MaxLengthCriteria, StoppingCriteriaList
 
-from .generation_utils import validate_stopping_criteria
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union, Dict
 
 
@@ -147,7 +146,6 @@ class CoCa(nn.Module):
             text,
             image_latent=None,
             image_emb=None,
-            normalize=True
         ):
 
         text_latent, token_emb = self._encode_text(text, add_cls=False)
@@ -186,7 +184,6 @@ class CoCa(nn.Module):
         if num_dims == 1:
             text = text[None, :]
 
-        _, t = text.shape
         self.eval()
         out = text
         image_latent, image_emb = self._encode_image(image)
@@ -208,8 +205,6 @@ class CoCa(nn.Module):
 
             out = torch.cat((out, sample), dim=-1)
 
-        out = out[:, t:]
-
         if num_dims == 1:
             out = out.squeeze(0)
 
@@ -219,8 +214,8 @@ class CoCa(nn.Module):
     def generate_beamsearch(
             self,
             image_inputs,
-            max_length=None,
-            pad_token_id=0,
+            max_length,
+            pad_token_id=None,
             eos_token_id=None,
             sot_token_id=None,
             num_beams=6,
@@ -228,6 +223,11 @@ class CoCa(nn.Module):
             min_seq_len=5,
             stopping_criteria=None,
         ):
+
+        sot_token_id = 49406 if sot_token_id is None else sot_token_id
+        eos_token_id = 49407 if eos_token_id is None else eos_token_id
+        pad_token_id = pad_token_id if pad_token_id is not None else self.pad_id
+
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
         image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
@@ -249,14 +249,9 @@ class CoCa(nn.Module):
         logits_processor = LogitsProcessorList(
             target_logits_processor_list
         )
-        # init values
-        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
-        if max_length is not None:
-            validate_stopping_criteria(stopping_criteria, max_length)
-
-        pad_token_id = pad_token_id if pad_token_id is not None else self.pad_id
-        eos_token_id = eos_token_id if eos_token_id is not None else self.pad_id
+        stopping_criteria = StoppingCriteriaList(
+            [MaxLengthCriteria(max_length=max_length)]
+        )
 
         batch_size = len(beam_scorer._beam_hyps)
         num_beams = beam_scorer.num_beams
