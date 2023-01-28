@@ -116,7 +116,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
                         image_features, text_features, logit_scale,
                         dist_image_features, dist_text_features, dist_logit_scale
                     )
-                    total_loss = contrastive_loss + distill_loss
+                    # TODO don't hardcode at 0.5.
+                    total_loss = 0.5 * contrastive_loss + 0.5 * distill_loss
                 else:
                     total_loss = loss(image_features, text_features, logit_scale) + distill_loss
 
@@ -192,6 +193,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
             # NOTE loss is coarsely sampled, just master node and per log update
             loss_m.update(total_loss.item(), batch_size)
             distill_loss_m.update(distill_loss.item(), batch_size)
+            contrastive_loss_m.update(contrastive_loss.item(), batch_size)
             logit_scale_scalar = logit_scale.item()
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
