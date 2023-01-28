@@ -57,6 +57,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
 
+    contrastive_loss = torch.tensor(0.)
     distill_loss = torch.tensor(0.)
 
     model.train()
@@ -87,6 +88,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
 
     loss_m = AverageMeter()
     distill_loss_m = AverageMeter()
+    contrastive_loss_m = AverageMeter()
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
@@ -110,11 +112,11 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
                 if args.distill:
                     with torch.no_grad():
                         dist_image_features, dist_text_features, dist_logit_scale = dist_model(images, texts)
-                    total_loss, distill_loss = loss(
+                    contrastive_loss, distill_loss = loss(
                         image_features, text_features, logit_scale,
                         dist_image_features, dist_text_features, dist_logit_scale
                     )
-                    total_loss = total_loss + distill_loss
+                    total_loss = contrastive_loss + distill_loss
                 else:
                     total_loss = loss(image_features, text_features, logit_scale) + distill_loss
 
@@ -194,7 +196,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
-                f"Distill loss: {loss_m.val:#.5g} ({loss_m.avg:#.4g}) "
+                f"Distill loss: {distill_loss_m.val:#.5g} ({distill_loss_m.avg:#.4g}) "
+                f"Contrastive loss: {contrastive_loss_m.val:#.5g} ({contrastive_loss_m.avg:#.4g}) "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq * args.batch_size * args.world_size / batch_time_m.val:#g}/s "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
@@ -208,7 +211,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
                 "batch_time": batch_time_m.val,
                 "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
                 "scale": logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
+                "lr": optimizer.param_groups[0]["lr"],
+                "distill_loss": distill_loss_m.val,
+                "contrastive_loss": contrastive_loss_m.val,
             }
             for name, val in log_data.items():
                 name = "train/" + name
