@@ -23,7 +23,6 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
-    latent_dim: int = 512
 
 
 def _build_text_decoder_tower(
@@ -69,12 +68,12 @@ class CoCa(nn.Module):
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
         self.text = _build_text_tower(
-            multimodal_cfg.latent_dim,
+            embed_dim=embed_dim,
             text_cfg=text_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
-        
+
         vocab_size = (
             text_cfg.vocab_size  # for hf models
             if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
@@ -82,7 +81,7 @@ class CoCa(nn.Module):
         )
 
         self.visual = _build_vision_tower(
-            multimodal_cfg.latent_dim,
+            embed_dim=embed_dim,
             vision_cfg=vision_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
@@ -114,14 +113,14 @@ class CoCa(nn.Module):
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
-    
+
     def encode_image(self, images, normalize=True):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
-        
+
     def encode_text(self, text, normalize=True):
         text_latent, _ = self._encode_text(text, normalize=normalize)
-        return text_latent  
+        return text_latent
 
     def forward(self, image, text):
         text_latent, token_embs = self._encode_text(text)
