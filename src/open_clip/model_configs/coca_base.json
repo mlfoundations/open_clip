@@ -9,7 +9,6 @@
         "dim_head": 64,
         "heads": 12,
         "n_queries": 256,
-        "latent_dim": 512,
         "attn_pooler_heads": 8
     },
     "vision_cfg": {
