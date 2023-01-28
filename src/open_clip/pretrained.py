@@ -175,7 +175,7 @@ _convnext_base_w_320 = dict(
 )
 
 _coca_VITB32 = dict(
-    laion2B_s13B_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k')
+    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k')
 )
 
 
