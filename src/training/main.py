@@ -78,21 +78,20 @@ def main(args):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
-    args.model = args.model.replace('/', '-')
-
     # fully initialize distributed device environment
     device = init_distributed_device(args)
 
     # get the name of the experiments
     if args.name is None:
-        date_str = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+        # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
+        model_name_safe = args.model.replace('/', '-')
+        date_str = datetime.now().strftime("%Y_%m_%d`-%H_%M_%S")
         if args.distributed:
             # sync date_str from master to all ranks
             date_str = broadcast_object(args, date_str)
         args.name = '-'.join([
             date_str,
-            f"model_{args.model}",
+            f"model_{model_name_safe}",
             f"lr_{args.lr}",
             f"b_{args.batch_size}",
             f"j_{args.workers}",
@@ -206,7 +205,7 @@ def main(args):
 
     if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
         # arg is nargs, single (square) image size list -> int
-        args.force_image_size = force_image_size[0]
+        args.force_image_size = args.force_image_size[0]
     random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,

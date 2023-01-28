@@ -19,10 +19,10 @@ models_to_test = set(open_clip.list_models())
 models_to_test = models_to_test.difference({
         # not available with timm yet
         # see https://github.com/mlfoundations/open_clip/issues/219
-        'timm-convnext_xlarge',
-        'timm-convnext_xxlarge',
-        'timm-convnext_xxlarge_320',
-        'timm-vit_medium_patch16_gap_256',
+        'convnext_xlarge',
+        'convnext_xxlarge',
+        'convnext_xxlarge_320',
+        'vit_medium_patch16_gap_256',
         # exceeds GH runner memory limit
         'ViT-bigG-14',
         'ViT-e-14',

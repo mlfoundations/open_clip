@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Tuple
 
 import torch
 from torch import nn
@@ -219,7 +219,7 @@ class ResidualAttentionBlock(nn.Module):
             q_x: torch.Tensor,
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
-            attn_mask: Optional[torch.Tensor] = None
+            attn_mask: Optional[torch.Tensor] = None,
     ):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
@@ -229,12 +229,13 @@ class ResidualAttentionBlock(nn.Module):
             q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
         )[0]
 
-    def forward(self,
+    def forward(
+            self,
             q_x: torch.Tensor,
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
-            attn_mask: Optional[torch.Tensor] = None
-        ):
+            attn_mask: Optional[torch.Tensor] = None,
+    ):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
 
@@ -321,6 +322,7 @@ class Transformer(nn.Module):
 
 class VisionTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
+
     def __init__(
             self,
             image_size: int,
@@ -372,6 +374,7 @@ class VisionTransformer(nn.Module):
             self.ln_post = norm_layer(output_dim)
             self.proj = nn.Parameter(scale * torch.randn(output_dim, output_dim))
         else:
+            self.attn_pool = None
             self.ln_post = norm_layer(width)
             self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -434,6 +437,12 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
+    def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.global_average_pool:
+            return x.mean(dim=1), x
+        else:
+            return x[:, 0], x[:, 1:]
+
     def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
@@ -451,16 +460,12 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        if hasattr(self, "attn_pool"):
+        if self.attn_pool is not None:
             x = self.attn_pool(x)
             x = self.ln_post(x)
-
-        if self.global_average_pool:
-            pooled, tokens = x.mean(dim=1), x
+            pooled, tokens = self._global_pool(x)
         else:
-            pooled, tokens = x[:, 0], x[:, 1:]
-
-        if not hasattr(self, "attn_pool"):
+            pooled, tokens = self._global_pool(x)
             pooled = self.ln_post(pooled)
 
         if self.proj is not None:
@@ -474,6 +479,7 @@ class VisionTransformer(nn.Module):
 
 class TextTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
+
     def __init__(
             self,
             context_length: int = 77,
@@ -626,8 +632,14 @@ class MultimodalTransformer(Transformer):
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
             ResidualAttentionBlock(
-                width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer,
-                is_cross_attention=True)
+                width,
+                heads,
+                mlp_ratio,
+                ls_init_value=ls_init_value,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                is_cross_attention=True,
+            )
             for _ in range(layers)
         ])
 

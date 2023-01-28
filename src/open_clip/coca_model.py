@@ -76,7 +76,7 @@ class CoCa(nn.Module):
             multimodal_cfg.latent_dim,
             text_cfg=text_cfg,
             quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype
+            cast_dtype=cast_dtype,
         )
 
         vocab_size = (
@@ -86,11 +86,17 @@ class CoCa(nn.Module):
         )
 
         self.visual = _build_vision_tower(
-            multimodal_cfg.latent_dim, vision_cfg, quick_gelu, cast_dtype
+            multimodal_cfg.latent_dim,
+            vision_cfg=vision_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
         )
 
         self.text_decoder = _build_text_decoder_tower(
-            vocab_size, multimodal_cfg, quick_gelu, cast_dtype
+            vocab_size,
+            multimodal_cfg=multimodal_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
         )
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -122,9 +128,7 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize, add_cls=add_cls)
         return text_latent
 
-
     def forward(self, image, text):
-
         text_latent, token_embs = self._encode_text(text)
         image_latent, image_emb = self._encode_image(image)
 

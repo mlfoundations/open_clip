@@ -95,7 +95,7 @@ def _build_vision_tower(
             drop=vision_cfg.timm_drop,
             drop_path=vision_cfg.timm_drop_path,
             embed_dim=embed_dim,
-            image_size=vision_cfg.image_size
+            image_size=vision_cfg.image_size,
         )
         act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
     elif isinstance(vision_cfg.layers, (tuple, list)):
@@ -105,7 +105,7 @@ def _build_vision_tower(
             output_dim=embed_dim,
             heads=vision_heads,
             image_size=vision_cfg.image_size,
-            width=vision_cfg.width
+            width=vision_cfg.width,
         )
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
@@ -148,7 +148,7 @@ def _build_text_tower(
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
-            output_tokens=text_cfg.output_tokens
+            output_tokens=text_cfg.output_tokens,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -173,6 +173,7 @@ def _build_text_tower(
 
 class CLIP(nn.Module):
     output_dict: torch.jit.Final[bool]
+
     def __init__(
             self,
             embed_dim: int,
@@ -180,7 +181,7 @@ class CLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False
+            output_dict: bool = False,
     ):
         super().__init__()
         self.output_dict = output_dict
@@ -238,6 +239,7 @@ class CLIP(nn.Module):
 
 class CustomTextCLIP(nn.Module):
     output_dict: torch.jit.Final[bool]
+
     def __init__(
             self,
             embed_dim: int,
@@ -245,7 +247,7 @@ class CustomTextCLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False
+            output_dict: bool = False,
     ):
         super().__init__()
         self.output_dict = output_dict
@@ -373,7 +375,7 @@ def build_model_from_openai_state_dict(
         vocab_size=vocab_size,
         width=transformer_width,
         heads=transformer_heads,
-        layers=transformer_layers
+        layers=transformer_layers,
     )
     model = CLIP(
         embed_dim,
