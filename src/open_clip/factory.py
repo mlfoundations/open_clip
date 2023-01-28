@@ -231,14 +231,16 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod)
+            use_horovod=args.horovod,
+        )
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
         cache_labels=True,
         rank=args.rank,
         world_size=args.world_size,
-        use_horovod=args.horovod)
+        use_horovod=args.horovod,
+    )
 
 
 def create_model_and_transforms(

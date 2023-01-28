@@ -79,9 +79,11 @@ class ClsPooler(nn.Module):
 
         return x.last_hidden_state[:, self.cls_token_position, :]
 
+
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     output_tokens: torch.jit.Final[bool]
+
     def __init__(
             self,
             model_name_or_path: str,
@@ -90,8 +92,8 @@ class HFTextEncoder(nn.Module):
             pooler_type: str = None,
             proj: str = None,
             pretrained: bool = True,
-            output_tokens: bool = False
-        ):
+            output_tokens: bool = False,
+    ):
         super().__init__()
         self.output_tokens = output_tokens
         self.output_dim = output_dim
