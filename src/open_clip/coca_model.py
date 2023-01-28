@@ -68,17 +68,11 @@ class CoCa(nn.Module):
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
-        norm_layer = (
-            LayerNormFp32
-            if cast_dtype in (torch.float16, torch.bfloat16)
-            else LayerNorm
-        )
-
         self.text = _build_text_tower(
             multimodal_cfg.latent_dim,
             text_cfg=text_cfg,
             quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype
+            cast_dtype=cast_dtype,
         )
         
         vocab_size = (
@@ -88,11 +82,17 @@ class CoCa(nn.Module):
         )
 
         self.visual = _build_vision_tower(
-            multimodal_cfg.latent_dim, vision_cfg, quick_gelu, cast_dtype
+            multimodal_cfg.latent_dim,
+            vision_cfg=vision_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
         )
 
         self.text_decoder = _build_text_decoder_tower(
-            vocab_size, multimodal_cfg, quick_gelu, cast_dtype
+            vocab_size,
+            multimodal_cfg=multimodal_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
         )
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -110,7 +110,7 @@ class CoCa(nn.Module):
         return image_latent, tokens_embs
 
     def _encode_text(self, text, normalize=True):
-        text = text[:, :-1] # make space for CLS token
+        text = text[:, :-1]  # make space for CLS token
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
@@ -123,9 +123,7 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent  
 
-
     def forward(self, image, text):
-
         text_latent, token_embs = self._encode_text(text)
         image_latent, image_embs = self._encode_image(image)
 
