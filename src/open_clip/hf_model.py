@@ -90,8 +90,8 @@ class HFTextEncoder(nn.Module):
             pooler_type: str = None,
             proj: str = None,
             pretrained: bool = True,
-            output_tokens: bool = False
-        ):
+            output_tokens: bool = False,
+    ):
         super().__init__()
         self.output_tokens = output_tokens
         self.output_dim = output_dim
@@ -116,7 +116,7 @@ class HFTextEncoder(nn.Module):
             self.transformer = AutoModel.from_config(config)
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
-        
+
         self.pooler = _POOLERS[pooler_type]()
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
@@ -140,11 +140,11 @@ class HFTextEncoder(nn.Module):
 
         seq_len = out.last_hidden_state.shape[1]
         tokens = (
-            out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :] 
-            if type(self.pooler) == ClsPooler 
+            out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :]
+            if type(self.pooler) == ClsPooler
             else out.last_hidden_state
         )
-        
+
         if self.output_tokens:
             return projected, tokens
         return projected

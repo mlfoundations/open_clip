@@ -9,7 +9,6 @@ def exists(val):
 
 def top_p(logits, thres=0.9):
     # nucleus
-
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
     cum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
@@ -19,7 +18,6 @@ def top_p(logits, thres=0.9):
 
     sorted_logits[sorted_indices_to_remove] = float('-inf')
     return sorted_logits.scatter(1, sorted_indices, sorted_logits)
-
 
 
 def top_k(logits, thres=0.9):

@@ -271,6 +271,7 @@ Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through spec
 	"attn_pooler_heads": 8
 }
 ```
+Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https://github.com/lucidrains/CoCa-pytorch), [gpucce](https://github.com/gpucce) for adapting the code to open_clip, and [iejMac](https://github.com/iejMac) for training the models.
 
 ### Training with pre-trained language models as text encoder:
 
@@ -499,7 +500,8 @@ Future trained models will use nn.GELU.
  ('ViT-bigG-14', 'laion2b_s39b_b160k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
- ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),]
+ ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
+ ('coca_ViT-B-32', 'laion2B-s13B-b90k'),]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
@@ -515,7 +517,7 @@ There is some additional GPU memory required --- the features and data from all 
 
 There are also `m` loss computations instead of the usual 1.
 
-For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050).
 
 ### Support for remote loading/training
 

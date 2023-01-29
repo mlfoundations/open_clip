@@ -3,8 +3,7 @@ name: Continuous integration
 on:
   push:
     branches:
-    - main 
-    - coca
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -13,8 +12,7 @@ on:
     - 'docs/**'
   pull_request:
     branches:
-    - main 
-    - coca
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'

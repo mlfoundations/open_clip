@@ -473,7 +473,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
@@ -493,14 +493,25 @@ class TextTransformer(nn.Module):
             norm_layer: Callable = LayerNorm,
             embed_cls: bool = False,
             pad_id: int = 0,
-            output_tokens: bool = False
+            output_tokens: bool = False,
     ):
         super().__init__()
         self.output_tokens = output_tokens
-        self.context_length = context_length
+        self.num_pos = self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
         self.output_dim = output_dim
+        self.embed_cls = embed_cls
+        self.heads = heads
+        self.pad_id = pad_id
+
+        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+
+        if self.embed_cls:
+            self.cls_emb = nn.Parameter(torch.empty(width))
+            self.num_pos += 1
+        else:
+            self.cls_emb = None
 
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
         if embed_cls:
@@ -511,7 +522,7 @@ class TextTransformer(nn.Module):
             self.context_length += 1
 
         self.token_embedding = nn.Embedding(vocab_size, width)
-        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, width))
+        self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
         self.transformer = Transformer(
             width=width,
             layers=layers,
@@ -549,9 +560,9 @@ class TextTransformer(nn.Module):
         self.transformer.grad_checkpointing = enable
 
     def build_attention_mask(self):
-        # lazily create causal attention mask, with full attention between the vision tokens
+        # lazily create causal attention mask, with full attention between the tokens
         # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
+        mask = torch.empty(self.num_pos, self.num_pos)
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
@@ -574,7 +585,7 @@ class TextTransformer(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         attn_mask = self.attn_mask
-        if hasattr(self, "embed_cls") and self.embed_cls:
+        if self.embed_cls is not None:
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
             cls_mask = self.build_cls_mask(text, cast_dtype)
@@ -587,22 +598,18 @@ class TextTransformer(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-
-        if hasattr(self, "embed_cls") and self.embed_cls:
-            pooled = x[:, -1]
-            tokens = x[:, :-1]
+        if self.embed_cls is not None:
+            pooled, tokens = x[:, -1], x[:, :-1]
             pooled = self.ln_final(pooled)
         else:
             x = self.ln_final(x)
-            pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
-            tokens = x
+            pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
 
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
         if self.output_tokens:
             return pooled, tokens
-        
         return pooled
 
 
@@ -667,7 +674,7 @@ class MultimodalTransformer(Transformer):
             nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
 
     def build_attention_mask(self):
-        # lazily create causal attention mask, with full attention between the vision tokens
+        # lazily create causal attention mask, with full attention between the tokens
         # pytorch uses additive attention mask; fill with -inf
         mask = torch.empty(self.context_length, self.context_length)
         mask.fill_(float("-inf"))
