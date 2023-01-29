@@ -499,7 +499,8 @@ Future trained models will use nn.GELU.
  ('ViT-bigG-14', 'laion2b_s39b_b160k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
- ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),]
+ ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
+ ('coca_ViT-B-32', 'laion2B-s13B-b90k'),]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
