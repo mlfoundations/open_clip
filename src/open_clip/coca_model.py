@@ -108,8 +108,8 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True):
-        text = text[:, :-1]  # make space for CLS token
+    def _encode_text(self, text, normalize=True, embed_cls=True):
+        text = text[:, :-1] if embed_cls else text # make space for CLS token
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
@@ -118,13 +118,14 @@ class CoCa(nn.Module):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
-    def encode_text(self, text, normalize=True):
-        text_latent, _ = self._encode_text(text, normalize=normalize)
+    def encode_text(self, text, normalize=True, embed_cls=True):
+        text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
         return text_latent
 
-    def forward(self, image, text):
-        text_latent, token_embs = self._encode_text(text)
-        image_latent, image_embs = self._encode_image(image)
+    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
+        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+        if image_latent is None or image_embs is None:
+            image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
@@ -168,7 +169,7 @@ class CoCa(nn.Module):
             x = out[:, -max_seq_len:]
 
             # TODO: adjust for dict output
-            logits = self(image, x)["logits"][:, -1]
+            logits = self(image, x, embed_cls=False)["logits"][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -207,12 +208,12 @@ class CoCa(nn.Module):
 
         sot_token_id = 49406 if sot_token_id is None else sot_token_id
         eos_token_id = 49407 if eos_token_id is None else eos_token_id
-        pad_token_id = pad_token_id if pad_token_id is not None else self.pad_id
+        pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
 
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
         image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
-        image_latent, image_emb = self._encode_image(image_inputs)
+        image_latent, image_embs = self._encode_image(image_inputs)
 
         input_ids = torch.ones((batch_size * num_beams, 1), device=device, dtype=torch.long)
         input_ids = input_ids * sot_token_id
@@ -262,11 +263,12 @@ class CoCa(nn.Module):
 
             # do one decoder step on all beams of all sentences in batch
             model_inputs = prepare_inputs_for_generation(input_ids=input_ids, image_inputs=image_inputs)
-            outputs = self.generation_forward(
+            outputs = self(
                 model_inputs['images'],
                 model_inputs['text'],
+                embed_cls=False,
                 image_latent=image_latent,
-                image_emb=image_emb
+                image_embs=image_embs
             )
 
             for beam_group_idx in range(num_beam_groups):
