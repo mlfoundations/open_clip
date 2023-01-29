@@ -13,8 +13,8 @@ from .transformer import (
     MultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
-from .generation_utils import top_a, top_k, top_p
-
+from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
+from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
 
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
