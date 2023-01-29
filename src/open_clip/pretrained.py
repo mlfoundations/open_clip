@@ -174,6 +174,10 @@ _convnext_base_w_320 = dict(
     laion_aesthetic_s13b_b82k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K-augreg/'),
 )
 
+_coca_VITB32 = dict(
+    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k/')
+)
+
 
 _PRETRAINED = {
     "RN50": _RN50,
@@ -198,6 +202,7 @@ _PRETRAINED = {
     "convnext_base": _convnext_base,
     "convnext_base_w": _convnext_base_w,
     "convnext_base_w_320": _convnext_base_w_320,
+    "coca_ViT-B-32": _coca_VITB32,
 }
 
 

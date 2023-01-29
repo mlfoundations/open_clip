@@ -33,6 +33,24 @@ def inference_image(model, preprocess_val, batches):
             x = torch.stack([preprocess_val(img) for img in x])
             y.append(model.encode_image(x))
         return torch.stack(y)
+    
+def forward_model(model, model_name, preprocess_val, image_batch, text_batch):
+    y = []
+    tokenizer = open_clip.get_tokenizer(model_name)
+    with torch.no_grad():
+        for x_im, x_txt in zip(image_batch, text_batch):
+            x_im = torch.stack([preprocess_val(im) for im in x_im])
+            x_txt = tokenizer(x_txt)
+        y.append(model(x_im, x_txt))
+    if type(y[0]) == dict:
+        out = {}
+        for key in y[0].keys():
+            out[key] = torch.stack([batch_out[key] for batch_out in y])
+    else:
+        out = []
+        for i in range(len(y[0])):
+            out.append(torch.stack([batch_out[i] for batch_out in y]))
+    return out
 
 def random_image_batch(batch_size, size):
     h, w = size
@@ -177,6 +195,25 @@ def create_test_data(
 
 def _sytem_assert(string):
     assert os.system(string) == 0
+
+class TestWrapper(torch.nn.Module):
+    output_dict: torch.jit.Final[bool]
+    def __init__(self, model, model_name, output_dict=True) -> None:
+        super().__init__()
+        self.model = model
+        self.output_dict = output_dict
+        if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP]:
+            self.model.output_dict = self.output_dict
+        config = open_clip.get_model_config(model_name)
+        self.head = torch.nn.Linear(config["embed_dim"], 2)
+
+    def forward(self, image, text):
+        x = self.model(image, text)
+        if self.output_dict:
+            out = self.head(x["image_features"])
+        else:
+            out = self.head(x[0])
+        return {"test_output": out}
 
 def main(args):
     global open_clip
