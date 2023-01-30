@@ -159,7 +159,7 @@ def create_model(
             model_cfg["quick_gelu"] = True
 
         if force_patch_dropout is not None:
-            # override the defaueven if it is cliplt patch dropout value
+            # override the defalt patch dropout value
             model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
 
         if force_image_size is not None:
@@ -216,7 +216,7 @@ def create_model(
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
-        # to always output dict even if it is cl
+        # to always output dict even if it is clip
         if running_in_open_clip and hasattr(model, "output_dict"):
             model.output_dict = True
 
