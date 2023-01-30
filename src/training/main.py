@@ -221,6 +221,7 @@ def main(args):
         image_mean=args.image_mean,
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
+        output_dict=True,
     )
     random_seed(args.seed, args.rank)
 
