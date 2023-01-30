@@ -384,7 +384,7 @@ def parse_args(args):
         "--model_type",
         type=str,
         choices=["CLIP", "text_dual_encoder", "text_siamese_encoder"],
-        default=False,
+        default="CLIP",
         help="Specify the model type",
     )
 
