@@ -230,9 +230,9 @@ class CLIP(nn.Module):
         text_features = self.encode_text(text, normalize=True)
         if self.output_dict:
             return {
-                "image_features":image_features, 
-                "text_features":text_features,
-                "logit_scale":self.logit_scale.exp()
+                "image_features": image_features,
+                "text_features": text_features,
+                "logit_scale": self.logit_scale.exp()
             }
         return image_features, text_features, self.logit_scale.exp()
 
@@ -280,9 +280,9 @@ class CustomTextCLIP(nn.Module):
         text_features = self.encode_text(text, normalize=True)
         if self.output_dict:
             return {
-                "image_features":image_features, 
-                "text_features":text_features,
-                "logit_scale":self.logit_scale.exp()
+                "image_features": image_features,
+                "text_features": text_features,
+                "logit_scale": self.logit_scale.exp()
             }
         return image_features, text_features, self.logit_scale.exp()
 
