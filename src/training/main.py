@@ -85,7 +85,7 @@ def main(args):
     if args.name is None:
         # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
         model_name_safe = args.model.replace('/', '-')
-        date_str = datetime.now().strftime("%Y_%m_%d`-%H_%M_%S")
+        date_str = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
         if args.distributed:
             # sync date_str from master to all ranks
             date_str = broadcast_object(args, date_str)
