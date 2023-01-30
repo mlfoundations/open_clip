@@ -10,16 +10,28 @@ Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 millio
 
 We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 
-We have trained:
-  * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
+We have trained the following ViT CLIP models:
+  * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet-1k
   * ViT-B/32 on LAION-2B with a accuracy of **66.6%**.
   * ViT-B/16 on LAION-400M achieving an accuracy of **67.1%**, lower than OpenAI's **68.3%** (as measured here, 68.6% in paper)
   * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) on LAION-400M achieving an accuracy of **69.2%**
+  * ViT-B/16 on LAION-2B with a accuracy of **70.2%**.
   * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
   * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced schedule, same samples seen as 400M models.
   * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
+
+And the following ConvNeXt CLIP models:
+  * ConvNext-Base @ 224x224 on LAION-400M with an ImageNet-1k zero-shot top-1 of **66.3%**
+  * ConvNext-Base (W) @ 256x256 on LAION-2B with an ImageNet-1k zero-shot top-1 of **70.8%**
+  * ConvNext-Base (W) @ 256x256 /w augreg (extra augmentation + regularization) on LAION-2B with a top-1 of **71.5%**
+  * ConvNext-Base (W) @ 256x256 on LAION-A (900M sample aesthetic subset of 2B) with a top-1 of **71.0%**
+  * ConvNext-Base (W) @ 320x320 on LAION-A with a top-1 of **71.7%** (eval at 384x384 is **71.0**)
+  * ConvNext-Base (W) @ 320x320 /w augreg on LAION-A with a top-1 of **71.3%** (eval at 384x384 is **72.2%**)
+  * ConvNext-Large (D) @ 256x256 /w augreg on LAION-2B with a top-1 of **75.9%**
+
+Model cards w/ additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
