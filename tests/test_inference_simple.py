@@ -1,4 +1,3 @@
-
 import torch
 from PIL import Image
 from open_clip.factory import get_tokenizer
@@ -7,9 +6,35 @@ import open_clip
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-@pytest.mark.parametrize("model_type,pretrained", [("ViT-B-32-quickgelu", "laion400m_e32"), ("roberta-ViT-B-32", "laion2b_s12b_b32k")])
-def test_inference_simple(model_type, pretrained):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_type, pretrained=pretrained, jit=False)
+if hasattr(torch._C, '_jit_set_profiling_executor'):
+    # legacy executor is too slow to compile large models for unit tests
+    # no need for the fusion performance here
+    torch._C._jit_set_profiling_executor(True)
+    torch._C._jit_set_profiling_mode(False)
+
+
+test_simple_models = [
+    # model, pretrained, jit, force_custom_text
+    ("ViT-B-32", "laion2b_s34b_b79k", False, False),
+    ("ViT-B-32", "laion2b_s34b_b79k", True, False),
+    ("ViT-B-32", "laion2b_s34b_b79k", True, True),
+    ("roberta-ViT-B-32", "laion2b_s12b_b32k", False, False),
+]
+
+
+@pytest.mark.parametrize("model_type,pretrained,jit,force_custom_text", test_simple_models)
+def test_inference_simple(
+        model_type,
+        pretrained,
+        jit,
+        force_custom_text,
+):
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        model_type,
+        pretrained=pretrained,
+        jit=jit,
+        force_custom_text=force_custom_text,
+    )
     tokenizer = get_tokenizer(model_type)
 
     current_dir = os.path.dirname(os.path.realpath(__file__))
