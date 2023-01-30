@@ -116,7 +116,7 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
-        output_dict=None,
+        output_dict: Optional[bool] = None,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -264,7 +264,7 @@ def create_model_and_transforms(
         image_std: Optional[Tuple[float, ...]] = None,
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
-        output_dict=None,
+        output_dict: Optional[bool] = None,
 ):
     model = create_model(
         model_name,
