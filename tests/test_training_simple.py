@@ -8,6 +8,12 @@ from training.main import main
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+if hasattr(torch._C, '_jit_set_profiling_executor'):
+    # legacy executor is too slow to compile large models for unit tests
+    # no need for the fusion performance here
+    torch._C._jit_set_profiling_executor(True)
+    torch._C._jit_set_profiling_mode(False)
+
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
 def test_training():
     main([
