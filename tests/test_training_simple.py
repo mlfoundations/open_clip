@@ -101,5 +101,5 @@ def test_training_unfreezing_vit():
     '--model', 'ViT-B-32',
     '--lock-image',
     '--lock-image-unlocked-groups', '5',
-    '--torchscript', 'True'
+    '--torchscript'
     ])
