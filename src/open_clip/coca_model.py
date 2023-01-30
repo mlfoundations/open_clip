@@ -142,11 +142,12 @@ class CoCa(nn.Module):
     def generate(
             self,
             image,
-            text,
-            seq_len,
+            text=None,
+            seq_len=77,
             max_seq_len=77,
             mask_prob=0.0,
             temperature=1.,
+            sot_token_id=None,
             filter_logits_fn=top_k,
             filter_thres=0.9,
             min_p_pow=2.0,
@@ -154,7 +155,11 @@ class CoCa(nn.Module):
     ):
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
+        device = image.device
 
+        sot_token_id = 49406 if sot_token_id is None else sot_token_id
+        if text is None:
+            text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
         was_training = self.training
         num_dims = len(text.shape)
 
@@ -168,7 +173,6 @@ class CoCa(nn.Module):
         for _ in range(seq_len):
             x = out[:, -max_seq_len:]
 
-            # TODO: adjust for dict output
             logits = self(image, x, embed_cls=False)["logits"][:, -1]
 
             if filter_logits_fn in {top_k, top_p}:
@@ -184,8 +188,6 @@ class CoCa(nn.Module):
             sample = torch.multinomial(probs, 1)
 
             out = torch.cat((out, sample), dim=-1)
-
-        out = out[:, t:]
 
         if num_dims == 1:
             out = out.squeeze(0)
