@@ -302,7 +302,7 @@ class SiameseTextCLIP(nn.Module):
         self.text_tower = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def lock_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         self.text_tower.lock(unlocked_layers, freeze_layer_norm)
 
     @torch.jit.ignore

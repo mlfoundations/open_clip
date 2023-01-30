@@ -198,7 +198,7 @@ def create_model(
         if precision in ("fp16", "bf16"):
             convert_weights_to_lp(model, dtype=torch.bfloat16 if precision == 'bf16' else torch.float16)
 
-        if not text_to_text:
+        if model_type=="CLIP":
         # set image / mean metadata from pretrained_cfg if available, or use default
             model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
             model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
