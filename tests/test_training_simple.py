@@ -86,7 +86,7 @@ def test_training_unfreezing_vit():
 
 
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
-def test_training_unfreezing_vit():
+def test_training_clip_with_jit():
     main([
     '--save-frequency', '1',
     '--zeroshot-frequency', '1',
@@ -99,7 +99,5 @@ def test_training_unfreezing_vit():
     '--epochs', '1',
     '--workers', '2',
     '--model', 'ViT-B-32',
-    '--lock-image',
-    '--lock-image-unlocked-groups', '5',
     '--torchscript'
     ])
