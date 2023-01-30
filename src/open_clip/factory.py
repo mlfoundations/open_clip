@@ -159,7 +159,7 @@ def create_model(
             model_cfg["quick_gelu"] = True
 
         if force_patch_dropout is not None:
-            # override the defalt patch dropout value
+            # override the default patch dropout value
             model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
 
         if force_image_size is not None:
