@@ -285,14 +285,12 @@ class CLIP(nn.Module):
 
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(
-            self,
-            image: Optional[torch.Tensor] = None,
-            text: Optional[torch.Tensor] = None,
-    ):
+    def forward(self, image, text, clamp_logit_scale_to=None):
         image_features = self.encode_image(image, normalize=True) if image is not None else None
         text_features = self.encode_text(text, normalize=True) if text is not None else None
-
+        if clamp_logit_scale_to is not None:
+            with torch.no_grad():
+                self.logit_scale.data.clamp_(0, clamp_logit_scale_to)
         if self.output_dict:
             out_dict = {
                 "image_features": image_features,
