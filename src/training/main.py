@@ -31,7 +31,6 @@ except ImportError:
     hvd = None
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
-from open_clip.transformer import VisionTransformer, TextTransformer, ResidualAttentionBlock
 from open_clip.model import CLIP
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
@@ -294,7 +293,6 @@ def main(args):
                 f.write(f"{name}: {val}\n")
 
     if args.distributed and not args.horovod:
-
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if args.distributed_engine == 'ddp':
@@ -318,21 +316,23 @@ def main(args):
                 reduce_dtype=torch.bfloat16,
                 #buffer_dtype=torch.bfloat16,
             )
+            layers = set()
+            for module in model.modules():
+                name = module.__class__.__name__
+                for layer in args.fsdp_layers_to_wrap:
+                    if re.match(layer, name):
+                        layers.add(module.__class__)
+            print("Wrapped layers", layers)
             wrapper_kwargs = dict(
                 mixed_precision=mp,
                 limit_all_gathers=args.fsdp_limit_allgathers,
                 cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
                 auto_wrap_policy=partial(
                    transformer_auto_wrap_policy,
-                   transformer_layer_cls={
-                       VisionTransformer,
-                       TextTransformer,
-                       ResidualAttentionBlock,
-                   },
+                   transformer_layer_cls=layers,
                 ),
                 device_id=device,
             )
-
             # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
             #model.transformer = FSDP(model.transformer, device_id=device)
             #model.token_embedding = FSDP(model.token_embedding, device_id=device)
@@ -345,6 +345,12 @@ def main(args):
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
                 #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+                layers_grad_checkpoint = set()
+                for module in model.modules():
+                    name = module.__class__.__name__
+                    for layer in args.fsdp_layers_to_grad_checkpoint:
+                        if re.match(layer, name):
+                            layers_grad_checkpoint.add(module.__class__)
                 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
                     checkpoint_wrapper,
                     CheckpointImpl,
@@ -355,7 +361,7 @@ def main(args):
                     offload_to_cpu=args.fsdp_cpu_offload,
                     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
                 )
-                check_fn = lambda submodule: isinstance(submodule, ResidualAttentionBlock)
+                check_fn = lambda submodule: (any(isinstance(submodule, layer) for layer in layers_grad_checkpoint))
                 apply_activation_checkpointing(
                     model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
                 )

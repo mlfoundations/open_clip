@@ -23,6 +23,8 @@ class ParseKwargs(argparse.Action):
         setattr(namespace, self.dest, kw)
 
 
+
+
 def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -378,6 +380,34 @@ def parse_args(args):
         "--fsdp-limit-allgathers",
         default=False,
         action="store_true",
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-wrap",
+        default=(
+            # Match all sort of blocks
+            '.*Block.*',
+            'Bottleneck',
+            # CLIP
+            'VisionTransformer', 
+            'Transformer', 
+            # CLIP ModifiedResNet
+            'ModifiedResNet',
+            # HF Text
+            'HFTextEncoder',
+            # TIMM visual
+            'TimmModel',
+        ),
+        type=str,
+        nargs='+'
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-grad-checkpoint",
+        default=(
+            '.*Block.*',
+            'Bottleneck',
+        ),
+        type=str,
+        nargs='+'
     )
     parser.add_argument(
         "--no-set-device-rank",
