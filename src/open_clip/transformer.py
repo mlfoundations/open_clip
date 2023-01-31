@@ -501,13 +501,12 @@ class TextTransformer(nn.Module):
         self.vocab_size = vocab_size
         self.width = width
         self.output_dim = output_dim
-        self.embed_cls = embed_cls
         self.heads = heads
         self.pad_id = pad_id
 
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
-        if self.embed_cls:
+        if embed_cls:
             self.cls_emb = nn.Parameter(torch.empty(width))
             self.num_pos += 1
         else:
@@ -532,7 +531,7 @@ class TextTransformer(nn.Module):
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
-        if hasattr(self, "embed_cls") and self.embed_cls:
+        if self.cls_emb is not None:
             nn.init.normal_(self.cls_emb, std=0.01)
 
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
@@ -577,7 +576,7 @@ class TextTransformer(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         attn_mask = self.attn_mask
-        if self.embed_cls is not None:
+        if self.cls_emb is not None:
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
             cls_mask = self.build_cls_mask(text, cast_dtype)
@@ -590,7 +589,7 @@ class TextTransformer(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        if self.embed_cls is not None:
+        if self.cls_emb is not None:
             pooled, tokens = x[:, -1], x[:, :-1]
             pooled = self.ln_final(pooled)
         else:

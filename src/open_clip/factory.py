@@ -116,6 +116,7 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
+        output_dict: Optional[bool] = None,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -215,6 +216,10 @@ def create_model(
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
+        # to always output dict even if it is clip
+        if output_dict and hasattr(model, "output_dict"):
+            model.output_dict = True
+
         if jit:
             model = torch.jit.script(model)
 
@@ -259,6 +264,7 @@ def create_model_and_transforms(
         image_std: Optional[Tuple[float, ...]] = None,
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
+        output_dict: Optional[bool] = None,
 ):
     model = create_model(
         model_name,
@@ -273,6 +279,7 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
+        output_dict=output_dict,
     )
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
