@@ -162,6 +162,7 @@ class CoCa(nn.Module):
             **kwargs
     ):
 
+        assert generation_type in GENERATION_TYPES, f"generation type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
         filter_logits_fn = GENERATION_TYPES[generation_type]
 
         if generation_type == "beam_search":
