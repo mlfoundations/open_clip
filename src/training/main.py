@@ -31,7 +31,7 @@ except ImportError:
     hvd = None
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
-from open_clip.transformer import VisionTransformer, TextTransformer
+from open_clip.transformer import VisionTransformer, TextTransformer, ResidualAttentionBlock
 from open_clip.model import CLIP
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
@@ -85,7 +85,6 @@ def main(args):
 
     # fully initialize distributed device environment
     device = init_distributed_device(args)
-
     # get the name of the experiments
     if args.name is None:
         # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
@@ -280,7 +279,8 @@ def main(args):
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
     if args.grad_checkpointing:
-        model.set_grad_checkpointing()
+        if args.distributed_engine != 'fsdp':
+            model.set_grad_checkpointing()
 
     if is_master(args):
         logging.info("Model:")
@@ -303,29 +303,46 @@ def main(args):
                 ddp_args['static_graph'] = True
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
         elif args.distributed_engine == 'fsdp':
+
             print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             mp = MixedPrecision(
-                # param_dtype=torch.bfloat16,
+                #param_dtype=torch.bfloat16,
                 reduce_dtype=torch.bfloat16,
-                # buffer_dtype=torch.bfloat16,
+                #buffer_dtype=torch.bfloat16,
             )
             wrapper_kwargs = dict(
-                #mixed_precision=mp,
-                #limit_all_gathers=True,
+                mixed_precision=mp,
+                limit_all_gathers=True,
                 
-                #auto_wrap_policy=partial(
-                #   transformer_auto_wrap_policy,
-                #   transformer_layer_cls={
-                #       VisionTransformer,
-                #       TextTransformer,
-                #       CLIP,
-                #   },
-                #),
+                auto_wrap_policy=partial(
+                   transformer_auto_wrap_policy,
+                   transformer_layer_cls={
+                       VisionTransformer,
+                       TextTransformer,
+                       CLIP,
+                   },
+                ),
             )
             model = FSDP(model, device_id=device, **wrapper_kwargs)
             print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            if args.grad_checkpointing:
+                #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+                from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+                    checkpoint_wrapper,
+                    CheckpointImpl,
+                    apply_activation_checkpointing,
+                )
+                non_reentrant_wrapper = partial(
+                    checkpoint_wrapper,
+                    offload_to_cpu=False,
+                    checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+                )
+                check_fn = lambda submodule: isinstance(submodule, ResidualAttentionBlock)
+                apply_activation_checkpointing(
+                    model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
+                )
         else:
             print("--distrubted_engine should be either 'ddp or 'fsdp'")
             sys.exit(1)
