@@ -251,7 +251,6 @@ class CoCa(nn.Module):
         input_ids = input_ids * sot_token_id
         beam_scorer = BeamSearchScorer(
             batch_size=batch_size,
-            max_length=max_length,
             num_beams=num_beams,
             device=device,
             num_beam_groups=num_beam_groups,

@@ -303,7 +303,13 @@ im = Image.load("path/to/image").convert("RGB")
 # transform the image and add a batch size dimension
 im = transform(im).unsqueeze(0)
 
-model.generate(im)
+generated = model.generate(im)
+generated = generated.cpu().numpy()
+# alternatively if computation was running on a gpu
+# generated = generated.detach().cpu().numpy()
+
+print(open_clip.tokenizer._tokenizer.decode(generated[0]))
+# "<start_of_text> some text here <end_of_text>"
 ```
 
 ### Training with pre-trained language models as text encoder:
