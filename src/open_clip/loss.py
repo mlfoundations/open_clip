@@ -87,7 +87,14 @@ class ClipLoss(nn.Module):
         self.labels = {}
 
 
-    def forward(self, features_a, features_b, logit_scale, output_dict=False):
+    def forward(self, image_features=None, text_features=None, logit_scale=None, text_a_features=None, text_b_features=None, output_dict=False):
+        
+        if image_features is not None and text_features is not None:
+            features_a = image_features
+            features_b = text_features
+        elif text_a_features is not None and text_b_features is not None:
+            features_a = text_a_features
+            features_b = text_b_features
 
         device = features_a.device
         if self.world_size > 1:
@@ -151,7 +158,7 @@ class CoCaLoss(ClipLoss):
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
     def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
-        clip_loss = super().forward(features_a=image_features, features_b=text_features, logit_scale=logit_scale)
+        clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
         caption_loss = self.caption_loss(
