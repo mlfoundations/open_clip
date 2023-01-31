@@ -87,9 +87,9 @@ class ClipLoss(nn.Module):
         self.labels = {}
 
 
-    def forward(self, image_features=None, text_features=None, text_a_features=None, text_b_features=None, logit_scale=None,output_dict=False):
+    def forward(self, image_features=None, text_features=None, text_a_features=None, text_b_features=None, logit_scale=None, output_dict=False):
         
-        if features_a is not None and features_b is not None:
+        if image_features is not None and text_features is not None:
             features_a = image_features
             features_b = text_features
 
