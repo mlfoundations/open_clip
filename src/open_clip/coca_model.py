@@ -16,6 +16,13 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
 from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
 
+GENERATION_TYPES = {
+    "top_k": top_k,
+    "top_p": top_p,
+    "top_a": top_a,
+    "beam_search": "beam_search"
+}
+
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
     mlp_ratio: int = 4
@@ -148,11 +155,27 @@ class CoCa(nn.Module):
             mask_prob=0.0,
             temperature=1.,
             sot_token_id=None,
-            filter_logits_fn=top_k,
+            generation_type="beam_search",
             filter_thres=0.9,
             min_p_pow=2.0,
             min_p_ratio=0.02,
+            **kwargs
     ):
+
+        filter_logits_fn = GENERATION_TYPES[generation_type]
+
+        if generation_type == "beam_search":
+            return self.generate_beamsearch(
+                image_inputs = image,
+                max_length = seq_len,
+                pad_token_id=kwargs.get("pad_token_id", None),
+                eos_token_id=kwargs.get("eos_token_id", None),
+                sot_token_id=kwargs.get("sot_token_id", None),
+                num_beams=kwargs.get("num_beams", 6),
+                num_beam_groups=kwargs.get("num_beam_groups", 3),
+                min_seq_len=kwargs.get("min_seq_len", 5),
+                stopping_criteria=kwargs.get("stopping_criteria", None),
+            )
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
         device = image.device
