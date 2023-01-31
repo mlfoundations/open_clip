@@ -15,7 +15,6 @@ import torch
 import torchvision.datasets as datasets
 import webdataset as wds
 from PIL import Image
-from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
@@ -50,7 +49,9 @@ class TextPairDataset(Dataset):
 class HFTextPairDataset(Dataset):
     def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
         logging.debug(f'Loading parquet data from {input_filename}.')
-
+        
+        from datasets import load_dataset
+        
         self.dataset = load_dataset(input_filename)
         self.text_a_key = text_a_key
         self.text_b_key = text_b_key
