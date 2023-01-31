@@ -3,7 +3,7 @@ name: Continuous integration
 on:
   push:
     branches:
-    - main
+    - main 
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -12,7 +12,7 @@ on:
     - 'docs/**'
   pull_request:
     branches:
-    - main
+    - main 
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -81,7 +81,7 @@ jobs:
           --group ${{ matrix.job }} \
           -m regression_test \
           tests \
-          | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=])' \
+          | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=-False]|-True])' \
           > models_gh_runner.txt
         if [ -n "${{ inputs.manual_revision_reference }}" ]; then
           REVISION_REFERENCE=${{ inputs.manual_revision_reference }}

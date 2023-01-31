@@ -1,3 +1,22 @@
+## 2.10.1
+
+* `hf-hub:org/model_id` support for loading models w/ config and weights in Hugging Face Hub
+
+## 2.10.0
+
+* Added a ViT-bigG-14 model.
+* Added an up-to-date example slurm script for large training jobs.
+* Added a option to sync logs and checkpoints to S3 during training.
+* New options for LR schedulers, constant and constant with cooldown
+* Fix wandb autoresuming when resume is not set
+* ConvNeXt `base` & `base_w` pretrained models added
+* `timm-` model prefix removed from configs
+* `timm` augmentation + regularization (dropout / drop-path) supported
+
+## 2.9.3
+
+* Fix wandb collapsing multiple parallel runs into a single one
+
 ## 2.9.2
 
 * Fix braceexpand memory explosion for complex webdataset urls
