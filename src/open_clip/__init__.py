@@ -4,7 +4,6 @@ from .factory import list_models, add_model_config, get_model_config, load_check
 
 from .loss import ClipLoss, CoCaLoss
 from .model import CLIP, CustomTextCLIP, TextTextCLIP, SiameseTextCLIP, CLIPTextCfg, CLIPVisionCfg,\
-
     convert_weights_to_lp, convert_weights_to_fp16, trace_model, get_cast_dtype
 from .coca_model import CoCa
 from .openai import load_openai_model, list_openai_models

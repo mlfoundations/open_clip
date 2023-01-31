@@ -11,10 +11,10 @@ from training.main import main
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-@pytest.mark.parametrize("model_type", [("roberta-roberta")])
-def test_inference_simple(model_type, pretrained=None):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_type, pretrained=pretrained, jit=False, text_to_text=True)
-    tokenizer = get_tokenizer(model_type)
+@pytest.mark.parametrize("model_cfg", [("roberta-roberta")])
+def test_inference_simple(model_cfg, pretrained=None):
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_dual_encoder')
+    tokenizer = get_tokenizer(model_cfg)
 
     text_a = tokenizer(['this', 'is', 'a', 'document'])
     text_b = tokenizer(['this', 'is', 'a', 'summary'])

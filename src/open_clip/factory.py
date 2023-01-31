@@ -52,6 +52,7 @@ def _rescan_model_configs():
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
+    print(_MODEL_CONFIGS)
 
 
 _rescan_model_configs()  # initial populate of model config registry
