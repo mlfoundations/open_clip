@@ -154,12 +154,17 @@ class CoCa(nn.Module):
             max_seq_len=77,
             mask_prob=0.0,
             temperature=1.,
-            sot_token_id=None,
             generation_type="beam_search",
             filter_thres=0.9,
             min_p_pow=2.0,
             min_p_ratio=0.02,
-            **kwargs
+            pad_token_id=None,
+            eos_token_id=None,
+            sot_token_id=None,
+            num_beams=6,
+            num_beam_groups=3,
+            min_seq_len=5,
+            stopping_criteria=None,
     ):
 
         assert generation_type in GENERATION_TYPES, \
@@ -170,13 +175,13 @@ class CoCa(nn.Module):
             return self.generate_beamsearch(
                 image_inputs = image,
                 max_length = seq_len,
-                pad_token_id=kwargs.get("pad_token_id", None),
-                eos_token_id=kwargs.get("eos_token_id", None),
-                sot_token_id=kwargs.get("sot_token_id", None),
-                num_beams=kwargs.get("num_beams", 6),
-                num_beam_groups=kwargs.get("num_beam_groups", 3),
-                min_seq_len=kwargs.get("min_seq_len", 5),
-                stopping_criteria=kwargs.get("stopping_criteria", None),
+                pad_token_id=pad_token_id,
+                eos_token_id=eos_token_id,
+                sot_token_id=sot_token_id,
+                num_beams=num_beams,
+                num_beam_groups=num_beam_groups,
+                min_seq_len=min_seq_len,
+                stopping_criteria=stopping_criteria,
             )
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
@@ -258,8 +263,10 @@ class CoCa(nn.Module):
         logits_processor = LogitsProcessorList(
             target_logits_processor_list
         )
+        if stopping_criteria is None:
+            stopping_criteria = [MaxLengthCriteria(max_length=max_length)]
         stopping_criteria = StoppingCriteriaList(
-            [MaxLengthCriteria(max_length=max_length)]
+            stopping_criteria
         )
 
         batch_size = len(beam_scorer._beam_hyps)
