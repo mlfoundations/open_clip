@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
 try:
     import wandb
@@ -29,6 +31,8 @@ except ImportError:
     hvd = None
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip.transformer import VisionTransformer, TextTransformer
+from open_clip.model import CLIP
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -292,14 +296,35 @@ def main(args):
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-    
-        if args.distill:
-            dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
+        if args.distributed_engine == 'ddp':
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+        elif args.distributed_engine == 'fsdp':
+            mp = MixedPrecision(
+                # param_dtype=torch.bfloat16,
+                reduce_dtype=torch.bfloat16,
+                # buffer_dtype=torch.bfloat16,
+            )
+            wrapper_kwargs = dict(
+                mixed_precision=mp,
+                limit_all_gathers=True,
+		        auto_wrap_policy=partial(
+                    transformer_auto_wrap_policy,
+                    transformer_layer_cls={
+                        VisionTransformer,
+                        TextTransformer,
+                        CLIP,
+                    },
+                ),
+            )
+            model = FSDP(model, device_id=device, **wrapper_kwargs)
+            print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+        else:
+            print("--distrubted_engine should be either 'ddp or 'fsdp'")
+            sys.exit(1)
 
     # create optimizer and scaler
     optimizer = None

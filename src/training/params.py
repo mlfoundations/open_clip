@@ -359,6 +359,12 @@ def parse_args(args):
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
     )
     parser.add_argument(
+        "--distributed_engine",
+        type=str,
+        default="ddp",
+        choices=["ddp", "fsdp"],
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",
