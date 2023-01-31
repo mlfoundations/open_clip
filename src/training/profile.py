@@ -79,7 +79,7 @@ def count_params(model):
 
 
 def profile_model(model_name):
-    model = open_clip.create_model(model_name, force_custom_text=True)
+    model = open_clip.create_model(model_name, force_custom_text=True, pretrained_hf=False)
     model.eval()
     if torch.cuda.is_available():
         model = model.cuda()
@@ -137,7 +137,10 @@ def main():
     args = parser.parse_args()
 
     # FIXME accept a text file name to allow lists of models in txt/csv
-    parsed_model = args.model.split(',')
+    if args.model == 'all':
+        parsed_model = open_clip.list_models()
+    else:
+        parsed_model = args.model.split(',')
 
     results = []
     for m in parsed_model:

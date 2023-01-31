@@ -1,23 +1,37 @@
 # OpenCLIP
 
-[[Paper]](https://arxiv.org/abs/2109.01903) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+[[Paper]](https://arxiv.org/abs/2212.07143) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+[![pypi](https://img.shields.io/pypi/v/open_clip_torch.svg)](https://pypi.python.org/pypi/open_clip_torch)
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset.
+We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 
-We have trained:
-  * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet1k
+We have trained the following ViT CLIP models:
+  * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet-1k
   * ViT-B/32 on LAION-2B with a accuracy of **66.6%**.
   * ViT-B/16 on LAION-400M achieving an accuracy of **67.1%**, lower than OpenAI's **68.3%** (as measured here, 68.6% in paper)
   * ViT-B/16+ 240x240 (~50% more FLOPS than B/16 224x224) on LAION-400M achieving an accuracy of **69.2%**
+  * ViT-B/16 on LAION-2B with a accuracy of **70.2%**.
   * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
-  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The best in1k zero-shot for released, open-source weights thus far.
+  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
   * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced schedule, same samples seen as 400M models.
+  * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
+
+And the following ConvNeXt CLIP models:
+  * ConvNext-Base @ 224x224 on LAION-400M with an ImageNet-1k zero-shot top-1 of **66.3%**
+  * ConvNext-Base (W) @ 256x256 on LAION-2B with an ImageNet-1k zero-shot top-1 of **70.8%**
+  * ConvNext-Base (W) @ 256x256 /w augreg (extra augmentation + regularization) on LAION-2B with a top-1 of **71.5%**
+  * ConvNext-Base (W) @ 256x256 on LAION-A (900M sample aesthetic subset of 2B) with a top-1 of **71.0%**
+  * ConvNext-Base (W) @ 320x320 on LAION-A with a top-1 of **71.7%** (eval at 384x384 is **71.0**)
+  * ConvNext-Base (W) @ 320x320 /w augreg on LAION-A with a top-1 of **71.3%** (eval at 384x384 is **72.2%**)
+  * ConvNext-Large (D) @ 256x256 /w augreg on LAION-2B with a top-1 of **75.9%**
+
+Model cards w/ additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip
 
 As we describe in more detail [below](#why-are-low-accuracy-clip-models-interesting), CLIP models in a medium accuracy regime already allow us to draw conclusions about the robustness of larger CLIP models since the models follow [reliable scaling laws](https://arxiv.org/abs/2107.04649).
 
@@ -71,16 +85,7 @@ To download datasets as webdataset, we recommend [img2dataset](https://github.co
 
 ### Conceptual Captions
 
-OpenCLIP reads a CSV file with two columns: a path to an image, and a text caption. The names of the columns are passed as an argument to `main.py`.
-
-The script `src/data/gather_cc.py` will collect the Conceptual Captions images. First, download the [Conceptual Captions URLs](https://ai.google.com/research/ConceptualCaptions/download) and then run the script from our repository:
-
-```bash
-python3 src/data/gather_cc.py path/to/Train_GCC-training.tsv path/to/Validation_GCC-1.1.0-Validation.tsv
-```
-
-Our training set contains 2.89M images, and our validation set contains 13K images.
-
+See [cc3m img2dataset example](https://github.com/rom1504/img2dataset/blob/main/dataset_examples/cc3m.md)
 
 ### YFCC and other datasets
 
@@ -264,6 +269,21 @@ python -m training.main \
     --val-data="/path/to/validation_data.csv"  \
     --resume /path/to/checkpoints/epoch_K.pt
 ```
+
+### Training CoCa:
+Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through specifying a CoCa config using the ```--model``` parameter of the training script. Currently available configs are "coca_base", "coca_ViT-B-32", and "coca_roberta-ViT-B-32" (which uses RoBERTa as the text encoder). CoCa configs are different from CLIP configs because they have an additional "multimodal_cfg" component which specifies parameters for the multimodal text decoder. Here's an example from the coca_ViT-B-32 config:
+```json
+"multimodal_cfg": {
+	"context_length": 76,
+	"vocab_size": 49408,
+	"width": 512,
+	"heads": 8,
+	"layers": 12,
+	"latent_dim": 512,
+	"attn_pooler_heads": 8
+}
+```
+Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https://github.com/lucidrains/CoCa-pytorch), [gpucce](https://github.com/gpucce) for adapting the code to open_clip, and [iejMac](https://github.com/iejMac) for training the models.
 
 ### Training with pre-trained language models as text encoder:
 
@@ -489,9 +509,11 @@ Future trained models will use nn.GELU.
  ('ViT-L-14-336', 'openai'),
  ('ViT-H-14', 'laion2b_s32b_b79k'),
  ('ViT-g-14', 'laion2b_s12b_b42k'),
+ ('ViT-bigG-14', 'laion2b_s39b_b160k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
- ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),]
+ ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
+ ('coca_ViT-B-32', 'laion2B-s13B-b90k'),]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
@@ -506,6 +528,25 @@ Instead of 1 forward pass per example, there are now 2 forward passes per-exampl
 There is some additional GPU memory required --- the features and data from all `m` batches are stored in memory.
 
 There are also `m` loss computations instead of the usual 1.
+
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+
+### Support for remote loading/training
+
+It is always possible to resume directly from a remote file, e.g., a file in an s3 bucket. Just set `--resume s3://<path-to-checkpoint> `.
+This will work with any filesystem supported by `fsspec`.
+
+It is also possible to train `open_clip` models while continuously backing up to s3. This can help to avoid slow local file systems.
+
+Say that your node has a local ssd `/scratch`, an s3 bucket `s3://<path-to-bucket>`.
+
+In that case, set `--logs /scratch` and `--remote-sync s3://<path-to-bucket>`. Then, a background process will sync `/scratch/<run-name>` to `s3://<path-to-bucket>/<run-name>`. After syncing, the background process will sleep for `--remote-sync-frequency` seconds, which defaults to 5 minutes.
+
+There is also experimental support for syncing to other remote file systems, not just s3. To do so, specify `--remote-sync-protocol fsspec`. However, this is currently very slow and not recommended.
+
+Also, to optionally avoid saving too many checkpoints locally when using these features, you can use `--delete-previous-checkpoint` which deletes the previous checkpoint after saving a new one.
+
+Note: if you are using this feature with `--resume latest`, there are a few warnings. First, use with `--save-most-recent` is not supported. Second, only `s3` is supported. Finally, since the sync happens in the background, it is possible that the most recent checkpoint may not be finished syncing to the remote.
 
 ## Scaling trends
 
@@ -591,6 +632,31 @@ If you found this repository useful, please consider citing:
   author={Alec Radford and Jong Wook Kim and Chris Hallacy and A. Ramesh and Gabriel Goh and Sandhini Agarwal and Girish Sastry and Amanda Askell and Pamela Mishkin and Jack Clark and Gretchen Krueger and Ilya Sutskever},
   booktitle={ICML},
   year={2021}
+}
+```
+
+```bibtex
+@inproceedings{schuhmann2022laionb,
+  title={{LAION}-5B: An open large-scale dataset for training next generation image-text models},
+  author={Christoph Schuhmann and
+          Romain Beaumont and
+          Richard Vencu and
+          Cade W Gordon and
+          Ross Wightman and
+          Mehdi Cherti and
+          Theo Coombes and
+          Aarush Katta and
+          Clayton Mullis and
+          Mitchell Wortsman and
+          Patrick Schramowski and
+          Srivatsa R Kundurthy and
+          Katherine Crowson and
+          Ludwig Schmidt and
+          Robert Kaczmarczyk and
+          Jenia Jitsev},
+  booktitle={Thirty-sixth Conference on Neural Information Processing Systems Datasets and Benchmarks Track},
+  year={2022},
+  url={https://openreview.net/forum?id=M3Y74vmsMcY}
 }
 ```
 

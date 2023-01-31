@@ -1,3 +1,55 @@
+## 2.10.1
+
+* `hf-hub:org/model_id` support for loading models w/ config and weights in Hugging Face Hub
+
+## 2.10.0
+
+* Added a ViT-bigG-14 model.
+* Added an up-to-date example slurm script for large training jobs.
+* Added a option to sync logs and checkpoints to S3 during training.
+* New options for LR schedulers, constant and constant with cooldown
+* Fix wandb autoresuming when resume is not set
+* ConvNeXt `base` & `base_w` pretrained models added
+* `timm-` model prefix removed from configs
+* `timm` augmentation + regularization (dropout / drop-path) supported
+
+## 2.9.3
+
+* Fix wandb collapsing multiple parallel runs into a single one
+
+## 2.9.2
+
+* Fix braceexpand memory explosion for complex webdataset urls
+
+## 2.9.1
+
+* Fix release
+
+## 2.9.0
+
+* Add training feature to auto-resume from the latest checkpoint on restart via `--resume latest`
+* Allow webp in webdataset
+* Fix logging for number of samples when using gradient accumulation
+* Add model configs for convnext xxlarge
+
+## 2.8.2
+
+* wrapped patchdropout in a torch.nn.Module
+
+## 2.8.1
+
+* relax protobuf dependency
+* override the default patch dropout value in 'vision_cfg'
+
+## 2.8.0
+
+* better support for HF models
+* add support for gradient accumulation
+* CI fixes
+* add support for patch dropout
+* add convnext configs
+
+
 ## 2.7.0
 
 * add multilingual H/14 xlm roberta large
