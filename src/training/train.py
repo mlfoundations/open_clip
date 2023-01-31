@@ -117,7 +117,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, dist_model
                         dist_image_features, dist_text_features, dist_logit_scale
                     )
                     # TODO don't hardcode at 0.5.
-                    total_loss = 0.5 * contrastive_loss + 0.5 * distill_loss
+                    total_loss = 1. * contrastive_loss + 1. * distill_loss
                 else:
                     total_loss = loss(image_features, text_features, logit_scale) + distill_loss
 
