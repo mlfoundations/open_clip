@@ -117,9 +117,8 @@ class ClipLoss(nn.Module):
         else:
             labels = self.labels[device]
 
-        total_loss = (
-                             F.cross_entropy(logits_per_image, labels) +
-                             F.cross_entropy(logits_per_text, labels)
+        total_loss = ( F.cross_entropy(logits_per_feature_a, labels) +
+                       F.cross_entropy(logits_per_feature_b, labels)
                      ) / 2
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
