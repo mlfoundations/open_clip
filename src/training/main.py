@@ -203,6 +203,14 @@ def main(args):
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
 
+    dist_model = None
+    args.distill = args.distill_model is not None and args.distill_pretrained is not None
+    if args.distill:
+        #FIXME: support distillation with grad accum.
+        assert args.accum_freq == 1
+        #FIXME: support distillation with coca.
+        assert 'coca' not in args.model.lower()
+
     if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
         # arg is nargs, single (square) image size list -> int
         args.force_image_size = args.force_image_size[0]
@@ -223,6 +231,18 @@ def main(args):
         aug_cfg=args.aug_cfg,
         output_dict=True,
     )
+    if args.distill:
+        # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
+        dist_model, _, _ = create_model_and_transforms(
+            args.distill_model, 
+            args.distill_pretrained,
+            device=device,
+            precision=args.precision,
+            output_dict=True,
+        )
+        #FIXME why is the following call necessary.
+        dist_model.apply(lambda m: setattr(m, 'output_dict', True))
+
     random_seed(args.seed, args.rank)
 
     if args.trace:
@@ -260,6 +280,9 @@ def main(args):
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+    
+        if args.distill:
+            dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
@@ -374,7 +397,7 @@ def main(args):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
+        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
