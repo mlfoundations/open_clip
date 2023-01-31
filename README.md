@@ -293,12 +293,17 @@ To generate text with coca this should work
 import open_clip
 from PIL import Image
 
-model, _, transform = open_clip.create_model_and_transform("coca_ViT-B-32", pretrained="path/to/pretrained")
+model, _, transform = open_clip.create_model_and_transform(
+  model_name="coca_ViT-B-32",
+  pretrained="path/to/pretrained"
+)
 
+# load an image
 im = Image.load("path/to/image").convert("RGB")
+# transform the image and add a batch size dimension
+im = transform(im).unsqueeze(0)
 
-
-model.generate(transform(im))
+model.generate(im)
 ```
 
 ### Training with pre-trained language models as text encoder:
