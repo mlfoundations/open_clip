@@ -184,6 +184,18 @@ You can set this on your visual transformer config with the key `patch_dropout`.
 
 In the paper, they also finetuned without the patch dropout at the end. You can do this with the command-line argument `--force-patch-dropout 0.`
 
+#### Multiple data sources
+
+OpenCLIP supports using multiple data sources, by separating different data paths with `::`.
+For instance, to train on CC12M and on LAION, one might use `--train-data '/data/cc12m/cc12m-train-{0000..2175}.tar'::/data/LAION-400M/{00000..41455}.tar"`.
+Using `--dataset-resampled` is recommended for these cases.
+
+By default, on expectation the amount of times the model will see a sample from each source is proportional to the size of the source.
+For instance, when training on one data source with size 400M and one with size 10M, samples from the first source are 40x more likely to be seen in expectation.
+
+We also support different weighting of the data sources, by using the `--train-data-weights` flag.
+For instance, using `--train-data-weights=1::1` in the above scenario will make it so that samples from each data source are equally likely to be seen in expectation. 
+
 #### Single-Node
 
 We make use of `torchrun` to launch distributed jobs. The following launches a
