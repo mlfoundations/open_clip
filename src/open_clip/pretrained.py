@@ -160,7 +160,7 @@ _xlmRobertaLargeFrozenViTH14 = dict(
 )
 
 _convnext_base = dict(
-    laion400m_s13b_b51k=_pcfg(hf_hub='convnext_base-laion400M-s13B-b51K'),
+    laion400m_s13b_b51k=_pcfg(hf_hub='laion/CLIP-convnext_base-laion400M-s13B-b51K/'),
 )
 
 _convnext_base_w = dict(
@@ -172,6 +172,10 @@ _convnext_base_w = dict(
 _convnext_base_w_320 = dict(
     laion_aesthetic_s13b_b82k=_pcfg(hf_hub='laion/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K/'),
     laion_aesthetic_s13b_b82k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K-augreg/'),
+)
+
+_convnext_large_d = dict(
+    laion2b_s26b_b102k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_large_d.laion2B-s26B-b102K-augreg/'),
 )
 
 _coca_VITB32 = dict(
@@ -202,6 +206,7 @@ _PRETRAINED = {
     "convnext_base": _convnext_base,
     "convnext_base_w": _convnext_base_w,
     "convnext_base_w_320": _convnext_base_w_320,
+    "convnext_large_d": _convnext_large_d,
     "coca_ViT-B-32": _coca_VITB32,
 }
 
