@@ -422,8 +422,4 @@ def parse_args(args):
         if getattr(args, name) is None:
             setattr(args, name, val)
 
-    if args.train_data.startswith('s3'):
-        components = args.train_data.split('::')
-        args.train_data = '::'.join([f'pipe:aws s3 cp {c} -' for c in components])
-
     return args

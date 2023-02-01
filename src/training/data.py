@@ -71,25 +71,6 @@ class DataInfo:
             self.sampler.set_epoch(epoch)
 
 
-def expand_urls(urls, weights=None):
-    if isinstance(urls, str):
-        urllist = urls.split("::")
-        if weights is None:
-            weights = [1 for _ in urllist]
-        else:
-            weights = weights.split('::')
-            assert len(weights) == len(urllist), f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
-            weights = [float(weight) for weight in weights]
-        all_urls, all_weights = [], []
-        for url, weight in zip(urllist, weights):
-            expanded_url = braceexpand.braceexpand(url)
-            all_urls.extend(expanded_url)
-            all_weights.extend([weight for _ in expanded_url])
-        return all_urls, all_weights
-    else:
-        return list(urls), weights
-
-
 def get_dataset_size(shards):
     shards_list = wds.shardlists.expand_urls(shards)
     dir_path = os.path.dirname(shards_list[0])
