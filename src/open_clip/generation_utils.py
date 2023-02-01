@@ -1,6 +1,5 @@
 from math import ceil
 import torch
-from torch import nn
 import torch.nn.functional as F
 
 
@@ -35,3 +34,25 @@ def top_a(logits, min_p_pow=2.0, min_p_ratio=0.02):
     logits[probs < limit] = float('-inf')
     logits[probs >= limit] = 1
     return logits
+
+
+def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
+    if past:
+        input_ids = input_ids[:, -1].unsqueeze(-1)
+
+    attention_mask = kwargs.get("attention_mask", None)
+    position_ids = kwargs.get("position_ids", None)
+
+    if attention_mask is not None and position_ids is None:
+        # create position_ids on the fly for batch generation
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
+    else:
+        position_ids = None
+    return {
+        "text": input_ids,
+        "images": image_inputs,
+        "past_key_values": past,
+        "position_ids": position_ids,
+        "attention_mask": attention_mask,
+    }
