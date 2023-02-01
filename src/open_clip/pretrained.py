@@ -182,6 +182,9 @@ _coca_VITB32 = dict(
     laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k/')
 )
 
+_coca_VITL14 = dict(
+    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-L-14-laion2B-s13B-b90k/')
+)
 
 _PRETRAINED = {
     "RN50": _RN50,
@@ -208,6 +211,7 @@ _PRETRAINED = {
     "convnext_base_w_320": _convnext_base_w_320,
     "convnext_large_d": _convnext_large_d,
     "coca_ViT-B-32": _coca_VITB32,
+    "coca_ViT-L-14": _coca_VITL14,
 }
 
 
