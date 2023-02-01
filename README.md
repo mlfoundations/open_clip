@@ -295,7 +295,7 @@ from PIL import Image
 
 model, _, transform = open_clip.create_model_and_transform(
   model_name="coca_ViT-B-32",
-  pretrained="path/to/pretrained"
+  pretrained="laion2B-s13B-b90k"
 )
 
 # load an image
