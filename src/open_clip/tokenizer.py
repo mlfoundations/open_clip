@@ -152,6 +152,9 @@ class SimpleTokenizer(object):
 
 _tokenizer = SimpleTokenizer()
 
+def decode(output_ids: torch.Tensor):
+    output_ids = output_ids.cpu().numpy()
+    return _tokenizer.decode(output_ids)
 
 def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
     """

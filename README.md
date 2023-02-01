@@ -285,6 +285,32 @@ Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through spec
 ```
 Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https://github.com/lucidrains/CoCa-pytorch), [gpucce](https://github.com/gpucce) for adapting the code to open_clip, and [iejMac](https://github.com/iejMac) for training the models.
 
+### Generating text with CoCa
+
+To generate text with coca this should work
+
+```python
+import open_clip
+from PIL import Image
+
+model, _, transform = open_clip.create_model_and_transform(
+  model_name="coca_ViT-B-32",
+  pretrained="laion2B-s13B-b90k"
+)
+
+# load an image
+im = Image.load("path/to/image").convert("RGB")
+# transform the image and add a batch size dimension
+im = transform(im).unsqueeze(0)
+
+generated = model.generate(im)
+# alternatively if computation was running on a gpu
+# generated = generated.detach()
+
+print(open_clip.decode(generated[0]))
+# "<start_of_text> some text here <end_of_text>"
+```
+
 ### Training with pre-trained language models as text encoder:
 
 If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
