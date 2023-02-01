@@ -35,7 +35,11 @@ def parse_args(args):
         "--train-data-weights",
         type=str,
         default=None,
-        help="When using multiple data sources with webdataset and sampling with replacement, which weight to use for sampling the different data sources. Similar to --train-data, this should be a string with as many numbers as there are data sources, separated by `::` (e.g. 1::2::0.5)",
+        help=(
+            "When using multiple data sources with webdataset and sampling with replacement, which weight to use for sampling the different data sources. "
+            "Similar to --train-data, this should be a string with as many numbers as there are data sources, separated by `::` (e.g. 1::2::0.5) "
+            "By default, datapoints are sampled uniformly regardless of the dataset sizes."
+        )
     )
     parser.add_argument(
         "--val-data",
@@ -417,5 +421,9 @@ def parse_args(args):
     for name, val in default_params.items():
         if getattr(args, name) is None:
             setattr(args, name, val)
+
+    if args.train_data.startswith('s3'):
+        components = args.train_data.split('::')
+        args.train_data = '::'.join([f'pipe:aws s3 cp {c} -' for c in components])
 
     return args
