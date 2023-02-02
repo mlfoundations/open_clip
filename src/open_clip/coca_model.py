@@ -205,12 +205,13 @@ class CoCa(nn.Module):
         cur_len = text.shape[1]
         self.eval()
         out = text
+        image_latent, image_embs = self._encode_image(image)
 
         while True:
             x = out[:, -max_seq_len:]
             cur_len = min(cur_len, max_seq_len)
 
-            logits = self(image, x, embed_cls=False)["logits"][:, -1]
+            logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
             mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
             sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
