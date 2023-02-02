@@ -193,7 +193,6 @@ class CoCa(nn.Module):
         assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
         device = image.device
 
-        sot_token_id = 49406 if sot_token_id is None else sot_token_id
         if text is None:
             text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
 
