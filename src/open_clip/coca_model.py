@@ -167,6 +167,10 @@ class CoCa(nn.Module):
             stopping_criteria=None,
     ):
 
+        sot_token_id = 49406 if sot_token_id is None else sot_token_id
+        eos_token_id = 49407 if eos_token_id is None else eos_token_id
+        pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
+
         assert generation_type in GENERATION_TYPES, \
             f"generation_type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
         filter_logits_fn = GENERATION_TYPES[generation_type]
@@ -185,25 +189,32 @@ class CoCa(nn.Module):
             )
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
+        assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
         device = image.device
 
         sot_token_id = 49406 if sot_token_id is None else sot_token_id
         if text is None:
             text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
+
         was_training = self.training
         num_dims = len(text.shape)
 
         if num_dims == 1:
             text = text[None, :]
 
-        _, t = text.shape
+        cur_len = text.shape[1]
         self.eval()
         out = text
 
-        for _ in range(seq_len):
+        while True:
             x = out[:, -max_seq_len:]
 
             logits = self(image, x, embed_cls=False)["logits"][:, -1]
+            mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
+            logits = logits[~mask, :]
+
+            if cur_len + 1 < min_seq_len:
+                logits = logits[:, :-1] # eos_token_id is the largest
 
             if filter_logits_fn in {top_k, top_p}:
                 filtered_logits = filter_logits_fn(logits, thres=filter_thres)
@@ -215,9 +226,18 @@ class CoCa(nn.Module):
                 )
                 probs = F.softmax(filtered_logits / temperature, dim=-1)
 
-            sample = torch.multinomial(probs, 1)
+            cur_len += 1
+
+            sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
+            if cur_len == seq_len:
+                sample[~mask, :] = torch.ones((sum(mask), 1), device=device, dtype=torch.long) * eos_token_id
+            else:
+                sample[~mask, :] = torch.multinomial(probs, 1)
 
             out = torch.cat((out, sample), dim=-1)
+
+            if cur_len >= min_seq_len and cur_len >= seq_len:
+                break
 
         if num_dims == 1:
             out = out.squeeze(0)
@@ -237,10 +257,6 @@ class CoCa(nn.Module):
             min_seq_len=5,
             stopping_criteria=None,
         ):
-
-        sot_token_id = 49406 if sot_token_id is None else sot_token_id
-        eos_token_id = 49407 if eos_token_id is None else eos_token_id
-        pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
 
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
