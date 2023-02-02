@@ -226,15 +226,17 @@ class CoCa(nn.Module):
                 )
                 probs = F.softmax(filtered_logits / temperature, dim=-1)
 
-            cur_len += 1
+
 
             sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
-            if cur_len == seq_len:
+            if cur_len + 1 == seq_len:
                 sample[~mask, :] = torch.ones((sum(mask), 1), device=device, dtype=torch.long) * eos_token_id
             else:
                 sample[~mask, :] = torch.multinomial(probs, 1)
 
             out = torch.cat((out, sample), dim=-1)
+
+            cur_len += 1
 
             if cur_len >= min_seq_len and cur_len >= seq_len:
                 break
