@@ -165,6 +165,7 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
+            fixex_output_length=False # the output will have shape min(seq_len, max_output_len)
     ):
 
         sot_token_id = 49406 if sot_token_id is None else sot_token_id
@@ -208,6 +209,7 @@ class CoCa(nn.Module):
 
         while True:
             x = out[:, -max_seq_len:]
+            cur_len = min(cur_len, max_seq_len)
 
             logits = self(image, x, embed_cls=False)["logits"][:, -1]
             mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
@@ -229,16 +231,18 @@ class CoCa(nn.Module):
 
 
             sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
-            if cur_len + 1 == seq_len:
-                sample[~mask, :] = torch.ones((sum(mask), 1), device=device, dtype=torch.long) * eos_token_id
+            if (cur_len + 1 == seq_len):
+                sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
             else:
                 sample[~mask, :] = torch.multinomial(probs, 1)
 
             out = torch.cat((out, sample), dim=-1)
 
             cur_len += 1
+            if mask.all() and not fixex_output_length:
+                break
 
-            if (cur_len >= min_seq_len and cur_len >= seq_len) or mask.all():
+            if (cur_len >= min_seq_len and cur_len >= seq_len):
                 break
 
         if num_dims == 1:
