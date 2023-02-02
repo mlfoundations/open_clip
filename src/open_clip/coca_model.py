@@ -238,7 +238,7 @@ class CoCa(nn.Module):
 
             cur_len += 1
 
-            if cur_len >= min_seq_len and cur_len >= seq_len:
+            if (cur_len >= min_seq_len and cur_len >= seq_len) or mask.all():
                 break
 
         if num_dims == 1:
