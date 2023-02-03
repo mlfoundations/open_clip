@@ -294,13 +294,13 @@ To generate text with coca this should work
 import open_clip
 from PIL import Image
 
-model, _, transform = open_clip.create_model_and_transform(
+model, _, transform = open_clip.create_model_and_transforms(
   model_name="coca_ViT-B-32",
-  pretrained="laion2B-s13B-b90k"
+  pretrained="mscoco_finetuned_laion2B-s13B-b90k"
 )
 
 # load an image
-im = Image.load("path/to/image").convert("RGB")
+im = Image.open("path/to/image").convert("RGB")
 # transform the image and add a batch size dimension
 im = transform(im).unsqueeze(0)
 
