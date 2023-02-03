@@ -541,7 +541,9 @@ Future trained models will use nn.GELU.
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
  ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
  ('coca_ViT-B-32', 'laion2B-s13B-b90k'),
- ('coca_ViT-L-14', 'laion2B-s13B-b90k'),]
+ ('coca_ViT-B-32', 'mscoco_finetuned_laion2B-s13B-b90k'), # finetuned models lose contrastive capabilities
+ ('coca_ViT-L-14', 'laion2B-s13B-b90k'),
+ ('coca_ViT-L-14', 'mscoco_finetuned_laion2B-s13B-b90k'),] # finetuned models lose contrastive capabilities
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
