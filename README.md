@@ -354,6 +354,8 @@ tensorboard --logdir=logs/tensorboard/ --port=7777
 
 ## Evaluation / Zero-Shot
 
+We recommend https://github.com/LAION-AI/CLIP_benchmark#how-to-use for systematic evaluation on 40 datasets.
+
 ### Evaluating local checkpoint:
 
 ```bash
