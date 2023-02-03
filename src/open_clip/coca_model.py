@@ -14,7 +14,11 @@ from .transformer import (
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
-from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
+
+try:
+    from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
+except ImportError as e:
+    pass
 
 GENERATION_TYPES = {
     "top_k": top_k,
