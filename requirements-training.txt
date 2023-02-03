@@ -1,5 +1,6 @@
 torch>=1.9.0
 torchvision
+torchaudio
 webdataset>=0.2.5
 regex
 ftfy
