@@ -295,7 +295,7 @@ import open_clip
 from PIL import Image
 
 model, _, transform = open_clip.create_model_and_transforms(
-  model_name="coca_ViT-B-32",
+  model_name="coca_ViT-L-14",
   pretrained="mscoco_finetuned_laion2B-s13B-b90k"
 )
 
