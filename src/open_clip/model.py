@@ -29,7 +29,8 @@ class CLIPVisionCfg:
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
     ls_init_value: Optional[float] = None  # layer scale initial value
-    patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
+    patch_dropout: float = 0. # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
+    dual_patchnorm: bool = False # whether to use dual patchnorm - https://arxiv.org/abs/2302.01327v1 - only pre patchnorm is added, since openai clip has a post patchnorm
     global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
     attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
     n_queries: int = 256 # n_queries for attentional pooler
@@ -119,6 +120,7 @@ def _build_vision_tower(
             mlp_ratio=vision_cfg.mlp_ratio,
             ls_init_value=vision_cfg.ls_init_value,
             patch_dropout=vision_cfg.patch_dropout,
+            dual_patchnorm=vision_cfg.dual_patchnorm,
             global_average_pool=vision_cfg.global_average_pool,
             attentional_pool=vision_cfg.attentional_pool,
             n_queries=vision_cfg.n_queries,
