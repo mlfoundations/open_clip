@@ -1,6 +1,6 @@
 # OpenCLIP
 
-[[Paper]](https://arxiv.org/abs/2212.07143) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+[[Paper]](https://arxiv.org/abs/2212.07143) [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb) [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 [![pypi](https://img.shields.io/pypi/v/open_clip_torch.svg)](https://pypi.python.org/pypi/open_clip_torch)
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
@@ -73,6 +73,7 @@ with torch.no_grad(), torch.cuda.amp.autocast():
 
 print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
 ```
+See also this [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
 
 To compute billions of embeddings efficiently, you can use [clip-retrieval](https://github.com/rom1504/clip-retrieval) which has openclip support.
 
@@ -290,6 +291,7 @@ Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https:/
 
 ```python
 import open_clip
+import torch
 from PIL import Image
 
 model, _, transform = open_clip.create_model_and_transforms(
@@ -297,18 +299,16 @@ model, _, transform = open_clip.create_model_and_transforms(
   pretrained="mscoco_finetuned_laion2B-s13B-b90k"
 )
 
-# load an image
-im = Image.open("path/to/image").convert("RGB")
-# transform the image and add a batch size dimension
+im = Image.open("cat.jpg").convert("RGB")
 im = transform(im).unsqueeze(0)
 
-generated = model.generate(im)
-# alternatively if computation was running on a gpu
-# generated = generated.detach()
+with torch.no_grad(), torch.cuda.amp.autocast():
+  generated = model.generate(im)
 
-print(open_clip.decode(generated[0]))
-# "<start_of_text> some text here <end_of_text>"
+print(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", ""))
 ```
+
+See also this [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 
 ### Training with pre-trained language models as text encoder:
 
