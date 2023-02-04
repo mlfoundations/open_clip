@@ -1,3 +1,8 @@
+## 2.11.1
+
+* Make transformers optional
+* Add MSCOCO CoCa finetunes to pretrained models
+
 ## 2.11.0
 
 * coca support and weights
