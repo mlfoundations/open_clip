@@ -288,8 +288,6 @@ Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https:/
 
 ### Generating text with CoCa
 
-To generate text with coca this should work
-
 ```python
 import open_clip
 from PIL import Image
