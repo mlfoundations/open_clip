@@ -267,18 +267,18 @@ def main(args):
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
-    if args.lock_image:
-        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
-        model.lock_image_tower(
-            unlocked_groups=args.lock_image_unlocked_groups,
-            freeze_bn_stats=args.lock_image_freeze_bn_stats)
-    if args.lock_text:
-        model.lock_text_tower(
-            unlocked_layers=args.lock_text_unlocked_layers,
-            freeze_layer_norm=args.lock_text_freeze_layer_norm)
+    if args.distributed_engine != 'fsdp':
+        if args.lock_image:
+            # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+            model.lock_image_tower(
+                unlocked_groups=args.lock_image_unlocked_groups,
+                freeze_bn_stats=args.lock_image_freeze_bn_stats)
+        if args.lock_text:
+            model.lock_text_tower(
+                unlocked_layers=args.lock_text_unlocked_layers,
+                freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
-    if args.grad_checkpointing:
-        if args.distributed_engine != 'fsdp':
+        if args.grad_checkpointing:
             model.set_grad_checkpointing()
 
     if is_master(args):
@@ -343,6 +343,15 @@ def main(args):
             model = FSDP(model, **wrapper_kwargs)
             print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            if args.lock_image:
+                # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+                model.lock_image_tower(
+                    unlocked_groups=args.lock_image_unlocked_groups,
+                    freeze_bn_stats=args.lock_image_freeze_bn_stats)
+            if args.lock_text:
+                model.lock_text_tower(
+                    unlocked_layers=args.lock_text_unlocked_layers,
+                    freeze_layer_norm=args.lock_text_freeze_layer_norm)
             if args.grad_checkpointing:
                 #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
                 layers_grad_checkpoint = set()
@@ -365,6 +374,8 @@ def main(args):
                 apply_activation_checkpointing(
                     model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
                 )
+
+
         else:
             print("--distrubted_engine should be either 'ddp or 'fsdp'")
             sys.exit(1)
