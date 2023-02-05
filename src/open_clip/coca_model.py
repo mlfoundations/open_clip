@@ -162,7 +162,7 @@ class CoCa(nn.Module):
             self,
             image,
             text=None,
-            seq_len=77,
+            seq_len=30,
             max_seq_len=77,
             mask_prob=0.0,
             temperature=1.,
@@ -177,7 +177,7 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
-            repetition_penalty=0.9,
+            repetition_penalty=1.0,
             fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
     ):
 
