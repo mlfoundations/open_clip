@@ -13,7 +13,7 @@ from .transformer import (
     MultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
-from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
+
 try:
     from transformers import (
         BeamSearchScorer,
@@ -31,7 +31,6 @@ except ImportError as e:
 GENERATION_TYPES = {
     "top_k": TopKLogitsWarper,
     "top_p": TopPLogitsWarper,
-    "top_a": top_a,
     "beam_search": "beam_search"
 }
 
@@ -419,3 +418,24 @@ class CoCa(nn.Module):
         )
         return sequence_outputs['sequences']
 
+
+def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
+    if past:
+        input_ids = input_ids[:, -1].unsqueeze(-1)
+
+    attention_mask = kwargs.get("attention_mask", None)
+    position_ids = kwargs.get("position_ids", None)
+
+    if attention_mask is not None and position_ids is None:
+        # create position_ids on the fly for batch generation
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
+    else:
+        position_ids = None
+    return {
+        "text": input_ids,
+        "images": image_inputs,
+        "past_key_values": past,
+        "position_ids": position_ids,
+        "attention_mask": attention_mask,
+    }
