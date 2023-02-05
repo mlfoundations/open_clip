@@ -14,15 +14,23 @@ from .transformer import (
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
-
 try:
-    from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
+    from transformers import (
+        BeamSearchScorer,
+        LogitsProcessorList,
+        TopPLogitsWarper,
+        TopKLogitsWarper,
+        RepetitionPenaltyLogitsProcessor,
+        MinLengthLogitsProcessor,
+        MaxLengthCriteria,
+        StoppingCriteriaList
+    )
 except ImportError as e:
     pass
 
 GENERATION_TYPES = {
-    "top_k": top_k,
-    "top_p": top_p,
+    "top_k": TopKLogitsWarper,
+    "top_p": TopPLogitsWarper,
     "top_a": top_a,
     "beam_search": "beam_search"
 }
@@ -169,16 +177,24 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
+            repetition_penalty=0.9,
             fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
     ):
 
         sot_token_id = 49406 if sot_token_id is None else sot_token_id
         eos_token_id = 49407 if eos_token_id is None else eos_token_id
         pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
+        logit_processor = LogitsProcessorList(
+            [
+                MinLengthLogitsProcessor(min_seq_len, eos_token_id),
+                RepetitionPenaltyLogitsProcessor(repetition_penalty),
+            ]
+        )
 
         assert generation_type in GENERATION_TYPES, \
             f"generation_type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
-        filter_logits_fn = GENERATION_TYPES[generation_type]
+
+        logit_warper = GENERATION_TYPES[generation_type](filter_thres)
 
         if generation_type == "beam_search":
             return self.generate_beamsearch(
@@ -191,11 +207,14 @@ class CoCa(nn.Module):
                 num_beam_groups=num_beam_groups,
                 min_seq_len=min_seq_len,
                 stopping_criteria=stopping_criteria,
+                logit_processor=logit_processor,
+                logit_warper=logit_warper
             )
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
         assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
         device = image.device
+        image_latent, image_embs = self._encode_image(image)
 
         if text is None:
             text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
@@ -209,7 +228,6 @@ class CoCa(nn.Module):
         cur_len = text.shape[1]
         self.eval()
         out = text
-        image_latent, image_embs = self._encode_image(image)
 
         while True:
             x = out[:, -max_seq_len:]
@@ -225,18 +243,9 @@ class CoCa(nn.Module):
             else:
                 logits = logits[~mask, :]
 
-                if cur_len + 1 < min_seq_len:
-                    logits = logits[:, :-1] # eos_token_id is the largest
-
-                if filter_logits_fn in {top_k, top_p}:
-                    filtered_logits = filter_logits_fn(logits, thres=filter_thres)
-                    probs = F.softmax(filtered_logits / temperature, dim=-1)
-
-                elif filter_logits_fn is top_a:
-                    filtered_logits = filter_logits_fn(
-                        logits, min_p_pow=min_p_pow, min_p_ratio=min_p_ratio
-                    )
-                    probs = F.softmax(filtered_logits / temperature, dim=-1)
+                filtered_logits = logit_processor(text, logits)
+                filtered_logits = logit_warper(text, filtered_logits)
+                probs = F.softmax(filtered_logits / temperature, dim=-1)
 
                 if (cur_len + 1 == seq_len):
                     sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
@@ -267,6 +276,8 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
+            logit_processor=None,
+            logit_warper=None,
         ):
 
         device = image_inputs.device
@@ -283,11 +294,10 @@ class CoCa(nn.Module):
             num_beam_groups=num_beam_groups,
         )
         # instantiate logits processors
-        target_logits_processor_list = [
-            MinLengthLogitsProcessor(min_seq_len, eos_token_id=eos_token_id)
-        ]
-        logits_processor = LogitsProcessorList(
-            target_logits_processor_list
+        logits_processor = (
+            LogitsProcessorList([MinLengthLogitsProcessor(min_seq_len, eos_token_id=eos_token_id)])
+            if logit_processor is None
+            else logit_processor
         )
         if stopping_criteria is None:
             stopping_criteria = [MaxLengthCriteria(max_length=max_length)]
