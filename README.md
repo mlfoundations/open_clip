@@ -310,6 +310,55 @@ print(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_o
 
 See also this [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 
+### Fine Tuning CoCa
+
+To fine-tune coca on mscoco, first create the dataset, one way is using a csvdataset and perhaps the simplest way to do it is using [CLIP_benchmark](https://github.com/LAION-AI/CLIP_benchmark) which in turn uses [pycocotools](https://github.com/cocodataset/cocoapi) (that can be used also by itself).
+
+```python
+from clip_benchrmark.datasets.builder import build_dataset
+import pandas as pd
+import os
+
+root_path = "path/to/data/dir" # set this to smth meaningful
+ds = build_dataset("mscoco_captions", root=root_path, split="train") # this downloads the dataset if it is not there already
+coco = ds.coco
+imgs = coco.loadImgs(coco.getImgIds())
+future_df = {"filepath":[], "title":[]}
+for img in imgs:
+    caps = coco.imgToAnns[img["id"]]
+    for cap in caps:
+        future_df["filepath"].append(img["file_name"])
+        future_df["title"].append(cap["caption"])
+pd.DataFrame.from_dict(future_df).to_csv(
+  os.path.join(root_path, "train2014.csv"), index=False, sep="\t"
+)
+```
+This should create a csv dataset that one can use to fine-tune coca with open_clip
+```bash
+python -m training.main \
+    --dataset-type "csv" \
+    --train-data "path/to/data/dir/train2014.csv" \
+    --warmup 1000 \
+    --batch-size 128 \
+    --lr 1e-5 \
+    --wd 0.1 \
+    --epochs 1 \
+    --workers 3 \
+    --model "coca_ViT-L-14" \
+    --report-to "wandb" \
+    --coca-contrastive-loss-weight 0 \
+    --coca-caption-loss-weight 1 \
+    --log-every-n-steps 100
+```
+
+This is a general setting, open_clip has very parameters that can be set, ```python -m training.main --help``` should show them. The only relevant change compared to pre-training are the two arguments
+
+```bash
+--coca-contrastive-loss-weight 0
+--coca-caption-loss-weight 1
+```
+which make the model only train the generative side.
+
 ### Training with pre-trained language models as text encoder:
 
 If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
@@ -559,7 +608,7 @@ There is some additional GPU memory required --- the features and data from all 
 
 There are also `m` loss computations instead of the usual 1.
 
-For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050).
 
 ### Support for remote loading/training
 
