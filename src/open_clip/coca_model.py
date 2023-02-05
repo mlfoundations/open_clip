@@ -194,8 +194,6 @@ class CoCa(nn.Module):
         assert generation_type in GENERATION_TYPES, \
             f"generation_type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
 
-        logit_warper = GENERATION_TYPES[generation_type](filter_thres)
-
         if generation_type == "beam_search":
             return self.generate_beamsearch(
                 image_inputs = image,
@@ -208,7 +206,6 @@ class CoCa(nn.Module):
                 min_seq_len=min_seq_len,
                 stopping_criteria=stopping_criteria,
                 logit_processor=logit_processor,
-                logit_warper=logit_warper
             )
 
         assert mask_prob < 1, "mask_prob must be smaller than 1."
@@ -228,6 +225,8 @@ class CoCa(nn.Module):
         cur_len = text.shape[1]
         self.eval()
         out = text
+
+        logit_warper = GENERATION_TYPES[generation_type](filter_thres)
 
         while True:
             x = out[:, -max_seq_len:]
