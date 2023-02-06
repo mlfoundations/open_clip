@@ -246,9 +246,8 @@ class CoCa(nn.Module):
                         break
                 else:
                     logits = logits[~mask, :]
-
-                    filtered_logits = logit_processor(text, logits)
-                    filtered_logits = logit_warper(text, filtered_logits)
+                    filtered_logits = logit_processor(x[~mask, :], logits)
+                    filtered_logits = logit_warper(x[~mask, :], filtered_logits)
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
 
                     if (cur_len + 1 == seq_len):
