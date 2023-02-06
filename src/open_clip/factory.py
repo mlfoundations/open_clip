@@ -47,8 +47,9 @@ def _rescan_model_configs():
 
             is_clip = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
             is_text_only = all(a in model_cfg for a in ('embed_dim', 'tower_a_cfg', 'tower_b_cfg'))
+            is_siamese_text_only = all(a in model_cfg for a in ('embed_dim', 'text_cfg'))
             is_multimodal = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg', 'multimodal_cfg'))
-            if is_clip or is_text_only or is_multimodal:
+            if is_clip or is_text_only or is_siamese_text_only or is_multimodal:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}

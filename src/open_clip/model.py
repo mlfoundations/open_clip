@@ -296,8 +296,10 @@ class TextTextCLIP(nn.Module):
             tower_b_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False,
     ):
         super().__init__()
+        self.output_dict = output_dict
         self.tower_a = _build_text_tower(embed_dim, tower_a_cfg, quick_gelu, cast_dtype)
         self.tower_b = _build_text_tower(embed_dim, tower_b_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -324,6 +326,12 @@ class TextTextCLIP(nn.Module):
     def forward(self, text_a, text_b):
         features_a = self.encode_text_a(text_a, normalize=True)
         features_b = self.encode_text_b(text_b, normalize=True)
+        if self.output_dict:
+            return {
+                "text_a_features": features_a,
+                "text_b_features": features_b,
+                "logit_scale": self.logit_scale.exp()
+            }
         return features_a, features_b, self.logit_scale.exp()
 
 
@@ -336,8 +344,10 @@ class SiameseTextCLIP(nn.Module):
             text_cfg: CLIPTextCfg,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False,
     ):
         super().__init__()
+        self.output_dict = output_dict
         self.text_tower = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
@@ -355,6 +365,12 @@ class SiameseTextCLIP(nn.Module):
     def forward(self, text_a, text_b):
         features_a = self.encode_text(text_a, normalize=True)
         features_b = self.encode_text(text_b, normalize=True)
+        if self.output_dict:
+            return {
+                "text_a_features": features_a,
+                "text_b_features": features_b,
+                "logit_scale": self.logit_scale.exp()
+            }
         return features_a, features_b, self.logit_scale.exp()
 
 

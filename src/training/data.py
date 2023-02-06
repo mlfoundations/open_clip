@@ -48,11 +48,13 @@ class TextPairDataset(Dataset):
 
 class HFTextPairDataset(Dataset):
     def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
-        logging.debug(f'Loading parquet data from {input_filename}.')
+        logging.debug(f'Loading data from {input_filename}.')
         
         from datasets import load_dataset
         
         self.dataset = load_dataset(input_filename)
+        if "train" in self.dataset.keys():
+            self.dataset = self.dataset['train']
         self.text_a_key = text_a_key
         self.text_b_key = text_b_key
 
@@ -61,7 +63,7 @@ class HFTextPairDataset(Dataset):
         self.tokenize = tokenizer
 
     def __len__(self):
-        return len(self.text_a)
+        return len(self.dataset[self.text_a_key])
 
     def __getitem__(self, idx):
         texts_a = self.tokenize([str(self.dataset[self.text_a_key][idx])])[0]
@@ -88,6 +90,7 @@ def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
         )
         
     num_samples = len(dataset)
+    logging.debug("%s"%(num_samples))
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
 
