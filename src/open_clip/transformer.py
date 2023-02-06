@@ -338,7 +338,7 @@ class VisionTransformer(nn.Module):
             attn_pooler_heads: int = 8,
             output_dim: int = 512,
             patch_dropout: float = 0.,
-            dual_patchnorm: bool = False,
+            input_patchnorm: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False
@@ -350,10 +350,10 @@ class VisionTransformer(nn.Module):
         self.grid_size = (image_height // patch_height, image_width // patch_width)
         self.output_dim = output_dim
 
-        # to patches related hyperparameters and projections
-        self.dual_patchnorm = dual_patchnorm
+        # whether to layernorm each patch, as done in dual patchnorm paper - https://arxiv.org/abs/2302.01327v1
+        self.input_patchnorm = input_patchnorm
 
-        if dual_patchnorm:
+        if input_patchnorm:
             patch_input_dim = patch_height * patch_width * 3
             self.patchnorm_pre_ln = LayerNorm(patch_input_dim)
             self.conv1 = nn.Linear(patch_input_dim, width)
@@ -458,7 +458,7 @@ class VisionTransformer(nn.Module):
     def forward(self, x: torch.Tensor):
 
         # to patches - whether to use dual patchnorm - https://arxiv.org/abs/2302.01327v1
-        if self.dual_patchnorm:
+        if self.input_patchnorm:
             # einops - rearrange(x, 'b c (h p1) (w p2) -> b (h w) (c p1 p2)')
             x = x.reshape(x.shape[0], x.shape[1], self.grid_size[0], self.patch_size[0], self.grid_size[1], self.patch_size[1])
             x = x.permute(0, 2, 4, 1, 3, 5)
