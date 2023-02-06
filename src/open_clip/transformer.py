@@ -338,6 +338,7 @@ class VisionTransformer(nn.Module):
             attn_pooler_heads: int = 8,
             output_dim: int = 512,
             patch_dropout: float = 0.,
+            input_patchnorm: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
@@ -345,12 +346,23 @@ class VisionTransformer(nn.Module):
     ):
         super().__init__()
         self.output_tokens = output_tokens
-        self.image_size = to_2tuple(image_size)
-        self.patch_size = to_2tuple(patch_size)
-        self.grid_size = (self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1])
+        image_height, image_width = self.image_size = to_2tuple(image_size)
+        patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
+        self.grid_size = (image_height // patch_height, image_width // patch_width)
         self.output_dim = output_dim
-        self.conv1 = nn.Conv2d(in_channels=channels, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
+        # whether to layernorm each patch, as done in dual patchnorm paper - https://arxiv.org/abs/2302.01327v1
+        self.input_patchnorm = input_patchnorm
+
+        if input_patchnorm:
+            patch_input_dim = patch_height * patch_width * channels
+            self.patchnorm_pre_ln = LayerNorm(patch_input_dim)
+            self.conv1 = nn.Linear(patch_input_dim, width)
+        else:
+            self.patchnorm_pre_ln = nn.Identity()
+            self.conv1 = nn.Conv2d(in_channels=channels, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+
+        # class embeddings and positional embeddings
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
@@ -445,9 +457,21 @@ class VisionTransformer(nn.Module):
             return x[:, 0], x[:, 1:]
 
     def forward(self, x: torch.Tensor):
-        x = self.conv1(x)  # shape = [*, width, grid, grid]
-        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
-        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+
+        # to patches - whether to use dual patchnorm - https://arxiv.org/abs/2302.01327v1
+        if self.input_patchnorm:
+            # einops - rearrange(x, 'b c (h p1) (w p2) -> b (h w) (c p1 p2)')
+            x = x.reshape(x.shape[0], x.shape[1], self.grid_size[0], self.patch_size[0], self.grid_size[1], self.patch_size[1])
+            x = x.permute(0, 2, 4, 1, 3, 5)
+            x = x.reshape(x.shape[0], self.grid_size[0] * self.grid_size[1], -1)
+            x = self.patchnorm_pre_ln(x)
+            x = self.conv1(x)
+        else:
+            x = self.conv1(x)  # shape = [*, width, grid, grid]
+            x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+            x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+
+        # class embeddings and positional embeddings
         x = torch.cat(
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
