@@ -158,26 +158,23 @@ class CoCa(nn.Module):
         }
 
     def generate(
-            self,
-            image,
-            text=None,
-            seq_len=30,
-            max_seq_len=77,
-            mask_prob=0.0,
-            temperature=1.,
-            generation_type="beam_search",
-            filter_thres=0.9,
-            min_p_pow=2.0,
-            min_p_ratio=0.02,
-            pad_token_id=None,
-            eos_token_id=None,
-            sot_token_id=None,
-            num_beams=6,
-            num_beam_groups=3,
-            min_seq_len=5,
-            stopping_criteria=None,
-            repetition_penalty=1.0,
-            fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
+        self,
+        image,
+        text=None,
+        seq_len=30,
+        max_seq_len=77,
+        temperature=1.,
+        generation_type="beam_search",
+        filter_thres=0.9,
+        pad_token_id=None,
+        eos_token_id=None,
+        sot_token_id=None,
+        num_beams=6,
+        num_beam_groups=3,
+        min_seq_len=5,
+        stopping_criteria=None,
+        repetition_penalty=1.0,
+        fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
     ):
 
         with torch.no_grad():
@@ -214,7 +211,6 @@ class CoCa(nn.Module):
                     logit_processor=logit_processor,
                 )
 
-            assert mask_prob < 1, "mask_prob must be smaller than 1."
             assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
             device = image.device
             image_latent, image_embs = self._encode_image(image)
