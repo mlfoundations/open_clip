@@ -5,6 +5,8 @@
         "timm_model_pretrained": false,
         "timm_pool": "",
         "timm_proj": "linear",
+        "timm_drop": 0.0,
+        "timm_drop_path": 0.1,
         "image_size": 320
     },
     "text_cfg": {
