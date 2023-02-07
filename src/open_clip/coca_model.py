@@ -174,7 +174,7 @@ class CoCa(nn.Module):
         min_seq_len=5,
         stopping_criteria=None,
         repetition_penalty=1.0,
-        fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
+        fixed_output_length=False # if True output.shape == (batch_size, seq_len)
     ):
 
         with torch.no_grad():
