@@ -157,6 +157,9 @@ class CoCa(nn.Module):
             "logit_scale": self.logit_scale.exp()
         }
 
+
+    # taking many ideas and components from HuggingFace GenerationMixin
+    # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
     def generate(
         self,
         image,
