@@ -311,9 +311,10 @@ class WeightedSampler(IterableDataset):
             idx = self.rng.choices(idxs, weights=self.weights, k=1)[0]
             try:
                 sample = next(sources[idx])
-                yield sample
             except StopIteration:
-                return
+                sources[idx] = iter(self.datasets[idx])
+                sample = next(sources[idx])
+            yield sample
 
 
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
