@@ -168,7 +168,8 @@ class CoCa(nn.Module):
         max_seq_len=77,
         temperature=1.,
         generation_type="beam_search",
-        filter_thres=0.9,
+        top_p=0.1, # keep tokens in the 1 - top_p quantile
+        top_k=1, # keeps the top_k most probable tokens
         pad_token_id=None,
         eos_token_id=None,
         sot_token_id=None,
@@ -198,9 +199,6 @@ class CoCa(nn.Module):
                 stopping_criteria
             )
 
-            assert generation_type in GENERATION_TYPES, \
-                f"generation_type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
-
             if generation_type == "beam_search":
                 return self._generate_beamsearch(
                     image_inputs = image,
@@ -212,6 +210,16 @@ class CoCa(nn.Module):
                     min_seq_len=min_seq_len,
                     stopping_criteria=stopping_criteria,
                     logit_processor=logit_processor,
+                )
+            
+            elif generation_type == "top_p":
+                logit_warper = GENERATION_TYPES[generation_type](top_p)
+            elif generation_type == "top_k":
+                logit_warper = GENERATION_TYPES[generation_type](top_k)
+            else:
+                raise ValueError(
+                    f"generation_type has to be one of "
+                    f"{'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
                 )
 
             assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
@@ -231,7 +239,7 @@ class CoCa(nn.Module):
             self.eval()
             out = text
 
-            logit_warper = GENERATION_TYPES[generation_type](filter_thres)
+            
 
             while True:
                 x = out[:, -max_seq_len:]
