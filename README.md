@@ -1,6 +1,6 @@
 # OpenCLIP
 
-[[Paper]](https://arxiv.org/abs/2212.07143) [[Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
+[[Paper]](https://arxiv.org/abs/2212.07143) [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb) [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 [![pypi](https://img.shields.io/pypi/v/open_clip_torch.svg)](https://pypi.python.org/pypi/open_clip_torch)
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
@@ -73,6 +73,7 @@ with torch.no_grad(), torch.cuda.amp.autocast():
 
 print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
 ```
+See also this [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb)
 
 To compute billions of embeddings efficiently, you can use [clip-retrieval](https://github.com/rom1504/clip-retrieval) which has openclip support.
 
@@ -288,29 +289,75 @@ Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https:/
 
 ### Generating text with CoCa
 
-To generate text with coca this should work
-
 ```python
 import open_clip
+import torch
 from PIL import Image
 
-model, _, transform = open_clip.create_model_and_transform(
-  model_name="coca_ViT-B-32",
-  pretrained="laion2B-s13B-b90k"
+model, _, transform = open_clip.create_model_and_transforms(
+  model_name="coca_ViT-L-14",
+  pretrained="mscoco_finetuned_laion2B-s13B-b90k"
 )
 
-# load an image
-im = Image.load("path/to/image").convert("RGB")
-# transform the image and add a batch size dimension
+im = Image.open("cat.jpg").convert("RGB")
 im = transform(im).unsqueeze(0)
 
-generated = model.generate(im)
-# alternatively if computation was running on a gpu
-# generated = generated.detach()
+with torch.no_grad(), torch.cuda.amp.autocast():
+  generated = model.generate(im)
 
-print(open_clip.decode(generated[0]))
-# "<start_of_text> some text here <end_of_text>"
+print(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", ""))
 ```
+
+See also this [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
+
+### Fine Tuning CoCa
+
+To fine-tune coca on mscoco, first create the dataset, one way is using a csvdataset and perhaps the simplest way to do it is using [CLIP_benchmark](https://github.com/LAION-AI/CLIP_benchmark) which in turn uses [pycocotools](https://github.com/cocodataset/cocoapi) (that can be used also by itself).
+
+```python
+from clip_benchrmark.datasets.builder import build_dataset
+import pandas as pd
+import os
+
+root_path = "path/to/data/dir" # set this to smth meaningful
+ds = build_dataset("mscoco_captions", root=root_path, split="train") # this downloads the dataset if it is not there already
+coco = ds.coco
+imgs = coco.loadImgs(coco.getImgIds())
+future_df = {"filepath":[], "title":[]}
+for img in imgs:
+    caps = coco.imgToAnns[img["id"]]
+    for cap in caps:
+        future_df["filepath"].append(img["file_name"])
+        future_df["title"].append(cap["caption"])
+pd.DataFrame.from_dict(future_df).to_csv(
+  os.path.join(root_path, "train2014.csv"), index=False, sep="\t"
+)
+```
+This should create a csv dataset that one can use to fine-tune coca with open_clip
+```bash
+python -m training.main \
+    --dataset-type "csv" \
+    --train-data "path/to/data/dir/train2014.csv" \
+    --warmup 1000 \
+    --batch-size 128 \
+    --lr 1e-5 \
+    --wd 0.1 \
+    --epochs 1 \
+    --workers 3 \
+    --model "coca_ViT-L-14" \
+    --report-to "wandb" \
+    --coca-contrastive-loss-weight 0 \
+    --coca-caption-loss-weight 1 \
+    --log-every-n-steps 100
+```
+
+This is a general setting, open_clip has very parameters that can be set, ```python -m training.main --help``` should show them. The only relevant change compared to pre-training are the two arguments
+
+```bash
+--coca-contrastive-loss-weight 0
+--coca-caption-loss-weight 1
+```
+which make the model only train the generative side.
 
 ### Training with pre-trained language models as text encoder:
 
@@ -353,6 +400,8 @@ tensorboard --logdir=logs/tensorboard/ --port=7777
 ```
 
 ## Evaluation / Zero-Shot
+
+We recommend https://github.com/LAION-AI/CLIP_benchmark#how-to-use for systematic evaluation on 40 datasets.
 
 ### Evaluating local checkpoint:
 
@@ -541,7 +590,9 @@ Future trained models will use nn.GELU.
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
  ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
  ('coca_ViT-B-32', 'laion2B-s13B-b90k'),
- ('coca_ViT-L-14', 'laion2B-s13B-b90k'),]
+ ('coca_ViT-B-32', 'mscoco_finetuned_laion2B-s13B-b90k'), # finetuned models lose contrastive capabilities
+ ('coca_ViT-L-14', 'laion2B-s13B-b90k'),
+ ('coca_ViT-L-14', 'mscoco_finetuned_laion2B-s13B-b90k'),] # finetuned models lose contrastive capabilities
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
@@ -557,7 +608,7 @@ There is some additional GPU memory required --- the features and data from all 
 
 There are also `m` loss computations instead of the usual 1.
 
-For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050). 
+For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050).
 
 ### Support for remote loading/training
 
