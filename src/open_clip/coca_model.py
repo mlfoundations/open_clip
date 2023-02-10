@@ -180,7 +180,8 @@ class CoCa(nn.Module):
         repetition_penalty=1.0,
         fixed_output_length=False # if True output.shape == (batch_size, seq_len)
     ):
-
+        
+        assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
         with torch.no_grad():
             sot_token_id = 49406 if sot_token_id is None else sot_token_id
             eos_token_id = 49407 if eos_token_id is None else eos_token_id
@@ -198,9 +199,11 @@ class CoCa(nn.Module):
             stopping_criteria = StoppingCriteriaList(
                 stopping_criteria
             )
+            
+            device = image.device
 
             if generation_type == "beam_search":
-                return self._generate_beamsearch(
+                output = self._generate_beamsearch(
                     image_inputs = image,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
@@ -211,6 +214,12 @@ class CoCa(nn.Module):
                     stopping_criteria=stopping_criteria,
                     logit_processor=logit_processor,
                 )
+                if fixed_output_length and output.shape[1] < seq_len:
+                    return torch.cat(
+                        (output, torch.ones(output.shape[0], seq_len-output.shape[1], device=device, dtype=output.dtype) * self.pad_id),
+                        dim=1
+                    )
+                return output
             
             elif generation_type == "top_p":
                 logit_warper = GENERATION_TYPES[generation_type](top_p)
@@ -222,8 +231,6 @@ class CoCa(nn.Module):
                     f"{'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
                 )
 
-            assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
-            device = image.device
             image_latent, image_embs = self._encode_image(image)
 
             if text is None:
