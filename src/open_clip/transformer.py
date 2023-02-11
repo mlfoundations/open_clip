@@ -512,7 +512,7 @@ class VisionTransformer(nn.Module):
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         if(x.shape[1] > self.positional_embedding.shape[0]):
             dim = int(math.sqrt(x.shape[1]) * self.patch_size[0])
-            x = x + self.interpolate_pos_encoding(x, dim, dim)
+            x = x + self.interpolate_pos_encoding(x, dim, dim).to(x.dtype)
         else:
             x = x + self.positional_embedding.to(x.dtype)
 
