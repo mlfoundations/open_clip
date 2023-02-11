@@ -29,7 +29,17 @@ def parse_args(args):
         "--train-data",
         type=str,
         default=None,
-        help="Path to file(s) with training data",
+        help="Path to file(s) with training data. When using webdataset, multiple datasources can be combined using the `::` separator.",
+    )
+    parser.add_argument(
+        "--train-data-weights",
+        type=str,
+        default=None,
+        help=(
+            "When using multiple data sources with webdataset and sampling with replacement, which weight to use for sampling the different data sources. "
+            "Similar to --train-data, this should be a string with as many numbers as there are data sources, separated by `::` (e.g. 1::2::0.5) "
+            "By default, datapoints are sampled uniformly regardless of the dataset sizes."
+        )
     )
     parser.add_argument(
         "--val-data",

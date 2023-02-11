@@ -295,6 +295,27 @@ class ResampledShards2(IterableDataset):
             yield dict(url=self.rng.choice(self.urls))
 
 
+class WeightedSampler(IterableDataset):
+    def __init__(self, datasets, weights=None):
+        super().__init__()
+        self.datasets = datasets
+        self.rng = random.Random()
+        if weights is None:
+            weights = [1 for _ in self.datasets]
+        self.weights = weights
+    
+    def __iter__(self):
+        sources = [iter(ds) for ds in self.datasets]
+        idxs = list(range(len(sources)))
+        for _ in range(sys.maxsize):
+            idx = self.rng.choices(idxs, weights=self.weights, k=1)[0]
+            try:
+                sample = next(sources[idx])
+                yield sample
+            except StopIteration:
+                return
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -313,48 +334,65 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
-    if resampled:
-        pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
+    def build_pipeline(input_shards):
+        if resampled:
+            pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
+        else:
+            pipeline = [wds.SimpleShardList(input_shards)]
 
-    # at this point we have an iterator over all the shards
-    if is_train:
-        if not resampled:
+        # at this point we have an iterator over all the shards
+        if is_train:
+            if not resampled:
+                pipeline.extend([
+                    detshuffle2(
+                        bufsize=_SHARD_SHUFFLE_SIZE,
+                        initial=_SHARD_SHUFFLE_INITIAL,
+                        seed=args.seed,
+                        epoch=shared_epoch,
+                    ),
+                    wds.split_by_node,
+                    wds.split_by_worker,
+                ])
             pipeline.extend([
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
+                # at this point, we have an iterator over the shards assigned to each worker at each node
+                tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
+                wds.shuffle(
+                    bufsize=_SAMPLE_SHUFFLE_SIZE,
+                    initial=_SAMPLE_SHUFFLE_INITIAL,
                 ),
-                wds.split_by_node,
+            ])
+        else:
+            pipeline.extend([
                 wds.split_by_worker,
+                # at this point, we have an iterator over the shards assigned to each worker
+                wds.tarfile_to_samples(handler=log_and_continue),
             ])
         pipeline.extend([
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
+            wds.select(filter_no_caption_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.to_tuple("image", "text"),
         ])
+
+        return pipeline
+    
+    if args.train_data_weights is not None:
+        weights = args.train_data_weights
+        weights = [float(w) for w in weights.split('::')]
+        input_shard_list = input_shards.split('::')
+        assert len(input_shard_list) == len(weights), f"Expected the number of data components ({len(input_shard_list)}) and weights ({len(weights)}) to match."
+        datasets = [wds.DataPipeline(*build_pipeline(shards)) for shards in input_shard_list]
+        pipeline = [WeightedSampler(datasets, weights=weights)]
     else:
-        pipeline.extend([
-            wds.split_by_worker,
-            # at this point, we have an iterator over the shards assigned to each worker
-            wds.tarfile_to_samples(handler=log_and_continue),
-        ])
-    pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train),
-    ])
+        pipeline = build_pipeline(input_shards)
+    
+    pipeline.append(
+        wds.batched(args.batch_size, partial=not is_train)
+    )
 
     dataset = wds.DataPipeline(*pipeline)
+
     if is_train:
         if not resampled:
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
