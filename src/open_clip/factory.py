@@ -78,7 +78,8 @@ def get_tokenizer(model_name):
         tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
     else:
         config = get_model_config(model_name)
-        tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+        tokenizer = HFTokenizer(
+            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
     return tokenizer
 
 
@@ -117,6 +118,7 @@ def create_model(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        require_pretrained: bool = False,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -191,6 +193,7 @@ def create_model(
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
+        pretrained_loaded = False
         if pretrained:
             checkpoint_path = ''
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
@@ -208,9 +211,16 @@ def create_model(
                     f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
+            pretrained_loaded = True
         elif has_hf_hub_prefix:
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
             load_checkpoint(model, checkpoint_path)
+            pretrained_loaded = True
+
+        if require_pretrained and not pretrained_loaded:
+            # callers of create_model_from_pretrained always expect pretrained weights
+            raise RuntimeError(
+                f'Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded.')
 
         model.to(device=device)
         if precision in ("fp16", "bf16"):
@@ -316,7 +326,7 @@ def create_model_and_transforms(
 
 def create_model_from_pretrained(
         model_name: str,
-        pretrained: str,
+        pretrained: Optional[str] = None,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
@@ -328,11 +338,6 @@ def create_model_from_pretrained(
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
 ):
-    if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
-        raise RuntimeError(
-            f'{pretrained} is not a valid pretrained cfg or checkpoint for {model_name}.'
-            f' Use open_clip.list_pretrained() to find one.')
-
     model = create_model(
         model_name,
         pretrained,
@@ -343,6 +348,7 @@ def create_model_from_pretrained(
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
         cache_dir=cache_dir,
+        require_pretrained=True,
     )
 
     if not return_transform:
