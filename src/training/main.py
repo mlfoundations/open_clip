@@ -240,8 +240,6 @@ def main(args):
             precision=args.precision,
             output_dict=True,
         )
-        #FIXME why is the following call necessary.
-        dist_model.apply(lambda m: setattr(m, 'output_dict', True))
 
     random_seed(args.seed, args.rank)
 
