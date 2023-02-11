@@ -146,6 +146,10 @@ def create_model(
             jit=jit,
             cache_dir=cache_dir,
         )
+
+        # to always output dict even if it is clip
+        if output_dict and hasattr(model, "output_dict"):
+            model.output_dict = True
     else:
         model_cfg = model_cfg or get_model_config(model_name)
         if model_cfg is not None:
