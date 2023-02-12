@@ -1,3 +1,8 @@
+## 2.13.0
+
+* Add support for dataset mixtures with different sampling weights
+* make transformers optional again 
+
 ## 2.12.0
 
 * Updated convnext configs for consistency
