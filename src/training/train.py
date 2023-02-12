@@ -137,12 +137,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 images = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     logit_scale = model_out.pop("logit_scale")
-                    for key, val in accum_features:
+                    inputs = {}
+                    for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        accumulated = accumulated[:j] +  [model_out[key]] + accumulated[j + 1:]
-                    losses = loss(**accumulated, logit_scale=logit_scale, output_dict=True)
+                        inputs[key] = torch.cat(accumulated[:j] +  [model_out[key]] + accumulated[j + 1:])
+                    losses = loss(**inputs, logit_scale=logit_scale, output_dict=True)
+                    del inputs
                     total_loss = sum(losses.values())
                     losses["loss"] = total_loss
                 backward(total_loss, scaler)
