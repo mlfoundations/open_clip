@@ -25,14 +25,16 @@ try:
         MaxLengthCriteria,
         StoppingCriteriaList
     )
+
+    GENERATION_TYPES = {
+        "top_k": TopKLogitsWarper,
+        "top_p": TopPLogitsWarper,
+        "beam_search": "beam_search"
+    }
 except ImportError as e:
     pass
 
-GENERATION_TYPES = {
-    "top_k": TopKLogitsWarper,
-    "top_p": TopPLogitsWarper,
-    "beam_search": "beam_search"
-}
+
 
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
@@ -180,7 +182,7 @@ class CoCa(nn.Module):
         repetition_penalty=1.0,
         fixed_output_length=False # if True output.shape == (batch_size, seq_len)
     ):
-        
+
         assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
         with torch.no_grad():
             sot_token_id = 49406 if sot_token_id is None else sot_token_id
@@ -199,7 +201,7 @@ class CoCa(nn.Module):
             stopping_criteria = StoppingCriteriaList(
                 stopping_criteria
             )
-            
+
             device = image.device
 
             if generation_type == "beam_search":
@@ -220,7 +222,7 @@ class CoCa(nn.Module):
                         dim=1
                     )
                 return output
-            
+
             elif generation_type == "top_p":
                 logit_warper = GENERATION_TYPES[generation_type](top_p)
             elif generation_type == "top_k":
@@ -246,7 +248,7 @@ class CoCa(nn.Module):
             self.eval()
             out = text
 
-            
+
 
             while True:
                 x = out[:, -max_seq_len:]
