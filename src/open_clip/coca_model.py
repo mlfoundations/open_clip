@@ -31,9 +31,14 @@ try:
         "top_p": TopPLogitsWarper,
         "beam_search": "beam_search"
     }
+    _has_transformers = True
 except ImportError as e:
-    pass
-
+    GENERATION_TYPES = {
+        "top_k": None,
+        "top_p": None,
+        "beam_search": "beam_search"
+    }
+    _has_transformers = False
 
 
 @dataclass
@@ -159,9 +164,6 @@ class CoCa(nn.Module):
             "logit_scale": self.logit_scale.exp()
         }
 
-
-    # taking many ideas and components from HuggingFace GenerationMixin
-    # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
     def generate(
         self,
         image,
@@ -170,8 +172,8 @@ class CoCa(nn.Module):
         max_seq_len=77,
         temperature=1.,
         generation_type="beam_search",
-        top_p=0.1, # keep tokens in the 1 - top_p quantile
-        top_k=1, # keeps the top_k most probable tokens
+        top_p=0.1,  # keep tokens in the 1 - top_p quantile
+        top_k=1,  # keeps the top_k most probable tokens
         pad_token_id=None,
         eos_token_id=None,
         sot_token_id=None,
@@ -182,8 +184,11 @@ class CoCa(nn.Module):
         repetition_penalty=1.0,
         fixed_output_length=False # if True output.shape == (batch_size, seq_len)
     ):
-
+        # taking many ideas and components from HuggingFace GenerationMixin
+        # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
+        assert _has_transformers, "Please install transformers for generate functionality. `pip install transformers`."
         assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
+
         with torch.no_grad():
             sot_token_id = 49406 if sot_token_id is None else sot_token_id
             eos_token_id = 49407 if eos_token_id is None else eos_token_id
@@ -248,8 +253,6 @@ class CoCa(nn.Module):
             self.eval()
             out = text
 
-
-
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
@@ -296,8 +299,7 @@ class CoCa(nn.Module):
             stopping_criteria=None,
             logit_processor=None,
             logit_warper=None,
-        ):
-
+    ):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
         image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
