@@ -74,14 +74,17 @@ class CLIPMultimodalClassifier(nn.Module):
         super().__init__()
 
         self.encoder = encoder
-        self.logits_proj = nn.Linear(embed_dim * 2, num_labels) #size of answer space
+        
+        self.logits_proj = nn.Linear(embed_dim * 2, 1536) #size of answer space
 
+        self.logits_2 = nn.Linear(1536, num_classes)
     def forward(self, image, text):
         # CLIP doesn't have a multimodal encoder, so we concatenate the features
         text_features = self.encoder.encode_text(text)
         image_features = self.encoder.encode_image(image)
         multimodal_features = torch.cat([image_features, text_features], dim=-1)
-        logits = nn.functional.softmax(self.logits_proj(multimodal_features), dim=-1)
+        layer1 = nn.GeLU(self.logits_proj(multimodal_features), dim=-1)
+        logits = self.logits_2(layer1)
         return logits
 
 class EarlyStopping:
