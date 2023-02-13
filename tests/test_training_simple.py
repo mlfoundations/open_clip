@@ -81,7 +81,8 @@ def test_training_unfreezing_vit():
     '--workers', '2',
     '--model', 'ViT-B-32',
     '--lock-image',
-    '--lock-image-unlocked-groups', '5'
+    '--lock-image-unlocked-groups', '5',
+    '--accum-freq', '2'
     ])
 
 

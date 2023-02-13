@@ -152,6 +152,9 @@ class SimpleTokenizer(object):
 
 _tokenizer = SimpleTokenizer()
 
+def decode(output_ids: torch.Tensor):
+    output_ids = output_ids.cpu().numpy()
+    return _tokenizer.decode(output_ids)
 
 def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
     """
@@ -191,6 +194,9 @@ class HFTokenizer:
     def __init__(self, tokenizer_name: str):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
+    def save_pretrained(self, dest):
+        self.tokenizer.save_pretrained(dest)
 
     def __call__(self, texts: Union[str, List[str]], context_length: int = 77) -> torch.Tensor:
         # same cleaning as for default tokenizer, except lowercasing

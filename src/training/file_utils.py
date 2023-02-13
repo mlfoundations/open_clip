@@ -67,7 +67,7 @@ def pt_save(pt_obj, file_path):
         torch.save(pt_obj, file_path)
 
 def pt_load(file_path, map_location=None):
-    if not file_path.startswith('/'):
+    if file_path.startswith('s3'):
         logging.info('Loading remote checkpoint, which may take a bit.')
     of = fsspec.open(file_path, "rb")
     with of as f:
