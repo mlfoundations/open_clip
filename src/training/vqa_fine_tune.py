@@ -136,8 +136,25 @@ def compute_metrics(model, dataloader, device, args):
     metrics["loss"] = val_loss / samples_seen
     return metrics
 
+def train_single_epoch(model, data, optimizer, args):
+    model.train()
+    for i, batch in enumerate(data["train"]):
+        image = batch["image"].to(device)
+        text = batch["text"].to(device)
+        label = batch["label"].to(device)
+        
+        logits = model(image, text)
+        print(label.shape)
+        print(logits.shape)
+        loss_fn = nn.CrossEntropyLoss()
+        loss = loss_fn(logits, label)
+
+        loss.backward()
+
+        
 def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device, args):
     model.train()
+    loss_fn = nn.CrossEntropyLoss()
     progress_bar = tqdm(total=len(data["train"]))
     for i, batch in enumerate(data["train"]):
         step = epoch * len(data["train"]) + i
@@ -147,9 +164,8 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         text = batch["text"].to(device)
         label = batch["label"].to(device)
         logits = model(image, text)
-        logits = logits.view(-1)
-        label = label.view(-1).float()
-        loss = nn.CrossEntropyLoss(logits, label) #should be cross entropy 
+
+        loss = loss_fn(logits, label) #should be cross entropy 
 
         optimizer.zero_grad()
         loss.backward()
