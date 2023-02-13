@@ -22,10 +22,33 @@ dataset_train = load_dataset("HuggingFaceM4/VQAv2", split="train", cache_dir = "
 
 dataset_df = dataset_train.to_pandas()
 
+answer_space = []
+with open('answers_vqa.txt') as f:
+    for line in f:
+      answer_space.append(line.strip())
+answer_space = np.array(answer_space)
+
 labelencoder = preprocessing.LabelEncoder()
-labelencoder.fit(dataset_train['multiple_choice_answer'])
+labelencoder.fit(answer_space)
 num_classes = len(list(labelencoder.classes_))
-new_labels = labelencoder.transform(dataset_train['multiple_choice_answer'])
+
+answer_set = set(labelencoder.classes_)
+class_id = []
+questions = []
+images = []
+answers = []
+for index, row in dataset_df.iterrows():
+  if(row['multiple_choice_answer'] in answer_set):
+    class_id.append(row['question_id'])
+    questions.append(row['question'])
+    images.append(row['image'])
+    answers.append(row['multiple_choice_answer'])
+class_id = np.array(class_id)
+questions = np.array(questions)
+images = np.array(images)
+answers = np.array(answers)
+
+dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
 
 class VQATextDataset(Dataset):
     def __init__(self, df, split, transforms, tokenizer=None):
@@ -45,7 +68,7 @@ class VQATextDataset(Dataset):
         return {
             'image': self.transforms(image),
             'text': self.tokenize([text])[0],
-            'label': label
+            'label': torch.tensor(label)
         }
 
 def get_task_dataloaders(df, transforms, args):
