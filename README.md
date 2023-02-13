@@ -198,7 +198,7 @@ By default, on expectation the amount of times the model will see a sample from 
 For instance, when training on one data source with size 400M and one with size 10M, samples from the first source are 40x more likely to be seen in expectation.
 
 We also support different weighting of the data sources, by using the `--train-data-weights` flag.
-For instance, using `--train-data-weights=1::2` in the above scenario is equivalent to upsampling the second data source twice. 
+For instance, using `--train-data-weights=1::1` in the above scenario is equivalent to not using the flag, and `--train-data-weights=1::2` is equivalent to upsampling the second data source twice. 
 
 #### Single-Node
 
