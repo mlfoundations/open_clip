@@ -367,56 +367,41 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         assert args.train_data_weights is None, "--train-data-weights is only supported when sampling with replacement (together with --dataset-resampled)."
         pipeline = [wds.SimpleShardList(input_shards)]
 
-        # at this point we have an iterator over all the shards
-        if is_train:
-            if not resampled:
-                pipeline.extend([
-                    detshuffle2(
-                        bufsize=_SHARD_SHUFFLE_SIZE,
-                        initial=_SHARD_SHUFFLE_INITIAL,
-                        seed=args.seed,
-                        epoch=shared_epoch,
-                    ),
-                    wds.split_by_node,
-                    wds.split_by_worker,
-                ])
+    # at this point we have an iterator over all the shards
+    if is_train:
+        if not resampled:
             pipeline.extend([
-                # at this point, we have an iterator over the shards assigned to each worker at each node
-                tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
-                wds.shuffle(
-                    bufsize=_SAMPLE_SHUFFLE_SIZE,
-                    initial=_SAMPLE_SHUFFLE_INITIAL,
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
                 ),
-            ])
-        else:
-            pipeline.extend([
+                wds.split_by_node,
                 wds.split_by_worker,
-                # at this point, we have an iterator over the shards assigned to each worker
-                wds.tarfile_to_samples(handler=log_and_continue),
             ])
         pipeline.extend([
-            wds.select(filter_no_caption_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-            wds.to_tuple("image", "text"),
+            # at this point, we have an iterator over the shards assigned to each worker at each node
+            tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
+            wds.shuffle(
+                bufsize=_SAMPLE_SHUFFLE_SIZE,
+                initial=_SAMPLE_SHUFFLE_INITIAL,
+            ),
         ])
-
-        return pipeline
-    
-    if args.train_data_weights is not None:
-        weights = args.train_data_weights
-        weights = [float(w) for w in weights.split('::')]
-        input_shard_list = input_shards.split('::')
-        assert len(input_shard_list) == len(weights), f"Expected the number of data components ({len(input_shard_list)}) and weights ({len(weights)}) to match."
-        datasets = [wds.DataPipeline(*build_pipeline(shards)) for shards in input_shard_list]
-        pipeline = [WeightedSampler(datasets, weights=weights)]
     else:
-        pipeline = build_pipeline(input_shards)
-    
-    pipeline.append(
+        pipeline.extend([
+            wds.split_by_worker,
+            # at this point, we have an iterator over the shards assigned to each worker
+            wds.tarfile_to_samples(handler=log_and_continue),
+        ])
+    pipeline.extend([
+        wds.select(filter_no_caption_or_no_image),
+        wds.decode("pilrgb", handler=log_and_continue),
+        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+        wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train)
-    )
+    ])
 
     dataset = wds.DataPipeline(*pipeline)
 
