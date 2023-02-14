@@ -129,6 +129,7 @@ def compute_metrics(model, dataloader, device, args):
     #metrics = metric.compute()
     metrics = {}
     metrics["loss"] = val_loss / samples_seen
+    
     return metrics
 
 def train_single_epoch(model, data, optimizer, args):
@@ -180,8 +181,8 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
 
     progress_bar.close()
     metrics = compute_metrics(model, data["train"], device, args)
-    end_training = early_stop.step(metrics)
-    return metrics, end_training
+    #end_training = early_stop.step(metrics)
+    return metrics
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
@@ -306,4 +307,4 @@ early_stop = EarlyStopping(  # greater metric value is better
 )
 
 for epoch in range(10):
-    val_metrics, end_training = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
+    val_metrics = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
