@@ -16,39 +16,6 @@ from sklearn import preprocessing
 
 from datasets import load_dataset_builder
 from datasets import load_dataset
-ds_builder = load_dataset_builder("HuggingFaceM4/VQAv2")
-
-dataset_train = load_dataset("HuggingFaceM4/VQAv2", split="train", cache_dir = "./sample_data")
-
-dataset_df = dataset_train.to_pandas()
-
-answer_space = []
-with open('answers_vqa.txt') as f:
-    for line in f:
-      answer_space.append(line.strip())
-answer_space = np.array(answer_space)
-
-labelencoder = preprocessing.LabelEncoder()
-labelencoder.fit(answer_space)
-num_classes = len(list(labelencoder.classes_))
-
-answer_set = set(labelencoder.classes_)
-class_id = []
-questions = []
-images = []
-answers = []
-for index, row in dataset_df.iterrows():
-  if(row['multiple_choice_answer'] in answer_set):
-    class_id.append(row['question_id'])
-    questions.append(row['question'])
-    images.append(row['image'])
-    answers.append(row['multiple_choice_answer'])
-class_id = np.array(class_id)
-questions = np.array(questions)
-images = np.array(images)
-answers = np.array(answers)
-
-dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
 
 class VQATextDataset(Dataset):
     def __init__(self, df, split, transforms, tokenizer=None):
@@ -141,6 +108,7 @@ def compute_metrics(model, dataloader, device, args):
     metric = evaluate.load("accuracy")
     val_loss = 0
     samples_seen = 0
+    loss_fn = nn.CrossEntropyLoss()
     for batch in dataloader:
         with torch.no_grad():
             image = batch["image"].to(device)
@@ -148,17 +116,17 @@ def compute_metrics(model, dataloader, device, args):
             label = batch["label"].to(device)
             samples_seen += text.shape[0]
             logits = model(image, text)
-            logits = logits.view(-1)
-            label = label.view(-1).float()
-            predictions = torch.argmax(logits)
-            batch_val_loss = nn.CrossEntropyLoss(logits, label)
+
+            #predictions = torch.argmax(logits)
+            batch_val_loss = loss_fn(logits, label)
         val_loss += batch_val_loss.item()
-        metric.add_batch(
-            predictions=predictions.cpu().numpy(),
-            references=label.cpu().numpy(),
-        )
+        #metric.add_batch(
+            #predictions=predictions.cpu().numpy(),
+            #references=label.cpu().numpy(),
+        #)
     model.train()
-    metrics = metric.compute()
+    #metrics = metric.compute()
+    metrics = {}
     metrics["loss"] = val_loss / samples_seen
     return metrics
 
@@ -174,7 +142,7 @@ def train_single_epoch(model, data, optimizer, args):
         print(logits.shape)
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(logits, label)
-
+        print(loss)
         loss.backward()
 
         
@@ -201,14 +169,16 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         progress_bar.update(1)
         
         if (i % args.val_frequency) == 0 and i > 0:
-            metrics = compute_metrics(model, data["validation"], device, args)
-            end_training = early_stop.step(metrics)
-            if end_training:
-                progress_bar.close()
-                return metrics, end_training
+            print(loss)
+            metrics = compute_metrics(model, data["train"], device, args)
+            
+            #end_training = early_stop.step(metrics)
+            #if end_training:
+                #progress_bar.close()
+                #return metrics, end_training
 
     progress_bar.close()
-    metrics = compute_metrics(model, data["validation"], device, args)
+    metrics = compute_metrics(model, data["train"], device, args)
     end_training = early_stop.step(metrics)
     return metrics, end_training
 
@@ -273,6 +243,38 @@ def parse_args(args):
 
     args = parser.parse_args(args)
     return args
+
+dataset_train = load_dataset("HuggingFaceM4/VQAv2", split="train", cache_dir = "./sample_data")
+
+dataset_df = dataset_train.to_pandas()
+
+answer_space = []
+with open('answers_vqa.txt') as f:
+    for line in f:
+      answer_space.append(line.strip())
+answer_space = np.array(answer_space)
+
+labelencoder = preprocessing.LabelEncoder()
+labelencoder.fit(answer_space)
+num_classes = len(list(labelencoder.classes_))
+
+answer_set = set(labelencoder.classes_)
+class_id = []
+questions = []
+images = []
+answers = []
+for index, row in dataset_df.iterrows():
+  if(row['multiple_choice_answer'] in answer_set):
+    class_id.append(row['question_id'])
+    questions.append(row['question'])
+    images.append(row['image'])
+    answers.append(row['multiple_choice_answer'])
+class_id = np.array(class_id)
+questions = np.array(questions)
+images = np.array(images)
+answers = np.array(answers)
+
+dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
 
 args = parse_args([])
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
