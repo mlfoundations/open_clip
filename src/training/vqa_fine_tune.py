@@ -5,6 +5,7 @@ import torch
 from PIL import Image
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 from tqdm import tqdm
 
 import open_clip
@@ -302,4 +303,5 @@ early_stop = EarlyStopping(  # greater metric value is better
     metric_name=args.early_stop_metric_name,
 )
 
-val_metrics, end_training = train_one_epoch(clf, data, 1, optim, scheduler, early_stop, device, args)
+for epoch in range(10):
+    val_metrics, end_training = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
