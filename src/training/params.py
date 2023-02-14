@@ -51,13 +51,13 @@ def parse_args(args):
         "--train-num-samples",
         type=int,
         default=None,
-        help="Number of samples in dataset. Required for webdataset if not available in info file.",
+        help="Number of samples in dataset. Required for webdataset.",
     )
     parser.add_argument(
         "--val-num-samples",
         type=int,
         default=None,
-        help="Number of samples in dataset. Useful for webdataset if not available in info file.",
+        help="Number of samples in dataset. Useful for webdataset.",
     )
     parser.add_argument(
         "--dataset-type",
