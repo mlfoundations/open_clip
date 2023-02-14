@@ -65,16 +65,15 @@ class CLIPMultimodalClassifier(nn.Module):
 
         self.encoder = encoder
         
-        self.logits_proj = nn.Linear(embed_dim * 2, 1536) #size of answer space
-
-        self.logits_2 = nn.Linear(1536, num_classes)
+        self.fc1 = nn.Linear(embed_dim * 2, 1536) #size of answer space
+        self.fc2 = nn.Linear(1536, num_classes)
     def forward(self, image, text):
         # CLIP doesn't have a multimodal encoder, so we concatenate the features
         text_features = self.encoder.encode_text(text)
         image_features = self.encoder.encode_image(image)
         multimodal_features = torch.cat([image_features, text_features], dim=-1)
-        layer1 = nn.GeLU(self.logits_proj(multimodal_features), dim=-1)
-        logits = self.logits_2(layer1)
+        layer = F.relu(self.fc1(multimodal_features))
+        logits = self.fc2(layer)
         return logits
 
 class EarlyStopping:
@@ -194,7 +193,7 @@ def parse_args(args):
         "--workers", type=int, default=2, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=32, help="Batch size per GPU."
+        "--batch-size", type=int, default=64, help="Batch size per GPU."
     )
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for."
