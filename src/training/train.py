@@ -260,7 +260,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
