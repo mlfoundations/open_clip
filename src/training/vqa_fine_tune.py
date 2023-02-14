@@ -13,6 +13,7 @@ from training.scheduler import cosine_lr
 from training.train import AverageMeter
 import evaluate
 from sklearn import preprocessing
+import numpy as np
 
 from datasets import load_dataset_builder
 from datasets import load_dataset
