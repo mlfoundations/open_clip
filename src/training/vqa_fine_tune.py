@@ -276,6 +276,8 @@ images = np.array(images)
 answers = np.array(answers)
 
 dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
+dataset_df = dataset_df[0:12800]
+
 
 args = parse_args([])
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
