@@ -68,13 +68,14 @@ class CLIPMultimodalClassifier(nn.Module):
         self.encoder = encoder
         
         self.fc1 = nn.Linear(embed_dim * 2, 1536) #size of answer space
+        self.lnorm = nn.LayerNorm(1536)
         self.fc2 = nn.Linear(1536, num_classes)
     def forward(self, image, text):
         # CLIP doesn't have a multimodal encoder, so we concatenate the features
         text_features = self.encoder.encode_text(text)
         image_features = self.encoder.encode_image(image)
         multimodal_features = torch.cat([image_features, text_features], dim=-1)
-        layer = F.relu(self.fc1(multimodal_features))
+        layer = self.lnorm(F.relu(self.fc1(multimodal_features)))
         logits = self.fc2(layer)
         return logits
 
@@ -277,7 +278,7 @@ images = np.array(images)
 answers = np.array(answers)
 
 dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
-dataset_df = dataset_df[0:128000]
+dataset_df = dataset_df[0:12800]
 
 
 args = parse_args([])
@@ -306,5 +307,5 @@ early_stop = EarlyStopping(  # greater metric value is better
     metric_name=args.early_stop_metric_name,
 )
 
-for epoch in range(10):
+for epoch in range(20):
     val_metrics = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
