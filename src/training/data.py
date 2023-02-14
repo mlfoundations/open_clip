@@ -73,14 +73,14 @@ class DataInfo:
 
 
 def expand_urls(urls, weights=None):
+    if weights is None:
+        expanded_urls = wds.shardlists.expand_urls(urls)
+        return expanded_urls, None
     if isinstance(urls, str):
         urllist = urls.split("::")
-        if weights is None:
-            weights = [1 for _ in urllist]
-        else:
-            weights = weights.split('::')
-            assert len(weights) == len(urllist), f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
-            weights = [float(weight) for weight in weights]
+        weights = weights.split('::')
+        assert len(weights) == len(urllist), f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
+        weights = [float(weight) for weight in weights]
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
             expanded_url = list(braceexpand.braceexpand(url))
@@ -90,8 +90,6 @@ def expand_urls(urls, weights=None):
         return all_urls, all_weights
     else:
         all_urls = list(urls)
-        if weights is None:
-            weights = [1 for _ in all_urls]
         return all_urls, weights
 
 
@@ -293,7 +291,8 @@ class ResampledShards2(IterableDataset):
         urls, weights = expand_urls(urls, weights)
         self.urls = urls
         self.weights = weights
-        assert len(self.urls) == len(self.weights), f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
+        if self.weights is not None:
+            assert len(self.urls) == len(self.weights), f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
@@ -319,28 +318,10 @@ class ResampledShards2(IterableDataset):
                 seed = self.worker_seed() + epoch
             self.rng.seed(seed)
         for _ in range(self.nshards):
-            yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
-
-
-class WeightedSampler(IterableDataset):
-    def __init__(self, datasets, weights=None):
-        super().__init__()
-        self.datasets = datasets
-        self.rng = random.Random()
-        if weights is None:
-            weights = [1 for _ in self.datasets]
-        self.weights = weights
-    
-    def __iter__(self):
-        sources = [iter(ds) for ds in self.datasets]
-        idxs = list(range(len(sources)))
-        for _ in range(sys.maxsize):
-            idx = self.rng.choices(idxs, weights=self.weights, k=1)[0]
-            try:
-                sample = next(sources[idx])
-                yield sample
-            except StopIteration:
-                return
+            if self.weights is None:
+                yield dict(url=self.rng.choice(self.urls))
+            else:
+                yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
@@ -362,9 +343,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
-        pipeline = [ResampledShards2(input_shards, weights=args.train_data_weights, deterministic=True, epoch=shared_epoch)]
+        pipeline = [ResampledShards2(input_shards, weights=args.train_data_upsampling_factors, deterministic=True, epoch=shared_epoch)]
     else:
-        assert args.train_data_weights is None, "--train-data-weights is only supported when sampling with replacement (together with --dataset-resampled)."
+        assert args.train_data_upsampling_factors is None, "--train_data_upsampling_factors is only supported when sampling with replacement (together with --dataset-resampled)."
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # at this point we have an iterator over all the shards
