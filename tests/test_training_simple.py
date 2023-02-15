@@ -21,6 +21,8 @@ def test_training():
     '--zeroshot-frequency', '1',
     '--dataset-type', "synthetic",
     '--train-num-samples', '16',
+    '--val-data', "synthetic",
+    '--val-num-samples', '16',
     '--warmup', '1',
     '--batch-size', '4',
     '--lr', '1e-3',
