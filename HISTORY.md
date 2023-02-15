@@ -1,3 +1,16 @@
+## 2.13.0
+
+* Add support for dataset mixtures with different sampling weights
+* make transformers optional again 
+
+## 2.12.0
+
+* Updated convnext configs for consistency
+* Added input_patchnorm option
+* Clean and improve CoCa generation
+* Support model distillation
+* Add ConvNeXt-Large 320x320 fine-tune weights
+
 ## 2.11.1
 
 * Make transformers optional

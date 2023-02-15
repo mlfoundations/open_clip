@@ -13,7 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
-from .loss import ClipLoss, CoCaLoss
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
@@ -78,7 +78,8 @@ def get_tokenizer(model_name):
         tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
     else:
         config = get_model_config(model_name)
-        tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+        tokenizer = HFTokenizer(
+            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
     return tokenizer
 
 
@@ -117,6 +118,7 @@ def create_model(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        require_pretrained: bool = False,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -146,6 +148,10 @@ def create_model(
             jit=jit,
             cache_dir=cache_dir,
         )
+
+        # to always output dict even if it is clip
+        if output_dict and hasattr(model, "output_dict"):
+            model.output_dict = True
     else:
         model_cfg = model_cfg or get_model_config(model_name)
         if model_cfg is not None:
@@ -187,6 +193,7 @@ def create_model(
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
+        pretrained_loaded = False
         if pretrained:
             checkpoint_path = ''
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
@@ -204,9 +211,16 @@ def create_model(
                     f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
+            pretrained_loaded = True
         elif has_hf_hub_prefix:
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
             load_checkpoint(model, checkpoint_path)
+            pretrained_loaded = True
+
+        if require_pretrained and not pretrained_loaded:
+            # callers of create_model_from_pretrained always expect pretrained weights
+            raise RuntimeError(
+                f'Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded.')
 
         model.to(device=device)
         if precision in ("fp16", "bf16"):
@@ -227,7 +241,16 @@ def create_model(
 
 
 def create_loss(args):
-    if "coca" in args.model.lower():
+    if args.distill:
+        return DistillClipLoss(
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod,
+        )
+    elif "coca" in args.model.lower():
         return CoCaLoss(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
@@ -303,7 +326,7 @@ def create_model_and_transforms(
 
 def create_model_from_pretrained(
         model_name: str,
-        pretrained: str,
+        pretrained: Optional[str] = None,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
@@ -315,11 +338,6 @@ def create_model_from_pretrained(
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
 ):
-    if not is_pretrained_cfg(model_name, pretrained) and not os.path.exists(pretrained):
-        raise RuntimeError(
-            f'{pretrained} is not a valid pretrained cfg or checkpoint for {model_name}.'
-            f' Use open_clip.list_pretrained() to find one.')
-
     model = create_model(
         model_name,
         pretrained,
@@ -330,6 +348,7 @@ def create_model_from_pretrained(
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
         cache_dir=cache_dir,
+        require_pretrained=True,
     )
 
     if not return_transform:
