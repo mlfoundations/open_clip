@@ -193,7 +193,7 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         progress_bar.set_description(f"Loss: {loss.item():.4f}")
         progress_bar.update(1)
         
-        if (i % args.val_frequency) == 0 and i > 0:
+        if (i % args.val_frequency) == 0 and i > 5:
             print(loss)
             metrics = compute_metrics(model, data["validation"], device, args)
             print(metrics["accuracy"])
@@ -233,7 +233,7 @@ def parse_args(args):
         "--warmup", type=int, default=200, help="Number of steps to warmup for."
     )
     parser.add_argument(
-        "--val-frequency", type=int, default=30, help="How often to run evaluation with val data."
+        "--val-frequency", type=int, default=300, help="How often to run evaluation with val data."
     )
     parser.add_argument(
         "--early-stop-patience", type=int, default=5, help="Early stopping patience."
