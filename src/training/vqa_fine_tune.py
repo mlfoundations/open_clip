@@ -78,7 +78,7 @@ def get_task_dataloaders(path, transforms, args):
         dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
         dataset_df = dataset_df[0:12800]
         
-        dataset = VQATextDataset(df,
+        dataset = VQATextDataset(dataset_df,
             spliot,
             transforms,
             tokenizer=tokenizer,
