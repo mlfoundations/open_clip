@@ -141,7 +141,8 @@ def compute_metrics(model, dataloader, device, args):
             label = batch["label"].to(device)
             samples_seen += text.shape[0]
             logits = model(image, text)
-
+            print(logits)
+            print(label)
             predictions = torch.argmax(logits)
             print(predictions)
             batch_val_loss = loss_fn(logits, label)
