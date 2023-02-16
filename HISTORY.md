@@ -1,7 +1,14 @@
+## 2.14.0
+
+* Move dataset mixtures logic to shard level
+* Fix CoCa accum-grad training
+* Safer transformers import guard
+* get_labels refactoring
+
 ## 2.13.0
 
 * Add support for dataset mixtures with different sampling weights
-* make transformers optional again 
+* Make transformers optional again 
 
 ## 2.12.0
 
