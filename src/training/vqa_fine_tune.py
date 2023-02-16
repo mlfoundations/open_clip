@@ -144,6 +144,7 @@ def compute_metrics(model, dataloader, device, args):
             predictions = torch.argmax(logits, dim=-1)
             batch_val_loss = loss_fn(logits, label)
         val_loss += batch_val_loss.item()
+        print(val_loss)
         metric.add_batch(
             predictions=predictions.cpu().numpy(),
             references=label.cpu().numpy(),
@@ -219,7 +220,7 @@ def parse_args(args):
         "--workers", type=int, default=2, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size per GPU."
+        "--batch-size", type=int, default=1024, help="Batch size per GPU."
     )
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for."
