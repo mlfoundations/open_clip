@@ -142,17 +142,17 @@ def compute_metrics(model, dataloader, device, args):
             samples_seen += text.shape[0]
             logits = model(image, text)
 
-            #predictions = torch.argmax(logits)
+            predictions = torch.argmax(logits)
             batch_val_loss = loss_fn(logits, label)
         val_loss += batch_val_loss.item()
-        #metric.add_batch(
-            #predictions=predictions.cpu().numpy(),
-            #references=label.cpu().numpy(),
-        #)
+        metric.add_batch(
+            predictions=predictions.cpu().numpy(),
+            references=label.cpu().numpy(),
+        )
     model.train()
-    #metrics = metric.compute()
+    metrics = metric.compute()
     metrics = {}
-    metrics["loss"] = val_loss / samples_seen
+    metrics["accuracy"] = val_loss / samples_seen
     
     return metrics
 
@@ -196,17 +196,17 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         
         if (i % args.val_frequency) == 0 and i > 0:
             print(loss)
-            metrics = compute_metrics(model, data["train"], device, args)
+            metrics = compute_metrics(model, data["validation"], device, args)
             
-            #end_training = early_stop.step(metrics)
-            #if end_training:
-                #progress_bar.close()
-                #return metrics, end_training
+            end_training = early_stop.step(metrics)
+            if end_training:
+                progress_bar.close()
+                return metrics, end_training
 
     progress_bar.close()
-    metrics = compute_metrics(model, data["train"], device, args)
-    #end_training = early_stop.step(metrics)
-    return metrics
+    metrics = compute_metrics(model, data["validation"], device, args)
+    end_training = early_stop.step(metrics)
+    return metrics, end_training
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
@@ -310,4 +310,4 @@ if __name__ == "__main__":
     )
 
     for epoch in range(20):
-        val_metrics = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
+        val_metrics, end_training = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
