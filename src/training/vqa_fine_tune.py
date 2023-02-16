@@ -79,7 +79,7 @@ def get_task_dataloaders(path, transforms, args):
         dataset_df = dataset_df[0:12800]
         
         dataset = VQATextDataset(dataset_df,
-            spliot,
+            split,
             transforms,
             tokenizer=tokenizer,
         )
