@@ -141,6 +141,10 @@ def parse_args(args):
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
     )
     parser.add_argument(
+        "--opt", type=str, default='adamw',
+        help="Which optimizer to use. Choices are ['adamw', 'lion', 'lion-triton']."
+    )
+    parser.add_argument(
         "--use-bn-sync",
         default=False,
         action="store_true",
