@@ -41,23 +41,57 @@ class VQATextDataset(Dataset):
         }
 
 def get_task_dataloaders(df, transforms, args):
-    tokenizer = get_tokenizer(args.model)
+    answer_space = []
+    with open('answers_vqa.txt') as f:
+        for line in f:
+          answer_space.append(line.strip())
+    answer_space = np.array(answer_space)
+    
+    labelencoder = preprocessing.LabelEncoder()
+    labelencoder.fit(answer_space)
+    num_classes = len(list(labelencoder.classes_))
 
+    answer_set = set(labelencoder.classes_)
+    
+    tokenizer = get_tokenizer(args.model)
     dataloaders = {}
-    dataset = VQATextDataset(df,
-        "train",
-        transforms,
-        tokenizer=tokenizer,
-    )
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.workers,
-        pin_memory=True,
-        drop_last=True,
-    )
-    dataloaders["train"] = dataloader
+    
+    for split in ["train", "validation", "test"]
+        dataset_train = load_dataset("HuggingFaceM4/VQAv2", split=split, cache_dir = "./sample_data")
+        dataset_df = dataset_train.to_pandas()
+
+        class_id = []
+        questions = []
+        images = []
+        answers = []
+        for index, row in dataset_df.iterrows():
+          if(row['multiple_choice_answer'] in answer_set):
+            class_id.append(row['question_id'])
+            questions.append(row['question'])
+            images.append(row['image'])
+            answers.append(row['multiple_choice_answer'])
+        class_id = np.array(class_id)
+        questions = np.array(questions)
+        images = np.array(images)
+        answers = np.array(answers)
+
+        dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
+        dataset_df = dataset_df[0:12800]
+        
+        dataset = VQATextDataset(df,
+            spliot,
+            transforms,
+            tokenizer=tokenizer,
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+            drop_last=True,
+        )
+        dataloaders[split] = dataloader
 
     return dataloaders
 
@@ -247,65 +281,32 @@ def parse_args(args):
     args = parser.parse_args(args)
     return args
 
-dataset_train = load_dataset("HuggingFaceM4/VQAv2", split="train", cache_dir = "./sample_data")
+if __name__ == "__main__":
+    args = parse_args([])
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-dataset_df = dataset_train.to_pandas()
+    model, preprocess_train, preprocess_val = open_clip.factory.create_model_and_transforms(
+        args.model,
+        args.pretrained,
+        precision=args.precision,
+        device=device,
+    )
+    model_cfg = open_clip.factory.get_model_config(args.model)
+    embed_dim = model_cfg["embed_dim"]
 
-answer_space = []
-with open('answers_vqa.txt') as f:
-    for line in f:
-      answer_space.append(line.strip())
-answer_space = np.array(answer_space)
+    data = get_task_dataloaders(dataset_df, preprocess_val, args)
 
-labelencoder = preprocessing.LabelEncoder()
-labelencoder.fit(answer_space)
-num_classes = len(list(labelencoder.classes_))
+    clf_cls = CLIPMultimodalClassifier
+    clf = clf_cls(model, embed_dim, num_classes).to(device)
+    optim = torch.optim.AdamW(clf.parameters(), lr=args.lr, weight_decay=args.wd)
 
-answer_set = set(labelencoder.classes_)
-class_id = []
-questions = []
-images = []
-answers = []
-for index, row in dataset_df.iterrows():
-  if(row['multiple_choice_answer'] in answer_set):
-    class_id.append(row['question_id'])
-    questions.append(row['question'])
-    images.append(row['image'])
-    answers.append(row['multiple_choice_answer'])
-class_id = np.array(class_id)
-questions = np.array(questions)
-images = np.array(images)
-answers = np.array(answers)
+    total_steps = len(data["train"]) * args.epochs
+    scheduler = cosine_lr(optim, args.lr, args.warmup, total_steps)
+    early_stop = EarlyStopping(  # greater metric value is better
+        patience=args.early_stop_patience,
+        threshold=args.early_stop_threshold,
+        metric_name=args.early_stop_metric_name,
+    )
 
-dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
-dataset_df = dataset_df[0:12800]
-
-
-args = parse_args([])
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-model, preprocess_train, preprocess_val = open_clip.factory.create_model_and_transforms(
-    args.model,
-    args.pretrained,
-    precision=args.precision,
-    device=device,
-)
-model_cfg = open_clip.factory.get_model_config(args.model)
-embed_dim = model_cfg["embed_dim"]
-
-data = get_task_dataloaders(dataset_df, preprocess_val, args)
-
-clf_cls = CLIPMultimodalClassifier
-clf = clf_cls(model, embed_dim, num_classes).to(device)
-optim = torch.optim.AdamW(clf.parameters(), lr=args.lr, weight_decay=args.wd)
-
-total_steps = len(data["train"]) * args.epochs
-scheduler = cosine_lr(optim, args.lr, args.warmup, total_steps)
-early_stop = EarlyStopping(  # greater metric value is better
-    patience=args.early_stop_patience,
-    threshold=args.early_stop_threshold,
-    metric_name=args.early_stop_metric_name,
-)
-
-for epoch in range(20):
-    val_metrics = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
+    for epoch in range(20):
+        val_metrics = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
