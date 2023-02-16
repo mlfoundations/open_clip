@@ -56,7 +56,7 @@ def get_task_dataloaders(path, transforms, args):
     tokenizer = get_tokenizer(args.model)
     dataloaders = {}
     
-    for split in ["train", "validation", "test"]:
+    for split in ["train", "validation"]:
         dataset_train = load_dataset(path, split=split, cache_dir = "./sample_data")
         dataset_df = dataset_train.to_pandas()
 
