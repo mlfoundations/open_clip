@@ -40,7 +40,7 @@ class VQATextDataset(Dataset):
             'label': torch.tensor(label)
         }
 
-def get_task_dataloaders(df, transforms, args):
+def get_task_dataloaders(path, transforms, args):
     answer_space = []
     with open('answers_vqa.txt') as f:
         for line in f:
@@ -57,7 +57,7 @@ def get_task_dataloaders(df, transforms, args):
     dataloaders = {}
     
     for split in ["train", "validation", "test"]
-        dataset_train = load_dataset("HuggingFaceM4/VQAv2", split=split, cache_dir = "./sample_data")
+        dataset_train = load_dataset(path, split=split, cache_dir = "./sample_data")
         dataset_df = dataset_train.to_pandas()
 
         class_id = []
@@ -294,7 +294,7 @@ if __name__ == "__main__":
     model_cfg = open_clip.factory.get_model_config(args.model)
     embed_dim = model_cfg["embed_dim"]
 
-    data = get_task_dataloaders(dataset_df, preprocess_val, args)
+    data = get_task_dataloaders("HuggingFaceM4/VQAv2", preprocess_val, args)
 
     clf_cls = CLIPMultimodalClassifier
     clf = clf_cls(model, embed_dim, num_classes).to(device)
