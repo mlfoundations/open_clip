@@ -64,7 +64,7 @@ def get_task_dataloaders(path, transforms, labelencoder, args):
         answers = np.array(answers)
 
         dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
-        dataset_df = dataset_df[0:12800]
+        #dataset_df = dataset_df[0:12800]
         
         dataset = VQATextDataset(dataset_df,
             split,
@@ -141,10 +141,7 @@ def compute_metrics(model, dataloader, device, args):
             label = batch["label"].to(device)
             samples_seen += text.shape[0]
             logits = model(image, text)
-            print(logits)
-            print(label)
             predictions = torch.argmax(logits, dim=-1)
-            print(predictions)
             batch_val_loss = loss_fn(logits, label)
         val_loss += batch_val_loss.item()
         metric.add_batch(
