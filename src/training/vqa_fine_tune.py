@@ -143,7 +143,7 @@ def compute_metrics(model, dataloader, device, args):
             logits = model(image, text)
             print(logits)
             print(label)
-            predictions = torch.argmax(logits)
+            predictions = torch.argmax(logits, dim=-1)
             print(predictions)
             batch_val_loss = loss_fn(logits, label)
         val_loss += batch_val_loss.item()
