@@ -40,19 +40,7 @@ class VQATextDataset(Dataset):
             'label': torch.tensor(label)
         }
 
-def get_task_dataloaders(path, transforms, args):
-    answer_space = []
-    with open('answers_vqa.txt') as f:
-        for line in f:
-          answer_space.append(line.strip())
-    answer_space = np.array(answer_space)
-    
-    labelencoder = preprocessing.LabelEncoder()
-    labelencoder.fit(answer_space)
-    num_classes = len(list(labelencoder.classes_))
-
-    answer_set = set(labelencoder.classes_)
-    
+def get_task_dataloaders(path, transforms, labelencoder, args):
     tokenizer = get_tokenizer(args.model)
     dataloaders = {}
     
@@ -294,8 +282,20 @@ if __name__ == "__main__":
     )
     model_cfg = open_clip.factory.get_model_config(args.model)
     embed_dim = model_cfg["embed_dim"]
+    
+    answer_space = []
+    with open('answers_vqa.txt') as f:
+        for line in f:
+          answer_space.append(line.strip())
+    answer_space = np.array(answer_space)
+    
+    labelencoder = preprocessing.LabelEncoder()
+    labelencoder.fit(answer_space)
+    num_classes = len(list(labelencoder.classes_))
 
-    data = get_task_dataloaders("HuggingFaceM4/VQAv2", preprocess_val, args)
+    answer_set = set(labelencoder.classes_)
+    
+    data = get_task_dataloaders("HuggingFaceM4/VQAv2", preprocess_val, labelencoder, args)
 
     clf_cls = CLIPMultimodalClassifier
     clf = clf_cls(model, embed_dim, num_classes).to(device)
