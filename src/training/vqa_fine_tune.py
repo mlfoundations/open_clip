@@ -220,7 +220,7 @@ def parse_args(args):
         "--workers", type=int, default=2, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=1024, help="Batch size per GPU."
+        "--batch-size", type=int, default=256, help="Batch size per GPU."
     )
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for."
