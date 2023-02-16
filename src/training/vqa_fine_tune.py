@@ -65,7 +65,9 @@ def get_task_dataloaders(path, transforms, labelencoder, args):
 
         dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
         #dataset_df = dataset_df[0:12800]
-        
+        b_size = args.batch_size
+        if(split == "validation"):
+            b_size = args.batch_size
         dataset = VQATextDataset(dataset_df,
             split,
             transforms,
@@ -74,7 +76,7 @@ def get_task_dataloaders(path, transforms, labelencoder, args):
         )
         dataloader = DataLoader(
             dataset,
-            batch_size=args.batch_size,
+            batch_size=b_size,
             shuffle=True,
             num_workers=args.workers,
             pin_memory=True,
