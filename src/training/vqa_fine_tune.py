@@ -196,7 +196,7 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         if (i % args.val_frequency) == 0 and i > 0:
             print(loss)
             metrics = compute_metrics(model, data["validation"], device, args)
-            
+            print(metrics["accuracy"])
             end_training = early_stop.step(metrics)
             if end_training:
                 progress_bar.close()
