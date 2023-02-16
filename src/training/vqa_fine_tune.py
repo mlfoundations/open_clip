@@ -20,7 +20,7 @@ from datasets import load_dataset_builder
 from datasets import load_dataset
 
 class VQATextDataset(Dataset):
-    def __init__(self, df, split, transforms, tokenizer=None):
+    def __init__(self, df, split, transforms, labelencoder, tokenizer=None):
         self.df = df
         self.transforms = transforms
         self.tokenize = tokenizer
@@ -81,6 +81,7 @@ def get_task_dataloaders(path, transforms, args):
         dataset = VQATextDataset(dataset_df,
             split,
             transforms,
+            labelencoder,              
             tokenizer=tokenizer,
         )
         dataloader = DataLoader(
