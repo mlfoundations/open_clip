@@ -31,6 +31,8 @@ And the following ConvNeXt CLIP models:
   * ConvNext-Base (W) @ 320x320 on LAION-A with a top-1 of **71.7%** (eval at 384x384 is **71.0**)
   * ConvNext-Base (W) @ 320x320 /w augreg on LAION-A with a top-1 of **71.3%** (eval at 384x384 is **72.2%**)
   * ConvNext-Large (D) @ 256x256 /w augreg on LAION-2B with a top-1 of **75.9%**
+  * ConvNext-Large (D) @ 320x320 fine-tune of 256x256 weights above for ~2.5B more samples on LAION-2B, top-1 of **76.6%**
+  * ConvNext-Large (D) @ 320x320 soup of 3 fine-tunes of 256x256 weights above on LAION-2B, top-1 of **76.9%**
 
 Model cards w/ additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip
 
@@ -185,6 +187,20 @@ For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a 
 You can set this on your visual transformer config with the key `patch_dropout`.
 
 In the paper, they also finetuned without the patch dropout at the end. You can do this with the command-line argument `--force-patch-dropout 0.`
+
+#### Multiple data sources
+
+OpenCLIP supports using multiple data sources, by separating different data paths with `::`.
+For instance, to train on CC12M and on LAION, one might use `--train-data '/data/cc12m/cc12m-train-{0000..2175}.tar'::/data/LAION-400M/{00000..41455}.tar"`.
+Using `--dataset-resampled` is recommended for these cases.
+
+By default, on expectation the amount of times the model will see a sample from each source is proportional to the size of the source.
+For instance, when training on one data source with size 400M and one with size 10M, samples from the first source are 40x more likely to be seen in expectation.
+
+We also support different weighting of the data sources, by using the `--train-data-upsampling-factors` flag.
+For instance, using `--train-data-upsampling-factors=1::1` in the above scenario is equivalent to not using the flag, and `--train-data-upsampling-factors=1::2` is equivalent to upsampling the second data source twice.
+If you want to sample from data sources with the same frequency, the upsampling factors should be inversely proportional to the sizes of the data sources.
+For instance, if dataset `A` has 1000 samples and dataset `B` has 100 samples, you can use `--train-data-upsampling-factors=0.001::0.01` (or analogously, `--train-data-upsampling-factors=1::10`).
 
 #### Single-Node
 
@@ -596,6 +612,11 @@ Future trained models will use nn.GELU.
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
+### Model distillation
+
+You can distill from a pre-trained by using `--distill-model` and `--distill-pretrained` to specify the model you'd like to distill from.
+For instance, to distill from OpenAI ViT-L/14 use `--distill-model ViT-L-14 --distill-pretrained openai`.
+
 ### Gradient accumulation
 
 To simulate larger batches use `--accum-freq k`. If per gpu batch size, `--batch-size`, is `m`, then the effective batch size will be `k * m * num_gpus`.
@@ -626,6 +647,13 @@ There is also experimental support for syncing to other remote file systems, not
 Also, to optionally avoid saving too many checkpoints locally when using these features, you can use `--delete-previous-checkpoint` which deletes the previous checkpoint after saving a new one.
 
 Note: if you are using this feature with `--resume latest`, there are a few warnings. First, use with `--save-most-recent` is not supported. Second, only `s3` is supported. Finally, since the sync happens in the background, it is possible that the most recent checkpoint may not be finished syncing to the remote.
+
+### Pushing Models to Hugging Face Hub
+
+The module `open_clip.push_to_hf_hub` includes helpers for pushing models /w weights and config to the HF Hub.
+
+The tool can be run from command line, ex:
+`pytorch -m open_clip.push_to_hf_hub --model convnext_large_d_320 --pretrained /train/checkpoints/epoch_12.pt --repo-id laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft`
 
 ## Scaling trends
 

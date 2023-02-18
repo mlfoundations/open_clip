@@ -13,19 +13,33 @@ from .transformer import (
     MultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
-from .generation_utils import top_a, top_k, top_p, prepare_inputs_for_generation
 
 try:
-    from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor, StoppingCriteriaList, MaxLengthCriteria
-except ImportError as e:
-    pass
+    from transformers import (
+        BeamSearchScorer,
+        LogitsProcessorList,
+        TopPLogitsWarper,
+        TopKLogitsWarper,
+        RepetitionPenaltyLogitsProcessor,
+        MinLengthLogitsProcessor,
+        MaxLengthCriteria,
+        StoppingCriteriaList
+    )
 
-GENERATION_TYPES = {
-    "top_k": top_k,
-    "top_p": top_p,
-    "top_a": top_a,
-    "beam_search": "beam_search"
-}
+    GENERATION_TYPES = {
+        "top_k": TopKLogitsWarper,
+        "top_p": TopPLogitsWarper,
+        "beam_search": "beam_search"
+    }
+    _has_transformers = True
+except ImportError as e:
+    GENERATION_TYPES = {
+        "top_k": None,
+        "top_p": None,
+        "beam_search": "beam_search"
+    }
+    _has_transformers = False
+
 
 @dataclass
 class MultimodalCfg(CLIPTextCfg):
@@ -151,115 +165,131 @@ class CoCa(nn.Module):
         }
 
     def generate(
-            self,
-            image,
-            text=None,
-            seq_len=77,
-            max_seq_len=77,
-            mask_prob=0.0,
-            temperature=1.,
-            generation_type="beam_search",
-            filter_thres=0.9,
-            min_p_pow=2.0,
-            min_p_ratio=0.02,
-            pad_token_id=None,
-            eos_token_id=None,
-            sot_token_id=None,
-            num_beams=6,
-            num_beam_groups=3,
-            min_seq_len=5,
-            stopping_criteria=None,
-            fixed_output_length=False # the output will have shape min(seq_len, max_output_len)
+        self,
+        image,
+        text=None,
+        seq_len=30,
+        max_seq_len=77,
+        temperature=1.,
+        generation_type="beam_search",
+        top_p=0.1,  # keep tokens in the 1 - top_p quantile
+        top_k=1,  # keeps the top_k most probable tokens
+        pad_token_id=None,
+        eos_token_id=None,
+        sot_token_id=None,
+        num_beams=6,
+        num_beam_groups=3,
+        min_seq_len=5,
+        stopping_criteria=None,
+        repetition_penalty=1.0,
+        fixed_output_length=False # if True output.shape == (batch_size, seq_len)
     ):
+        # taking many ideas and components from HuggingFace GenerationMixin
+        # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
+        assert _has_transformers, "Please install transformers for generate functionality. `pip install transformers`."
+        assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
 
-        sot_token_id = 49406 if sot_token_id is None else sot_token_id
-        eos_token_id = 49407 if eos_token_id is None else eos_token_id
-        pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
-
-        assert generation_type in GENERATION_TYPES, \
-            f"generation_type has to be one of {'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
-        filter_logits_fn = GENERATION_TYPES[generation_type]
-
-        if generation_type == "beam_search":
-            return self.generate_beamsearch(
-                image_inputs = image,
-                max_length = seq_len,
-                pad_token_id=pad_token_id,
-                eos_token_id=eos_token_id,
-                sot_token_id=sot_token_id,
-                num_beams=num_beams,
-                num_beam_groups=num_beam_groups,
-                min_seq_len=min_seq_len,
-                stopping_criteria=stopping_criteria,
+        with torch.no_grad():
+            sot_token_id = 49406 if sot_token_id is None else sot_token_id
+            eos_token_id = 49407 if eos_token_id is None else eos_token_id
+            pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
+            logit_processor = LogitsProcessorList(
+                [
+                    MinLengthLogitsProcessor(min_seq_len, eos_token_id),
+                    RepetitionPenaltyLogitsProcessor(repetition_penalty),
+                ]
             )
 
-        assert mask_prob < 1, "mask_prob must be smaller than 1."
-        assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
-        device = image.device
+            if stopping_criteria is None:
+                stopping_criteria = [MaxLengthCriteria(max_length=seq_len)]
 
-        if text is None:
-            text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
+            stopping_criteria = StoppingCriteriaList(
+                stopping_criteria
+            )
 
-        was_training = self.training
-        num_dims = len(text.shape)
+            device = image.device
 
-        if num_dims == 1:
-            text = text[None, :]
-
-        cur_len = text.shape[1]
-        self.eval()
-        out = text
-        image_latent, image_embs = self._encode_image(image)
-
-        while True:
-            x = out[:, -max_seq_len:]
-            cur_len = min(cur_len, max_seq_len)
-
-            logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
-            mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
-            sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
-
-            if mask.all():
-                if not fixed_output_length:
-                    break
-            else:
-                logits = logits[~mask, :]
-
-                if cur_len + 1 < min_seq_len:
-                    logits = logits[:, :-1] # eos_token_id is the largest
-
-                if filter_logits_fn in {top_k, top_p}:
-                    filtered_logits = filter_logits_fn(logits, thres=filter_thres)
-                    probs = F.softmax(filtered_logits / temperature, dim=-1)
-
-                elif filter_logits_fn is top_a:
-                    filtered_logits = filter_logits_fn(
-                        logits, min_p_pow=min_p_pow, min_p_ratio=min_p_ratio
+            if generation_type == "beam_search":
+                output = self._generate_beamsearch(
+                    image_inputs = image,
+                    pad_token_id=pad_token_id,
+                    eos_token_id=eos_token_id,
+                    sot_token_id=sot_token_id,
+                    num_beams=num_beams,
+                    num_beam_groups=num_beam_groups,
+                    min_seq_len=min_seq_len,
+                    stopping_criteria=stopping_criteria,
+                    logit_processor=logit_processor,
+                )
+                if fixed_output_length and output.shape[1] < seq_len:
+                    return torch.cat(
+                        (output, torch.ones(output.shape[0], seq_len-output.shape[1], device=device, dtype=output.dtype) * self.pad_id),
+                        dim=1
                     )
+                return output
+
+            elif generation_type == "top_p":
+                logit_warper = GENERATION_TYPES[generation_type](top_p)
+            elif generation_type == "top_k":
+                logit_warper = GENERATION_TYPES[generation_type](top_k)
+            else:
+                raise ValueError(
+                    f"generation_type has to be one of "
+                    f"{'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
+                )
+
+            image_latent, image_embs = self._encode_image(image)
+
+            if text is None:
+                text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
+
+            was_training = self.training
+            num_dims = len(text.shape)
+
+            if num_dims == 1:
+                text = text[None, :]
+
+            cur_len = text.shape[1]
+            self.eval()
+            out = text
+
+            while True:
+                x = out[:, -max_seq_len:]
+                cur_len = x.shape[1]
+                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
+                sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
+
+                if mask.all():
+                    if not fixed_output_length:
+                        break
+                else:
+                    logits = logits[~mask, :]
+                    filtered_logits = logit_processor(x[~mask, :], logits)
+                    filtered_logits = logit_warper(x[~mask, :], filtered_logits)
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
 
-                if (cur_len + 1 == seq_len):
-                    sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
-                else:
-                    sample[~mask, :] = torch.multinomial(probs, 1)
+                    if (cur_len + 1 == seq_len):
+                        sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
+                    else:
+                        sample[~mask, :] = torch.multinomial(probs, 1)
 
-            out = torch.cat((out, sample), dim=-1)
+                out = torch.cat((out, sample), dim=-1)
 
-            cur_len += 1
+                cur_len += 1
 
-            if (cur_len >= min_seq_len and cur_len >= seq_len):
-                break
+                if stopping_criteria(out, None):
+                    break
 
-        if num_dims == 1:
-            out = out.squeeze(0)
+            if num_dims == 1:
+                out = out.squeeze(0)
 
-        self.train(was_training)
-        return out
+            self.train(was_training)
+            return out
 
-    def generate_beamsearch(
+    def _generate_beamsearch(
             self,
             image_inputs,
-            max_length,
             pad_token_id=None,
             eos_token_id=None,
             sot_token_id=None,
@@ -267,8 +297,9 @@ class CoCa(nn.Module):
             num_beam_groups=3,
             min_seq_len=5,
             stopping_criteria=None,
-        ):
-
+            logit_processor=None,
+            logit_warper=None,
+    ):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
         image_inputs = torch.repeat_interleave(image_inputs, num_beams, dim=0)
@@ -283,16 +314,10 @@ class CoCa(nn.Module):
             num_beam_groups=num_beam_groups,
         )
         # instantiate logits processors
-        target_logits_processor_list = [
-            MinLengthLogitsProcessor(min_seq_len, eos_token_id=eos_token_id)
-        ]
-        logits_processor = LogitsProcessorList(
-            target_logits_processor_list
-        )
-        if stopping_criteria is None:
-            stopping_criteria = [MaxLengthCriteria(max_length=max_length)]
-        stopping_criteria = StoppingCriteriaList(
-            stopping_criteria
+        logits_processor = (
+            LogitsProcessorList([MinLengthLogitsProcessor(min_seq_len, eos_token_id=eos_token_id)])
+            if logit_processor is None
+            else logit_processor
         )
 
         batch_size = len(beam_scorer._beam_hyps)
@@ -410,3 +435,24 @@ class CoCa(nn.Module):
         )
         return sequence_outputs['sequences']
 
+
+def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
+    if past:
+        input_ids = input_ids[:, -1].unsqueeze(-1)
+
+    attention_mask = kwargs.get("attention_mask", None)
+    position_ids = kwargs.get("position_ids", None)
+
+    if attention_mask is not None and position_ids is None:
+        # create position_ids on the fly for batch generation
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
+    else:
+        position_ids = None
+    return {
+        "text": input_ids,
+        "images": image_inputs,
+        "past_key_values": past,
+        "position_ids": position_ids,
+        "attention_mask": attention_mask,
+    }
