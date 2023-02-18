@@ -197,10 +197,10 @@ Using `--dataset-resampled` is recommended for these cases.
 By default, on expectation the amount of times the model will see a sample from each source is proportional to the size of the source.
 For instance, when training on one data source with size 400M and one with size 10M, samples from the first source are 40x more likely to be seen in expectation.
 
-We also support different weighting of the data sources, by using the `--train_data_upsampling_factors` flag.
-For instance, using `--train_data_upsampling_factors=1::1` in the above scenario is equivalent to not using the flag, and `--train_data_upsampling_factors=1::2` is equivalent to upsampling the second data source twice.
+We also support different weighting of the data sources, by using the `--train-data-upsampling-factors` flag.
+For instance, using `--train-data-upsampling-factors=1::1` in the above scenario is equivalent to not using the flag, and `--train-data-upsampling-factors=1::2` is equivalent to upsampling the second data source twice.
 If you want to sample from data sources with the same frequency, the upsampling factors should be inversely proportional to the sizes of the data sources.
-For instance, if dataset `A` has 1000 samples and dataset `B` has 100 samples, you can use `--train_data_upsampling_factors=0.001::0.01` (or analogously, ``--train_data_upsampling_factors=1::10`).
+For instance, if dataset `A` has 1000 samples and dataset `B` has 100 samples, you can use `--train-data-upsampling-factors=0.001::0.01` (or analogously, `--train-data-upsampling-factors=1::10`).
 
 #### Single-Node
 
