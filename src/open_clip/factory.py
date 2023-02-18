@@ -13,6 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
+from .vivit import VideoCLIP # TODO: change once full model is implemented
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -191,7 +192,10 @@ def create_model(
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            if "ViViT" in model_name: # TODO better way of detecting video configs
+                model = VideoCLIP(**model_cfg)
+            else:
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_loaded = False
         if pretrained:
