@@ -92,6 +92,10 @@ class ViViT(nn.Module):
 
         self.global_average_pool = global_average_pool
 
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.spatial.set_grad_checkpointing(enable)
+        self.temporal.grad_checkpointing = enable
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.global_average_pool:
@@ -165,6 +169,11 @@ class VideoCLIP(nn.Module):
         )
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.visual.set_grad_checkpointing(enable)
+        self.text.set_grad_checkpointing(enable)
 
     def encode_video(self, video, normalize: bool = False):
         features = self.visual(video)

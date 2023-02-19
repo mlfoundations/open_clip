@@ -315,13 +315,13 @@ def create_model_and_transforms(
         preprocess_train = video_transform( 
             frame_size=model.visual.spatial.image_size,
             n_frames=32,
-            take_every_nth=2,
+            take_every_nth=1,
             is_train=False, # TODO: figre out if frame augmentations make sense
         )
         preprocess_val = video_transform(
             frame_size=model.visual.spatial.image_size,
             n_frames=32,
-            take_every_nth=2,
+            take_every_nth=1,
             is_train=False,
         )
     else:
