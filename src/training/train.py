@@ -211,6 +211,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
                 "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
+                "samples_per_second_per_gpu": args.accum_freq * args.batch_size / batch_time_m.val,
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }            
