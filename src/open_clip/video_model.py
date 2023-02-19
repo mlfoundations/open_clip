@@ -109,8 +109,10 @@ class ViViT(nn.Module):
         # TODO: make this happen
         batch_size = video.shape[0]
 
+        # Flatten all frames in batch across time and encode with ViT
         frames = video.flatten(start_dim=0, end_dim=1)
         f_e = self.spatial(frames)
+        # Put frame embeddings back into correct temporal sequences
         f_e = f_e.view(*video.shape[:2], -1)
         
         # class embeddings and positional embeddings

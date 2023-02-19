@@ -73,6 +73,7 @@ def create_webdataset(
                 f.write(video_data)
                 video, audio, meta = torchvision.io.read_video(f.name, output_format="TCHW")
             video_tensor = video_transform(video)
+            print(video_tensor.shape)
             output["video_filename"] = item["__key__"]
             output["video_tensor"] = video_tensor
 
@@ -100,13 +101,12 @@ def dataset_to_dataloader(dataset, batch_size, num_prepro_workers, input_format)
         batch = list(filter(lambda x: x is not None, batch))
         return default_collate(batch)
 
+    #     pin_memory=True,
+    #     prefetch_factor=2,
     data = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=False,
         num_workers=num_prepro_workers,
-        pin_memory=True,
-        prefetch_factor=2,
         collate_fn=collate_fn if input_format == "files" else None,
     )
     return data
@@ -161,11 +161,10 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
         preprocess=preprocess_vid,
         input_dataset=args.train_data,
         batch_size=args.batch_size,
-        num_prepro_workers=96,
+        num_prepro_workers=args.workers,
         enable_metadata=True,
         tokenizer=tokenizer,
     )
-
 
     round_fn = math.floor
     global_batch_size = args.batch_size * args.world_size

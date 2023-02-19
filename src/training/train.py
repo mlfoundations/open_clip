@@ -82,6 +82,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     data_time_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
+        print(batch)
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
 
@@ -97,6 +98,15 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
+        print("OUTOUTOUT")
+        print("OUTOUTOUT")
+        print("OUTOUTOUT")
+        print("OUTOUTOUT")
+        print("OUTOUTOUT")
+        print(images.shape)
+        print(images.shape)
+        print(images.shape)
+        print(images.shape)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
