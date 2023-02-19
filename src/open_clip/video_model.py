@@ -1,6 +1,3 @@
-"""
-ViViT model (https://arxiv.org/abs/2103.15691)
-"""
 from typing import Optional
 
 import torch
@@ -49,6 +46,7 @@ def _build_video_tower(
 
 # TODO: implement
 class ViViT(nn.Module):
+    """ViViT model (https://arxiv.org/abs/2103.15691)"""
     def __init__(
         self,
         embed_dim,
@@ -81,6 +79,9 @@ class ViViT(nn.Module):
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
+
+    def forward(self, x):
+        return x
 
 
 # TODO: turn into VideoCoCa
@@ -121,3 +122,12 @@ class VideoCLIP(nn.Module):
             if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
             else text_cfg.vocab_size
         )
+
+    def encode_video(self, video, normalize: bool = False):
+        features = self.visual(video)
+        return F.normalize(features, dim=-1) if normalize else features
+    def encode_text(self, text, normalize: bool = False):
+        features = self.text(text)
+        return F.normalize(features, dim=-1) if normalize else features
+
+

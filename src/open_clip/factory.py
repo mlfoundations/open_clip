@@ -309,21 +309,27 @@ def create_model_and_transforms(
         output_dict=output_dict,
     )
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(
-        model.visual.image_size,
-        is_train=True,
-        mean=image_mean,
-        std=image_std,
-        aug_cfg=aug_cfg,
-    )
-    preprocess_val = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std,
-    )
+    # TODO: better way of getting modality specific transforms
+    if "ViViT" in model_name:
+        # TODO: make better preprocessing functions
+        preprocess_train = lambda vid: vid[:32, :128, :128, :]
+        preprocess_val = preprocess_train
+    else:
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess_train = image_transform(
+            model.visual.image_size,
+            is_train=True,
+            mean=image_mean,
+            std=image_std,
+            aug_cfg=aug_cfg,
+        )
+        preprocess_val = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std,
+        )
 
     return model, preprocess_train, preprocess_val
 

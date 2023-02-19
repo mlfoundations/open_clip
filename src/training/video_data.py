@@ -154,8 +154,6 @@ class VideoDatasetReader:
 
 
 def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokenizer=None):
-    # TODO: get this from the model
-    preprocess_vid = lambda vid: vid[:32, :128, :128, :] # TODO: adjust this so it works for testing
     num_samples = args.train_num_samples
     batch_size = args.batch_size
 
