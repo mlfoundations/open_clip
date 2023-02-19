@@ -18,7 +18,7 @@ from .video_model import VideoCLIP # TODO: change once full model is implemented
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
-from .transform import image_transform, AugmentationCfg
+from .transform import image_transform, video_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
 
@@ -312,15 +312,18 @@ def create_model_and_transforms(
 
     # TODO: better way of getting modality specific transforms
     if "ViViT" in model_name:
-        # TODO: make better preprocessing functions
-        def preprocess_video(video):
-            video = video[:32, :, :224, :224]
-            h, w = video.shape[-2:]
-            video = F.pad(video, (0, 224-w, 0, 224-h))
-            return video.float()
-
-        preprocess_train = preprocess_video
-        preprocess_val = preprocess_video
+        preprocess_train = video_transform( 
+            frame_size=model.visual.spatial.image_size,
+            n_frames=32,
+            take_every_nth=2,
+            is_train=False, # TODO: figre out if frame augmentations make sense
+        )
+        preprocess_val = video_transform(
+            frame_size=model.visual.spatial.image_size,
+            n_frames=32,
+            take_every_nth=2,
+            is_train=False,
+        )
     else:
         image_mean = image_mean or getattr(model.visual, 'image_mean', None)
         image_std = image_std or getattr(model.visual, 'image_std', None)

@@ -90,8 +90,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         # TODO: adapt dataloaders to fit open_clip format
         # TODO: generalize train loop to modality1, modality2 instead of image,text maybe
-        images, texts = batch["video_tensor"], batch["text_tokens"]
-        # images, texts = batch
+        if "ViViT" in args.model:
+            images, texts = batch["video_tensor"], batch["text_tokens"]
+        else:
+            images, texts = batch
+
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 

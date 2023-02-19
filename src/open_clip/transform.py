@@ -131,3 +131,35 @@ def image_transform(
             normalize,
         ])
         return Compose(transforms)
+
+
+# TODO: needs improvmenet
+def video_transform(
+        frame_size: int,
+        n_frames: int,
+        take_every_nth: int,
+        is_train: bool,
+    ):
+    
+    if is_train:
+        transforms = [
+            RandomResizedCrop(
+                frame_size,
+                scale=(0.9, 0.1),
+                interpolation=InterpolationMode.BICUBIC,
+            ),
+        ]
+    else:
+        transforms = [
+            Resize(frame_size, interpolation=InterpolationMode.BICUBIC),
+            CenterCrop(frame_size),
+        ]
+
+    frame_transform = Compose(transforms)
+    def apply_frame_transform(video):
+        video = video[::take_every_nth]
+        video = video[:n_frames] # TODO: maybe make this middle n frames
+        # TODO: this .float() is weird, look how this is done in other places
+        return torch.cat([frame_transform(frame)[None, ...].float() for frame in video])
+
+    return apply_frame_transform
