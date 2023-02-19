@@ -4,19 +4,14 @@
         "image_size": 224,
         "layers": 12,
         "width": 768,
-        "patch_size": 32,
-        "attentional_pool": true,
-        "attn_pooler_heads": 8,
-        "output_tokens": true
+        "patch_size": 32
     },
     "text_cfg": {
-        "context_length": 76,
+        "context_length": 77,
         "vocab_size": 49408,
         "width": 512,
         "heads": 8,
-        "layers": 12,
-        "embed_cls": true,
-        "output_tokens": true
+        "layers": 12
     },
     "temporal_cfg": {
         "context_length": 32,

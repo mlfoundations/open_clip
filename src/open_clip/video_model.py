@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 from torch import nn
 from torch.nn import functional as F
+import numpy as np
 from dataclasses import dataclass
 
 from .transformer import (
@@ -122,21 +123,21 @@ class VideoCLIP(nn.Module):
             else text_cfg.vocab_size
         )
 
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
     def encode_video(self, video, normalize: bool = False):
         features = self.visual(video)
         return F.normalize(features, dim=-1) if normalize else features
     def encode_text(self, text, normalize: bool = False):
         features = self.text(text)
-        print(features.shape)
         return F.normalize(features, dim=-1) if normalize else features
     def forward(self, video, text):
         video_features = self.encode_video(video, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        print(video_features.shape, text_features.shape)
         # TODO: make loss funcitons generalize to all types of modality pairs
         # i.e. make keys more general, for now keeping as image_features
         return {
-            "image_features": image_features,
+            "image_features": video_features,
             "text_features": text_features,
             "logit_scale": self.logit_scale.exp()
         }

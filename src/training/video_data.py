@@ -79,7 +79,7 @@ def create_webdataset(
         if enable_text:
             text = item[caption_key]
             caption = text.decode("utf-8")
-            tokenized_text = tokenizer(caption)
+            tokenized_text = tokenizer(caption)[0]
             output["text_tokens"] = tokenized_text
             output["text"] = caption
 
@@ -172,7 +172,7 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=wds, shared_epoch=shared_epoch)
 
 
-def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
+def get_video_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
