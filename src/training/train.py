@@ -90,16 +90,20 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         # TODO: adapt dataloaders to fit open_clip format
         # TODO: generalize train loop to modality1, modality2 instead of image,text maybe
-        images, texts = batch["video_tensor"], batch["text_tokens"]
+        # images, texts = batch["video_tensor"], batch["text_tokens"]
+        images, texts = batch
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
+        print(images.shape, texts.shape)
+
         if args.accum_freq == 1:
             with autocast():
                 model_out = model(images, texts)
+                print(model_out.keys())
                 logit_scale = model_out["logit_scale"]
                 if args.distill:
                     with torch.no_grad():
@@ -108,8 +112,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
+                print(total_loss)
                 losses["loss"] = total_loss
-
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.

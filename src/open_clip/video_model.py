@@ -80,13 +80,12 @@ class ViViT(nn.Module):
             norm_layer=norm_layer,
         )
 
-    def forward(self, x):
-        return x
+    def forward(self, video):
+        return torch.randn((video.shape[0], 512))
 
 
 # TODO: turn into VideoCoCa
-# TODO: implement
-# TODO: do we need quickgelu? 
+# TODO: set_grad_checkpointing
 class VideoCLIP(nn.Module):
     def __init__(
         self,
@@ -128,6 +127,16 @@ class VideoCLIP(nn.Module):
         return F.normalize(features, dim=-1) if normalize else features
     def encode_text(self, text, normalize: bool = False):
         features = self.text(text)
+        print(features.shape)
         return F.normalize(features, dim=-1) if normalize else features
-
-
+    def forward(self, video, text):
+        video_features = self.encode_video(video, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        print(video_features.shape, text_features.shape)
+        # TODO: make loss funcitons generalize to all types of modality pairs
+        # i.e. make keys more general, for now keeping as image_features
+        return {
+            "image_features": image_features,
+            "text_features": text_features,
+            "logit_scale": self.logit_scale.exp()
+        }
