@@ -46,8 +46,9 @@ def _build_video_tower(
         return model
 
 # TODO: implement
+# TODO: maybe add option for mean pooling
 class ViViT(nn.Module):
-    """ViViT model (https://arxiv.org/abs/2103.15691)"""
+    """ViViT model (https://arxiv.org/abs/2103.15691), factorised encoder variant"""
     def __init__(
         self,
         embed_dim,
@@ -66,6 +67,11 @@ class ViViT(nn.Module):
             LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         )
 
+        # class embeddings and positional embeddings
+        scale = temporal_cfg.width ** -0.5
+        self.video_class_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.width))
+        self.video_positional_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.context_length, temporal_cfg.width))
+
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
             vision_cfg=vision_cfg,
@@ -81,8 +87,24 @@ class ViViT(nn.Module):
             norm_layer=norm_layer,
         )
 
+    # TODO: add patch dropout as suggested by lucidrains
     def forward(self, video):
-        return torch.randn((video.shape[0], 512))
+        video = video[:, 1:] # make space for temporal CLS token
+        # TODO: make this happen
+        f_e = torch.randn((video.shape[0], video.shape[1], 512)).to(video.device) # shape = [b, cl-1, w]
+
+        # class embeddings and positional embeddings
+        f_e = torch.cat(
+            [self.video_class_embedding.to(f_e.dtype) + torch.zeros(f_e.shape[0], 1, f_e.shape[-1], dtype=f_e.dtype, device=f_e.device),
+             f_e], dim=1)  # shape = [b, cl, w]
+        f_e = f_e + self.video_positional_embedding.to(f_e.dtype)
+
+        return f_e.mean(dim=1)
+
+
+
+        
+
 
 
 # TODO: turn into VideoCoCa

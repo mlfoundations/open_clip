@@ -1,5 +1,6 @@
 """video dataset creation"""
 import io
+import math
 import torchvision
 import tempfile
 import webdataset as wds
@@ -155,17 +156,28 @@ class VideoDatasetReader:
 
 def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokenizer=None):
     num_samples = args.train_num_samples
-    batch_size = args.batch_size
 
     wds = VideoDatasetReader(
         sampler=lambda a: a,
         preprocess=preprocess_vid,
         input_dataset=args.train_data,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         num_prepro_workers=96,
         enable_metadata=True,
         tokenizer=tokenizer,
     )
+
+
+    round_fn = math.floor
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    num_samples = num_batches * global_batch_size
+
+    wds.num_batches = num_batches
+    wds.num_samples = num_samples
 
     shared_epoch = SharedEpoch(epoch=epoch)
 
