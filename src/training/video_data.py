@@ -71,8 +71,7 @@ def create_webdataset(
             video_data = item[video_key]
             with tempfile.NamedTemporaryFile() as f:
                 f.write(video_data)
-                # video = torchvision.io.read_video(video_data)
-                video, audio, meta = torchvision.io.read_video(f.name)
+                video, audio, meta = torchvision.io.read_video(f.name, output_format="TCHW")
             video_tensor = video_transform(video)
             output["video_filename"] = item["__key__"]
             output["video_tensor"] = video_tensor

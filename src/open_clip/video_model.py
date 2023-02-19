@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Callable, Optional, Sequence, Tuple
 
 import torch
 from torch import nn
@@ -54,6 +54,7 @@ class ViViT(nn.Module):
         embed_dim,
         vision_cfg,
         temporal_cfg,
+        global_average_pool: bool = False,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
     ):
@@ -72,6 +73,8 @@ class ViViT(nn.Module):
         self.video_class_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.width))
         self.video_positional_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.context_length, temporal_cfg.width))
 
+        self.ln_pre = norm_layer(temporal_cfg.width)
+
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
             vision_cfg=vision_cfg,
@@ -87,24 +90,40 @@ class ViViT(nn.Module):
             norm_layer=norm_layer,
         )
 
+        self.global_average_pool = global_average_pool
+
+
+    def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.global_average_pool:
+            return x.mean(dim=1), x
+        else:
+            return x[:, 0], x[:, 1:]
+
     # TODO: add patch dropout as suggested by lucidrains
     def forward(self, video):
         video = video[:, 1:] # make space for temporal CLS token
         # TODO: make this happen
-        f_e = torch.randn((video.shape[0], video.shape[1], 512)).to(video.device) # shape = [b, cl-1, w]
+        batch_size = video.shape[0]
 
+        frames = video.flatten(start_dim=0, end_dim=1)
+        f_e = self.spatial(frames)
+        f_e = f_e.view(*video.shape[:2], -1)
+        
         # class embeddings and positional embeddings
         f_e = torch.cat(
             [self.video_class_embedding.to(f_e.dtype) + torch.zeros(f_e.shape[0], 1, f_e.shape[-1], dtype=f_e.dtype, device=f_e.device),
              f_e], dim=1)  # shape = [b, cl, w]
         f_e = f_e + self.video_positional_embedding.to(f_e.dtype)
 
-        return f_e.mean(dim=1)
+        # TODO: need to look at paper again, section 3, equations (4,5,6)
+        # do we need the residual connections?
+        f_e = self.ln_pre(f_e)
 
+        v_e = self.temporal(f_e)
 
+        pooled, tokens = self._global_pool(v_e)
 
-        
-
+        return pooled
 
 
 # TODO: turn into VideoCoCa

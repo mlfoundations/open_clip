@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
@@ -312,8 +313,14 @@ def create_model_and_transforms(
     # TODO: better way of getting modality specific transforms
     if "ViViT" in model_name:
         # TODO: make better preprocessing functions
-        preprocess_train = lambda vid: vid[:32, :128, :128, :]
-        preprocess_val = preprocess_train
+        def preprocess_video(video):
+            video = video[:32, :, :224, :224]
+            h, w = video.shape[-2:]
+            video = F.pad(video, (0, 224-w, 0, 224-h))
+            return video.float()
+
+        preprocess_train = preprocess_video
+        preprocess_val = preprocess_video
     else:
         image_mean = image_mean or getattr(model.visual, 'image_mean', None)
         image_std = image_std or getattr(model.visual, 'image_std', None)
