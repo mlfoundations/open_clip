@@ -13,14 +13,8 @@ module load openmpi
 module load cuda/11.7
 
 export PYTHONFAULTHANDLER=1
-export CUDA_LAUNCH_BLOCKING=0
-export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_ADDR=`hostname`
 export MASTER_PORT=12802
-export COUNT_NODE=`scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l`
-
-echo go $COUNT_NODE
-echo $HOSTNAMES
 
 cd /admin/home-mitchellw/open_clip/src
 export PYTHONPATH="$PYTHONPATH:/admin/home-mitchellw/open_clip/src"
