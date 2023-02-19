@@ -261,6 +261,9 @@ def main(args):
         linear_replacement_cls = getattr(bnb.nn.triton_based_modules, args.use_bnb_linear)
         replace_linear(model, linear_replacement_cls)
         model = model.to(device)
+    # Prepare parameters to decay
+    exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+    parameters_to_decay = set(n for n, p in model.named_parameters() if not exclude(n,p))
 
     random_seed(args.seed, args.rank)
 
@@ -332,6 +335,7 @@ def main(args):
                    transformer_auto_wrap_policy,
                    transformer_layer_cls=layers,
                 ),
+                use_orig_params=True,
                 device_id=device,
             )
             # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
@@ -385,14 +389,17 @@ def main(args):
 
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
-
-        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-        include = lambda n, p: not exclude(n, p)
-
         named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
-
+        if args.distributed_engine == "fsdp":
+            def _param_name_without_fsdp_prefix(n):
+                n = n.replace("_fsdp_wrapped_module.", "")
+                n = n.replace("._checkpoint_wrapped_module", "")
+                return n
+            gain_or_bias_params = [p for n, p in named_parameters if _param_name_without_fsdp_prefix(n) not in parameters_to_decay and p.requires_grad] 
+            rest_params = [p for n, p in named_parameters if _param_name_without_fsdp_prefix(n) in parameters_to_decay and p.requires_grad]
+        else:
+            gain_or_bias_params = [p for n, p in named_parameters if n not in parameters_to_decay and p.requires_grad] 
+            rest_params = [p for n, p in named_parameters if n in parameters_to_decay and p.requires_grad]
         optimizer = optim.AdamW(
             [
                 {"params": gain_or_bias_params, "weight_decay": 0.},
