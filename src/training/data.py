@@ -11,6 +11,7 @@ from multiprocessing import Value
 
 import numpy as np
 import pandas as pd
+from functools import partial
 import torch
 import torchvision.datasets as datasets
 import webdataset as wds
@@ -26,73 +27,24 @@ except ImportError:
     hvd = None
 
 
-class TextPairDataset(Dataset):
-    def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
-        logging.debug(f'Loading parquet data from {input_filename}.')
-        df = pd.read_parquet(input_filename)
-
-        self.text_a = df[text_a_key].tolist()
-        self.text_b = df[text_b_key].tolist()
-        logging.debug('Done loading data.')
-
-        self.tokenize = tokenizer
-
-    def __len__(self):
-        return len(self.text_a)
-
-    def __getitem__(self, idx):
-        texts_a = self.tokenize([str(self.text_a[idx])])[0]
-        texts_b = self.tokenize([str(self.text_b[idx])])[0]
-        return texts_a,texts_b
 
 
-class HFTextPairDataset(Dataset):
-    def __init__(self, input_filename, text_a_key, text_b_key, tokenizer=None):
-        logging.debug(f'Loading data from {input_filename}.')
-        
-        from datasets import load_dataset
-        
-        self.dataset = load_dataset(input_filename)
-        if "train" in self.dataset.keys():
-            self.dataset = self.dataset['train']
-        self.text_a_key = text_a_key
-        self.text_b_key = text_b_key
-
-        logging.debug('Done loading data.')
-
-        self.tokenize = tokenizer
-
-    def __len__(self):
-        return len(self.dataset[self.text_a_key])
-
-    def __getitem__(self, idx):
-        texts_a = self.tokenize([str(self.dataset[self.text_a_key][idx])])[0]
-        texts_b = self.tokenize([str(self.dataset[self.text_b_key][idx])])[0]
-        return texts_a,texts_b
-
-
-def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_HF_text_dataset(args, preprocess_fn, is_train, epoch=0, floor=False, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
-    if input_filename.endswith('.parquet'):
-        dataset = TextPairDataset(
-            input_filename,
-            text_a_key=args.text_a_key,
-            text_b_key=args.text_b_key,
-            tokenizer=tokenizer
-        )
-    else:
-        dataset = HFTextPairDataset(
-            input_filename,
-            text_a_key=args.text_a_key,
-            text_b_key=args.text_b_key,
-            tokenizer=tokenizer
-        )
-        
-    num_samples = len(dataset)
-    logging.debug("%s"%(num_samples))
+
+    from datasets import load_dataset
+    dataset = load_dataset(input_filename,streaming=True)
+    if "train" in dataset.keys():
+        dataset = dataset['train']
+    
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
+    
+    def fetch(text_a_key,text_b_key,tokenizer,batch):
+        texts_a = tokenizer.tokenize([text for text in batch[text_a_key]])
+        texts_b = tokenizer.tokenize([text for text in batch[text_b_key]])
+        return texts_a,texts_b
 
     dataloader = DataLoader(
         dataset,
@@ -102,9 +54,20 @@ def get_text_pair_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
+        collate_fn=partial(fetch,args.text_a_key,args.text_b_key,tokenizer),
     )
+    
+    num_samples = args.train_num_samples
+    round_fn = math.floor if floor else math.ceil
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    
+    logging.debug("%s"%(num_samples))
     dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
+    dataloader.num_batches = num_batches
 
     return DataInfo(dataloader, sampler)
 
@@ -430,14 +393,24 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
-    pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train),
-    ])
+        
+    if 'text' in args.model_type:
+        pipeline.extend([
+            wds.to_tuple("text_a", "text_b"),
+            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
+            wds.batched(args.batch_size, partial=not is_train),
+        ])
+
+        
+    else:
+        pipeline.extend([
+            wds.select(filter_no_caption_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.to_tuple("image", "text"),
+            wds.batched(args.batch_size, partial=not is_train),
+        ])
 
     dataset = wds.DataPipeline(*pipeline)
     if is_train:
@@ -455,6 +428,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     else:
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
+
 
     dataloader = wds.WebLoader(
         dataset,
@@ -560,7 +534,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == 'textpair':
-        return get_text_pair_dataset
+        return get_HF_text_dataset
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
