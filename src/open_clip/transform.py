@@ -156,7 +156,10 @@ def video_transform(
         ]
 
     frame_transform = Compose(transforms)
-    def apply_frame_transform(video):
+    def apply_frame_transform(sample):
+        video, audio, video_meta = sample
+        video = video.permute(0, 3, 1, 2)
+
         video = video[::take_every_nth]
         video = video[:n_frames] # TODO: maybe make this middle n frames
 

@@ -82,31 +82,17 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     data_time_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
-        print(batch)
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
 
         if not args.skip_scheduler:
             scheduler(step)
 
-        # TODO: adapt dataloaders to fit open_clip format
         # TODO: generalize train loop to modality1, modality2 instead of image,text maybe
-        if "ViViT" in args.model:
-            images, texts = batch["video_tensor"], batch["text_tokens"]
-        else:
-            images, texts = batch
+        images, texts = batch
 
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
-        print("OUTOUTOUT")
-        print("OUTOUTOUT")
-        print("OUTOUTOUT")
-        print("OUTOUTOUT")
-        print("OUTOUTOUT")
-        print(images.shape)
-        print(images.shape)
-        print(images.shape)
-        print(images.shape)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
