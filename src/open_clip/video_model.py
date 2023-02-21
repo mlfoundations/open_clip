@@ -68,12 +68,14 @@ class ViViT(nn.Module):
             LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         )
 
+        '''
         # class embeddings and positional embeddings
         scale = temporal_cfg.width ** -0.5
         self.video_class_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.width))
         self.video_positional_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.context_length, temporal_cfg.width))
+        '''
 
-        self.ln_pre = norm_layer(temporal_cfg.width)
+        # self.ln_pre = norm_layer(temporal_cfg.width)
 
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
@@ -81,6 +83,7 @@ class ViViT(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
+        '''
         self.temporal = Transformer(
             width=temporal_cfg.width,
             layers=temporal_cfg.layers,
@@ -89,14 +92,15 @@ class ViViT(nn.Module):
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
+        '''
 
-        # self.global_average_pool = global_average_pool
-        self.global_average_pool = True
+
+        self.global_average_pool = global_average_pool
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.spatial.set_grad_checkpointing(enable)
-        self.temporal.grad_checkpointing = enable
+        # self.temporal.grad_checkpointing = enable
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.global_average_pool:
@@ -117,6 +121,7 @@ class ViViT(nn.Module):
         # Put frame embeddings back into correct temporal sequences
         f_e = f_e.view(*video.shape[:2], -1)
 
+        '''
         # print("FRAME EMBS")
         # print(f_e[:, :10, 0])
         
@@ -133,9 +138,13 @@ class ViViT(nn.Module):
         v_e = self.temporal(f_e)
 
         pooled, tokens = self._global_pool(v_e)
+        '''
 
-        # print("POOOOLED")
-        # print(pooled[:, :10])
+        pooled = torch.mean(f_e, dim=1)
+
+        print("POOOOLED")
+        print(pooled[:10, :10])
+        print(torch.mean(torch.var(pooled, dim=0)))
 
         return pooled
 

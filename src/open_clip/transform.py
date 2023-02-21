@@ -155,11 +155,14 @@ def video_transform(
     
     if is_train:
         transforms = [
+            ToPILImage(),
             RandomResizedCrop(
                 frame_size,
                 scale=(0.9, 0.1),
                 interpolation=InterpolationMode.BICUBIC,
             ),
+            _convert_to_rgb,
+            ToTensor(),
             normalize,
         ]
     else:
