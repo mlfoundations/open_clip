@@ -1,6 +1,8 @@
 """video dataset creation"""
 import io
+import logging
 import math
+import random
 import torchvision
 import tempfile
 import webdataset as wds
@@ -10,6 +12,7 @@ from multiprocessing import Value
 from pathlib import Path
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
+from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
 
@@ -75,40 +78,74 @@ def tarfile_to_samples_nothrow(src, handler=log_and_continue):
     samples = group_by_keys_nothrow(files, handler=handler)
     return samples
 
-def create_webdataset(
-    args,
-    video_transform,
-    tokenizer=None,
-):
+
+class detshuffle2(wds.PipelineStage):
+    def __init__(
+            self,
+            bufsize=1000,
+            initial=100,
+            seed=0,
+            epoch=-1,
+    ):
+        self.bufsize = bufsize
+        self.initial = initial
+        self.seed = seed
+        self.epoch = epoch
+
+    def run(self, src):
+        if isinstance(self.epoch, SharedEpoch):
+            epoch = self.epoch.get_value()
+        else:
+            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
+            # situation as different workers may wrap at different times (or not at all).
+            self.epoch += 1
+            epoch = self.epoch
+        rng = random.Random()
+        if self.seed < 0:
+            # If seed is negative, we use the worker's seed, this will be different across all nodes/workers
+            seed = pytorch_worker_seed(epoch)
+        else:
+            # This seed to be deterministic AND the same across all nodes/workers in each epoch
+            seed = self.seed + epoch
+        rng.seed(seed)
+        return _shuffle(src, self.bufsize, self.initial, rng)
+
+
+_SHARD_SHUFFLE_SIZE = 2000
+_SHARD_SHUFFLE_INITIAL = 500
+_SAMPLE_SHUFFLE_SIZE = 5000
+_SAMPLE_SHUFFLE_INITIAL = 1000
+
+
+def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokenizer=None):
+    num_samples = args.train_num_samples
+    shared_epoch = SharedEpoch(epoch=epoch)
+
     pipeline = [wds.SimpleShardList(args.train_data)]
     is_train = True
 
     pipeline.extend([
+        detshuffle2(
+            bufsize=_SHARD_SHUFFLE_SIZE,
+            initial=_SHARD_SHUFFLE_INITIAL,
+            seed=args.seed,
+            epoch=shared_epoch,
+        ),
         wds.split_by_node,
         wds.split_by_worker,
         tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
     ])
 
+
     pipeline.extend([
         wds.decode(wds.torch_video, handler=log_and_continue),
         wds.rename(video="mp4", text="txt"),
-        wds.map_dict(video=video_transform, text=lambda text: tokenizer(text)[0]),
+        wds.map_dict(video=preprocess_vid, text=lambda text: tokenizer(text)[0]),
         wds.to_tuple("video", "text"),
         wds.batched(args.batch_size, partial=not is_train)
     ])
 
     dataset = wds.DataPipeline(*pipeline)
-    return dataset
-
-
-def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokenizer=None):
-    num_samples = args.train_num_samples
-
-    dataset = create_webdataset(
-        args,
-        preprocess_vid,
-        tokenizer=tokenizer,
-    )
 
     dataloader = wds.WebLoader(
         dataset,
@@ -130,7 +167,6 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-    shared_epoch = SharedEpoch(epoch=epoch)
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 

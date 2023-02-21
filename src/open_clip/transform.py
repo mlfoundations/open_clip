@@ -7,7 +7,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as F
 
 from torchvision.transforms import Normalize, Compose, RandomResizedCrop, InterpolationMode, ToTensor, Resize, \
-    CenterCrop
+    CenterCrop, ToPILImage
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
@@ -139,7 +139,19 @@ def video_transform(
         n_frames: int,
         take_every_nth: int,
         is_train: bool,
+        frame_mean: Optional[Tuple[float, ...]] = None,
+        frame_std: Optional[Tuple[float, ...]] = None,
     ):
+
+    frame_mean = frame_mean or OPENAI_DATASET_MEAN
+    if not isinstance(frame_mean, (list, tuple)):
+        frame_mean = (frame_mean,) * 3
+
+    frame_std = frame_std or OPENAI_DATASET_STD
+    if not isinstance(frame_std, (list, tuple)):
+        frame_std = (frame_std,) * 3
+
+    normalize = Normalize(mean=frame_mean, std=frame_std) 
     
     if is_train:
         transforms = [
@@ -148,11 +160,16 @@ def video_transform(
                 scale=(0.9, 0.1),
                 interpolation=InterpolationMode.BICUBIC,
             ),
+            normalize,
         ]
     else:
         transforms = [
+            ToPILImage(),
             Resize(frame_size, interpolation=InterpolationMode.BICUBIC),
             CenterCrop(frame_size),
+            _convert_to_rgb,
+            ToTensor(),
+            normalize,
         ]
 
     frame_transform = Compose(transforms)
@@ -173,6 +190,6 @@ def video_transform(
             video = padded_video
 
         # TODO: this .float() is weird, look how this is done in other places
-        return torch.cat([frame_transform(frame)[None, ...].float() for frame in video])
+        return torch.cat([frame_transform(frame.float())[None, ...] for frame in video])
 
     return apply_frame_transform

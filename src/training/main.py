@@ -340,6 +340,7 @@ def main(args):
         data = get_video_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
     else:
         data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train

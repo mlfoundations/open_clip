@@ -90,7 +90,8 @@ class ViViT(nn.Module):
             norm_layer=norm_layer,
         )
 
-        self.global_average_pool = global_average_pool
+        # self.global_average_pool = global_average_pool
+        self.global_average_pool = True
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -105,6 +106,7 @@ class ViViT(nn.Module):
 
     # TODO: add patch dropout as suggested by lucidrains
     def forward(self, video):
+        # print(video[:, :10, 0, 0, 0])
         video = video[:, 1:] # make space for temporal CLS token
         # TODO: make this happen
         batch_size = video.shape[0]
@@ -114,6 +116,9 @@ class ViViT(nn.Module):
         f_e = self.spatial(frames)
         # Put frame embeddings back into correct temporal sequences
         f_e = f_e.view(*video.shape[:2], -1)
+
+        # print("FRAME EMBS")
+        # print(f_e[:, :10, 0])
         
         # class embeddings and positional embeddings
         f_e = torch.cat(
@@ -128,6 +133,9 @@ class ViViT(nn.Module):
         v_e = self.temporal(f_e)
 
         pooled, tokens = self._global_pool(v_e)
+
+        # print("POOOOLED")
+        # print(pooled[:, :10])
 
         return pooled
 
@@ -186,6 +194,7 @@ class VideoCLIP(nn.Module):
     def forward(self, video, text):
         video_features = self.encode_video(video, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        # print(text_features[:, :10])
         # TODO: make loss funcitons generalize to all types of modality pairs
         # i.e. make keys more general, for now keeping as image_features
         return {
