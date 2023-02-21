@@ -331,7 +331,7 @@ See also this [[Coca Colab]](https://colab.research.google.com/github/mlfoundati
 To fine-tune coca on mscoco, first create the dataset, one way is using a csvdataset and perhaps the simplest way to do it is using [CLIP_benchmark](https://github.com/LAION-AI/CLIP_benchmark) which in turn uses [pycocotools](https://github.com/cocodataset/cocoapi) (that can be used also by itself).
 
 ```python
-from clip_benchrmark.datasets.builder import build_dataset
+from clip_benchmark.datasets.builder import build_dataset
 import pandas as pd
 import os
 
