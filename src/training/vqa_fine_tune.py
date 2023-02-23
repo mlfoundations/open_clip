@@ -67,13 +67,14 @@ def get_task_dataloaders(path, transforms, labelencoder, args):
         #dataset_df = dataset_df[0:12800]
         b_size = args.batch_size
         if(split == "validation"):
-            b_size = args.batch_size
-        dataset = VQATextDataset(dataset_df,
-            split,
-            transforms,
-            labelencoder,              
-            tokenizer=tokenizer,
-        )
+            b_size = args.batch_size * 20
+            dataset_df = dataset_df[0:12800]
+            dataset = VQATextDataset(dataset_df,
+                split,
+                transforms,
+                labelencoder,              
+                tokenizer=tokenizer,
+            )
         dataloader = DataLoader(
             dataset,
             batch_size=b_size,
@@ -222,7 +223,7 @@ def parse_args(args):
         "--workers", type=int, default=2, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=256, help="Batch size per GPU."
+        "--batch-size", type=int, default=128, help="Batch size per GPU."
     )
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for."
