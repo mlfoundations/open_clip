@@ -103,10 +103,13 @@ class AudioSpectrogramTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.vit.set_grad_checkpointing(enable=enable)
 
-    def forward(self, x: torch.Tensor):
-        x = self.spec(x)
+    def forward(self, x: torch.Tensor, should_augment: bool = True):
+        is_spectrogram = x.ndim == 3
 
-        if self.training:
+        if not is_spectrogram:
+            x = self.spec(x)
+
+        if self.training and should_augment:
             x = self.aug(x)
 
         # automatically crop if audio does not yield a 2d spectrogram that is divisible by patch sizes
@@ -240,8 +243,8 @@ class AudioCLIP(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
 
-    def encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
+    def encode_image(self, image, normalize: bool = False, should_augment: bool = True):
+        features = self.visual(image, should_augment=should_augment)
         return F.normalize(features, dim=-1) if normalize else features
 
     def encode_text(self, text, normalize: bool = False):
@@ -259,11 +262,11 @@ class AudioCLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, audio, text, audio_latent=None):
+    def forward(self, audio, text, audio_latent=None, augment_audio=True):
         text_latent = self.encode_text(text)
 
         if audio_latent is None:
-            audio_latent = self.encode_image(audio)
+            audio_latent = self.encode_image(audio, should_augment=augment_audio)
 
         logit_scale = self.logit_scale.exp()
 
