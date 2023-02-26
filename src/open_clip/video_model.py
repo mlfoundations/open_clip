@@ -68,14 +68,14 @@ class ViViT(nn.Module):
             LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         )
 
-        '''
         # class embeddings and positional embeddings
         scale = temporal_cfg.width ** -0.5
         self.video_class_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.width))
         self.video_positional_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.context_length, temporal_cfg.width))
-        '''
 
-        # self.ln_pre = norm_layer(temporal_cfg.width)
+        self.ln_pre = norm_layer(temporal_cfg.width)
+        self.ln_post = norm_layer(temporal_cfg.width)
+        self.proj = nn.Parameter(scale * torch.randn(temporal_cfg.width, temporal_cfg.width))
 
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
@@ -83,7 +83,6 @@ class ViViT(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
-        '''
         self.temporal = Transformer(
             width=temporal_cfg.width,
             layers=temporal_cfg.layers,
@@ -93,14 +92,20 @@ class ViViT(nn.Module):
             norm_layer=norm_layer,
         )
         '''
-
+        self.temporal = nn.Sequential(
+            nn.Linear(temporal_cfg.width, temporal_cfg.width*temporal_cfg.mlp_ratio),
+            act_layer(),
+            nn.Linear(temporal_cfg.width*temporal_cfg.mlp_ratio, temporal_cfg.width),
+        )
+        '''
 
         self.global_average_pool = global_average_pool
+        # self.global_average_pool = True
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.spatial.set_grad_checkpointing(enable)
-        # self.temporal.grad_checkpointing = enable
+        self.temporal.grad_checkpointing = enable
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.global_average_pool:
@@ -110,9 +115,7 @@ class ViViT(nn.Module):
 
     # TODO: add patch dropout as suggested by lucidrains
     def forward(self, video):
-        # print(video[:, :10, 0, 0, 0])
         video = video[:, 1:] # make space for temporal CLS token
-        # TODO: make this happen
         batch_size = video.shape[0]
 
         # Flatten all frames in batch across time and encode with ViT
@@ -121,10 +124,6 @@ class ViViT(nn.Module):
         # Put frame embeddings back into correct temporal sequences
         f_e = f_e.view(*video.shape[:2], -1)
 
-        '''
-        # print("FRAME EMBS")
-        # print(f_e[:, :10, 0])
-        
         # class embeddings and positional embeddings
         f_e = torch.cat(
             [self.video_class_embedding.to(f_e.dtype) + torch.zeros(f_e.shape[0], 1, f_e.shape[-1], dtype=f_e.dtype, device=f_e.device),
@@ -135,12 +134,13 @@ class ViViT(nn.Module):
         # do we need the residual connections?
         f_e = self.ln_pre(f_e)
 
+        f_e = f_e.permute(1, 0, 2)
         v_e = self.temporal(f_e)
+        v_e = v_e.permute(1, 0, 2)
 
         pooled, tokens = self._global_pool(v_e)
-        '''
-
-        pooled = torch.mean(f_e, dim=1)
+        pooled = self.ln_post(pooled)
+        pooled = pooled @ self.proj
 
         print("POOOOLED")
         print(pooled[:10, :10])
@@ -203,7 +203,6 @@ class VideoCLIP(nn.Module):
     def forward(self, video, text):
         video_features = self.encode_video(video, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        # print(text_features[:, :10])
         # TODO: make loss funcitons generalize to all types of modality pairs
         # i.e. make keys more general, for now keeping as image_features
         return {
