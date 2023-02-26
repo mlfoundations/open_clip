@@ -42,8 +42,8 @@ class DataInfo:
 
 def filter_no_caption_or_no_video(sample):
     has_caption = ('txt' in sample)
-    has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
-    return has_caption and has_image
+    has_video = ('mp4' in sample)
+    return has_caption and has_video
 
 
 def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None):
