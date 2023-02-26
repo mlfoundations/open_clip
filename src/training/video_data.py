@@ -40,6 +40,12 @@ class DataInfo:
             self.sampler.set_epoch(epoch)
 
 
+def filter_no_caption_or_no_video(sample):
+    has_caption = ('txt' in sample)
+    has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
+    return has_caption and has_image
+
+
 def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None):
     """Return function over iterator that groups key, value pairs into samples.
     :param keys: function that splits the key into key and extension (base_plus_ext)
@@ -138,6 +144,7 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
 
 
     pipeline.extend([
+        wds.select(filter_no_caption_or_no_video),
         wds.decode(wds.torch_video, handler=log_and_continue),
         wds.rename(video="mp4", text="txt"),
         wds.map_dict(video=preprocess_vid, text=lambda text: tokenizer(text)[0]),
