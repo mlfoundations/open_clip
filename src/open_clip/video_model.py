@@ -45,8 +45,7 @@ def _build_video_tower(
 
         return model
 
-# TODO: implement
-# TODO: maybe add option for mean pooling
+# TODO: finish option for mean pooling (no cls token if global_average_pool == True)
 class ViViT(nn.Module):
     """ViViT model (https://arxiv.org/abs/2103.15691), factorised encoder variant"""
     def __init__(
@@ -75,7 +74,7 @@ class ViViT(nn.Module):
 
         self.ln_pre = norm_layer(temporal_cfg.width)
         self.ln_post = norm_layer(temporal_cfg.width)
-        self.proj = nn.Parameter(scale * torch.randn(temporal_cfg.width, temporal_cfg.width))
+        self.proj = nn.Parameter(scale * torch.randn(temporal_cfg.width, embed_dim))
 
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
@@ -91,16 +90,8 @@ class ViViT(nn.Module):
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
-        '''
-        self.temporal = nn.Sequential(
-            nn.Linear(temporal_cfg.width, temporal_cfg.width*temporal_cfg.mlp_ratio),
-            act_layer(),
-            nn.Linear(temporal_cfg.width*temporal_cfg.mlp_ratio, temporal_cfg.width),
-        )
-        '''
 
         self.global_average_pool = global_average_pool
-        # self.global_average_pool = True
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -142,9 +133,9 @@ class ViViT(nn.Module):
         pooled = self.ln_post(pooled)
         pooled = pooled @ self.proj
 
-        print("POOOOLED")
-        print(pooled[:10, :10])
-        print(torch.mean(torch.var(pooled, dim=0)))
+        # print("POOLED")
+        # print(pooled[:10, :10])
+        # print(torch.mean(torch.var(pooled, dim=0)))
 
         return pooled
 
@@ -203,7 +194,7 @@ class VideoCLIP(nn.Module):
     def forward(self, video, text):
         video_features = self.encode_video(video, normalize=True)
         text_features = self.encode_text(text, normalize=True)
-        # TODO: make loss funcitons generalize to all types of modality pairs
+        # TODO: make loss functions generalize to all types of modality pairs
         # i.e. make keys more general, for now keeping as image_features
         return {
             "image_features": video_features,
