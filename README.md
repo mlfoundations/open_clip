@@ -33,6 +33,9 @@ And the following ConvNeXt CLIP models:
   * ConvNext-Large (D) @ 256x256 /w augreg on LAION-2B with a top-1 of **75.9%**
   * ConvNext-Large (D) @ 320x320 fine-tune of 256x256 weights above for ~2.5B more samples on LAION-2B, top-1 of **76.6%**
   * ConvNext-Large (D) @ 320x320 soup of 3 fine-tunes of 256x256 weights above on LAION-2B, top-1 of **76.9%**
+  * ConvNext-XXLarge @ 256x256 original run **79.1%** 
+  * ConvNext-XXLarge @ 256x256 rewind of last 10% **79.3%**
+  * ConvNext-XXLarge @ 256x256 soup of original + rewind **79.4%**
 
 Model cards w/ additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip
 
