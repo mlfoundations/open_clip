@@ -15,16 +15,17 @@ from training.train import AverageMeter
 import evaluate
 from sklearn import preprocessing
 import numpy as np
+import sys
 
 from datasets import load_dataset_builder
 from datasets import load_dataset
 
 class VQATextDataset(Dataset):
-    def __init__(self, df, split, transforms, labelencoder, tokenizer=None):
+    def __init__(self, df, split, transforms, answer_set, tokenizer=None):
         self.df = df
         self.transforms = transforms
         self.tokenize = tokenizer
-        self.labels = labelencoder.transform(df['multiple_choice_answer'])
+        self.num_classes = len(answer_set)
     def __len__(self):
         return len(self.df)
 
@@ -33,14 +34,19 @@ class VQATextDataset(Dataset):
         img_path = item["image"]["path"]
         image = Image.open(str(img_path))
         text = item["question"]
-        label = self.labels[idx]
+        target = np.zeros(self.num_classes)
+        for index, row in self.df.iterrows():
+            target[row['answer_list']] = row['answer_weights']
         return {
             'image': self.transforms(image),
             'text': self.tokenize([text])[0],
-            'label': torch.tensor(label)
+            'target': torch.tensor(target)
         }
 
-def get_task_dataloaders(path, transforms, labelencoder, args):
+def get_score(count: int) -> float:
+    return min(1.0, count / 3)
+
+def get_task_dataloaders(path, transforms, labelencoder, answer_set, args):
     tokenizer = get_tokenizer(args.model)
     dataloaders = {}
     
@@ -52,29 +58,43 @@ def get_task_dataloaders(path, transforms, labelencoder, args):
         questions = []
         images = []
         answers = []
+        weights = []
         for index, row in dataset_df.iterrows():
-          if(row['multiple_choice_answer'] in answer_set):
+            answer_count = {}
+            for answer in row['answers']:
+                answer_ = answer["answer"]
+                answer_count[answer_] = answer_count.get(answer_, 0) + 1
+            labels = []
+            scores = []
+            for answer in answer_count:
+                if answer not in answer_set:
+                    continue
+                labels.append(labelencoder.transform([answer])[0])
+                score = get_score(answer_count[answer])
+                scores.append(score)
+            if(len(labels) == 0):
+                continue
             class_id.append(row['question_id'])
             questions.append(row['question'])
             images.append(row['image'])
-            answers.append(row['multiple_choice_answer'])
+            answers.append(labels)
+            weights.append(scores)
+
         class_id = np.array(class_id)
         questions = np.array(questions)
         images = np.array(images)
-        answers = np.array(answers)
-
-        dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'multiple_choice_answer': answers})
+        dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'answer_list': answers, 'answer_weights': weights})
         #dataset_df = dataset_df[0:12800]
         b_size = args.batch_size
         if(split == "validation"):
             b_size = args.batch_size * 20
             dataset_df = dataset_df[0:12800]
-            dataset = VQATextDataset(dataset_df,
-                split,
-                transforms,
-                labelencoder,              
-                tokenizer=tokenizer,
-            )
+        dataset = VQATextDataset(dataset_df,
+            split,
+            transforms,    
+            answer_set,       
+            tokenizer=tokenizer,
+        )
         dataloader = DataLoader(
             dataset,
             batch_size=b_size,
@@ -92,17 +112,19 @@ class CLIPMultimodalClassifier(nn.Module):
         super().__init__()
 
         self.encoder = encoder
+        self.layers = nn.Sequential(
+            nn.Linear(embed_dim * 2, 1536), #size of answer space
+            nn.ReLU(inplace=True),
+            nn.LayerNorm(1536),
+            nn.Linear(1536, num_labels)
+        )
         
-        self.fc1 = nn.Linear(embed_dim * 2, 1536) #size of answer space
-        self.lnorm = nn.LayerNorm(1536)
-        self.fc2 = nn.Linear(1536, num_classes)
     def forward(self, image, text):
         # CLIP doesn't have a multimodal encoder, so we concatenate the features
         text_features = self.encoder.encode_text(text)
         image_features = self.encoder.encode_image(image)
         multimodal_features = torch.cat([image_features, text_features], dim=-1)
-        layer = self.lnorm(F.relu(self.fc1(multimodal_features)))
-        logits = self.fc2(layer)
+        logits = self.layers(multimodal_features)
         return logits
 
 class EarlyStopping:
@@ -136,16 +158,15 @@ def compute_metrics(model, dataloader, device, args):
     metric = evaluate.load("accuracy")
     val_loss = 0
     samples_seen = 0
-    loss_fn = nn.CrossEntropyLoss()
     for batch in dataloader:
         with torch.no_grad():
             image = batch["image"].to(device)
             text = batch["text"].to(device)
-            label = batch["label"].to(device)
+            label = batch["target"].to(device)
             samples_seen += text.shape[0]
             logits = model(image, text)
             predictions = torch.argmax(logits, dim=-1)
-            batch_val_loss = loss_fn(logits, label)
+            batch_val_loss = nn.functional.binary_cross_entropy_with_logits(logits, label, reduction="mean")
         val_loss += batch_val_loss.item()
         print(val_loss)
         metric.add_batch(
@@ -164,20 +185,18 @@ def train_single_epoch(model, data, optimizer, args):
     for i, batch in enumerate(data["train"]):
         image = batch["image"].to(device)
         text = batch["text"].to(device)
-        label = batch["label"].to(device)
+        label = batch["target"].to(device)
         
         logits = model(image, text)
         print(label.shape)
         print(logits.shape)
-        loss_fn = nn.CrossEntropyLoss()
-        loss = loss_fn(logits, label)
+        loss = nn.functional.binary_cross_entropy_with_logits(logits, label, reduction="mean")
         print(loss)
         loss.backward()
 
         
 def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device, args):
     model.train()
-    loss_fn = nn.CrossEntropyLoss()
     progress_bar = tqdm(total=len(data["train"]))
     for i, batch in enumerate(data["train"]):
         step = epoch * len(data["train"]) + i
@@ -185,10 +204,10 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         
         image = batch["image"].to(device)
         text = batch["text"].to(device)
-        label = batch["label"].to(device)
+        label = batch["target"].to(device)
         logits = model(image, text)
 
-        loss = loss_fn(logits, label) #should be cross entropy 
+        loss = nn.functional.binary_cross_entropy_with_logits(logits, label, reduction = "mean") #should be cross entropy 
 
         optimizer.zero_grad()
         loss.backward()
@@ -228,7 +247,7 @@ def parse_args(args):
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for."
     )
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate.")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate.")
     parser.add_argument("--beta1", type=float, default=0.9, help="Adam beta 1.")
     parser.add_argument("--beta2", type=float, default=0.999, help="Adam beta 2.")
     parser.add_argument("--eps", type=float, default=1e-8, help="Adam epsilon.")
@@ -273,8 +292,8 @@ def parse_args(args):
     args = parser.parse_args(args)
     return args
 
-if __name__ == "__main__":
-    args = parse_args([])
+def main(args):
+    args = parse_args(args)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     model, preprocess_train, preprocess_val = open_clip.factory.create_model_and_transforms(
@@ -287,7 +306,7 @@ if __name__ == "__main__":
     embed_dim = model_cfg["embed_dim"]
     
     answer_space = []
-    with open('answers_vqa.txt') as f:
+    with open('src/training/answers_vqa.txt') as f:
         for line in f:
           answer_space.append(line.strip())
     answer_space = np.array(answer_space)
@@ -298,7 +317,7 @@ if __name__ == "__main__":
 
     answer_set = set(labelencoder.classes_)
     
-    data = get_task_dataloaders("HuggingFaceM4/VQAv2", preprocess_val, labelencoder, args)
+    data = get_task_dataloaders("HuggingFaceM4/VQAv2", preprocess_val, labelencoder, answer_set, args)
 
     clf_cls = CLIPMultimodalClassifier
     clf = clf_cls(model, embed_dim, num_classes).to(device)
@@ -314,3 +333,6 @@ if __name__ == "__main__":
 
     for epoch in range(20):
         val_metrics, end_training = train_one_epoch(clf, data, epoch, optim, scheduler, early_stop, device, args)
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
