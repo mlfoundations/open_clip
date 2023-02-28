@@ -21,11 +21,13 @@ from datasets import load_dataset_builder
 from datasets import load_dataset
 
 class VQATextDataset(Dataset):
-    def __init__(self, df, split, transforms, answer_set, tokenizer=None):
+    def __init__(self, df, split, transforms, label_encoder, answer_set, tokenizer=None):
         self.df = df
         self.transforms = transforms
         self.tokenize = tokenizer
         self.num_classes = len(answer_set)
+        self.label_encoder = label_encoder
+        self.answer_set = answer_set
     def __len__(self):
         return len(self.df)
 
@@ -34,9 +36,23 @@ class VQATextDataset(Dataset):
         img_path = item["image"]["path"]
         image = Image.open(str(img_path))
         text = item["question"]
+
+        answer_count = {}
+        for answer in item['answers']:
+            answer_ = answer["answer"]
+            answer_count[answer_] = answer_count.get(answer_, 0) + 1
+        labels = []
+        scores = []
+        for answer in answer_count:
+            if answer not in self.answer_set:
+                continue
+            labels.append(self.label_encoder.transform([answer])[0])
+            score = get_score(answer_count[answer])
+            scores.append(score)
         target = np.zeros(self.num_classes)
-        for index, row in self.df.iterrows():
-            target[row['answer_list']] = row['answer_weights']
+        for label, score in zip(labels, scores):
+            target[label] = score
+        
         return {
             'image': self.transforms(image),
             'text': self.tokenize([text])[0],
@@ -44,54 +60,25 @@ class VQATextDataset(Dataset):
         }
 
 def get_score(count: int) -> float:
-    return min(1.0, count / 3)
+    return min(1.0, count / 3.0)
 
 def get_task_dataloaders(path, transforms, labelencoder, answer_set, args):
     tokenizer = get_tokenizer(args.model)
     dataloaders = {}
     
     for split in ["train", "validation"]:
-        dataset_train = load_dataset(path, split=split, cache_dir = "./sample_data")
+        dataset_train = load_dataset(path, split=split, cache_dir = "./vqa_data")
         dataset_df = dataset_train.to_pandas()
-
-        class_id = []
-        questions = []
-        images = []
-        answers = []
-        weights = []
-        for index, row in dataset_df.iterrows():
-            answer_count = {}
-            for answer in row['answers']:
-                answer_ = answer["answer"]
-                answer_count[answer_] = answer_count.get(answer_, 0) + 1
-            labels = []
-            scores = []
-            for answer in answer_count:
-                if answer not in answer_set:
-                    continue
-                labels.append(labelencoder.transform([answer])[0])
-                score = get_score(answer_count[answer])
-                scores.append(score)
-            if(len(labels) == 0):
-                continue
-            class_id.append(row['question_id'])
-            questions.append(row['question'])
-            images.append(row['image'])
-            answers.append(labels)
-            weights.append(scores)
-
-        class_id = np.array(class_id)
-        questions = np.array(questions)
-        images = np.array(images)
-        dataset_df = pd.DataFrame({'question_id': class_id, 'question': questions, 'image': images, 'answer_list': answers, 'answer_weights': weights})
-        #dataset_df = dataset_df[0:12800]
+        dataset_df = dataset_df[dataset_df.apply(lambda item: True if item['multiple_choice_answer'] in answer_set else False, axis=1)]
+        
         b_size = args.batch_size
         if(split == "validation"):
-            b_size = args.batch_size * 20
+            b_size = args.batch_size * 10
             dataset_df = dataset_df[0:12800]
         dataset = VQATextDataset(dataset_df,
             split,
-            transforms,    
+            transforms, 
+            labelencoder,   
             answer_set,       
             tokenizer=tokenizer,
         )
@@ -158,6 +145,8 @@ def compute_metrics(model, dataloader, device, args):
     metric = evaluate.load("accuracy")
     val_loss = 0
     samples_seen = 0
+    total_correct = 0
+
     for batch in dataloader:
         with torch.no_grad():
             image = batch["image"].to(device)
@@ -167,19 +156,21 @@ def compute_metrics(model, dataloader, device, args):
             logits = model(image, text)
             predictions = torch.argmax(logits, dim=-1)
             batch_val_loss = nn.functional.binary_cross_entropy_with_logits(logits, label, reduction="mean")
+        predictions=predictions.cpu().numpy()
+        references= label.cpu().numpy()
         val_loss += batch_val_loss.item()
-        print(val_loss)
-        metric.add_batch(
-            predictions=predictions.cpu().numpy(),
-            references=label.cpu().numpy(),
-        )
+        for i, pred in enumerate(predictions):
+            total_correct += references[i][pred]
+    #print("total correct", total_correct, "seen", samples_seen)
+
     model.train()
-    metrics = metric.compute()
     metrics = {}
-    metrics["accuracy"] = val_loss / samples_seen
+    metrics["accuracy"] = total_correct/ samples_seen
+    metrics["loss"] = val_loss / samples_seen
     
     return metrics
 
+#Remove in final commit
 def train_single_epoch(model, data, optimizer, args):
     model.train()
     for i, batch in enumerate(data["train"]):
@@ -219,11 +210,11 @@ def train_one_epoch(model, data, epoch, optimizer, scheduler, early_stop, device
         if (i % args.val_frequency) == 0 and i > 5:
             print(loss)
             metrics = compute_metrics(model, data["validation"], device, args)
-            print(metrics["accuracy"])
+            print("accuracy", metrics["accuracy"])
             end_training = early_stop.step(metrics)
-            if end_training:
-                progress_bar.close()
-                return metrics, end_training
+            #if end_training:
+            #    progress_bar.close()
+            #    return metrics, end_training
 
     progress_bar.close()
     metrics = compute_metrics(model, data["validation"], device, args)
@@ -256,7 +247,7 @@ def parse_args(args):
         "--warmup", type=int, default=200, help="Number of steps to warmup for."
     )
     parser.add_argument(
-        "--val-frequency", type=int, default=300, help="How often to run evaluation with val data."
+        "--val-frequency", type=int, default=100, help="How often to run evaluation with val data."
     )
     parser.add_argument(
         "--early-stop-patience", type=int, default=5, help="Early stopping patience."
