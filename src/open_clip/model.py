@@ -30,11 +30,11 @@ class CLIPVisionCfg:
     image_size: Union[Tuple[int, int], int] = 224
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
-    input_patchnorm: bool = False # whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design
+    input_patchnorm: bool = False  # whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design
     global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
-    attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
-    n_queries: int = 256 # n_queries for attentional pooler
-    attn_pooler_heads: int = 8 # n heads for attentional_pooling
+    attentional_pool: bool = False  # whether to use attentional pooler in the last embedding layer
+    n_queries: int = 256  # n_queries for attentional pooler
+    attn_pooler_heads: int = 8  # n heads for attentional_pooling
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -195,6 +195,7 @@ class CLIP(nn.Module):
         self.token_embedding = text.token_embedding
         self.positional_embedding = text.positional_embedding
         self.ln_final = text.ln_final
+        self.return_all_embeddings = text_cfg.pop("return_all_embeddings", False)
         self.text_projection = text.text_projection
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
@@ -223,8 +224,15 @@ class CLIP(nn.Module):
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # By default, this only returns the embedding for the final timestep. If you want
+        # to use these embeddings for something like Stable Diffusion training, you may
+        # want to return embeddings for ALL timesteps.
+        if not self.return_all_embeddings:
+            # take features from the eot embedding (eot_token is the highest number in each sequence)
+            x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        else:
+            x = x @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(self, image, text):
