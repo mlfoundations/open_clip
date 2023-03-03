@@ -7,6 +7,7 @@ import re
 
 import torch
 import torch.nn as nn
+import intel_extension_for_pytorch
 from torch import TensorType
 
 try:

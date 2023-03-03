@@ -7,6 +7,7 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import intel_extension_for_pytorch
 
 try:
     import timm

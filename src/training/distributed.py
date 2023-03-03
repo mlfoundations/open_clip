@@ -2,6 +2,7 @@ import os
 
 import torch
 import torch.distributed as dist
+import intel_extension_for_pytorch
 
 try:
     import horovod.torch as hvd
@@ -101,12 +102,12 @@ def init_distributed_device(args):
             args.rank = torch.distributed.get_rank()
         args.distributed = True
 
-    if torch.cuda.is_available():
+    if torch.xpu.is_available():
         if args.distributed and not args.no_set_device_rank:
-            device = 'cuda:%d' % args.local_rank
+            device = 'xpu:%d' % args.local_rank
         else:
-            device = 'cuda:0'
-        torch.cuda.set_device(device)
+            device = 'xpu:0'
+        torch.xpu.set_device(device)
     else:
         device = 'cpu'
     args.device = device

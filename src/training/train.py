@@ -7,6 +7,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+import intel_extension_for_pytorch
 from torch.nn.parallel.distributed import DistributedDataParallel
 
 try:

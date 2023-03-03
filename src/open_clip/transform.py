@@ -4,7 +4,9 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
+import intel_extension_for_pytorch
 import torchvision.transforms.functional as F
+import intel_extension_for_pytorch
 
 from torchvision.transforms import Normalize, Compose, RandomResizedCrop, InterpolationMode, ToTensor, Resize, \
     CenterCrop

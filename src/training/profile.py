@@ -81,8 +81,8 @@ def count_params(model):
 def profile_model(model_name):
     model = open_clip.create_model(model_name, force_custom_text=True, pretrained_hf=False)
     model.eval()
-    if torch.cuda.is_available():
-        model = model.cuda()
+    if torch.xpu.is_available():
+        model = model.xpu()
 
     if isinstance(model.visual.image_size, (tuple, list)):
         image_input_size = (3,) + tuple(model.visual.image_size[-2:])

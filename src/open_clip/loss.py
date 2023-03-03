@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import intel_extension_for_pytorch
 from torch.nn import functional as F
 
 try:

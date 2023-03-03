@@ -2,6 +2,7 @@ import logging
 
 import torch
 import torch.nn.functional as F
+import intel_extension_for_pytorch
 from tqdm import tqdm
 
 from open_clip import get_cast_dtype, get_tokenizer

@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torchvision.datasets as datasets
+import intel_extension_for_pytorch
 import webdataset as wds
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info

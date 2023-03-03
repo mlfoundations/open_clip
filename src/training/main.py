@@ -10,7 +10,7 @@ from datetime import datetime
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
+from torch.xpu.amp import GradScaler
 
 try:
     import wandb
@@ -19,6 +19,7 @@ except ImportError:
 
 try:
     import torch.utils.tensorboard as tensorboard
+import intel_extension_for_pytorch
 except ImportError:
     tensorboard = None
 
@@ -70,11 +71,11 @@ def get_latest_checkpoint(path: str, remote : bool):
 def main(args):
     args = parse_args(args)
 
-    if torch.cuda.is_available():
+    if torch.xpu.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
         # float16 and almost as accurate as float32
         # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.xpu.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 

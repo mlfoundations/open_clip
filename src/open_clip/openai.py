@@ -50,7 +50,7 @@ def load_openai_model(
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "xpu" if torch.xpu.is_available() else "cpu"
     if precision is None:
         precision = 'fp32' if device == 'cpu' else 'fp16'
 
@@ -105,7 +105,7 @@ def load_openai_model(
 
         for graph in graphs:
             for node in graph.findAllNodes("prim::Constant"):
-                if "value" in node.attributeNames() and str(node["value"]).startswith("cuda"):
+                if "value" in node.attributeNames() and str(node["value"]).startswith("xpu"):
                     node.copyAttributes(device_node)
 
     model.apply(patch_device)
