@@ -30,7 +30,6 @@ class AudioSpectrogramTransformer(nn.Module):
             layers: int,
             heads: int,
             mlp_ratio: float,
-            channels: int = 1,
             ls_init_value: float = None,
             global_average_pool: bool = False,
             attentional_pool: bool = False,
@@ -91,7 +90,7 @@ class AudioSpectrogramTransformer(nn.Module):
             act_layer=act_layer,
             norm_layer=norm_layer,
             output_tokens=output_tokens,
-            channels=channels
+            channels=1
         )
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
@@ -105,12 +104,12 @@ class AudioSpectrogramTransformer(nn.Module):
         self.vit.set_grad_checkpointing(enable=enable)
 
     def forward(self, x: torch.Tensor, should_augment: bool = True):
-        is_spectrogram = x.ndim >= 3
+        is_spectrogram = x.ndim == 3
 
         if not is_spectrogram:
             x = self.spec(x)
 
-        if self.training and x.ndim == 3 and should_augment:
+        if self.training and should_augment:
             x = self.aug(x)
 
         # automatically crop if audio does not yield a 2d spectrogram that is divisible by patch sizes
@@ -124,12 +123,7 @@ class AudioSpectrogramTransformer(nn.Module):
         if (height, width) != (rounded_height, rounded_width):
             print(f'spectrogram yielded shape of {(height, width)}, but had to be cropped to {(rounded_height, rounded_width)} to be patchified for transformer')
 
-        x = x[..., :rounded_height, :rounded_width]
-
-        # flexible for allowing > 1 channels
-
-        if x.ndim == 3:
-            x = x[:, None, ...]
+        x = x[..., None, :rounded_height, :rounded_width]
 
         # pass maybe cropped spectrogram to vit
 
@@ -139,7 +133,6 @@ class AudioSpectrogramTransformer(nn.Module):
 
 @dataclass
 class CLIPAudioCfg(CLIPVisionCfg):
-    channels: int = 1
     spec_n_fft: int = 128
     spec_power: int = 2
     spec_win_length: int = 24
@@ -177,7 +170,6 @@ def _build_audio_tower(
         layers=audio_cfg.layers,
         heads=audio_heads,
         mlp_ratio=audio_cfg.mlp_ratio,
-        channels=audio_cfg.channels,
         ls_init_value=audio_cfg.ls_init_value,
         patch_dropout=audio_cfg.patch_dropout,
         global_average_pool=audio_cfg.global_average_pool,
