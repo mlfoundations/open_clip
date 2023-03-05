@@ -129,7 +129,7 @@ class AudioSpectrogramTransformer(nn.Module):
         # pass maybe cropped spectrogram to vit
 
         if x.ndim == 3:
-            x = x[..., None]
+            x = x[:, None, ...]
 
         return self.vit(x)
 
