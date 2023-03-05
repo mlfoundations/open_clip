@@ -104,7 +104,8 @@ class AudioSpectrogramTransformer(nn.Module):
         self.vit.set_grad_checkpointing(enable=enable)
 
     def forward(self, x: torch.Tensor, should_augment: bool = True):
-        is_spectrogram = x.ndim == 3
+        assert x.ndim in {2, 3, 4}   # can be either wave (batch, time) or spectrogram (batch, freq, time) | (batch, 1, freq, time)
+        is_spectrogram = x.ndim >= 3
 
         if not is_spectrogram:
             x = self.spec(x)
@@ -123,9 +124,12 @@ class AudioSpectrogramTransformer(nn.Module):
         if (height, width) != (rounded_height, rounded_width):
             print(f'spectrogram yielded shape of {(height, width)}, but had to be cropped to {(rounded_height, rounded_width)} to be patchified for transformer')
 
-        x = x[..., None, :rounded_height, :rounded_width]
+        x = x[..., :rounded_height, :rounded_width]
 
         # pass maybe cropped spectrogram to vit
+
+        if x.ndim == 3:
+            x = x[..., None]
 
         return self.vit(x)
 
