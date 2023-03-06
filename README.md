@@ -20,7 +20,8 @@ We have trained the following ViT CLIP models:
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * CoCa ViT-L/14 on LAION-2B with an accuracy of **75.5%** (currently only 13B samples seen) vs. CLIP ViT-L/14 73.1% (on the same dataset and samples seen)
   * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
-  * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced schedule, same samples seen as 400M models.
+  * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
+  * ViT-g/14 on LAION-2B with an accuracy of **78.5**. Full 34B samples seen schedule.
   * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
 
 And the following ConvNeXt CLIP models:

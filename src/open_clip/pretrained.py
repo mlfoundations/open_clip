@@ -141,6 +141,7 @@ _VITH14 = dict(
 
 _VITg14 = dict(
     laion2b_s12b_b42k=_pcfg(hf_hub='laion/CLIP-ViT-g-14-laion2B-s12B-b42K/'),
+    laion2b_s34b_b88k=_pcfg(hf_hub='laion/CLIP-ViT-g-14-laion2B-s34B-b88K/'),
 )
 
 _VITbigG14 = dict(
