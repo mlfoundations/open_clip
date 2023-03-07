@@ -304,6 +304,8 @@ def main(args):
                 # this doesn't exist in older PyTorch, arg only added if enabled
                 ddp_args['static_graph'] = True
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+            if args.distill:
+                dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
         elif args.distributed_engine == 'fsdp':
             from torch.distributed.fsdp.wrap import (
                 enable_wrap,
