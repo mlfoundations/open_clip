@@ -171,15 +171,47 @@ class AttentionalPooler(nn.Module):
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
-        self.attn = nn.MultiheadAttention(d_model, n_head, kdim=context_dim, vdim=context_dim)
         self.ln_q = norm_layer(d_model)
         self.ln_k = norm_layer(context_dim)
+        self.n_head = n_head
+        self.d_model = d_model
+        self.context_dim = context_dim
+        self.q_proj_weight = nn.Parameter(torch.randn(d_model, d_model))
+        self.k_proj_weight = nn.Parameter(torch.randn(d_model, context_dim))
+        self.v_proj_weight = nn.Parameter(torch.randn(d_model, context_dim))
+        self.in_proj_bias = nn.Parameter(torch.randn(d_model * 3))
+        self.out_proj = nn.Linear(d_model, d_model)
+
+    def attention(self, q, k, v):
+        bq, bk, bv = self.in_proj_bias.chunk(3)
+        q = F.linear(q, self.q_proj_weight, bq)
+        k = F.linear(k, self.k_proj_weight, bk)
+        v = F.linear(v, self.v_proj_weight, bv)
+
+        s1, b, _ = q.shape
+        s2, _, _ = k.shape
+        head_dim = self.d_model // self.n_head
+
+        qatt = q.view(s1, b * self.n_head, head_dim).contiguous().transpose(0, 1)
+        katt = k.view(s2, b * self.n_head, head_dim).contiguous().transpose(0, 1)
+        vatt = v.view(s2, b * self.n_head, head_dim).contiguous().transpose(0, 1)
+
+        att = F.softmax(
+            torch.bmm(qatt, katt.transpose(-2, -1)) / math.sqrt(qatt.shape[-1]), dim=-1
+        )
+        v_out = torch.bmm(att, vatt)
+
+        out = v_out.transpose(0, 1)
+        out = out.contiguous().view(s1 * b, self.d_model).contiguous()
+        out = self.out_proj(out)
+        out = out.view(s1, b, out.shape[-1]).contiguous()
+        return out
 
     def forward(self, x: torch.Tensor):
         x = self.ln_k(x).permute(1, 0, 2)  # NLD -> LND
         N = x.shape[1]
         q = self.ln_q(self.query)
-        out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
+        out = self.attention(self._repeat(q, N), x, x)
         return out.permute(1, 0, 2)  # LND -> NLD
 
     def _repeat(self, query, N: int):
@@ -497,7 +529,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
