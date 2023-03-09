@@ -110,7 +110,9 @@ class HFEncoder(nn.Module):
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
-            self.config = AutoConfig.from_pretrained(model_name_or_path)
+            config = {}
+        if isinstance(config, dict):
+            self.config = AutoConfig.from_pretrained(model_name_or_path, **config)
             create_func, model_args = (AutoModel.from_pretrained, model_name_or_path) if pretrained else (
                 AutoModel.from_config, self.config)
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??

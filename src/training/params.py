@@ -170,6 +170,12 @@ def parse_args(args):
         help="Load imagenet pretrained weights for image tower backbone if available.",
     )
     parser.add_argument(
+        "--pretrained-hf",
+        default=False,
+        action='store_true',
+        help="Load pretrained weights for HF text tower backbone if available.",
+    )
+    parser.add_argument(
         "--lock-image",
         default=False,
         action='store_true',
@@ -297,6 +303,12 @@ def parse_args(args):
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
     )
     parser.add_argument(
+        "--ddp-find-unused-parameters",
+        default=False,
+        action='store_true',
+        help="Enable unused parameters for DDP.",
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",
@@ -369,6 +381,42 @@ def parse_args(args):
         type=float,
         default=0.1,
         help="ITM negative probability when training FLAVA."
+    )
+    parser.add_argument(
+        "--flava-mae-norm-pix-loss",
+        type=bool,
+        default=True,
+        help="If True, normalize MAE loss by number of pixels in image."
+    )
+    parser.add_argument(
+        "--flava-unimodal-mlm",
+        type=str,
+        default=None,
+        help="Dataset used for unimodal text encoder pre-training with MLM."
+    )
+    parser.add_argument(
+        "--flava-unimodal-mae",
+        type=str,
+        default=None,
+        help="Dataset used for unimodal image encoder pre-training with MAE."
+    )
+    parser.add_argument(
+        "--flava-unimodal-mae-batch-size",
+        type=int,
+        default=14,
+        help="Batch size per GPU for unimodal MAE."
+    )
+    parser.add_argument(
+        "--flava-unimodal-mlm-batch-size",
+        type=int,
+        default=14,
+        help="Batch size per GPU for unimodal MLM."
+    )
+    parser.add_argument(
+        "--wds-filter-smaller-256",
+        default=False,
+        action='store_true',
+        help="Use dataset sampling from BLIP: filter out images with a shorter edge smaller than 256 pixels."
     )
 
     args = parser.parse_args(args)

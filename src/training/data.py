@@ -21,10 +21,59 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+from open_clip.factory import get_tokenizer
+from open_clip.flava_data import get_mlm_collate
+
 try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
+
+
+class HFTextDataset(Dataset):
+    def __init__(self, name, split, text_key, tokenizer=None):
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError('Please install datasets with `pip install datasets`.')
+
+        logging.debug(f'Loading HuggingFace dataset from {name}.')
+        self.df = load_dataset(name, split=split)
+        self.size = len(self.df)
+        self.text_key = text_key
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, idx):
+        text = self.tokenize([str(self.df[idx][self.text_key])])[0]
+        return {'text': text}
+
+
+class HFImageDataset(Dataset):
+    def __init__(self, name, split, transforms, image_key):
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError('Please install datasets with `pip install datasets`.')
+
+        logging.debug(f'Loading HuggingFace dataset from {name}.')
+        self.df = load_dataset(name, split=split)
+        self.size = len(self.df)
+        self.image_key = image_key
+        logging.debug('Done loading data.')
+
+        self.transforms = transforms
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, idx):
+        image = self.transforms(self.df[idx][self.image_key])
+        return {'image': image}
 
 
 class CsvDataset(Dataset):
@@ -157,6 +206,16 @@ def filter_no_caption_or_no_image(sample):
     has_caption = ('txt' in sample)
     has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
     return has_caption and has_image
+
+
+def filter_blip_subset(sample):
+    # Only download images whose shorter edge is larger than 256 pixels (from BLIP)
+    has_json_metadata = ('json' in sample)
+    if not (filter_no_caption_or_no_image(sample) and has_json_metadata):
+        return False
+    metadata = json.loads(sample['json'])
+    has_dimensions = ('original_height' in metadata) and ('original_width' in metadata)
+    return has_dimensions and min(metadata['original_height'], metadata["original_width"]) >= 256
 
 
 def log_and_continue(exn):
@@ -358,7 +417,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
     pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
+        wds.select(filter_blip_subset if args.wds_filter_smaller_256 else filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
         wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
@@ -448,6 +507,56 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, coll
     return DataInfo(dataloader, sampler)
 
 
+def get_hf_text_dataset(args, split, text_key="text", epoch=0, tokenizer=None, collate_fn=None):
+    dataset_name = args.flava_unimodal_mlm
+    assert dataset_name
+    is_train = (split == "train")
+
+    dataset = HFTextDataset(dataset_name, split=split, text_key=text_key, tokenizer=tokenizer)
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed else None
+    shuffle = sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.flava_unimodal_mlm_batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        sampler=sampler,
+        collate_fn=collate_fn,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
+def get_hf_image_dataset(args, split, image_key="image", epoch=0, transforms=None, collate_fn=None):
+    dataset_name = args.flava_unimodal_mae
+    assert dataset_name
+    is_train = (split == "train")
+
+    dataset = HFImageDataset(dataset_name, split=split, transforms=transforms, image_key=image_key)
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed else None
+    shuffle = sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.flava_unimodal_mae_batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        sampler=sampler,
+        collate_fn=collate_fn,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
 class SyntheticDataset(Dataset):
 
     def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer=None):
@@ -465,7 +574,6 @@ class SyntheticDataset(Dataset):
     def __getitem__(self, idx):
         if self.transform is not None:
             image = self.transform(self.image)
-        # TODO(gmittal): make this usable like other datasets
         return image, self.preprocess_txt(self.caption)
 
 
@@ -530,5 +638,26 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None, collate_fn=None):
 
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+
+    # FLAVA unimodal data sources
+    is_flava = args.model.startswith('flava')
+    if is_flava and args.flava_unimodal_mlm:
+        unimodal_tokenizer = get_tokenizer(args.model, unimodal=True)
+        data["flava-mlm"] = get_hf_text_dataset(
+            args,
+            "train",
+            epoch=epoch,
+            tokenizer=unimodal_tokenizer,
+            collate_fn=get_mlm_collate(unimodal_tokenizer, args.flava_mlm_prob),
+        )
+
+    if is_flava and args.flava_unimodal_mae:
+        data["flava-mae"] = get_hf_image_dataset(
+            args,
+            "train",
+            epoch=epoch,
+            transforms=preprocess_train,
+            collate_fn=None,
+        )
 
     return data

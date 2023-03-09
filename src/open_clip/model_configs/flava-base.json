@@ -2,38 +2,35 @@
   "embed_dim": 512,
   "vision_cfg": {
       "image_size": 224,
-      "layers": 12,
-      "width": 768,
+      "layers": 8,
+      "width": 512,
       "head_width": 64,
       "patch_size": 16,
 
       "mae_mask_ratio": 0.75,
-      "mae_decoder_layers": 8,
+      "mae_decoder_layers": 4,
       "mae_decoder_width": 512,
-      "mae_decoder_heads": 16
+      "mae_decoder_heads": 4
   },
   "text_cfg": {
       "hf_model_name": "roberta-base",
       "hf_tokenizer_name": "roberta-base",
       "hf_model_pretrained": false,
       "hf_model_config": {
-          "hidden_size": 768,
-          "num_hidden_layers": 12,
-          "num_attention_heads": 12,
-          "intermediate_size": 3072,
-          "max_position_embeddings": 514,
+          "hidden_size": 512,
+          "num_hidden_layers": 8,
+          "num_attention_heads": 8,
+          "intermediate_size": 2048,
+          "max_position_embeddings": 130,
           "vocab_size": 50304
       },
-
-      "context_length": 77,
-      "unimodal_context_length": 512,
-
+      "context_length": 128,
       "pooler_type": "identity_pooler",
       "proj": "linear"
   },
   "multimodal_cfg": {
-    "layers": 6,
-    "width": 768,
-    "heads": 12
+    "layers": 8,
+    "width": 512,
+    "heads": 8
   }
 }

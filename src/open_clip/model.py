@@ -39,6 +39,7 @@ class CLIPVisionCfg:
     hf_model_name: str = None
     hf_tokenizer_name: str = None
     hf_model_pretrained: bool = True
+    hf_model_config: dict = None
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
@@ -54,6 +55,7 @@ class CLIPTextCfg:
     hf_model_name: str = None
     hf_tokenizer_name: str = None
     hf_model_pretrained: bool = True
+    hf_model_config: dict = None
     proj: str = 'mlp'
     pooler_type: str = 'mean_pooler'
 
@@ -85,6 +87,7 @@ def _build_vision_tower(
         visual = HFEncoder(
             vision_cfg.hf_model_name,
             output_dim=embed_dim,
+            config=vision_cfg.hf_model_config,
             proj=vision_cfg.proj,
             pooler_type=vision_cfg.pooler_type,
             pretrained=vision_cfg.hf_model_pretrained
@@ -143,6 +146,7 @@ def _build_text_tower(
         text = HFEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
+            config=text_cfg.hf_model_config,
             proj=text_cfg.proj,
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained

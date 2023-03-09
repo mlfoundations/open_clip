@@ -62,6 +62,12 @@ def get_latest_checkpoint(path: str):
 def main(args):
     args = parse_args(args)
 
+    # HACK
+    if args.train_data is not None and args.train_data.startswith('s3'):
+        args.train_data = f"pipe:aws s3 cp {args.train_data} -"
+    if args.val_data is not None and args.val_data.startswith('s3'):
+        args.val_data = f"pipe:aws s3 cp {args.val_data} -"
+        
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
         # float16 and almost as accurate as float32
@@ -174,6 +180,7 @@ def main(args):
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
         pretrained_image=args.pretrained_image,
+        pretrained_hf=args.pretrained_hf,
         image_mean=args.image_mean,
         image_std=args.image_std,
     )
@@ -213,6 +220,8 @@ def main(args):
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
+        if args.ddp_find_unused_parameters:
+            ddp_args['find_unused_parameters'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
@@ -297,6 +306,7 @@ def main(args):
         wandb.init(
             project=args.wandb_project_name,
             name=args.name,
+            id=args.name,
             notes=args.wandb_notes,
             tags=[],
             resume='auto',

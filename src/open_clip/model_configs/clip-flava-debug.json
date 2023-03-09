@@ -5,12 +5,7 @@
       "layers": 12,
       "width": 768,
       "head_width": 64,
-      "patch_size": 16,
-
-      "mae_mask_ratio": 0.75,
-      "mae_decoder_layers": 8,
-      "mae_decoder_width": 512,
-      "mae_decoder_heads": 16
+      "patch_size": 16
   },
   "text_cfg": {
       "hf_model_name": "roberta-base",
@@ -24,16 +19,8 @@
           "max_position_embeddings": 514,
           "vocab_size": 50304
       },
-
       "context_length": 77,
-      "unimodal_context_length": 512,
-
-      "pooler_type": "identity_pooler",
-      "proj": "linear"
-  },
-  "multimodal_cfg": {
-    "layers": 6,
-    "width": 768,
-    "heads": 12
+      "pooler_type": "cls_pooler",
+      "proj": "mlp"
   }
 }

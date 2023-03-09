@@ -1,0 +1,26 @@
+{
+  "embed_dim": 512,
+  "vision_cfg": {
+      "image_size": 224,
+      "layers": 8,
+      "width": 512,
+      "head_width": 64,
+      "patch_size": 16
+  },
+  "text_cfg": {
+      "hf_model_name": "roberta-base",
+      "hf_tokenizer_name": "roberta-base",
+      "hf_model_pretrained": false,
+      "hf_model_config": {
+          "hidden_size": 512,
+          "num_hidden_layers": 8,
+          "num_attention_heads": 8,
+          "intermediate_size": 2048,
+          "max_position_embeddings": 130,
+          "vocab_size": 50304
+      },
+      "context_length": 128,
+      "pooler_type": "cls_pooler",
+      "proj": "mlp"
+  }
+}

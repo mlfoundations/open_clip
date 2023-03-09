@@ -134,10 +134,9 @@ class MLMLoss(nn.Module):
         labels = labels.reshape(-1)
 
         # only compute loss on masked logits
-        masked_idx = torch.where(labels != self.ignore_index)
-        masked_logits = logits[masked_idx]
-        masked_labels = labels[masked_idx]
-
+        mask = (labels != self.ignore_index)
+        masked_logits = logits[mask]
+        masked_labels = labels[mask]
         return F.cross_entropy(masked_logits, masked_labels, ignore_index=self.ignore_index)
 
 
@@ -152,6 +151,46 @@ class ITMLoss(nn.Module):
         return F.binary_cross_entropy_with_logits(itm_logits, itm_labels)
 
 
+class MAELoss(nn.Module):
+
+    def __init__(self, norm_pix_loss):
+        super().__init__()
+        self.norm_pix_loss = norm_pix_loss
+
+    def patchify(self, imgs, p):
+        """
+        imgs: (N, 3, H, W)
+        x: (N, L, patch_size**2 *3)
+        """
+        assert imgs.shape[2] == imgs.shape[3], 'image must be square'
+        assert imgs.shape[2] % p == 0, 'image size must be divisible by patch size'
+
+        h = w = imgs.shape[2] // p
+        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        x = torch.einsum('nchpwq->nhwpqc', x)
+        x = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+        return x
+
+    def forward(self, imgs, pred, mask):
+        """
+        imgs: [N, 3, H, W]
+        pred: [N, L, p*p*3]
+        mask: [N, L], 0 is keep, 1 is remove,
+        """
+        patch_area = pred.shape[-1] / 3
+        patch_size = int(patch_area**0.5)
+        target = self.patchify(imgs, patch_size)
+        if self.norm_pix_loss:
+            mean = target.mean(dim=-1, keepdim=True)
+            var = target.var(dim=-1, keepdim=True)
+            target = (target - mean) / (var + 1.e-6)**.5
+
+        one_mask = (mask == 1)
+        loss = (pred[one_mask] - target[one_mask]) ** 2
+        loss = loss.mean()  # mean loss on removed patches
+        return loss
+
+
 class FlavaLoss(ClipLoss):
 
     def __init__(
@@ -160,11 +199,13 @@ class FlavaLoss(ClipLoss):
         itm_loss_weight,
         mlm_loss_weight,
         mae_loss_weight,
+        mae_norm_pix_loss,
         *args,
         **kwargs):
         super().__init__(*args, **kwargs)
 
         self.mlm_loss = MLMLoss()
+        self.mae_loss = MAELoss(mae_norm_pix_loss)
         self.itm_loss = ITMLoss()
 
         self.contrastive_loss_weight = contrastive_loss_weight
@@ -172,29 +213,50 @@ class FlavaLoss(ClipLoss):
         self.mlm_loss_weight = mlm_loss_weight
         self.mae_loss_weight = mae_loss_weight
 
+    def forward_mlm(self, mlm_logits, mlm_labels):
+        return {
+            "mlm_loss": self.mlm_loss_weight * self.mlm_loss(mlm_logits, mlm_labels)
+        }
+
+    def forward_mae(self, image, mae_mask, mae_logits):
+        return {
+            "mae_loss": self.mae_loss_weight * self.mae_loss(image, mae_logits, mae_mask)
+        }
+
     def forward(
         self,
         *,
+        # contrastive
         image_features,
         text_features,
         logit_scale,
-        # text_masked_logits,
-        text_masked_labels,
+
+        # mae
+        image,
+        mae_mask,
+        mm_mae_logits,
+
+        # mlm
+        mlm_labels,
+        mm_mlm_logits,
+
+        # itm
         itm_logits,
         itm_labels,
-        mm_masked_logits,
     ):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         itm_loss = self.itm_loss(itm_logits, itm_labels)
-        mm_mlm_loss = self.mlm_loss(mm_masked_logits, text_masked_labels)
-        # TODO: add MAE loss
+        mm_mlm_loss = self.mlm_loss(mm_mlm_logits, mlm_labels)
+        mm_mae_loss = self.mae_loss(image, mm_mae_logits, mae_mask)
 
         clip_loss = self.contrastive_loss_weight * clip_loss
         itm_loss = self.itm_loss_weight * itm_loss
         mm_mlm_loss = self.mlm_loss_weight * mm_mlm_loss
+        mm_mae_loss = self.mae_loss_weight * mm_mae_loss
 
         return {
             "contrastive_loss": clip_loss,
             "itm_loss": itm_loss,
             "mlm_loss": mm_mlm_loss,
+            "mae_loss": mm_mae_loss,
         }

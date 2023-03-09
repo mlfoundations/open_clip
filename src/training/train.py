@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import math
@@ -78,6 +79,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
+    is_flava = args.model.startswith('flava')
 
     model.train()
 
@@ -85,6 +87,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
     dataloader = data['train'].dataloader
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
+
+    # FLAVA unimodal dataloaders
+    if is_flava and args.flava_unimodal_mae:
+        data['flava-mae'].set_epoch(epoch)
+        mae_dataloader = iter(data['flava-mae'].dataloader)
+    if is_flava and args.flava_unimodal_mlm:
+        data['flava-mlm'].set_epoch(epoch)
+        mlm_dataloader = iter(data['flava-mlm'].dataloader)
 
     if args.accum_freq > 1:
         assert not args.model.startswith('flava'), 'FLAVA does not support gradient accumulation'
@@ -104,10 +114,50 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
         dtypes = {'image': cast_dtype}
         batch = Batch(**batch).to(device=device, non_blocking=True, dtypes=dtypes)
 
+        # FLAVA unimodal batches
+        if is_flava and args.flava_unimodal_mae:
+            try:
+                mae_batch = next(mae_dataloader)
+            except:
+                mae_dataloader = iter(data['flava-mae'].dataloader)
+                mae_batch = next(mae_dataloader)
+            mae_batch = Batch(**mae_batch).to(device=device, non_blocking=True, dtypes=dtypes)
+
+        if is_flava and args.flava_unimodal_mlm:
+            try:
+                mlm_batch = next(mlm_dataloader)
+            except:
+                mlm_dataloader = iter(data['flava-mlm'].dataloader)
+                mlm_batch = next(mlm_dataloader)
+            mlm_batch = Batch(**mlm_batch).to(device=device, non_blocking=True, dtypes=dtypes)
+
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         if args.accum_freq == 1:
+            no_grad_sync = model.no_sync if args.distributed else contextlib.nullcontext
+            losses_dict = {}
+
+            # FLAVA unimodal forward passes
+            if is_flava and args.flava_unimodal_mlm:
+                with no_grad_sync():
+                    with autocast():
+                        mlm_out = model(**mlm_batch, unimodal_mlm=True)
+                        mlm_losses = loss.forward_mlm(**mlm_out)
+                        total_mlm_loss = sum(mlm_losses.values())
+                        losses_dict["unimodal_mlm_loss"] = total_mlm_loss
+                    backward(total_mlm_loss, scaler)
+
+            if is_flava and args.flava_unimodal_mae:
+                with no_grad_sync():
+                    with autocast():
+                        mae_out = model(**mae_batch, unimodal_mae=True)
+                        mae_losses = loss.forward_mae(**mae_out)
+                        total_mae_loss = sum(mae_losses.values())
+                        losses_dict["unimodal_mae_loss"] = total_mae_loss
+                    backward(total_mae_loss, scaler)
+
+            # FLAVA multimodal forward pass
             with autocast():
                 model_out = model(**batch)
                 assert isinstance(model_out, dict)
@@ -118,8 +168,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 else:
                     total_loss = losses
                     losses = {"loss": losses}
+                losses_dict.update(losses)
 
             backward(total_loss, scaler)
+
         else:
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
@@ -199,7 +251,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
             # NOTE loss is coarsely sampled, just master node and per log update
-            for key, val in losses.items():
+            for key, val in losses_dict.items():
                 if key not in losses_m:
                     losses_m[key] = AverageMeter()
                 losses_m[key].update(val.item(), batch_size)

@@ -72,12 +72,15 @@ def get_model_config(model_name):
         return None
 
 
-def get_tokenizer(model_name):
+def get_tokenizer(model_name, unimodal=False):
     config = get_model_config(model_name)
-    # TODO: default value for context_length if not in config? 77?
+    if unimodal:
+        context_length = config['text_cfg']['unimodal_context_length']
+    else:
+        context_length = config['text_cfg']['context_length']
     tokenizer = HFTokenizer(
         tokenizer_name=config['text_cfg']['hf_tokenizer_name'],
-        context_length=config['text_cfg']['context_length'],
+        context_length=context_length,
     ) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
     return tokenizer
 
@@ -199,12 +202,13 @@ def create_model(
 
 
 def create_loss(args):
-    if "flava" in args.model.lower():
+    if args.model.lower().startswith("flava"):
         return FlavaLoss(
             contrastive_loss_weight=args.flava_contrastive_loss_weight,
             itm_loss_weight=args.flava_itm_loss_weight,
             mlm_loss_weight=args.flava_mlm_loss_weight,
             mae_loss_weight=args.flava_mae_loss_weight,
+            mae_norm_pix_loss=args.flava_mae_norm_pix_loss,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=True,
