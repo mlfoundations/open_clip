@@ -187,6 +187,7 @@ def video_transform(
         # TODO: also F.pad is acting up for some reason
         # isn't letting me input a len 8 tuple for 4d tnesor???
         # video = F.pad(video, tuple([0, 0]*len(video.shape[-3:]) + [0, n_frames - video.shape[0]]))
+
         if video.shape[0] < n_frames:
             padded_video = torch.zeros(n_frames, *video.shape[1:])
             padded_video[:video.shape[0]] = video
@@ -194,5 +195,6 @@ def video_transform(
 
         # TODO: this .float() is weird, look how this is done in other places
         return torch.cat([frame_transform(frame.float())[None, ...] for frame in video])
+
 
     return apply_frame_transform

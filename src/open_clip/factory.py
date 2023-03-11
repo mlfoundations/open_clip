@@ -314,16 +314,16 @@ def create_model_and_transforms(
     if "ViViT" in model_name:
         preprocess_train = video_transform( 
             frame_size=model.visual.spatial.image_size,
-            n_frames=32,
-            take_every_nth=1,
+            n_frames=model.visual.context_length,
+            take_every_nth=5,
             is_train=False, # TODO: figre out if frame augmentations make sense
             frame_mean=None,
             frame_std=None,
         )
         preprocess_val = video_transform(
             frame_size=model.visual.spatial.image_size,
-            n_frames=32,
-            take_every_nth=1,
+            n_frames=model.visual.context_length,
+            take_every_nth=5,
             is_train=False,
             frame_mean=None,
             frame_std=None,

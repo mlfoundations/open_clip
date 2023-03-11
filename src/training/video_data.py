@@ -140,8 +140,11 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
         wds.split_by_node,
         wds.split_by_worker,
         tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
+        wds.shuffle(
+            bufsize=_SAMPLE_SHUFFLE_SIZE,
+            initial=_SAMPLE_SHUFFLE_INITIAL,
+        ),
     ])
-
 
     pipeline.extend([
         wds.select(filter_no_caption_or_no_video),
@@ -157,10 +160,9 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
     dataloader = wds.WebLoader(
         dataset,
         batch_size=None,
-        num_workers=args.workers,
+        shuffle=False,
+        num_workers=1,# args.workers,
         persistent_workers=True,
-        prefetch_factor=8,
-        pin_memory=True,
     )
 
     round_fn = math.floor
