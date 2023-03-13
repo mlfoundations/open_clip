@@ -12,9 +12,10 @@ import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision 
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
 try:
     import wandb
 except ImportError:
@@ -419,6 +420,7 @@ def main(args):
         scaler = GradScaler() if args.precision == "amp" else None
     # optionally resume from a checkpoint
     start_epoch = 0
+    
     if args.resume is not None:
         checkpoint = pt_load(args.resume, map_location='cpu')
         if 'epoch' in checkpoint:
@@ -429,7 +431,11 @@ def main(args):
                 sd = {k[len('module.'):]: v for k, v in sd.items()}
             model.load_state_dict(sd)
             if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer"])
+                if args.distributed_engine == 'fsdp':
+                    sharded_state_dict = FSDP.optim_state_dict_to_load(checkpoint["optimizer"], model, optimizer)
+                    optimizer.load_state_dict(sharded_state_dict)
+                else:
+                    optimizer.load_state_dict(checkpoint["optimizer"])
             if scaler is not None and 'scaler' in checkpoint:
                 scaler.load_state_dict(checkpoint['scaler'])
             logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
@@ -437,6 +443,7 @@ def main(args):
             # loading a bare (model only) checkpoint for fine-tune or evaluation
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+
     # initialize datasets
     tokenizer = get_tokenizer(args.model)
     data = get_data(
@@ -523,11 +530,13 @@ def main(args):
 
         # Saving checkpoints.
         if args.save_logs:
+            
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
                 "state_dict": original_model.state_dict(),
-                "optimizer": optimizer.state_dict(),
+                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.distributed_engine == 'fsdp' else optimizer.state_dict()
+
             }
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
