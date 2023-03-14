@@ -12,9 +12,9 @@ import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision 
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 
 try:
     import wandb
@@ -444,6 +444,13 @@ def main(args):
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
+    if args.distributed_engine == 'fsdp':
+        FSDP.set_state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
+            FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
+        )
     # initialize datasets
     tokenizer = get_tokenizer(args.model)
     data = get_data(
@@ -453,6 +460,7 @@ def main(args):
         tokenizer=tokenizer,
     )
     assert len(data), 'At least one train or eval dataset must be specified.'
+
 
     # create scheduler if train
     scheduler = None
