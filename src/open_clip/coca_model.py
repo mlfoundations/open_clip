@@ -13,6 +13,7 @@ from .transformer import (
     MultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .tokenizer import VQGANTokenizer
 
 try:
     from transformers import (
@@ -129,7 +130,7 @@ class CoCa(nn.Module):
                 quick_gelu=quick_gelu,
                 cast_dtype=cast_dtype,
             )
-            self.img_tokenizer = lambda x: x # temp
+            self.img_tokenizer = VQGANTokenizer("/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/configs/model.yaml", "/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/checkpoints/last.ckpt")
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
@@ -180,6 +181,9 @@ class CoCa(nn.Module):
         if self.img_decoder is not None:
             logits_image = self.img_decoder(text_embs, image_embs)
             labels_image = self.img_tokenizer(image)
+
+            print(labels_image)
+            print(labels_image.shape)
 
             output_dict["logits_image"] = logits_image
             output_dict["labels_image"] = labels_image
