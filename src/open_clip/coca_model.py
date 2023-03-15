@@ -48,9 +48,10 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
+    vocab_size: int = 1 # TODO: not sure where we put this, here or VisionCfg
 
 
-def _build_text_decoder_tower(
+def _build_decoder_tower(
         embed_dim,
         multimodal_cfg,
         quick_gelu: bool = False,
@@ -80,15 +81,17 @@ class CoCa(nn.Module):
     def __init__(
             self,
             embed_dim,
-            multimodal_cfg: MultimodalCfg,
+            multimodal_txt_cfg: MultimodalCfg,
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
+            multimodal_img_cfg: MultimodalCfg = None,
             quick_gelu: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
     ):
         super().__init__()
-        multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+        multimodal_txt_cfg = MultimodalCfg(**multimodal_txt_cfg) if isinstance(multimodal_txt_cfg, dict) else multimodal_txt_cfg
+        multimodal_img_cfg = MultimodalCfg(**multimodal_img_cfg) if isinstance(multimodal_img_cfg, dict) else multimodal_img_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
@@ -99,7 +102,7 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        vocab_size = (
+        txt_vocab_size = (
             text_cfg.vocab_size  # for hf models
             if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
             else text_cfg.vocab_size
@@ -112,12 +115,21 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.text_decoder = _build_text_decoder_tower(
-            vocab_size,
-            multimodal_cfg=multimodal_cfg,
+        self.text_decoder = _build_decoder_tower(
+            txt_vocab_size,
+            multimodal_cfg=multimodal_txt_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
+
+        if multimodal_img_cfg is not None:
+            self.img_decoder = _build_decoder_tower(
+                multimodal_img_cfg.vocab_size, # VQGAN vocab size?
+                multimodal_cfg=multimodal_img_cfg,
+                quick_gelu=quick_gelu,
+                cast_dtype=cast_dtype,
+            )
+            self.img_tokenizer = lambda x: x # temp
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
@@ -147,22 +159,32 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
         return text_latent
 
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, text_latent=None, text_embs=None):
+        if text_latent is None or text_embs is None:
+            text_latent, text_embs = self._encode_text(text, embed_cls=embed_cls)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
-        labels = text[:, -token_embs.shape[1]:]
+        labels_text = text[:, -text_embs.shape[1]:]
 
-        logits = self.text_decoder(image_embs, token_embs)
-        return {
+        logits_text = self.text_decoder(image_embs, text_embs)
+        output_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
-            "logits": logits,
-            "labels": labels,
+            "logits_text": logits_text,
+            "labels_text": labels_text,
             "logit_scale": self.logit_scale.exp()
         }
+
+        if self.img_decoder is not None:
+            logits_image = self.img_decoder(text_embs, image_embs)
+            labels_image = self.img_tokenizer(image)
+
+            output_dict["logits_image"] = logits_image
+            output_dict["labels_image"] = labels_image
+
+        return output_dict
 
     def generate(
         self,
