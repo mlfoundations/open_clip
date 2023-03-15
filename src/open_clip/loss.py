@@ -162,8 +162,8 @@ class CoCaLoss(ClipLoss):
         clip_loss = self.clip_loss_weight * clip_loss
 
         caption_loss = self.generative_loss(
-            logits.permute(0, 2, 1),
-            labels,
+            logits_text.permute(0, 2, 1),
+            labels_text,
         )
         caption_loss = caption_loss * self.caption_loss_weight
         out_dict = {"contrastive_loss": clip_loss, "caption_loss": caption_loss}

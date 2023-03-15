@@ -7,6 +7,7 @@ import html
 import os
 from functools import lru_cache
 from typing import Union, List
+from torch import nn
 
 import ftfy
 import regex as re
@@ -232,10 +233,11 @@ def instantiate_from_config(config):
     return get_obj_from_str(config["target"])(**config.get("params", dict()))
 
 
-class VQGANTokenizer:
+class VQGANTokenizer(nn.Module):
     """VQGAN image tokenizer"""
 
     def __init__(self, config_path, model_path):
+        super().__init__()
         config = OmegaConf.load(config_path)
         self.vqgan = VQModel(**config.model.params)
         sd = torch.load(model_path, map_location="cpu")["state_dict"]

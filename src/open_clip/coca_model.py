@@ -180,10 +180,9 @@ class CoCa(nn.Module):
 
         if self.img_decoder is not None:
             logits_image = self.img_decoder(text_embs, image_embs)
-            labels_image = self.img_tokenizer(image_tok)
+            labels_image = self.img_tokenizer(image_tok).reshape(image.shape[0], -1)
 
-            print(labels_image)
-            print(labels_image.shape)
+            labels_image = labels_image[:, -image_embs.shape[1]:]
 
             output_dict["logits_image"] = logits_image
             output_dict["labels_image"] = labels_image
