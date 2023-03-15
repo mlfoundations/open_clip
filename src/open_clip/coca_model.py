@@ -160,7 +160,7 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
         return text_latent
 
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, text_latent=None, text_embs=None):
+    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, text_latent=None, text_embs=None, image_tok=None):
         if text_latent is None or text_embs is None:
             text_latent, text_embs = self._encode_text(text, embed_cls=embed_cls)
         if image_latent is None or image_embs is None:
@@ -180,7 +180,7 @@ class CoCa(nn.Module):
 
         if self.img_decoder is not None:
             logits_image = self.img_decoder(text_embs, image_embs)
-            labels_image = self.img_tokenizer(image)
+            labels_image = self.img_tokenizer(image_tok)
 
             print(labels_image)
             print(labels_image.shape)
