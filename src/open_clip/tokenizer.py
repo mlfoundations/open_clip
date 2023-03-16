@@ -217,8 +217,11 @@ class HFTokenizer:
 
 # TEMPORARY WIP
 import importlib
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from taming.models.vqgan import VQModel # I don't love this part
+from einops import rearrange
+from math import sqrt
 
 def get_obj_from_str(string, reload=False):
     module, cls = string.rsplit(".", 1)
@@ -242,6 +245,7 @@ class VQGANTokenizer(nn.Module):
         self.vqgan = VQModel(**config.model.params)
         sd = torch.load(model_path, map_location="cpu")["state_dict"]
         missing, unexpected = self.vqgan.load_state_dict(sd, strict=False)
+        self.num_tokens = 1024 # temp
 
         self.vqgan.eval()
         
@@ -250,8 +254,15 @@ class VQGANTokenizer(nn.Module):
         return indices
 
     def decode(self, tokens):
-        # TODO: implement
-        return tokens
+        b, n = tokens.shape
+        one_hot_indices = F.one_hot(tokens, num_classes = self.num_tokens).float()
+        z = one_hot_indices @ self.vqgan.quantize.embedding.weight
+
+        z = rearrange(z, 'b (h w) c -> b c h w', h = int(sqrt(n)))
+        img = self.vqgan.decode(z)
+
+        img = (img.clamp(-1., 1.) + 1) * 0.5
+        return img
 
     def __call__(self, image):
         return self.encode(image)
