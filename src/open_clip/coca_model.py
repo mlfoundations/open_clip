@@ -123,6 +123,7 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
+        self.img_decoder = None
         if multimodal_img_cfg is not None:
             self.img_decoder = _build_decoder_tower(
                 multimodal_img_cfg.vocab_size, # VQGAN vocab size?
@@ -132,6 +133,9 @@ class CoCa(nn.Module):
             )
             self.img_tokenizer = VQGANTokenizer("/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/configs/model.yaml", "/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/checkpoints/last.ckpt")
 
+            for param in self.img_tokenizer.parameters(): # freeze
+                param.requires_grad = False
+
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
 
@@ -140,6 +144,8 @@ class CoCa(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
         self.text_decoder.set_grad_checkpointing(enable)
+        if self.img_decoder is not None:
+            self.img_decoder.set_grad_checkpointing(enable)
 
     def _encode_image(self, images, normalize=True):
         image_latent, tokens_embs = self.visual(images)
