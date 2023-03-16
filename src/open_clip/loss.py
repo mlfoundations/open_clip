@@ -136,6 +136,7 @@ class CoCaLoss(ClipLoss):
             self,
             caption_loss_weight,
             clip_loss_weight,
+            image_generation_loss_weight=0.0,
             pad_id=0,  # pad_token for open_clip custom tokenizer
             local_loss=False,
             gather_with_grad=False,
@@ -155,6 +156,7 @@ class CoCaLoss(ClipLoss):
 
         self.clip_loss_weight = clip_loss_weight
         self.caption_loss_weight = caption_loss_weight
+        self.image_generation_loss_weight = image_generation_loss_weight
         self.generative_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
     def forward(self, image_features, text_features, logits_text, labels_text, logit_scale, logits_image=None, labels_image=None, output_dict=False):
@@ -174,6 +176,7 @@ class CoCaLoss(ClipLoss):
                 logits_image.permute(0, 2, 1),
                 labels_image,
             )
+            image_gen_loss = image_gen_loss * self.image_generation_loss_weight
             out_dict["image_gen_loss"] = image_gen_loss
 
         if output_dict:
