@@ -131,7 +131,7 @@ class CoCa(nn.Module):
                 quick_gelu=quick_gelu,
                 cast_dtype=cast_dtype,
             )
-            self.img_tokenizer = VQGANTokenizer("/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/configs/model.yaml", "/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/checkpoints/last.ckpt")
+            self.img_tokenizer = VQGANTokenizer("/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/configs/model.yaml", "/admin/home-iejmac/taming-transformers/logs/vqgan_imagenet_f16_1024/checkpoints/last.ckpt", 80)
 
             for param in self.img_tokenizer.parameters(): # freeze
                 param.requires_grad = False
@@ -186,13 +186,13 @@ class CoCa(nn.Module):
 
         if self.img_decoder is not None:
             logits_image = self.img_decoder(text_embs, image_embs)
-            labels_image = self.img_tokenizer(image_tok).reshape(image.shape[0], -1)
+            labels_image = self.img_tokenizer(image_tok)
             labels_image = labels_image.to(image.device)
 
             labels_image = labels_image[:, -image_embs.shape[1]:]
 
-            # output_dict["logits_image"] = logits_image
-            # output_dict["labels_image"] = labels_image
+            output_dict["logits_image"] = logits_image
+            output_dict["labels_image"] = labels_image
 
         return output_dict
 

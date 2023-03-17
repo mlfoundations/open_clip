@@ -239,20 +239,24 @@ def instantiate_from_config(config):
 class VQGANTokenizer(nn.Module):
     """VQGAN image tokenizer"""
 
-    def __init__(self, config_path, model_path):
+    def __init__(self, config_path, model_path, split_batch):
         super().__init__()
         config = OmegaConf.load(config_path)
         self.vqgan = VQModel(**config.model.params)
         sd = torch.load(model_path, map_location="cpu")["state_dict"]
         missing, unexpected = self.vqgan.load_state_dict(sd, strict=False)
-        self.num_tokens = 1024 # temp
+        self.num_tokens = config["model"]["params"]["n_embed"]
+        self.split_batch = split_batch
 
         self.vqgan.eval()
         
     def encode(self, image):
-        _, _, [_, _, indices] = self.vqgan.encode(image)
-        # indices = torch.randint(self.num_tokens, (image.shape[0], 256)).type(torch.int64)
-        return indices
+        tot_indices = []
+        for img in torch.split(image, self.split_batch):
+            _, _, [_, _, indices] = self.vqgan.encode(img)
+            tot_indices.append(indices.reshape(img.shape[0], -1))
+        indices = torch.cat(tot_indices)
+        return indices # [bs, ctx_len]
 
     def decode(self, tokens):
         b, n = tokens.shape
