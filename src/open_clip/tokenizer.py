@@ -251,6 +251,7 @@ class VQGANTokenizer(nn.Module):
         
     def encode(self, image):
         _, _, [_, _, indices] = self.vqgan.encode(image)
+        # indices = torch.randint(self.num_tokens, (image.shape[0], 256)).type(torch.int64)
         return indices
 
     def decode(self, tokens):
