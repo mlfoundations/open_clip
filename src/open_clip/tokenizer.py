@@ -258,10 +258,14 @@ class VQGANTokenizer(nn.Module):
         indices = torch.cat(tot_indices)
         return indices # [bs, ctx_len]
 
-    def decode(self, tokens):
-        b, n = tokens.shape
+    def _get_embeddings(self, tokens):
         one_hot_indices = F.one_hot(tokens, num_classes = self.num_tokens).float()
         z = one_hot_indices @ self.vqgan.quantize.embedding.weight
+        return z
+
+    def decode(self, tokens):
+        b, n = tokens.shape
+        z = self._get_embeddings(tokens)
 
         z = rearrange(z, 'b (h w) c -> b c h w', h = int(sqrt(n)))
         img = self.vqgan.decode(z)

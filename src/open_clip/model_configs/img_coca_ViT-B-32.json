@@ -29,7 +29,6 @@
     },
     "multimodal_img_cfg": {
         "context_length": 255,
-        "vocab_size": 49408,
         "width": 512,
         "heads": 8,
         "layers": 12,
