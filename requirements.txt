@@ -1,4 +1,4 @@
-torch>=1.9.0
+torch>=1.9.0,<2.0.0
 torchvision
 regex
 ftfy
