@@ -141,6 +141,7 @@ _VITH14 = dict(
 
 _VITg14 = dict(
     laion2b_s12b_b42k=_pcfg(hf_hub='laion/CLIP-ViT-g-14-laion2B-s12B-b42K/'),
+    laion2b_s34b_b88k=_pcfg(hf_hub='laion/CLIP-ViT-g-14-laion2B-s34B-b88K/'),
 )
 
 _VITbigG14 = dict(
@@ -178,8 +179,25 @@ _convnext_large_d = dict(
     laion2b_s26b_b102k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_large_d.laion2B-s26B-b102K-augreg/'),
 )
 
+_convnext_large_d_320 = dict(
+    laion2b_s29b_b131k_ft=_pcfg(hf_hub='laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft/'),
+    laion2b_s29b_b131k_ft_soup=_pcfg(hf_hub='laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft-soup/'),
+)
+
+_convnext_xxlarge = dict(
+    laion2b_s34b_b82k_augreg=_pcfg(hf_hub='laion/CLIP-convnext_xxlarge-laion2B-s34B-b82K-augreg/'),
+    laion2b_s34b_b82k_augreg_rewind=_pcfg(hf_hub='laion/CLIP-convnext_xxlarge-laion2B-s34B-b82K-augreg-rewind/'),
+    laion2b_s34b_b82k_augreg_soup=_pcfg(hf_hub='laion/CLIP-convnext_xxlarge-laion2B-s34B-b82K-augreg-soup/'),
+)
+
 _coca_VITB32 = dict(
-    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k/')
+    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-B-32-laion2B-s13B-b90k/'),
+    mscoco_finetuned_laion2b_s13b_b90k=_pcfg(hf_hub='laion/mscoco_finetuned_CoCa-ViT-B-32-laion2B-s13B-b90k/')
+)
+
+_coca_VITL14 = dict(
+    laion2b_s13b_b90k=_pcfg(hf_hub='laion/CoCa-ViT-L-14-laion2B-s13B-b90k/'),
+    mscoco_finetuned_laion2b_s13b_b90k=_pcfg(hf_hub='laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k/')
 )
 
 
@@ -207,7 +225,10 @@ _PRETRAINED = {
     "convnext_base_w": _convnext_base_w,
     "convnext_base_w_320": _convnext_base_w_320,
     "convnext_large_d": _convnext_large_d,
+    "convnext_large_d_320": _convnext_large_d_320,
+    "convnext_xxlarge": _convnext_xxlarge,
     "coca_ViT-B-32": _coca_VITB32,
+    "coca_ViT-L-14": _coca_VITL14,
 }
 
 

@@ -59,12 +59,15 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
+def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
 
+
     model.train()
+    if args.distill:
+        dist_model.eval()
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
@@ -96,6 +99,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             with autocast():
                 model_out = model(images, texts)
                 logit_scale = model_out["logit_scale"]
+                if args.distill:
+                    with torch.no_grad():
+                        dist_model_out = dist_model(images, texts)
+                    model_out.update({f'dist_{k}' : v for k, v in dist_model_out.items()})
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
@@ -130,12 +137,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                 images = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     logit_scale = model_out.pop("logit_scale")
-                    for key, val in accum_features:
+                    inputs = {}
+                    for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        accumulated = accumulated[:j] +  [model_out[key]] + accumulated[j + 1:]
-                    losses = loss(**accumulated, logit_scale=logit_scale, output_dict=True)
+                        inputs[key] = torch.cat(accumulated[:j] +  [model_out[key]] + accumulated[j + 1:])
+                    losses = loss(**inputs, logit_scale=logit_scale, output_dict=True)
+                    del inputs
                     total_loss = sum(losses.values())
                     losses["loss"] = total_loss
                 backward(total_loss, scaler)
@@ -189,10 +198,12 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
+            samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
+            samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f}, {args.accum_freq * args.batch_size * args.world_size / batch_time_m.val:#g}/s "
+                f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
             )
@@ -201,7 +212,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, args
             log_data = {
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
+                "samples_per_second": samples_per_second,
+                "samples_per_second_per_gpu": samples_per_second_per_gpu,
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }            
@@ -251,7 +263,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts, output_dict=True)
+                    model_out = model(images, texts)
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]

@@ -86,17 +86,21 @@ class ClipLoss(nn.Module):
         self.prev_num_logits = 0
         self.labels = {}
 
+    def get_ground_truth(self, device, num_logits) -> torch.Tensor:
+        # calculated ground-truth and cache if enabled
+        if self.prev_num_logits != num_logits or device not in self.labels:
+            labels = torch.arange(num_logits, device=device, dtype=torch.long)
+            if self.world_size > 1 and self.local_loss:
+                labels = labels + num_logits * self.rank
+            if self.cache_labels:
+                self.labels[device] = labels
+                self.prev_num_logits = num_logits
+        else:
+            labels = self.labels[device]
+        return labels
 
-    def forward(self, image_features=None, text_features=None, logit_scale=None, text_a_features=None, text_b_features=None, output_dict=False):
-        
-        if image_features is not None and text_features is not None:
-            features_a = image_features
-            features_b = text_features
-        elif text_a_features is not None and text_b_features is not None:
-            features_a = text_a_features
-            features_b = text_b_features
+    def get_logits(self, features_a, features_b, logit_scale):
 
-        device = features_a.device
         if self.world_size > 1:
             all_features_a, all_features_b = gather_features(
                 features_a, features_b,
@@ -112,21 +116,28 @@ class ClipLoss(nn.Module):
             logits_per_feature_a = logit_scale * features_a @ features_b.T
             logits_per_feature_b = logit_scale * features_b @ features_a.T
 
-        # calculated ground-truth and cache if enabled
-        num_logits = logits_per_feature_a.shape[0]
-        if self.prev_num_logits != num_logits or device not in self.labels:
-            labels = torch.arange(num_logits, device=device, dtype=torch.long)
-            if self.world_size > 1 and self.local_loss:
-                labels = labels + num_logits * self.rank
-            if self.cache_labels:
-                self.labels[device] = labels
-                self.prev_num_logits = num_logits
-        else:
-            labels = self.labels[device]
+       
+        return logits_per_feature_a, logits_per_feature_b
 
-        total_loss = ( F.cross_entropy(logits_per_feature_a, labels) +
-                       F.cross_entropy(logits_per_feature_b, labels)
-                     ) / 2
+
+    def forward(self, image_features=None, text_features=None, logit_scale=None, text_a_features=None, text_b_features=None, output_dict=False):
+        
+        if image_features is not None and text_features is not None:
+            features_a = image_features
+            features_b = text_features
+        elif text_a_features is not None and text_b_features is not None:
+            features_a = text_a_features
+            features_b = text_b_features
+
+        device = features_a.device
+        logits_per_feature_a, logits_per_feature_b = self.get_logits(features_a, features_b, logit_scale)
+
+        labels = self.get_ground_truth(device, logits_per_image.shape[0])
+
+        total_loss = (
+            F.cross_entropy(logits_per_feature_a, labels) +
+            F.cross_entropy(logits_per_feature_b, labels)
+        ) / 2
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
@@ -171,4 +182,43 @@ class CoCaLoss(ClipLoss):
             return {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
 
         return clip_loss, caption_loss
+
+
+class DistillClipLoss(ClipLoss):
+
+    def dist_loss(self, teacher_logits, student_logits):
+        return -(teacher_logits.softmax(dim=1) * student_logits.log_softmax(dim=1)).sum(dim=1).mean(dim=0)
+
+    def forward(
+            self,
+            image_features,
+            text_features,
+            logit_scale,
+            dist_image_features,
+            dist_text_features,
+            dist_logit_scale,
+            output_dict=False,
+    ):
+        logits_per_image, logits_per_text = \
+            self.get_logits(image_features, text_features, logit_scale)
+
+        dist_logits_per_image, dist_logits_per_text = \
+            self.get_logits(dist_image_features, dist_text_features, dist_logit_scale)
+
+        labels = self.get_ground_truth(image_features.device, logits_per_image.shape[0])
+
+        contrastive_loss = (
+            F.cross_entropy(logits_per_image, labels) +
+            F.cross_entropy(logits_per_text, labels)
+        ) / 2
+
+        distill_loss = (
+            self.dist_loss(dist_logits_per_image, logits_per_image) +
+            self.dist_loss(dist_logits_per_text, logits_per_text)
+        ) / 2
+
+        if output_dict:
+            return {"contrastive_loss": contrastive_loss, "distill_loss": distill_loss}
+
+        return contrastive_loss, distill_loss
 
