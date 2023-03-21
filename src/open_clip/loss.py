@@ -132,7 +132,7 @@ class ClipLoss(nn.Module):
         device = features_a.device
         logits_per_feature_a, logits_per_feature_b = self.get_logits(features_a, features_b, logit_scale)
 
-        labels = self.get_ground_truth(device, logits_per_image.shape[0])
+        labels = self.get_ground_truth(device, logits_per_feature_a.shape[0])
 
         total_loss = (
             F.cross_entropy(logits_per_feature_a, labels) +
