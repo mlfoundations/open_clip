@@ -408,7 +408,8 @@ def main(args):
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'sts-val')):
+            logging.info('Running evaluation.')
             evaluate(model, data, completed_epoch, args, writer)
 
         # Saving checkpoints.

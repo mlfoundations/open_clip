@@ -114,6 +114,12 @@ def parse_args(args):
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
+        "--sts-val-data",
+        type=str,
+        default=None,
+        help="Path to STS17 crosslingual evaluation data. The default path is: lingjzhu/sts17-crosslingual",
+    )
+    parser.add_argument(
         "--logs",
         type=str,
         default="./logs/",
@@ -427,7 +433,7 @@ def parse_args(args):
         help="Log every n steps to tensorboard/console/wandb.",
     )
     parser.add_argument(
-        "--model_type",
+        "--model-type",
         type=str,
         choices=["CLIP", "text_dual_encoder", "text_siamese_encoder"],
         default="CLIP",

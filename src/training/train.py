@@ -17,6 +17,7 @@ except ImportError:
 from open_clip import get_cast_dtype, CLIP, CustomTextCLIP
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
+from .sts_eval import sts_eval
 from .precision import get_autocast
 
 
@@ -239,9 +240,13 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         return metrics
     device = torch.device(args.device)
     model.eval()
-
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
-    metrics.update(zero_shot_metrics)
+    
+    if hasattr(model,'visual'):
+        zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
+        metrics.update(zero_shot_metrics)
+    elif hasattr(model,'text_tower'):
+        sts_metrics = sts_eval(model, data, epoch, args)
+        metrics.update(sts_metrics)
 
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)

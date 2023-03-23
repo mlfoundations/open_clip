@@ -28,25 +28,40 @@ except ImportError:
     hvd = None
 
 
+class STSDataset(Dataset):
+    def __init__(self, input_filename, tokenizer=None):
+        from datasets import load_dataset
+        logging.debug(f'Loading STS data from {input_filename}.')
+        self.dataset = load_dataset(input_filename,keep_in_memory=True)
+        if "train" in self.dataset.keys():
+            self.dataset = self.dataset['train']
+
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        entry = self.dataset[idx]
+        sent1 = self.tokenize([str(entry['sentence1'])])[0]
+        sent2 = self.tokenize([str(entry['sentence2'])])[0]
+        score = entry['score']
+        return sent1,sent2,score
 
 
-def get_HF_text_dataset(args, preprocess_fn, is_train, epoch=0, floor=False, tokenizer=None):
-    input_filename = args.train_data if is_train else args.val_data
+
+def get_STS_dataset(args, preprocess_fn, is_train, epoch=0, floor=False, tokenizer=None):
+    input_filename = args.sts_val_data
     assert input_filename
 
-    from datasets import load_dataset
-    dataset = load_dataset(input_filename,streaming=True)
-    if "train" in dataset.keys():
-        dataset = dataset['train']
+    
+    dataset = STSDataset(input_filename,tokenizer=tokenizer)
     
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
     
-    def fetch(text_a_key,text_b_key,tokenizer,batch):
-        texts_a = tokenizer.tokenize([text for text in batch[text_a_key]])
-        texts_b = tokenizer.tokenize([text for text in batch[text_b_key]])
-        return texts_a,texts_b
-
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -55,7 +70,6 @@ def get_HF_text_dataset(args, preprocess_fn, is_train, epoch=0, floor=False, tok
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
-        collate_fn=partial(fetch,args.text_a_key,args.text_b_key,tokenizer),
     )
     
     num_samples = args.train_num_samples
@@ -565,8 +579,8 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 
 def get_dataset_fn(data_path, dataset_type):
-    if dataset_type == 'textpair':
-        return get_HF_text_dataset
+    if dataset_type == 'sts':
+        return get_STS_dataset
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
@@ -603,5 +617,8 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
 
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+        
+    if args.sts_val_data is not None:
+        data['sts-val'] = get_dataset_fn(args,'sts')(args, preprocess_fns, is_train=False, epoch=epoch, tokenizer=tokenizer)
 
     return data
