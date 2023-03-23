@@ -11,3 +11,4 @@ transformers
 datasets
 timm
 fsspec
+scipy

@@ -29,24 +29,3 @@ def test_inference_simple(model_cfg, pretrained=None):
     text_probs = (100.0 * text_a_features @ text_b_features.T).softmax(dim=-1)
     print(text_probs)
 
-'''    
-if __name__ == "__main__":
-
-
-    main([
-    '--save-frequency', '1',
-    '--train-num-samples', '16',
-    '--warmup', '1',
-    '--batch-size', '2',
-    '--lr', '1e-3',
-    '--wd', '0.1',
-    '--epochs', '1',
-    '--workers', '2',
-    '--model', 'roberta-roberta', 
-    '--dataset-type', 'textpair', 
-    '--train-data', 'text_pairs.parquet.gzip',
-    '--text-to-text', 'True',
-    '--text-a-key', 'query', 
-    '--text-b-key', 'doc'
-    ])
-'''    
