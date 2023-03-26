@@ -179,7 +179,6 @@ class CoCaLoss(ClipLoss):
             # adjustment = (cap_weights.shape[0] + 1 - cap_weights.sum()) # in the beginning sim ~ U(bs)
             # cap_weights = cap_weights * adjustment
 
-        # caption_loss = caption_loss * cap_weights.unsqueeze(1)
         def custom_backward_hook(grad):
             return cap_weights * grad
         caption_loss.register_hook(custom_backward_hook)
