@@ -89,7 +89,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             scheduler(step)
 
         # TODO: generalize train loop to modality1, modality2 instead of image,text maybe
-        images, texts = batch
+        # images, texts = batch
+        images, texts = batch["mp4"], batch["txt"]
 
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)

@@ -15,6 +15,8 @@ from torch.utils.data.dataloader import default_collate
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+from video2dataset.dataloader import get_video_dataset
+
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
@@ -180,11 +182,59 @@ def get_wds_dataset(args, preprocess_vid, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
+def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, tokenizer=None):
+    num_samples = args.train_num_samples
+    shared_epoch = SharedEpoch(epoch=epoch)
+
+    decoder_kwargs = { # TODO: update with params
+        "n_frames": 32,
+        "fps": 10,
+        "num_threads": 12,
+    }
+    
+    custom_transforms = {
+        "mp4": lambda x: x.permute(0, 3, 1, 2),
+        "txt": lambda text: tokenizer(text)[0],
+    }
+
+    dataset = get_video_dataset(
+        urls=args.train_data,
+        batch_size=args.batch_size,
+        decoder_kwargs=decoder_kwargs,
+        custom_transforms=custom_transforms,
+        resize_size=224,
+        crop_size=224,
+    )
+
+    dataloader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=1,# args.workers,
+        persistent_workers=True,
+    )
+
+    round_fn = math.floor
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    num_samples = num_batches * global_batch_size
+
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+
+
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
+
 def get_video_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
     if args.train_data:
-        data["train"] = get_wds_dataset(args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+        # data["train"] = get_wds_dataset(args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+        data["train"] = get_wds_dataset2(args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
 
     return data
