@@ -187,8 +187,8 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
     shared_epoch = SharedEpoch(epoch=epoch)
 
     decoder_kwargs = { # TODO: update with params
-        "n_frames": 32,
-        "fps": 10,
+        "n_frames": 8,
+        "fps": 1,
         "num_threads": 12,
     }
     
@@ -200,6 +200,8 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
     dataset = get_video_dataset(
         urls=args.train_data,
         batch_size=args.batch_size,
+        shuffle=True,
+        repeat=True,
         decoder_kwargs=decoder_kwargs,
         custom_transforms=custom_transforms,
         resize_size=224,

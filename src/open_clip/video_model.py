@@ -68,7 +68,6 @@ class ViViT(nn.Module):
         )
         self.context_length = temporal_cfg.context_length
 
-        '''
         # class embeddings and positional embeddings
         scale = temporal_cfg.width ** -0.5
         self.video_class_embedding = nn.Parameter(scale * torch.randn(temporal_cfg.width))
@@ -77,7 +76,6 @@ class ViViT(nn.Module):
         self.ln_pre = norm_layer(temporal_cfg.width)
         self.ln_post = norm_layer(temporal_cfg.width)
         self.proj = nn.Parameter(scale * torch.randn(temporal_cfg.width, embed_dim))
-        '''
 
         self.spatial = _build_vision_tower(
             embed_dim=embed_dim,
@@ -85,7 +83,6 @@ class ViViT(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
-        '''
         self.temporal = Transformer(
             width=temporal_cfg.width,
             layers=temporal_cfg.layers,
@@ -94,15 +91,13 @@ class ViViT(nn.Module):
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
-        '''
 
         self.global_average_pool = global_average_pool
-        self.global_average_pool = True
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.spatial.set_grad_checkpointing(enable)
-        # self.temporal.grad_checkpointing = enable
+        self.temporal.grad_checkpointing = enable
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.global_average_pool:
@@ -112,9 +107,7 @@ class ViViT(nn.Module):
 
     # TODO: add patch dropout as suggested by lucidrains
     def forward(self, video):
-        print("VIDEO SHAPE")
-        print(video.shape)
-        # video = video[:, 1:] # make space for temporal CLS token
+        video = video[:, 1:] # make space for temporal CLS token
         batch_size = video.shape[0]
 
         # Flatten all frames in batch across time and encode with ViT
@@ -122,10 +115,7 @@ class ViViT(nn.Module):
         f_e = self.spatial(frames)
         # Put frame embeddings back into correct temporal sequences
         f_e = f_e.view(*video.shape[:2], -1)
-        print("FRAME EMBEDDINGS SHAPE")
-        print(f_e.shape)
 
-        '''
         # class embeddings and positional embeddings
         f_e = torch.cat(
             [self.video_class_embedding.to(f_e.dtype) + torch.zeros(f_e.shape[0], 1, f_e.shape[-1], dtype=f_e.dtype, device=f_e.device),
@@ -140,21 +130,22 @@ class ViViT(nn.Module):
         v_e = self.temporal(f_e)
         v_e = v_e.permute(1, 0, 2)
 
+        self.global_average_pool = True
         pooled, tokens = self._global_pool(v_e)
         pooled = self.ln_post(pooled)
         pooled = pooled @ self.proj
 
-        # print("POOLED")
-        # print(pooled[:10, :10])
-        # print(torch.mean(torch.var(pooled, dim=0)))
         '''
-        pooled, tokens = self._global_pool(f_e)
+        print("POOLED")
+        print(pooled[:10, :10])
+        print(pooled.shape)
+        print(torch.mean(torch.var(pooled, dim=0)))
+        '''
 
         return pooled
 
 
 # TODO: turn into VideoCoCa
-# TODO: set_grad_checkpointing
 class VideoCLIP(nn.Module):
     def __init__(
         self,

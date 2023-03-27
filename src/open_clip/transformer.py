@@ -495,10 +495,6 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        # print("POOOOLED")
-        # print(pooled[:10, :10])
-        # print(torch.mean(torch.var(pooled, dim=0)))
-
         if self.output_tokens:
             return pooled, tokens
      
