@@ -201,7 +201,6 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
         urls=args.train_data,
         batch_size=args.batch_size,
         shuffle=True,
-        repeat=True,
         decoder_kwargs=decoder_kwargs,
         custom_transforms=custom_transforms,
         resize_size=224,
