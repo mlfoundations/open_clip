@@ -256,7 +256,7 @@ def main(args):
         model.lock_text_tower(
             unlocked_layers=args.lock_text_unlocked_layers,
             freeze_layer_norm=args.lock_text_freeze_layer_norm,
-            unlocked_biases=args.text_unlocked_biase)
+            unlocked_biases=args.text_unlocked_biases)
     if args.lock_tower_a:
         model.lock_tower_a(
             unlocked_layers=args.lock_tower_a_unlocked_layers,
