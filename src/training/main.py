@@ -255,15 +255,18 @@ def main(args):
     if args.lock_text:
         model.lock_text_tower(
             unlocked_layers=args.lock_text_unlocked_layers,
-            freeze_layer_norm=args.lock_text_freeze_layer_norm)
+            freeze_layer_norm=args.lock_text_freeze_layer_norm,
+            unlocked_biases=args.text_unlocked_biase)
     if args.lock_tower_a:
         model.lock_tower_a(
             unlocked_layers=args.lock_tower_a_unlocked_layers,
-            freeze_layer_norm=args.lock_tower_a_freeze_layer_norm)
+            freeze_layer_norm=args.lock_tower_a_freeze_layer_norm,
+            unlocked_biases=args.text_a_unlocked_biases)
     if args.lock_tower_b:
         model.lock_tower_b(
             unlocked_layers=args.lock_tower_b_unlocked_layers,
-            freeze_layer_norm=args.lock_tower_b_freeze_layer_norm)
+            freeze_layer_norm=args.lock_tower_b_freeze_layer_norm,
+            unlocked_biases=args.text_b_unlocked_biases)
 
     if args.grad_checkpointing:
         model.set_grad_checkpointing()

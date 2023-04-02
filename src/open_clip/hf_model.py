@@ -179,11 +179,16 @@ class HFTextEncoder(nn.Module):
         
         return projected
 
-    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
         if not unlocked_layers:  # full freezing
             for n, p in self.transformer.named_parameters():
-                p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+                p.requires_grad = False
+                if "LayerNorm" in n.split("."):
+                    p.requires_grad = (not freeze_layer_norm)
+                if 'bias' in n.split("."):
+                    p.requires_grad = unlocked_biases 
             return
+        
 
         encoder = self.transformer.encoder if hasattr(self.transformer, 'encoder') else self.transformer
         layer_list = getattr(encoder, arch_dict[self.config.model_type]["config_names"]["layer_attr"])

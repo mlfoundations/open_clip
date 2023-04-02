@@ -382,13 +382,19 @@ def parse_args(args):
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n text tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--text-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+        help="Freeze BatchNorm running stats in text tower for any locked layers.",
     )
     parser.add_argument(
         "--lock-tower-b",
@@ -400,7 +406,7 @@ def parse_args(args):
         "--lock-tower-b-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n tower layer groups unlocked.",
     )
     parser.add_argument(
         "--lock-tower-b-freeze-layer-norm",
@@ -418,13 +424,25 @@ def parse_args(args):
         "--lock-tower-a-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n tower layer groups unlocked.",
     )
     parser.add_argument(
         "--lock-tower-a-freeze-layer-norm",
         default=False,
         action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
+        "--text-b-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
+    )
+    parser.add_argument(
+        "--text-a-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
     )
     parser.add_argument(
         "--log-every-n-steps",

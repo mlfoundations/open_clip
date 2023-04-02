@@ -261,8 +261,8 @@ class CustomTextCLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
-    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.text.lock(unlocked_layers, freeze_layer_norm)
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.text.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -306,11 +306,11 @@ class TextTextCLIP(nn.Module):
         self.tower_b = _build_text_tower(embed_dim, tower_b_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def lock_tower_a(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.tower_a.lock(unlocked_layers, freeze_layer_norm)
+    def lock_tower_a(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.tower_a.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
 
-    def lock_tower_b(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.tower_b.lock(unlocked_layers, freeze_layer_norm)
+    def lock_tower_b(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.tower_b.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -353,8 +353,8 @@ class SiameseTextCLIP(nn.Module):
         self.text_tower = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.text_tower.lock(unlocked_layers, freeze_layer_norm)
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.text_tower.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
