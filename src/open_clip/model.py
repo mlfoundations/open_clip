@@ -261,8 +261,8 @@ class CustomTextCLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
-    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.text.lock(unlocked_layers, freeze_layer_norm)
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.text.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -287,6 +287,94 @@ class CustomTextCLIP(nn.Module):
                 "logit_scale": self.logit_scale.exp()
             }
         return image_features, text_features, self.logit_scale.exp()
+
+
+
+class TextTextCLIP(nn.Module):
+    def __init__(
+            self,
+            embed_dim: int,
+            tower_a_cfg: CLIPTextCfg,
+            tower_b_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False,
+    ):
+        super().__init__()
+        self.output_dict = output_dict
+        self.tower_a = _build_text_tower(embed_dim, tower_a_cfg, quick_gelu, cast_dtype)
+        self.tower_b = _build_text_tower(embed_dim, tower_b_cfg, quick_gelu, cast_dtype)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    def lock_tower_a(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.tower_a.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
+
+    def lock_tower_b(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.tower_b.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.tower_a.set_grad_checkpointing(enable)
+        self.tower_b.set_grad_checkpointing(enable)
+
+    def encode_text_a(self, text, normalize: bool = False):
+        features = self.tower_a(text)
+        return F.normalize(features, dim=-1) if normalize else features
+
+    def encode_text_b(self, text, normalize: bool = False):
+        features = self.tower_b(text)
+        return F.normalize(features, dim=-1) if normalize else features
+
+    def forward(self, text_a, text_b):
+        features_a = self.encode_text_a(text_a, normalize=True)
+        features_b = self.encode_text_b(text_b, normalize=True)
+        if self.output_dict:
+            return {
+                "text_a_features": features_a,
+                "text_b_features": features_b,
+                "logit_scale": self.logit_scale.exp()
+            }
+        return features_a, features_b, self.logit_scale.exp()
+
+
+
+
+class SiameseTextCLIP(nn.Module):
+    def __init__(
+            self,
+            embed_dim: int,
+            text_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False,
+    ):
+        super().__init__()
+        self.output_dict = output_dict
+        self.text_tower = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, unlocked_biases: bool = False):
+        self.text_tower.lock(unlocked_layers, freeze_layer_norm, unlocked_biases)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.text_tower.set_grad_checkpointing(enable)
+
+    def encode_text(self, text, normalize: bool = False):
+        features = self.text_tower(text)
+        return F.normalize(features, dim=-1) if normalize else features
+
+    def forward(self, text_a, text_b):
+        features_a = self.encode_text(text_a, normalize=True)
+        features_b = self.encode_text(text_b, normalize=True)
+        if self.output_dict:
+            return {
+                "text_a_features": features_a,
+                "text_b_features": features_b,
+                "logit_scale": self.logit_scale.exp()
+            }
+        return features_a, features_b, self.logit_scale.exp()
+
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):

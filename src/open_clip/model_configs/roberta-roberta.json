@@ -1,0 +1,16 @@
+{
+    "embed_dim": 512,
+    "quick_gelu": true,
+    "tower_a_cfg": {
+        "hf_model_name": "roberta-base",
+        "hf_tokenizer_name": "roberta-base",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    },
+    "tower_b_cfg": {
+        "hf_model_name": "roberta-base",
+        "hf_tokenizer_name": "roberta-base",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}

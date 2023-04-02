@@ -12,6 +12,7 @@ from multiprocessing import Value
 
 import numpy as np
 import pandas as pd
+from functools import partial
 import torch
 import torchvision.datasets as datasets
 import webdataset as wds
@@ -25,6 +26,67 @@ try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
+
+
+class STSDataset(Dataset):
+    def __init__(self, input_filename, tokenizer=None):
+        from datasets import load_dataset
+        logging.debug(f'Loading STS data from {input_filename}.')
+        self.dataset = load_dataset(input_filename,keep_in_memory=True)
+        if "train" in self.dataset.keys():
+            self.dataset = self.dataset['train']
+
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        entry = self.dataset[idx]
+        sent1 = self.tokenize([str(entry['sentence1'])])[0]
+        sent2 = self.tokenize([str(entry['sentence2'])])[0]
+        score = entry['score']
+        return sent1,sent2,score
+
+
+
+def get_STS_dataset(args, preprocess_fn, is_train, epoch=0, floor=False, tokenizer=None):
+    input_filename = args.sts_val_data
+    assert input_filename
+
+    
+    dataset = STSDataset(input_filename,tokenizer=tokenizer)
+    
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+    
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    
+    num_samples = args.train_num_samples
+    round_fn = math.floor if floor else math.ceil
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    
+    logging.debug("%s"%(num_samples))
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = num_batches
+
+    return DataInfo(dataloader, sampler)
+
+
 
 
 class CsvDataset(Dataset):
@@ -375,14 +437,25 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
-    pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train)
-    ])
+        
+    if 'text' in args.model_type:
+        pipeline.extend([
+            wds.to_tuple("text_a", "text_b"),
+            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
+            wds.batched(args.batch_size, partial=not is_train),
+        ])
+
+        
+    else:
+        pipeline.extend([
+            wds.select(filter_no_caption_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.to_tuple("image", "text"),
+            wds.batched(args.batch_size, partial=not is_train),
+        ])
+
 
     dataset = wds.DataPipeline(*pipeline)
 
@@ -401,6 +474,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     else:
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
+
 
     dataloader = wds.WebLoader(
         dataset,
@@ -505,6 +579,8 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 
 def get_dataset_fn(data_path, dataset_type):
+    if dataset_type == 'sts':
+        return get_STS_dataset
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "csv":
@@ -541,5 +617,8 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
 
     if args.imagenet_v2 is not None:
         data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+        
+    if args.sts_val_data is not None:
+        data['sts-val'] = get_dataset_fn(args,'sts')(args, preprocess_fns, is_train=False, epoch=epoch, tokenizer=tokenizer)
 
     return data

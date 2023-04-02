@@ -61,7 +61,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "csv", "synthetic", "auto", "textpair"],
         default="auto",
         help="Which type of dataset to process."
     )
@@ -90,6 +90,18 @@ def parse_args(args):
         help="For csv-like datasets, the name of the key for the captions."
     )
     parser.add_argument(
+        "--text-a-key",
+        type=str,
+        default="text_a",
+        help="For text pair datasets, the name of the key for the texts a."
+    )
+    parser.add_argument(
+        "--text-b-key",
+        type=str,
+        default="text_b",
+        help="For text pair datasets, the name of the key for the texts b."
+    )
+    parser.add_argument(
         "--imagenet-val",
         type=str,
         default=None,
@@ -100,6 +112,12 @@ def parse_args(args):
         type=str,
         default=None,
         help="Path to imagenet v2 for conducting zero shot evaluation.",
+    )
+    parser.add_argument(
+        "--sts-val-data",
+        type=str,
+        default=None,
+        help="Path to STS17 crosslingual evaluation data. The default path is: lingjzhu/sts17-crosslingual",
     )
     parser.add_argument(
         "--logs",
@@ -364,20 +382,82 @@ def parse_args(args):
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n text tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--text-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
+        help="Freeze BatchNorm running stats in text tower for any locked layers.",
+    )
+    parser.add_argument(
+        "--lock-tower-b",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-tower-b-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-tower-b-freeze-layer-norm",
+        default=False,
+        action='store_true',
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
+        "--lock-tower-a",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+    parser.add_argument(
+        "--lock-tower-a-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n tower layer groups unlocked.",
+    )
+    parser.add_argument(
+        "--lock-tower-a-freeze-layer-norm",
+        default=False,
+        action='store_true',
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+    )
+    parser.add_argument(
+        "--text-b-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
+    )
+    parser.add_argument(
+        "--text-a-unlocked-biases",
+        type=bool,
+        default=False,
+        help="Only unlock model biases",
     )
     parser.add_argument(
         "--log-every-n-steps",
         type=int,
-        default=100,
+        default=10,
         help="Log every n steps to tensorboard/console/wandb.",
     )
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        choices=["CLIP", "text_dual_encoder", "text_siamese_encoder"],
+        default="CLIP",
+        help="Specify the model type",
+    )
+
     parser.add_argument(
         "--coca-caption-loss-weight",
         type=float,
@@ -414,6 +494,7 @@ def parse_args(args):
         action="store_true",
         help="If true, delete previous checkpoint after storing a new one."
     )
+
     parser.add_argument(
         "--distill-model",
         default=None,

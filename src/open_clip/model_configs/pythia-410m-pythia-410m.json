@@ -1,0 +1,16 @@
+{
+    "embed_dim": 512,
+    "quick_gelu": true,
+    "tower_a_cfg": {
+        "hf_model_name": "EleutherAI/pythia-410m-deduped",
+        "hf_tokenizer_name": "EleutherAI/pythia-410m-deduped",
+        "proj": "mlp",
+        "pooler_type": "weighted_mean_pooler"
+    },
+    "tower_b_cfg": {
+        "hf_model_name": "EleutherAI/pythia-410m-deduped",
+        "hf_tokenizer_name": "EleutherAI/pythia-410m-deduped",
+        "proj": "mlp",
+        "pooler_type": "weighted_mean_pooler"
+    }
+}

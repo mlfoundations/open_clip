@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
-from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, CustomTextCLIP, TextTextCLIP, SiameseTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
@@ -44,10 +44,16 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+
+            is_clip = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
+            is_text_only = all(a in model_cfg for a in ('embed_dim', 'tower_a_cfg', 'tower_b_cfg'))
+            is_siamese_text_only = all(a in model_cfg for a in ('embed_dim', 'text_cfg'))
+            is_multimodal = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg', 'multimodal_cfg'))
+            if is_clip or is_text_only or is_siamese_text_only or is_multimodal:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
+    
 
 
 _rescan_model_configs()  # initial populate of model config registry
@@ -74,12 +80,24 @@ def get_model_config(model_name):
 
 
 def get_tokenizer(model_name):
+
     if model_name.startswith(HF_HUB_PREFIX):
         tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
     else:
         config = get_model_config(model_name)
-        tokenizer = HFTokenizer(
-            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+
+        if 'text_cfg' in config.keys():
+            key = 'text_cfg'
+        elif 'tower_a_cfg' in config.keys():
+            key = 'tower_a_cfg'
+        if 'hf_tokenizer_name' in config[key]:
+            tokenizer = HFTokenizer(config[key]['hf_tokenizer_name']) 
+            if "pythia" in config[key]['hf_tokenizer_name']:
+                tokenizer.tokenizer.pad_token_id = 1
+        else: 
+            tokenizer = tokenize
+        
+
     return tokenizer
 
 
@@ -117,8 +135,10 @@ def create_model(
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
+        model_type: Optional[str] = "CLIP",
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
+
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -180,18 +200,35 @@ def create_model(
                 assert False, 'pretrained image towers currently only supported for timm models'
 
         cast_dtype = get_cast_dtype(precision)
+
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
-        if custom_text:
-            if is_hf_model:
-                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
-            if "coca" in model_name:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+        # switch to TextTextCLIP
+        if model_type=="text_dual_encoder":
+            if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
+                model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
+            if 'hf_model_name' in model_cfg.get('tower_b_cfg', {}):
+                model_cfg['tower_b_cfg']['hf_model_pretrained'] = pretrained_hf
+            model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+
+        elif model_type=="text_siamese_encoder":
+            if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
+                model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
+            model = SiameseTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+            
+        elif model_type=="CLIP":
+        
+            if custom_text:
+                if is_hf_model:
+                    model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
+                if "coca" in model_name:
+                    model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+                else:
+                    model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
             else:
-                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
-        else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+
 
         pretrained_loaded = False
         if pretrained:
@@ -226,9 +263,10 @@ def create_model(
         if precision in ("fp16", "bf16"):
             convert_weights_to_lp(model, dtype=torch.bfloat16 if precision == 'bf16' else torch.float16)
 
+        if model_type=="CLIP":
         # set image / mean metadata from pretrained_cfg if available, or use default
-        model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
-        model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
+            model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
+            model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
         # to always output dict even if it is clip
         if output_dict and hasattr(model, "output_dict"):
@@ -287,6 +325,7 @@ def create_model_and_transforms(
         image_std: Optional[Tuple[float, ...]] = None,
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
+        model_type: Optional[str] = "CLIP",
         output_dict: Optional[bool] = None,
 ):
     model = create_model(
@@ -302,24 +341,29 @@ def create_model_and_transforms(
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
+        model_type=model_type,
         output_dict=output_dict,
     )
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(
-        model.visual.image_size,
-        is_train=True,
-        mean=image_mean,
-        std=image_std,
-        aug_cfg=aug_cfg,
-    )
-    preprocess_val = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std,
-    )
+    if model_type=="CLIP":
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess_train = image_transform(
+            model.visual.image_size,
+            is_train=True,
+            mean=image_mean,
+            std=image_std
+        )
+        preprocess_val = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std
+        )
+    else:
+        preprocess_val = None
+        preprocess_train = None
+
 
     return model, preprocess_train, preprocess_val
 
@@ -337,6 +381,7 @@ def create_model_from_pretrained(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        model_type: Optional[str] = "CLIP",
 ):
     model = create_model(
         model_name,
@@ -348,19 +393,23 @@ def create_model_from_pretrained(
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
         cache_dir=cache_dir,
+        model_type=model_type,
         require_pretrained=True,
     )
 
     if not return_transform:
         return model
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std,
-    )
+
+    if model_type=="CLIP":
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std
+        )
+
 
     return model, preprocess

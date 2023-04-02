@@ -17,8 +17,8 @@ except ImportError:
 
 
 def gather_features(
-        image_features,
-        text_features,
+        features_a,
+        features_b,
         local_loss=False,
         gather_with_grad=False,
         rank=0,
@@ -29,38 +29,38 @@ def gather_features(
     if use_horovod:
         assert hvd is not None, 'Please install horovod'
         if gather_with_grad:
-            all_image_features = hvd.allgather(image_features)
-            all_text_features = hvd.allgather(text_features)
+            all_features_a = hvd.allgather(features_a)
+            all_features_b = hvd.allgather(features_b)
         else:
             with torch.no_grad():
-                all_image_features = hvd.allgather(image_features)
-                all_text_features = hvd.allgather(text_features)
+                all_features_a = hvd.allgather(features_a)
+                all_features_b = hvd.allgather(features_b)
             if not local_loss:
                 # ensure grads for local rank when all_* features don't have a gradient
-                gathered_image_features = list(all_image_features.chunk(world_size, dim=0))
-                gathered_text_features = list(all_text_features.chunk(world_size, dim=0))
-                gathered_image_features[rank] = image_features
-                gathered_text_features[rank] = text_features
-                all_image_features = torch.cat(gathered_image_features, dim=0)
-                all_text_features = torch.cat(gathered_text_features, dim=0)
+                gathered_features_a = list(all_features_a.chunk(world_size, dim=0))
+                gathered_features_b = list(all_features_b.chunk(world_size, dim=0))
+                gathered_features_a[rank] = features_a
+                gathered_features_b[rank] = features_b
+                all_features_a = torch.cat(gathered_features_a, dim=0)
+                all_features_b = torch.cat(gathered_features_b, dim=0)
     else:
         # We gather tensors from all gpus
         if gather_with_grad:
-            all_image_features = torch.cat(torch.distributed.nn.all_gather(image_features), dim=0)
-            all_text_features = torch.cat(torch.distributed.nn.all_gather(text_features), dim=0)
+            all_features_a = torch.cat(torch.distributed.nn.all_gather(features_a), dim=0)
+            all_features_b = torch.cat(torch.distributed.nn.all_gather(features_b), dim=0)
         else:
-            gathered_image_features = [torch.zeros_like(image_features) for _ in range(world_size)]
-            gathered_text_features = [torch.zeros_like(text_features) for _ in range(world_size)]
-            dist.all_gather(gathered_image_features, image_features)
-            dist.all_gather(gathered_text_features, text_features)
+            gathered_features_a = [torch.zeros_like(features_a) for _ in range(world_size)]
+            gathered_features_b = [torch.zeros_like(features_b) for _ in range(world_size)]
+            dist.all_gather(gathered_features_a, features_a)
+            dist.all_gather(gathered_features_b, features_b)
             if not local_loss:
                 # ensure grads for local rank when all_* features don't have a gradient
-                gathered_image_features[rank] = image_features
-                gathered_text_features[rank] = text_features
-            all_image_features = torch.cat(gathered_image_features, dim=0)
-            all_text_features = torch.cat(gathered_text_features, dim=0)
+                gathered_features_a[rank] = features_a
+                gathered_features_b[rank] = features_b
+            all_features_a = torch.cat(gathered_features_a, dim=0)
+            all_features_b = torch.cat(gathered_features_b, dim=0)
 
-    return all_image_features, all_text_features
+    return all_features_a, all_features_b
 
 
 class ClipLoss(nn.Module):
@@ -99,33 +99,44 @@ class ClipLoss(nn.Module):
             labels = self.labels[device]
         return labels
 
-    def get_logits(self, image_features, text_features, logit_scale):
+    def get_logits(self, features_a, features_b, logit_scale):
+
         if self.world_size > 1:
-            all_image_features, all_text_features = gather_features(
-                image_features, text_features,
+            all_features_a, all_features_b = gather_features(
+                features_a, features_b,
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
 
             if self.local_loss:
-                logits_per_image = logit_scale * image_features @ all_text_features.T
-                logits_per_text = logit_scale * text_features @ all_image_features.T
+                logits_per_feature_a = logit_scale * features_a @ all_features_b.T
+                logits_per_feature_b = logit_scale * features_b @ all_features_a.T
             else:
-                logits_per_image = logit_scale * all_image_features @ all_text_features.T
-                logits_per_text = logits_per_image.T
+                logits_per_feature_a = logit_scale * all_features_a @ all_features_b.T
+                logits_per_feature_b = logits_per_feature_a.T
         else:
-            logits_per_image = logit_scale * image_features @ text_features.T
-            logits_per_text = logit_scale * text_features @ image_features.T
+            logits_per_feature_a = logit_scale * features_a @ features_b.T
+            logits_per_feature_b = logit_scale * features_b @ features_a.T
+
+       
+        return logits_per_feature_a, logits_per_feature_b
+
+
+    def forward(self, image_features=None, text_features=None, logit_scale=None, text_a_features=None, text_b_features=None, output_dict=False):
         
-        return logits_per_image, logits_per_text
+        if image_features is not None and text_features is not None:
+            features_a = image_features
+            features_b = text_features
+        elif text_a_features is not None and text_b_features is not None:
+            features_a = text_a_features
+            features_b = text_b_features
 
-    def forward(self, image_features, text_features, logit_scale, output_dict=False):
-        device = image_features.device
-        logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
+        device = features_a.device
+        logits_per_feature_a, logits_per_feature_b = self.get_logits(features_a, features_b, logit_scale)
 
-        labels = self.get_ground_truth(device, logits_per_image.shape[0])
+        labels = self.get_ground_truth(device, logits_per_feature_a.shape[0])
 
         total_loss = (
-            F.cross_entropy(logits_per_image, labels) +
-            F.cross_entropy(logits_per_text, labels)
+            F.cross_entropy(logits_per_feature_a, labels) +
+            F.cross_entropy(logits_per_feature_b, labels)
         ) / 2
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
@@ -210,3 +221,4 @@ class DistillClipLoss(ClipLoss):
             return {"contrastive_loss": contrastive_loss, "distill_loss": distill_loss}
 
         return contrastive_loss, distill_loss
+
