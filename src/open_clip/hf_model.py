@@ -62,6 +62,29 @@ class MaxPooler(nn.Module):
 
 
 @register_pooler
+class WeightedMeanPooler(nn.Module):
+    """Weighted mean pooling for autoregressive models"""
+    
+    def forward(self, x: BaseModelOutput, attention_mask: TensorType):
+        
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(x.last_hidden_state.size()).float()
+        weights = (
+                    torch.arange(start=1, end=x.last_hidden_state.shape[1] + 1)
+                    .unsqueeze(0)
+                    .unsqueeze(-1)
+                    .expand(x.last_hidden_state.size())
+                    .float().to(x.last_hidden_state.device)
+                    )
+        assert weights.shape == x.last_hidden_state.shape == input_mask_expanded.shape
+        input_mask_expanded = input_mask_expanded * weights
+
+        sum_embeddings = torch.sum(x.last_hidden_state * input_mask_expanded, 1)
+        sum_mask = input_mask_expanded.sum(1)
+        sum_mask = torch.clamp(sum_mask, min=1e-9)
+        return sum_embeddings / sum_mask
+    
+    
+@register_pooler
 class ClsPooler(nn.Module):
     """CLS token pooling"""
 
@@ -78,6 +101,8 @@ class ClsPooler(nn.Module):
             return x.pooler_output
 
         return x.last_hidden_state[:, self.cls_token_position, :]
+    
+
 
 
 class HFTextEncoder(nn.Module):
@@ -111,6 +136,9 @@ class HFTextEncoder(nn.Module):
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                 self.transformer = create_func(model_args)
                 self.transformer = self.transformer.encoder
+            elif 'gpt' in self.config.model_type:
+                self.transformer = create_func(model_args)
+                self.config.pad_token_id = 1 # this is for GPT-NeoX. It might need to be changed if other models are needed.
             else:
                 self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
         else:
@@ -139,16 +167,16 @@ class HFTextEncoder(nn.Module):
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
         pooled_out = self.pooler(out, attn_mask)
         projected = self.proj(pooled_out)
-
-        seq_len = out.last_hidden_state.shape[1]
-        tokens = (
-            out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :] 
-            if type(self.pooler) == ClsPooler 
-            else out.last_hidden_state
-        )
         
         if self.output_tokens:
+            seq_len = out.last_hidden_state.shape[1]
+            tokens = (
+                out.last_hidden_state[:, torch.arange(seq_len) != self.pooler.cls_token_position, :] 
+                if type(self.pooler) == ClsPooler 
+                else out.last_hidden_state
+            )            
             return projected, tokens
+        
         return projected
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):

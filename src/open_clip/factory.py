@@ -91,6 +91,9 @@ def get_tokenizer(model_name):
         elif 'tower_a_cfg' in config.keys():
             key = 'tower_a_cfg'
         tokenizer = HFTokenizer(config[key]['hf_tokenizer_name']) if 'hf_tokenizer_name' in config[key] else tokenize
+        
+        if "pythia" in config[key]['hf_tokenizer_name']:
+            tokenizer.tokenizer.pad_token_id = 1
 
     return tokenizer
 

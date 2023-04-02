@@ -29,3 +29,59 @@ def test_inference_simple(model_cfg, pretrained=None):
     text_probs = (100.0 * text_a_features @ text_b_features.T).softmax(dim=-1)
     print(text_probs)
 
+
+@pytest.mark.parametrize("model_cfg", [("Siamese-xlm-roberta-large")])
+def test_inference_simple(model_cfg, pretrained=None):
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_siamese_encoder')
+    tokenizer = get_tokenizer(model_cfg)
+
+    text_a = tokenizer(['this', 'is', 'a', 'document'])
+    text_b = tokenizer(['this', 'is', 'a', 'summary'])
+
+    with torch.no_grad():
+        text_a_features = model.encode_text(text_a)
+        text_b_features = model.encode_text(text_b)
+    
+    print(text_a_features.shape)
+    print(text_b_features.shape)
+
+    text_probs = (100.0 * text_a_features @ text_b_features.T).softmax(dim=-1)
+    print(text_probs)
+
+    
+@pytest.mark.parametrize("model_cfg", [("pythia-1b-pythia-1b")])
+def test_inference_simple(model_cfg, pretrained=None):
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_dual_encoder')
+    tokenizer = get_tokenizer(model_cfg)
+
+    text_a = tokenizer(['this', 'is', 'a', 'document'])
+    text_b = tokenizer(['this', 'is', 'a', 'summary'])
+
+    with torch.no_grad():
+        text_a_features = model.encode_text_a(text_a)
+        text_b_features = model.encode_text_b(text_b)
+    
+    print(text_a_features.shape)
+    print(text_b_features.shape)
+
+    text_probs = (100.0 * text_a_features @ text_b_features.T).softmax(dim=-1)
+    print(text_probs)
+
+    
+@pytest.mark.parametrize("model_cfg", [("Siamese-pythia-410m")])
+def test_inference_simple(model_cfg, pretrained=None):
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_siamese_encoder')
+    tokenizer = get_tokenizer(model_cfg)
+
+    text_a = tokenizer(['this', 'is', 'a', 'document'])
+    text_b = tokenizer(['this', 'is', 'a', 'summary'])
+
+    with torch.no_grad():
+        text_a_features = model.encode_text(text_a)
+        text_b_features = model.encode_text(text_b)
+    
+    print(text_a_features.shape)
+    print(text_b_features.shape)
+
+    text_probs = (100.0 * text_a_features @ text_b_features.T).softmax(dim=-1)
+    print(text_probs)
