@@ -102,7 +102,18 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
     resize_pos_embed(state_dict, model)
-    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+
+    incompatible_keys = []
+    # TODO: find better way of doing this
+    if isinstance(model, VideoCLIP):
+        text_state_dict = dict([(k[len("text."):], v) for (k, v) in state_dict.items() if k.startswith("text")])
+        visual_state_dict = dict([(k[len("visual."):], v) for (k, v) in state_dict.items() if k.startswith("visual")])
+
+        incompatible_keys += model.text.load_state_dict(text_state_dict, strict=strict)
+        incompatible_keys += model.visual.spatial.load_state_dict(visual_state_dict, strict=strict)
+    else:
+        incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+
     return incompatible_keys
 
 
@@ -201,6 +212,12 @@ def create_model(
         pretrained_loaded = False
         if pretrained:
             checkpoint_path = ''
+
+            # TODO: not sure how to initialize components nicely
+            # idea for now: model_name:pretrained
+            if ":" in pretrained:
+                model_name, pretrained = pretrained.split(":")
+
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
             if pretrained_cfg:
                 checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
