@@ -64,6 +64,11 @@ def run(model, classifier, dataloader, args):
     return top1, top5
 
 
+def inat21_class_preprocess(cls):
+    num, *tiers = cls.split('_')
+    return ' '.join(tiers)
+
+
 def zero_shot_eval(model, data, epoch, args):
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
@@ -75,7 +80,14 @@ def zero_shot_eval(model, data, epoch, args):
     logging.info('Starting zero-shot imagenet.')
 
     logging.info('Building zero-shot classifier')
-    classifier = zero_shot_classifier(model, imagenet_classnames, openai_imagenet_template, args)
+    # To do zero-shot eval on iNat21 classes, we use the class names directly.
+    # They are stored in the dataset in the .classes attribute
+    logging.warn("Using iNat21 classes instead of imagenet!")
+    inat_classnames = [
+        inat21_class_preprocess(c)
+        for c in data['imagenet-val'].dataloader.dataset.classes
+    ]
+    classifier = zero_shot_classifier(model, inat_classnames, openai_imagenet_template, args)
 
     logging.info('Using classifier')
     results = {}
