@@ -1,0 +1,216 @@
+import argparse
+import ast
+
+
+
+class ParseKwargs(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        kw = {}
+        for value in values:
+            key, value = value.split("=")
+            try:
+                kw[key] = ast.literal_eval(value)
+            except ValueError:
+                # fallback to string (avoid need to escape on command line)
+                kw[key] = str(value)
+        setattr(namespace, self.dest, kw)
+
+
+def parse_args(args):
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--val-data",
+        type=str,
+        default=None,
+        help="Path to file(s) with validation data",
+    )
+    parser.add_argument(
+        "--val-num-samples",
+        type=int,
+        default=None,
+        help="Number of samples in dataset. Useful for webdataset if not available in info file.",
+    )
+    parser.add_argument(
+        "--dataset-type",
+        choices=["webdataset", "csv", "synthetic", "auto"],
+        default="auto",
+        help="Which type of dataset to process.",
+    )
+    parser.add_argument(
+        "--dataset-resampled",
+        default=False,
+        action="store_true",
+        help="Whether to use sampling with replacement for webdataset shard selection.",
+    )
+    parser.add_argument(
+        "--imagenet-val",
+        type=str,
+        default=None,
+        help="Path to imagenet val set for conducting zero shot evaluation.",
+    )
+    parser.add_argument(
+        "--imagenet-v2",
+        type=str,
+        default=None,
+        help="Path to imagenet v2 for conducting zero shot evaluation.",
+    )
+    parser.add_argument(
+        "--logs",
+        type=str,
+        default="./logs/",
+        help="Where to store tensorboard logs. Use None to avoid storing logs.",
+    )
+    parser.add_argument(
+        "--log-local",
+        action="store_true",
+        default=False,
+        help="log files on local master, otherwise global master only.",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Optional identifier for the experiment when storing logs. Otherwise use current time.",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=1, help="Number of dataloader workers per GPU."
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=64, help="Batch size per GPU."
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        type=str,
+        help="path to latest checkpoint (default: none)",
+    )
+    parser.add_argument(
+        "--precision",
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp32"],
+        default="amp",
+        help="Floating point precision.",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="RN50",
+        help="Name of the vision backbone to use.",
+    )
+    parser.add_argument(
+        "--pretrained",
+        default="",
+        type=str,
+        help="Use a pretrained CLIP model weights with the specified tag or file path.",
+    )
+    parser.add_argument(
+        "--pretrained-image",
+        default=False,
+        action="store_true",
+        help="Load imagenet pretrained weights for image tower backbone if available.",
+    )
+    parser.add_argument(
+        "--image-mean",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="MEAN",
+        help="Override default image mean value of dataset",
+    )
+    parser.add_argument(
+        "--image-std",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="STD",
+        help="Override default image std deviation of of dataset",
+    )
+    parser.add_argument("--aug-cfg", nargs="*", default={}, action=ParseKwargs)
+    parser.add_argument(
+        "--grad-checkpointing",
+        default=False,
+        action="store_true",
+        help="Enable gradient checkpointing.",
+    )
+    parser.add_argument(
+        "--local-loss",
+        default=False,
+        action="store_true",
+        help="calculate loss w/ local features @ global (instead of realizing full global @ global matrix)",
+    )
+    parser.add_argument(
+        "--force-image-size",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Override default image size",
+    )
+    parser.add_argument(
+        "--force-quick-gelu",
+        default=False,
+        action="store_true",
+        help="Force use of QuickGELU activation for non-OpenAI transformer models.",
+    )
+    parser.add_argument(
+        "--force-custom-text",
+        default=False,
+        action="store_true",
+        help="Force use of CustomTextCLIP model (separate text-tower).",
+    )
+    parser.add_argument(
+        "--torchscript",
+        default=False,
+        action="store_true",
+        help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
+    )
+    parser.add_argument(
+        "--trace",
+        default=False,
+        action="store_true",
+        help="torch.jit.trace the model for inference / eval only",
+    )
+    parser.add_argument(
+        "--accum-freq",
+        type=int,
+        default=1,
+        help="Update the model every --acum-freq steps.",
+    )
+    parser.add_argument(
+        "--report-to",
+        default="",
+        type=str,
+        help="Options are ['wandb', 'tensorboard', 'wandb,tensorboard']",
+    )
+    parser.add_argument(
+        "--wandb-notes", default="", type=str, help="Notes if logging with wandb"
+    )
+    parser.add_argument(
+        "--wandb-project-name",
+        type=str,
+        default="open-clip",
+        help="Name of the project if logging with wandb.",
+    )
+    parser.add_argument(
+        "--debug",
+        default=False,
+        action="store_true",
+        help="If true, more information is logged.",
+    )
+    parser.add_argument(
+        "--no-set-device-rank",
+        default=False,
+        action="store_true",
+        help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Default random seed.")
+    parser.add_argument(
+        "--grad-clip-norm", type=float, default=None, help="Gradient clip."
+    )
+    parser.add_argument(
+        "--log-every-n-steps",
+        type=int,
+        default=100,
+        help="Log every n steps to tensorboard/console/wandb.",
+    )
+    args = parser.parse_args(args)
+
+    return args
