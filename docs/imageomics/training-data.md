@@ -37,7 +37,7 @@ There are two challenges:
 * [eBMS Field Guides for butterfly Identification](https://butterfly-monitoring.net/field-guides)
 * [Field Guide to the Butterflies of Sri Lanka](https://www.researchgate.net/publication/329880548_Field_Guide_to_the_Butterflies_of_Sri_Lanka)
 
-**Heliconious:**
+**Heliconius:**
 * [UWI's The Online Guide to the Animals of Trinidad and Tobago](https://sta.uwi.edu/fst/lifesciences/sites/default/files/lifesciences/documents/ogatt/Heliconius_melpomene%20-%20Postman%20Butterfly.pdf)
 
 ## Bird datasets
