@@ -328,7 +328,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
-    num_shards = len(expand_urls(input_shards))
+    num_shards = len(expand_urls(input_shards)[0])
 
     if is_train:
         if args.train_num_samples is not None:
