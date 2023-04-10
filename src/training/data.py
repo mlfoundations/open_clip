@@ -93,7 +93,7 @@ def expand_urls(urls, weights=None):
         return all_urls, weights
 
 
-def get_dataset_size(shards):
+def get_num_samples(shards):
     shards_list, _ = expand_urls(shards)
     dir_path = os.path.dirname(shards_list[0])
     sizes_filename = os.path.join(dir_path, 'sizes.json')
@@ -111,8 +111,7 @@ def get_dataset_size(shards):
         # CC12M: 10968539
         # LAION-400M: 407332084
         # LAION-2B (english): 2170337258
-    num_shards = len(shards_list)
-    return total_size, num_shards
+    return total_size
 
 
 def get_imagenet(args, preprocess_fns, split):
@@ -329,16 +328,20 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
-    num_samples, num_shards = get_dataset_size(input_shards)
-    if not num_samples:
-        if is_train:
+    num_shards = len(expand_urls(input_shards))
+
+    if is_train:
+        if args.train_num_samples is not None:
             num_samples = args.train_num_samples
-            if not num_samples:
+        else:
+            num_samples = get_num_samples(input_shards)
+            if num_samples is None:
                 raise RuntimeError(
                     'Currently, number of dataset samples must be specified for training dataset. '
                     'Please specify via `--train-num-samples` if no dataset length info present.')
-        else:
-            num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
+    else:
+        # Eval will just exhaust the iterator if the size is not specified.
+        num_samples = args.val_num_samples or 0 
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
