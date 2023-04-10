@@ -197,7 +197,7 @@ class AttentionalPooler(nn.Module):
         vatt = v.view(s2, b * self.n_head, head_dim).contiguous().transpose(0, 1)
 
         att = F.softmax(
-            torch.bmm(qatt, katt.transpose(-2, -1)) / math.sqrt(qatt.shape[-1]), dim=-1
+            torch.bmm(qatt / math.sqrt(qatt.shape[-1]), katt.transpose(-2, -1)), dim=-1
         )
         v_out = torch.bmm(att, vatt)
 
