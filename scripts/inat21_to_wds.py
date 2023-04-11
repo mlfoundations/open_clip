@@ -1,5 +1,8 @@
 """
-Converts a regular iNat21 dataset to a CLIP dataset in webdataset format.
+Converts iNat21 to a pretraining webdataset format.
+
+* Only includes 9K training classes so there are 1K unseen classes for evaluation
+* Uses both scientific and common names in the text descriptions
 """
 import os
 
@@ -7,11 +10,14 @@ import torchvision
 import webdataset
 from tqdm.auto import tqdm
 
-inat_root = "/local/scratch/cv_datasets/inat21/rand-species-split/pretrain"
+import evaluation.data
+import imageomics.naming
+
+inat_root = "/local/scratch/cv_datasets/inat21/raw"
 split = "train"
 resize_size = (224, 224)
 
-output_root = "/local/scratch/cv_datasets/inat21/rand-species-split/pretrain-webdataset"
+output_root = "/local/scratch/cv_datasets/inat21/pretrain-webdataset"
 
 # Pattern for shard names
 shard_pattern = "shard-%06d.tar"
@@ -24,11 +30,27 @@ os.makedirs(output_root, exist_ok=True)
 
 def parse(raw):
     index, *tiers = raw.split("_")
-    return tiers
+    return int(index, base=10), tiers
+
+
+def make_descriptions(classname):
+    index, tiers = parse(classname)
+    scientific_name = " ".join(tiers)
+    yield f"a photo of {scientific_name}."
+
+    if index not in common_name_lookup:
+        # Don't know the common name
+        return
+
+    common_name = common_name_lookup[index]
+    yield f"a photo of {common_name}."
 
 
 if __name__ == "__main__":
-    dataset = torchvision.datasets.ImageFolder(
+    # Set up common name lookup
+    common_name_lookup = imageomics.naming.read_mapping()
+
+    dataset = evaluation.data.PretrainingInat(
         os.path.join(inat_root, split),
         transform=torchvision.transforms.Resize(resize_size, antialias=True),
     )
@@ -39,9 +61,7 @@ if __name__ == "__main__":
 
     for i, (image, cls) in enumerate(tqdm(dataset)):
         label = parse(dataset.classes[cls])
-        desc = " ".join(label)
-        sink.write(
-            {"__key__": f"sample{i:08d}", "jpg": image, "txt": desc}
-        )
+        for desc in make_descriptions(dataset.classes[cls]):
+            sink.write({"__key__": f"sample{i:08d}", "jpg": image, "txt": desc})
 
     sink.close()

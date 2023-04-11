@@ -14,7 +14,6 @@ import sys
 
 import torch
 import torch.nn.functional as F
-from torchvision import datasets
 from tqdm import tqdm
 
 from open_clip import (
@@ -26,21 +25,22 @@ from open_clip import (
 from training.imagenet_zeroshot_data import openai_imagenet_template
 from training.logger import setup_logging
 from training.precision import get_autocast
+import imageomics.naming
 
+from .data import SeenInat, UnseenInat
 from .params import parse_args
-from .utils import random_seed, init_device
+from .utils import init_device, random_seed
 
-val_seen_path = "/local/scratch/cv_datasets/inat21/clip/eval/val-seen"
-val_unseen_path = "/local/scratch/cv_datasets/inat21/clip/eval/val-unseen"
+inat_root = "/local/scratch/cv_datasets/inat21/raw"
+num_workers = 8
+common_names = True
 
 
-def get_imagenet(args, preprocess_fn, data_path):
-    dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
-
+def get_dataloader(dataset, batch_size):
     return torch.utils.data.DataLoader(
         dataset,
-        batch_size=args.batch_size,
-        num_workers=args.workers,
+        batch_size=batch_size,
+        num_workers=num_workers,
         sampler=None,
     )
 
@@ -98,8 +98,14 @@ def run(model, classifier, dataloader, args):
 
 
 def inat21_class_preprocess(cls):
-    num, *tiers = cls.split("_")
-    return " ".join(tiers)
+    taxon = imageomics.naming.dataset_class_to_taxon(cls)
+    if common_names:
+        if taxon.dataset_id in common_name_lookup:
+            return common_name_lookup[taxon.dataset_id]
+        else:
+            logging.warning("Missing common name for %s.", taxon.scientific_name)
+
+    return taxon.scientific_name
 
 
 def zero_shot_eval(model, data, args):
@@ -208,6 +214,7 @@ if __name__ == "__main__":
     logging.info(f"{str(model)}")
     logging.info("Params:")
     params_file = os.path.join(args.logs, args.name, "params.txt")
+    # TODO: include non-arg-based configuration here
     with open(params_file, "w") as f:
         for name in sorted(vars(args)):
             val = getattr(args, name)
@@ -216,12 +223,23 @@ if __name__ == "__main__":
 
     # initialize datasets
     data = {
-        "inat21-val-seen": get_imagenet(args, preprocess_val, val_seen_path),
-        "inat21-val-unseen": get_imagenet(args, preprocess_val, val_unseen_path),
+        "inat21-val-seen": get_dataloader(
+            SeenInat(os.path.join(inat_root, "val"), transform=preprocess_val),
+            batch_size=args.batch_size,
+        ),
+        "inat21-val-unseen": get_dataloader(
+            UnseenInat(os.path.join(inat_root, "val"), transform=preprocess_val),
+            batch_size=args.batch_size,
+        ),
     }
 
     args.save_logs = args.logs and args.logs.lower() != "none"
     writer = None
+
+    # Load common names
+    common_name_lookup = {}
+    if common_names:
+        common_name_lookup.update(imageomics.naming.read_mapping())
 
     model.eval()
     metrics = zero_shot_eval(model, data, args)

@@ -18,12 +18,12 @@ def init_device(args):
 
     if torch.cuda.is_available():
         if args.distributed and not args.no_set_device_rank:
-            device = 'cuda:%d' % args.local_rank
+            device = "cuda:%d" % args.local_rank
         else:
-            device = 'cuda:0'
+            device = "cuda:0"
         torch.cuda.set_device(device)
     else:
-        device = 'cpu'
+        device = "cpu"
 
     args.device = device
     device = torch.device(device)

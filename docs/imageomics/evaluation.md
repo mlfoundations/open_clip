@@ -20,14 +20,22 @@ We also want to compare common names and taxonomic names for the text encoder: c
 # Butterflies Classification
 
 Can we classify museum photos of co-mimics?
-They're deliberately visually challenging.
+They're deliberately visually challenging (to predators).
 We would want to do zero-shot classification, perhaps with textual descriptions of the differences between species.
+We could also use butterflies for zero-shot fine-grained classification of very similar classes, and to test whether CLIP generalizes to museum photos.
+
+Data on `/fs/ess/PAS2136/Butterfly/Jiggins_dataset/Jiggins_datav2` might useful for this.
 
 # Data Efficiency
 
 How can we do few-shot evaluation of CLIP models?
 Should we fine-tune?
 Should we do some sort of prompting or in-context learning?
+
+Probably can just do Tip-Adapter: this takes advantage of the text encoder, but doesn't require any training.
+We can also do CLIP-Adapter which inserts a bottleneck layer (linear projection to lower dimension, then a linear projection to original dimension) and a residual connection after the vision and text encoders, which are tuned on the few-shot examples.
+Other options include Wise-FT which is a linear combination of the tuned weights and the original weights.
+Linear probing is consistently worse than zero-shot CLIP or these other options; do not use it.
 
 # Generalization to Lab/Museum Photos
 
