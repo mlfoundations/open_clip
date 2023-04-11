@@ -10,3 +10,6 @@ install-test: ## [Local development] Install test requirements
 
 test: ## [Local development] Run unit tests
 	python -m pytest -x -s -v tests
+
+lint:
+	find src/evaluation -iname '*.py' | xargs ruff
