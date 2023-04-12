@@ -20,8 +20,8 @@ import json
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 #Download data:
-#!git lfs install
-#!git clone https://huggingface.co/datasets/lil-lab/kilogram
+#git lfs install
+#git clone https://huggingface.co/datasets/lil-lab/kilogram
 
 class ValidationDataSet(Dataset):
 	def __init__(self, image_path, data, tokenizer, image_processor):
