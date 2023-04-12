@@ -1,0 +1,12 @@
+FROM python:3.8-slim-buster
+RUN apt-get update && apt-get install -y make
+
+WORKDIR /app
+
+COPY Makefile . 
+COPY requirements-test.txt .
+
+RUN make install-test
+
+COPY . .
+ENTRYPOINT ["python", "-m", "pytest", "-xsv", "tests"]
