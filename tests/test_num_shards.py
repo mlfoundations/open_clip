@@ -1,6 +1,6 @@
 import pytest
 
-from training.data import expand_urls
+from training.data import get_dataset_size
 
 @pytest.mark.parametrize(
     "shards,expected_size",
@@ -16,5 +16,5 @@ from training.data import expand_urls
     ]
 )
 def test_num_shards(shards, expected_size):
-    size = len(expand_urls(shards)[0])
+    _, size = get_dataset_size(shards)
     assert size == expected_size, f'Expected {expected_size} for {shards} but found {size} instead.'

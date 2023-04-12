@@ -5,7 +5,6 @@ import math
 import os
 import random
 import sys
-import time
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
@@ -93,7 +92,7 @@ def expand_urls(urls, weights=None):
         return all_urls, weights
 
 
-def get_num_samples(shards):
+def get_dataset_size(shards):
     shards_list, _ = expand_urls(shards)
     dir_path = os.path.dirname(shards_list[0])
     sizes_filename = os.path.join(dir_path, 'sizes.json')
@@ -111,7 +110,8 @@ def get_num_samples(shards):
         # CC12M: 10968539
         # LAION-400M: 407332084
         # LAION-2B (english): 2170337258
-    return total_size
+    num_shards = len(shards_list)
+    return total_size, num_shards
 
 
 def get_imagenet(args, preprocess_fns, split):
@@ -328,13 +328,11 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
-    num_shards = len(expand_urls(input_shards)[0])
-
     if is_train:
         if args.train_num_samples is not None:
             num_samples = args.train_num_samples
         else:
-            num_samples = get_num_samples(input_shards)
+            num_samples, num_shards = get_dataset_size(input_shards)
             if num_samples is None:
                 raise RuntimeError(
                     'Currently, the number of dataset samples must be specified for the training dataset. '
@@ -391,6 +389,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     if is_train:
         if not resampled:
+            if is_train and args.train_num_samples is not None:
+                num_shards = get_dataset_size(input_shards)[1]
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
