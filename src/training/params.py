@@ -424,6 +424,12 @@ def parse_args(args):
         default=None,
         help='Which pre-trained weights to distill from, if any.'
     )
+    parser.add_argument(
+        "--use-bnb-linear",
+        default=None,
+        help='Replace the network linear layers from the bitsandbytes library. '
+        'Allows int8 training/inference, etc.'
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

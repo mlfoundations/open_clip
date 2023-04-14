@@ -649,6 +649,14 @@ There are also `m` loss computations instead of the usual 1.
 
 For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050).
 
+### Int8 Support
+
+We have beta support for int8 training and inference.
+You can enable int8 training with `--use-bnb-linear SwitchBackLinearGlobal` or `--use-bnb-linear SwitchBackLinearGlobalMemEfficient`.
+Please see the bitsandbytes library for definitions for these layers.
+For CLIP VIT-Huge this should currently correspond to a 10% training speedup with no accuracy loss.
+More speedups comin when the attention layer is refactored so that linear layers man be replaced there, too.
+
 ### Support for remote loading/training
 
 It is always possible to resume directly from a remote file, e.g., a file in an s3 bucket. Just set `--resume s3://<path-to-checkpoint> `.

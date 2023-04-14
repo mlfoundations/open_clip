@@ -240,6 +240,16 @@ def main(args):
             precision=args.precision,
             output_dict=True,
         )
+    if args.use_bnb_linear is not None:
+        print('=> using a layer from bitsandbytes.\n'
+              '   this is an experimental feature which requires two extra pip installs\n'
+              '   pip install bitsandbytes triton'
+              '   please make sure to use triton 2.0.0')
+        import bitsandbytes as bnb
+        from open_clip.utils import replace_linear
+        print(f'=> replacing linear layers with {args.use_bnb_linear}')
+        linear_replacement_cls = getattr(bnb.nn.triton_based_modules, args.use_bnb_linear)
+        replace_linear(model, linear_replacement_cls)
 
     random_seed(args.seed, args.rank)
 
@@ -277,6 +287,8 @@ def main(args):
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
+        if args.use_bnb_linear is not None:
+            model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
     
         if args.distill:
