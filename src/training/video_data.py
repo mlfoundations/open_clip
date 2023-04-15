@@ -200,18 +200,19 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
     dataset = get_video_dataset(
         urls=args.train_data,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=1,
         decoder_kwargs=decoder_kwargs,
         custom_transforms=custom_transforms,
         resize_size=224,
         crop_size=224,
+        keys_to_remove=["m4a"],
     )
 
     dataloader = wds.WebLoader(
         dataset,
         batch_size=None,
         shuffle=False,
-        num_workers=1,# args.workers,
+        num_workers=args.workers,
         persistent_workers=True,
     )
 
