@@ -63,8 +63,8 @@ import torch
 from PIL import Image
 import open_clip
 
-model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
-tokenizer = open_clip.get_tokenizer('ViT-B-32-quickgelu')
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+tokenizer = open_clip.get_tokenizer('ViT-B-32')
 
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
 text = tokenizer(["a diagram", "a dog", "a cat"])
@@ -596,6 +596,7 @@ Future trained models will use nn.GELU.
  ('ViT-B-16', 'openai'),
  ('ViT-B-16', 'laion400m_e31'),
  ('ViT-B-16', 'laion400m_e32'),
+ ('ViT-B-16', 'laion2b_s34b_b88k'),
  ('ViT-B-16-plus-240', 'laion400m_e31'),
  ('ViT-B-16-plus-240', 'laion400m_e32'),
  ('ViT-L-14', 'openai'),
@@ -605,14 +606,27 @@ Future trained models will use nn.GELU.
  ('ViT-L-14-336', 'openai'),
  ('ViT-H-14', 'laion2b_s32b_b79k'),
  ('ViT-g-14', 'laion2b_s12b_b42k'),
+ ('ViT-g-14', 'laion2b_s34b_b88k'),
  ('ViT-bigG-14', 'laion2b_s39b_b160k'),
  ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
  ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
  ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
- ('coca_ViT-B-32', 'laion2B-s13B-b90k'),
- ('coca_ViT-B-32', 'mscoco_finetuned_laion2B-s13B-b90k'), # finetuned models lose contrastive capabilities
- ('coca_ViT-L-14', 'laion2B-s13B-b90k'),
- ('coca_ViT-L-14', 'mscoco_finetuned_laion2B-s13B-b90k'),] # finetuned models lose contrastive capabilities
+ ('convnext_base', 'laion400m_s13b_b51k'),
+ ('convnext_base_w', 'laion2b_s13b_b82k'),
+ ('convnext_base_w', 'laion2b_s13b_b82k_augreg'),
+ ('convnext_base_w', 'laion_aesthetic_s13b_b82k'),
+ ('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'),
+ ('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'),
+ ('convnext_large_d', 'laion2b_s26b_b102k_augreg'),
+ ('convnext_large_d_320', 'laion2b_s29b_b131k_ft'),
+ ('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'),
+ ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'),
+ ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'),
+ ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'),
+ ('coca_ViT-B-32', 'laion2b_s13b_b90k'),
+ ('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'),
+ ('coca_ViT-L-14', 'laion2b_s13b_b90k'),
+ ('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k')]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
