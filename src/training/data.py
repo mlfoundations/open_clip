@@ -5,7 +5,6 @@ import math
 import os
 import random
 import sys
-import time
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
@@ -329,16 +328,18 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
-    num_samples, num_shards = get_dataset_size(input_shards)
-    if not num_samples:
-        if is_train:
+    if is_train:
+        if args.train_num_samples is not None:
             num_samples = args.train_num_samples
-            if not num_samples:
-                raise RuntimeError(
-                    'Currently, number of dataset samples must be specified for training dataset. '
-                    'Please specify via `--train-num-samples` if no dataset length info present.')
         else:
-            num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
+            num_samples, num_shards = get_dataset_size(input_shards)
+            if num_samples is None:
+                raise RuntimeError(
+                    'Currently, the number of dataset samples must be specified for the training dataset. '
+                    'Please specify it via `--train-num-samples` if no dataset length info is present.')
+    else:
+        # Eval will just exhaust the iterator if the size is not specified.
+        num_samples = args.val_num_samples or 0 
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
@@ -388,6 +389,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     if is_train:
         if not resampled:
+            if is_train and args.train_num_samples is not None:
+                num_shards = get_dataset_size(input_shards)[1]
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
