@@ -82,7 +82,9 @@ class ClsPooler(nn.Module):
 
 @register_pooler
 class ClsLastHiddenStatePooler(nn.Module):
-    """CLS token pooling"""
+    """CLS token pooling
+    NOTE: this is equivalent to ClsPooler above with use_pooler_output=False
+    """
 
     def __init__(self):
         super().__init__()
