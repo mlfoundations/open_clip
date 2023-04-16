@@ -78,7 +78,8 @@ def expand_urls(urls, weights=None):
     if isinstance(urls, str):
         urllist = urls.split("::")
         weights = weights.split('::')
-        assert len(weights) == len(urllist), f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
+        assert len(weights) == len(urllist),\
+            f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
         weights = [float(weight) for weight in weights]
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
@@ -291,7 +292,8 @@ class ResampledShards2(IterableDataset):
         self.urls = urls
         self.weights = weights
         if self.weights is not None:
-            assert len(self.urls) == len(self.weights), f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
+            assert len(self.urls) == len(self.weights),\
+                f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
@@ -345,9 +347,15 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
-        pipeline = [ResampledShards2(input_shards, weights=args.train_data_upsampling_factors, deterministic=True, epoch=shared_epoch)]
+        pipeline = [ResampledShards2(
+            input_shards,
+            weights=args.train_data_upsampling_factors,
+            deterministic=True,
+            epoch=shared_epoch,
+        )]
     else:
-        assert args.train_data_upsampling_factors is None, "--train_data_upsampling_factors is only supported when sampling with replacement (together with --dataset-resampled)."
+        assert args.train_data_upsampling_factors is None,\
+            "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # at this point we have an iterator over all the shards
@@ -466,7 +474,14 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
 
 class SyntheticDataset(Dataset):
 
-    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer=None):
+    def __init__(
+            self,
+            transform=None,
+            image_size=(224, 224),
+            caption="Dummy caption",
+            dataset_size=100,
+            tokenizer=None,
+    ):
         self.transform = transform
         self.image_size = image_size
         self.caption = caption
