@@ -80,6 +80,20 @@ class ClsPooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 
+@register_pooler
+class ClsLastHiddenStatePooler(nn.Module):
+    """CLS token pooling
+    NOTE: this is equivalent to ClsPooler above with use_pooler_output=False
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.cls_token_position = 0
+
+    def forward(self, x: BaseModelOutput, attention_mask: TensorType):
+        return x.last_hidden_state[:, self.cls_token_position, :]
+
+
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     output_tokens: torch.jit.Final[bool]
