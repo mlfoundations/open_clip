@@ -3,7 +3,6 @@
 Wraps HuggingFace transformers (https://github.com/huggingface/transformers) models for use as a text tower in CLIP model.
 """
 import re
-import warnings
 
 import torch
 import torch.nn as nn
@@ -136,9 +135,6 @@ class HFTextEncoder(nn.Module):
         # FIXME downstream users of OpenCLIP models use these attr, need to verify valid across all models
         self.vocab_size = getattr(self.config, 'vocab_size', 0)
         self.context_length = getattr(self.config, 'max_position_embeddings', 0)
-        if not self.vocab_size or not self.context_length:
-            warnings.warn(
-                f'vocab_size ({self.vocab_size} and context_length ({self.context_length} were not properly set.')
 
         self.pooler = _POOLERS[pooler_type]()
 
