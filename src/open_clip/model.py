@@ -191,6 +191,7 @@ class CLIP(nn.Module):
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.transformer = text.transformer
+        self.context_length = text.context_length
         self.vocab_size = text.vocab_size
         self.token_embedding = text.token_embedding
         self.positional_embedding = text.positional_embedding
@@ -255,6 +256,8 @@ class CustomTextCLIP(nn.Module):
         self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.context_length = self.text.context_length
+        self.vocab_size = self.text.vocab_size
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
