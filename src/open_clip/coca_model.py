@@ -6,8 +6,6 @@ from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass
 
-import time
-
 from .transformer import (
     LayerNormFp32,
     LayerNorm,
@@ -150,19 +148,13 @@ class CoCa(nn.Module):
         return text_latent
 
     def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, cache=None):
-        start_time = time.time()
         text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
-        text_time = time.time()
-        print("text:", text_time - start_time)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
-        start_time = time.time()
         logits, attentions, cross_attentions = self.text_decoder(image_embs, token_embs, cache=cache)
-        dec_time = time.time()
-        print("dec:", dec_time - start_time)
         return {
             "image_features": image_latent,
             "text_features": text_latent,
