@@ -6,6 +6,8 @@ from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass
 
+import time
+
 from .transformer import (
     LayerNormFp32,
     LayerNorm,
@@ -147,19 +149,26 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
         return text_latent
 
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
+    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, cache=None):
+        start_time = time.time()
         text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+        text_time = time.time()
+        print("text:", text_time - start_time)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
-
-        logits = self.text_decoder(image_embs, token_embs)
+        start_time = time.time()
+        logits, attentions, cross_attentions = self.text_decoder(image_embs, token_embs, cache=cache)
+        dec_time = time.time()
+        print("dec:", dec_time - start_time)
         return {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
+            "attentions": attentions,
+            "cross_attentions": cross_attentions,
             "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
@@ -182,7 +191,8 @@ class CoCa(nn.Module):
         min_seq_len=5,
         stopping_criteria=None,
         repetition_penalty=1.0,
-        fixed_output_length=False # if True output.shape == (batch_size, seq_len)
+        fixed_output_length=False, # if True output.shape == (batch_size, seq_len)
+        caching=True, # cache previously computed attentions
     ):
         # taking many ideas and components from HuggingFace GenerationMixin
         # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
@@ -220,6 +230,7 @@ class CoCa(nn.Module):
                     min_seq_len=min_seq_len,
                     stopping_criteria=stopping_criteria,
                     logit_processor=logit_processor,
+                    caching=caching
                 )
                 if fixed_output_length and output.shape[1] < seq_len:
                     return torch.cat(
@@ -253,10 +264,19 @@ class CoCa(nn.Module):
             self.eval()
             out = text
 
+            cache = {"self": None, "cross": None}
+
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                
+                outputs = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False, cache=cache)
+
+                if caching:
+                    cache["self"] = outputs["attentions"]
+                    cache["cross"] = outputs["cross_attentions"]
+                    
+                logits = outputs["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -299,6 +319,7 @@ class CoCa(nn.Module):
             stopping_criteria=None,
             logit_processor=None,
             logit_warper=None,
+            caching=True,
     ):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
@@ -338,6 +359,8 @@ class CoCa(nn.Module):
         beam_scores[:, ::num_sub_beams] = 0
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
+        cache = {"text": None, "decoder": None}
+
         while True:
 
             # predicted tokens in cur_len step
@@ -353,8 +376,13 @@ class CoCa(nn.Module):
                 model_inputs['text'],
                 embed_cls=False,
                 image_latent=image_latent,
-                image_embs=image_embs
+                image_embs=image_embs,
+                cache=cache
             )
+
+            if caching:
+                cache["text"] = outputs["text_attentions"]
+                cache["decoder"] = outputs["attentions"]
 
             for beam_group_idx in range(num_beam_groups):
                 group_start_idx = beam_group_idx * num_sub_beams
