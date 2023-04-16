@@ -261,7 +261,7 @@ class CoCa(nn.Module):
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                
+
                 outputs = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False, cache=cache)
 
                 if caching:
@@ -351,7 +351,7 @@ class CoCa(nn.Module):
         beam_scores[:, ::num_sub_beams] = 0
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
-        cache = {"text": None, "decoder": None}
+        cache = {"self": None, "cross": None}
 
         while True:
 
@@ -373,8 +373,8 @@ class CoCa(nn.Module):
             )
 
             if caching:
-                cache["text"] = outputs["text_attentions"]
-                cache["decoder"] = outputs["attentions"]
+                cache["self"] = outputs["attentions"]
+                cache["cross"] = outputs["cross_attentions"]
 
             for beam_group_idx in range(num_beam_groups):
                 group_start_idx = beam_group_idx * num_sub_beams
