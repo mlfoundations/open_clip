@@ -1,5 +1,6 @@
 torch>=1.9.0
 torchvision
+torchaudio
 regex
 ftfy
 tqdm

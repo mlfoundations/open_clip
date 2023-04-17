@@ -341,7 +341,8 @@ class VisionTransformer(nn.Module):
             input_patchnorm: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False
+            output_tokens: bool = False,
+            channels: int = 3
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -354,12 +355,12 @@ class VisionTransformer(nn.Module):
         self.input_patchnorm = input_patchnorm
 
         if input_patchnorm:
-            patch_input_dim = patch_height * patch_width * 3
+            patch_input_dim = patch_height * patch_width * channels
             self.patchnorm_pre_ln = LayerNorm(patch_input_dim)
             self.conv1 = nn.Linear(patch_input_dim, width)
         else:
             self.patchnorm_pre_ln = nn.Identity()
-            self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+            self.conv1 = nn.Conv2d(in_channels=channels, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
         # class embeddings and positional embeddings
         scale = width ** -0.5
@@ -474,7 +475,7 @@ class VisionTransformer(nn.Module):
         x = torch.cat(
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.positional_embedding.to(x.dtype)
+        x = x + self.positional_embedding[:x.shape[1]].to(x.dtype)
 
         # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
         x = self.patch_dropout(x)
