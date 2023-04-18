@@ -188,7 +188,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -280,6 +280,12 @@ def parse_args(args):
         default=False,
         action='store_true',
         help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
+    )
+    parser.add_argument(
+        "--torchcompile",
+        default=False,
+        action='store_true',
+        help="torch.compile() the model, requires pytorch 2.0 or later.",
     )
     parser.add_argument(
         "--trace",

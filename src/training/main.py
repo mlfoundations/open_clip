@@ -221,6 +221,7 @@ def main(args):
         precision=args.precision,
         device=device,
         jit=args.torchscript,
+        torchcompile=args.torchcompile,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,

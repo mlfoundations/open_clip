@@ -102,12 +102,6 @@ _VITB16 = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_16-laion400m_e31-00efa78f.pt"),
     laion400m_e32=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_16-laion400m_e32-55e67d44.pt"),
-    # laion400m_32k=_pcfg(
-    #     url="",
-    #     mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-    # laion400m_64k=_pcfg(
-    #     url="",
-    #     mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     laion2b_s34b_b88k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-laion2B-s34B-b88K/'),
 )
 
@@ -229,6 +223,34 @@ _PRETRAINED = {
     "convnext_xxlarge": _convnext_xxlarge,
     "coca_ViT-B-32": _coca_VITB32,
     "coca_ViT-L-14": _coca_VITL14,
+    "EVA01-g-14": dict(
+        # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_psz14_s11B.pt
+        laion400m_s11b_b41k=_pcfg(hf_hub='timm/eva_giant_patch14_clip_224.laion400m_s11b_b41k/'),
+    ),
+    "EVA01-g-14-plus": dict(
+        # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_plus_psz14_s11B.pt
+        merged2b_s11b_b114k=_pcfg(hf_hub='timm/eva_giant_patch14_plus_clip_224.merged2b_s11b_b114k/'),
+    ),
+    "EVA02-B-16": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_B_psz16_s8B.pt
+        merged2b_s8b_b131k=_pcfg(hf_hub='timm/eva02_base_patch16_clip_224.merged2b_s8b_b131k/'),
+    ),
+    "EVA02-L-14": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_L_psz14_s4B.pt
+        merged2b_s4b_b131k=_pcfg(hf_hub='timm/eva02_large_patch14_clip_224.merged2b_s4b_b131k/'),
+    ),
+    "EVA02-L-14-336": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_L_336_psz14_s6B.pt
+        merged2b_s6b_b61k=_pcfg(hf_hub='timm/eva02_large_patch14_clip_336.merged2b_s6b_b61k/'),
+    ),
+    "EVA02-E-14": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_s4B.pt
+        laion2b_s4b_b115k=_pcfg(hf_hub='timm/eva02_enormous_patch14_clip_224.laion2b_s4b_b115k/'),
+    ),
+    "EVA02-E-14-plus": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_plus_s9B.pt
+        laion2b_s9b_b144k=_pcfg(hf_hub='timm/eva02_enormous_patch14_plus_clip_224.laion2b_s9b_b144k/'),
+    )
 }
 
 

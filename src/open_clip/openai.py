@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 
 import torch
 
+from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import build_model_from_openai_state_dict, convert_weights_to_lp, get_cast_dtype
 from .pretrained import get_pretrained_url, list_pretrained_models_by_tag, download_pretrained_from_url
 
@@ -83,11 +84,15 @@ def load_openai_model(
 
         # model from OpenAI state dict is in manually cast fp16 mode, must be converted for AMP/fp32/bf16 use
         model = model.to(device)
-        if precision.startswith('amp') or precision == 'fp32':
+        if precision != 'fp16':
             model.float()
-        elif precision == 'bf16':
-            convert_weights_to_lp(model, dtype=torch.bfloat16)
+            if precision == 'bf16':
+                # for bf16, convert back to low-precision
+                convert_weights_to_lp(model, dtype=torch.bfloat16)
 
+        # add mean / std attributes for consistency with OpenCLIP models
+        model.visual.image_mean = OPENAI_DATASET_MEAN
+        model.visual.image_std = OPENAI_DATASET_STD
         return model
 
     # patch the device names
@@ -139,6 +144,8 @@ def load_openai_model(
         patch_float(model.encode_text)
         model.float()
 
-    # ensure image_size attr available at consistent location for both jit and non-jit
+    # ensure attributes available at consistent location for both jit vs non-jit, OpenAI vs OpenCLIP
     model.visual.image_size = model.input_resolution.item()
+    model.visual.image_mean = OPENAI_DATASET_MEAN
+    model.visual.image_std = OPENAI_DATASET_STD
     return model
