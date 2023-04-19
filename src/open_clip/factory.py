@@ -111,7 +111,6 @@ def create_model(
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
-        torchcompile: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -150,13 +149,6 @@ def create_model(
             jit=jit,
             cache_dir=cache_dir,
         )
-
-        if not jit:
-            # these additions aren't compatible with OpenAI scripted models
-            if output_dict and hasattr(model, "output_dict"):
-                model.output_dict = True
-            if torchcompile:
-                model = torch.compile(model)
     else:
         model_cfg = model_cfg or get_model_config(model_name)
         if model_cfg is not None:
@@ -256,15 +248,12 @@ def create_model(
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
-        # to always output dict even if it is clip
-        if output_dict and hasattr(model, "output_dict"):
-            model.output_dict = True
-
         if jit:
             model = torch.jit.script(model)
-        elif torchcompile:
-            model = torch.compile(model)
 
+    # to always output dict even if it is clip
+    if output_dict and hasattr(model, "output_dict"):
+        model.output_dict = True
     return model
 
 
@@ -305,7 +294,6 @@ def create_model_and_transforms(
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
-        torchcompile: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -324,7 +312,6 @@ def create_model_and_transforms(
         precision=precision,
         device=device,
         jit=jit,
-        torchcompile=torchcompile,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_patch_dropout=force_patch_dropout,
@@ -360,7 +347,6 @@ def create_model_from_pretrained(
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
-        torchcompile: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
@@ -375,7 +361,6 @@ def create_model_from_pretrained(
         precision=precision,
         device=device,
         jit=jit,
-        torchcompile=torchcompile,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
