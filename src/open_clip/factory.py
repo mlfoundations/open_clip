@@ -1,4 +1,5 @@
 import json
+import inspect
 import logging
 import os
 import pathlib
@@ -6,6 +7,19 @@ import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+from contextlib import nullcontext
+import importlib
+import importlib_metadata
+
+_accelerate_available = importlib.util.find_spec("accelerate") is not None
+try:
+    _accelerate_version = importlib_metadata.version("accelerate")
+    from accelerate import init_empty_weights
+    import accelerate
+    from accelerate.utils import set_module_tensor_to_device
+    from accelerate.utils.versions import is_torch_version
+except importlib_metadata.PackageNotFoundError:
+    _accelerate_available = False
 
 import torch
 
@@ -94,13 +108,37 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
     return state_dict
 
 
-def load_checkpoint(model, checkpoint_path, strict=True):
+def load_checkpoint(model, checkpoint_path, strict=True, device='cpu', dtype=torch.float32):
     state_dict = load_state_dict(checkpoint_path)
     # detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
     resize_pos_embed(state_dict, model)
+
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+    if not _accelerate_available:
+        return incompatible_keys
+
+    param_device = device
+    torch_dtype = dtype
+    empty_state_dict = model.state_dict()
+    for param_name, param in state_dict.items():
+        accepts_dtype = "dtype" in set(
+            inspect.signature(set_module_tensor_to_device).parameters.keys()
+        )
+
+        if empty_state_dict[param_name].shape != param.shape:
+            raise ValueError(
+                f"Cannot load model because {param_name} expected shape {empty_state_dict[param_name]}, but got {param.shape}. To ignore this error, set strict=False."
+            )
+
+        if accepts_dtype:
+            set_module_tensor_to_device(
+                model, param_name, param_device, value=param, dtype=torch_dtype
+            )
+        else:
+            set_module_tensor_to_device(model, param_name, param_device, value=param)
+    
     return incompatible_keys
 
 
@@ -183,15 +221,16 @@ def create_model(
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
-        if custom_text:
-            if is_hf_model:
-                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
-            if "coca" in model_name:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+        with init_empty_weights() if (pretrained or has_hf_hub_prefix) and _accelerate_available else nullcontext():
+            if custom_text:
+                if is_hf_model:
+                    model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
+                if "coca" in model_name:
+                    model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+                else:
+                    model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
             else:
-                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
-        else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_loaded = False
         if pretrained:
@@ -204,7 +243,7 @@ def create_model(
 
             if checkpoint_path:
                 logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-                load_checkpoint(model, checkpoint_path)
+                load_checkpoint(model, checkpoint_path, device=device, dtype=cast_dtype)
             else:
                 error_str = (
                     f'Pretrained weights ({pretrained}) not found for model {model_name}.'
@@ -214,7 +253,7 @@ def create_model(
             pretrained_loaded = True
         elif has_hf_hub_prefix:
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-            load_checkpoint(model, checkpoint_path)
+            load_checkpoint(model, checkpoint_path, device=device, dtype=cast_dtype)
             pretrained_loaded = True
 
         if require_pretrained and not pretrained_loaded:
