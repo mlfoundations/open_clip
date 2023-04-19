@@ -10,17 +10,12 @@ from typing import Any, Dict, Optional, Tuple, Union
 from contextlib import nullcontext
 import importlib
 import importlib_metadata
+import os
+from contextlib import contextmanager
+from typing import Dict, List, Optional, Union
 
-_accelerate_available = importlib.util.find_spec("accelerate") is not None
-try:
-    _accelerate_version = importlib_metadata.version("accelerate")
-    from accelerate import init_empty_weights
-    import accelerate
-    from accelerate.utils import set_module_tensor_to_device
-    from accelerate.utils.versions import is_torch_version
-except importlib_metadata.PackageNotFoundError:
-    _accelerate_available = False
-
+import torch
+import torch.nn as nn
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
@@ -38,6 +33,142 @@ HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
 
+def set_module_tensor_to_device(
+    module: nn.Module,
+    tensor_name: str,
+    device: Union[int, str, torch.device],
+    value: Optional[torch.Tensor] = None,
+    dtype: Optional[Union[str, torch.dtype]] = None,
+):
+    """
+    A helper function to set a given tensor (parameter of buffer) of a module on a specific device (note that doing
+    `param.to(device)` creates a new tensor not linked to the parameter, which is why we need this function).
+
+    Args:
+        module (`torch.nn.Module`):
+            The module in which the tensor we want to move lives.
+        param_name (`str`):
+            The full name of the parameter/buffer.
+        device (`int`, `str` or `torch.device`):
+            The device on which to set the tensor.
+        value (`torch.Tensor`, *optional*):
+            The value of the tensor (useful when going from the meta device to any other device).
+        dtype (`torch.dtype`, *optional*):
+            If passed along the value of the parameter will be cast to this `dtype`. Otherwise, `value` will be cast to
+            the dtype of the existing parameter in the model.
+    """
+    # Recurse if needed
+    if "." in tensor_name:
+        splits = tensor_name.split(".")
+        for split in splits[:-1]:
+            new_module = getattr(module, split)
+            if new_module is None:
+                raise ValueError(f"{module} has no attribute {split}.")
+            module = new_module
+        tensor_name = splits[-1]
+
+    if tensor_name not in module._parameters and tensor_name not in module._buffers:
+        raise ValueError(f"{module} does not have a parameter or a buffer named {tensor_name}.")
+    is_buffer = tensor_name in module._buffers
+    old_value = getattr(module, tensor_name)
+
+    if old_value.device == torch.device("meta") and device not in ["meta", torch.device("meta")] and value is None:
+        raise ValueError(f"{tensor_name} is on the meta device, we need a `value` to put in on {device}.")
+
+    if value is not None:
+        if dtype is None:
+            # For compatibility with PyTorch load_state_dict which converts state dict dtype to existing dtype in model
+            value = value.to(old_value.dtype)
+        elif not str(value.dtype).startswith(("torch.uint", "torch.int", "torch.bool")):
+            value = value.to(dtype)
+
+    with torch.no_grad():
+        if value is None:
+            new_value = old_value.to(device)
+        elif isinstance(value, torch.Tensor):
+            new_value = value.to(device)
+        else:
+            new_value = torch.tensor(value, device=device)
+
+        if is_buffer:
+            module._buffers[tensor_name] = new_value
+        elif value is not None or torch.device(device) != module._parameters[tensor_name].device:
+            param_cls = type(module._parameters[tensor_name])
+            kwargs = module._parameters[tensor_name].__dict__
+            if param_cls.__name__ == "Int8Params":
+                new_value = param_cls(new_value, requires_grad=old_value.requires_grad, **kwargs).to(device)
+            else:
+                new_value = param_cls(new_value, requires_grad=old_value.requires_grad).to(device)
+            module._parameters[tensor_name] = new_value
+
+
+@contextmanager
+def init_on_device(device: torch.device, include_buffers: bool = False):
+    """
+    A context manager under which models are initialized with all parameters on the specified device.
+
+    Args:
+        device (`torch.device`):
+            Device to initialize all parameters on.
+        include_buffers (`bool`, *optional*, defaults to `False`):
+            Whether or not to also put all buffers on the meta device while initializing.
+
+    Example:
+
+    ```python
+    import torch.nn as nn
+    from accelerate import init_on_device
+
+    with init_on_device(device=torch.device("cuda")):
+        tst = nn.Liner(100, 100)  # on `cuda` device
+    ```
+    """
+    old_register_parameter = nn.Module.register_parameter
+    if include_buffers:
+        old_register_buffer = nn.Module.register_buffer
+
+    def register_empty_parameter(module, name, param):
+        old_register_parameter(module, name, param)
+        if param is not None:
+            param_cls = type(module._parameters[name])
+            kwargs = module._parameters[name].__dict__
+            module._parameters[name] = param_cls(module._parameters[name].to(device), **kwargs)
+
+    def register_empty_buffer(module, name, buffer):
+        old_register_buffer(module, name, buffer)
+        if buffer is not None:
+            module._buffers[name] = module._buffers[name].to(device)
+
+    # Patch tensor creation
+    if include_buffers:
+        tensor_constructors_to_patch = {
+            torch_function_name: getattr(torch, torch_function_name)
+            for torch_function_name in ["empty", "zeros", "ones", "full"]
+        }
+    else:
+        tensor_constructors_to_patch = {}
+
+    def patch_tensor_constructor(fn):
+        def wrapper(*args, **kwargs):
+            kwargs["device"] = device
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    try:
+        nn.Module.register_parameter = register_empty_parameter
+        if include_buffers:
+            nn.Module.register_buffer = register_empty_buffer
+        for torch_function_name in tensor_constructors_to_patch.keys():
+            setattr(torch, torch_function_name, patch_tensor_constructor(getattr(torch, torch_function_name)))
+        yield
+    finally:
+        nn.Module.register_parameter = old_register_parameter
+        if include_buffers:
+            nn.Module.register_buffer = old_register_buffer
+        for torch_function_name, old_torch_function in tensor_constructors_to_patch.items():
+            setattr(torch, torch_function_name, old_torch_function)
+            
 
 def _natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
@@ -116,8 +247,6 @@ def load_checkpoint(model, checkpoint_path, strict=True, device='cpu', dtype=tor
     resize_pos_embed(state_dict, model)
 
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
-    if not _accelerate_available:
-        return incompatible_keys
 
     param_device = device
     torch_dtype = dtype
@@ -221,7 +350,7 @@ def create_model(
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
-        with init_empty_weights() if (pretrained or has_hf_hub_prefix) and _accelerate_available else nullcontext():
+        with init_on_device(torch.device("meta")) if (pretrained or has_hf_hub_prefix) else nullcontext():
             if custom_text:
                 if is_hf_model:
                     model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
