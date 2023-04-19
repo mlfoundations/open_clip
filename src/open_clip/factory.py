@@ -146,7 +146,6 @@ def create_model(
             model_name,
             precision=precision,
             device=device,
-            jit=jit,
             cache_dir=cache_dir,
         )
     else:
@@ -248,12 +247,12 @@ def create_model(
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
-        if jit:
-            model = torch.jit.script(model)
-
-    # to always output dict even if it is clip
     if output_dict and hasattr(model, "output_dict"):
         model.output_dict = True
+
+    if jit:
+        model = torch.jit.script(model)
+
     return model
 
 

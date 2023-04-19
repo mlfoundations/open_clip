@@ -18,7 +18,6 @@ def accuracy(output, target, topk=(1,)):
 def run(model, classifier, dataloader, args):
     autocast = get_autocast(args.precision)
     input_dtype = get_input_dtype(args.precision)
-    old_api = not hasattr(model, 'output_dict')
 
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
@@ -28,14 +27,8 @@ def run(model, classifier, dataloader, args):
 
             with autocast():
                 # predict
-                if old_api:
-                    # old OpenAI jit models need to use encode_image
-                    image_features = model.encode_image(images)
-                    image_features = F.normalize(image_features, dim=-1)
-                else:
-                    # current OpenCLIP models and non-jit'd OpenAI can use forward() w/ optional args
-                    output = model(image=images)
-                    image_features = output['image_features'] if isinstance(output, dict) else output[0]
+                output = model(image=images)
+                image_features = output['image_features'] if isinstance(output, dict) else output[0]
                 logits = 100. * image_features @ classifier
 
             # measure accuracy
