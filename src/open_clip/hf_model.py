@@ -2,7 +2,6 @@
 
 Wraps HuggingFace transformers (https://github.com/huggingface/transformers) models for use as a text tower in CLIP model.
 """
-
 import re
 
 import torch
@@ -80,6 +79,20 @@ class ClsPooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 
+@register_pooler
+class ClsLastHiddenStatePooler(nn.Module):
+    """CLS token pooling
+    NOTE: this is equivalent to ClsPooler above with use_pooler_output=False
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.cls_token_position = 0
+
+    def forward(self, x: BaseModelOutput, attention_mask: TensorType):
+        return x.last_hidden_state[:, self.cls_token_position, :]
+
+
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     output_tokens: torch.jit.Final[bool]
@@ -118,7 +131,11 @@ class HFTextEncoder(nn.Module):
             self.transformer = AutoModel.from_config(config)
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
-        
+
+        # FIXME downstream users of OpenCLIP models use these attr, need to verify valid across all models
+        self.vocab_size = getattr(self.config, 'vocab_size', 0)
+        self.context_length = getattr(self.config, 'max_position_embeddings', 0)
+
         self.pooler = _POOLERS[pooler_type]()
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
