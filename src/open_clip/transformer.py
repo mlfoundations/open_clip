@@ -340,7 +340,7 @@ class Transformer(nn.Module):
         for r, c in zip(self.resblocks, caches):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask)
+                x = checkpoint(r, x, None, None, attn_mask, -1)
             else:
                 x, attn = r(x, attn_mask=attn_mask, cache=c)
                 attentions.append(attn)
@@ -625,7 +625,7 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text):
+    def forward(self, text, cache=-1):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -639,7 +639,10 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask, cache=-1)
+        if cache != -1:
+            x, attentions = self.transformer(x, attn_mask=attn_mask, cache=cache)
+        else:
+            x = self.transformer(x, attn_mask=attn_mask, cache=cache)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -654,8 +657,12 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        if self.output_tokens:
+        if self.output_tokens and cache == -1:
             return pooled, tokens
+        elif self.output_tokens and cache != -1:
+            return pooled, tokens, attentions
+        elif cache != -1:
+             return pooled, attentions
 
         return pooled
 
@@ -734,14 +741,17 @@ class MultimodalTransformer(Transformer):
         seq_len = text_embs.shape[0]
         attentions = []
         cross_attentions = []
-
-        if cache is None or cache == -1 or cache["self"] is None:
-            empty_cache = [None]*len(self.resblocks)
-            caches = {"self": empty_cache, "cross": empty_cache}
+        
+        # Could allow for only caching one or the other, but unsure when that
+        # would be beneficial over the alternatives
+        if cache == -1 or cache["self"] == -1 or cache["self"] is None:
+            self_caches = [None]*len(self.resblocks)
+            cross_caches = [None]*len(self.resblocks)
         else:
-            caches = cache
+            self_caches = cache["self"]
+            cross_caches = cache["cross"]
 
-        for resblock, cross_attn, self_cache, cross_cache in zip(self.resblocks, self.cross_attn, caches["self"], caches["cross"]):
+        for resblock, cross_attn, self_cache, cross_cache in zip(self.resblocks, self.cross_attn, self_caches, cross_caches):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
