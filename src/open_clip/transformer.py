@@ -329,19 +329,16 @@ class Transformer(nn.Module):
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[Union[List[torch.Tensor], List[None]]] = None):
-        if cache is None or len(cache) == 0:
-            caches = [None]*len(self.resblocks)
-        else:
-            caches = cache
-
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[List[torch.Tensor]] = None):
         attentions = []
-        for r, c in zip(self.resblocks, caches):
+        for i, r, in enumerate(self.resblocks):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask, None)
+                x, _ = checkpoint(r, x, None, None, attn_mask, None)
+            elif cache is None or len(cache) != len(self.resblocks):
+                x, _ = r(x, attn_mask=attn_mask, cache=None)
             else:
-                x, attn = r(x, attn_mask=attn_mask, cache=c)
+                x, attn = r(x, attn_mask=attn_mask, cache=cache[i])
                 attentions.append(attn)
         
         if cache is not None:
@@ -741,23 +738,24 @@ class MultimodalTransformer(Transformer):
         attentions = []
         cross_attentions = []
         
-        # Could allow for only caching one or the other, but unsure when that
-        # would be beneficial over the alternatives
-        if cache == None or cache["self"] == None or cache["self"] == []:
-            self_caches = [None]*len(self.resblocks)
-            cross_caches = [None]*len(self.resblocks)
-        else:
-            self_caches = cache["self"]
-            cross_caches = cache["cross"]
+        valid_cache = True
+        if cache is None or cache["self"] is None or cache["self"] == []:
+            valid_cache = False
 
-        for resblock, cross_attn, self_cache, cross_cache in zip(self.resblocks, self.cross_attn, self_caches, cross_caches):
+        for i, (resblock, cross_attn) in enumerate(zip(self.resblocks, self.cross_attn)):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
                 text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
             else:
-                text_embs, attn = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len], cache=self_cache)
-                text_embs, x_attn = cross_attn(text_embs, k_x=image_embs, v_x=image_embs, cache=cross_cache)
+                # Could allow for only caching one or the other, but unsure when that
+                # would be beneficial over the alternatives
+                if not valid_cache:
+                    text_embs, attn = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len], cache=None)
+                    text_embs, x_attn = cross_attn(text_embs, k_x=image_embs, v_x=image_embs, cache=None)
+                else:
+                    text_embs, attn = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len], cache=cache["self"][i])
+                    text_embs, x_attn = cross_attn(text_embs, k_x=image_embs, v_x=image_embs, cache=cache["cross"][i])
                 attentions.append(attn)
                 cross_attentions.append(x_attn)
 
