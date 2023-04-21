@@ -329,7 +329,7 @@ class Transformer(nn.Module):
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[List[Union[torch.Tensor, None]]] = None):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[Union[List[torch.Tensor], List[None]]] = None):
         if cache is None or len(cache) == 0:
             caches = [None]*len(self.resblocks)
         else:
