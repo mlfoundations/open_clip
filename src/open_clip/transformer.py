@@ -329,10 +329,10 @@ class Transformer(nn.Module):
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[Union[List[torch.Tensor], int]] = -1):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[Union[List[torch.Tensor], None]] = -1):
         attentions = []
 
-        if cache is None or type(cache) == int:
+        if cache is None or cache == -1:
             caches = [None]*len(self.resblocks)
         else:
             caches = cache
@@ -345,7 +345,7 @@ class Transformer(nn.Module):
                 x, attn = r(x, attn_mask=attn_mask, cache=c)
                 attentions.append(attn)
         
-        if type(cache) != int:
+        if cache != -1:
             return x, attentions
 
         return x
@@ -512,7 +512,7 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, cache=-1)
+        x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         if self.attn_pool is not None:
@@ -642,7 +642,7 @@ class TextTransformer(nn.Module):
         if cache != -1:
             x, attentions = self.transformer(x, attn_mask=attn_mask, cache=cache)
         else:
-            x = self.transformer(x, attn_mask=attn_mask, cache=cache)
+            x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
