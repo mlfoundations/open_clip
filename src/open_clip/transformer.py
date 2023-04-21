@@ -329,23 +329,22 @@ class Transformer(nn.Module):
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[Union[List[torch.Tensor], None]] = -1):
-        attentions = []
-
-        if cache is None or cache == -1:
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[List[torch.Tensor]] = None):
+        if cache is None or len(cache) == 0:
             caches = [None]*len(self.resblocks)
         else:
             caches = cache
 
+        attentions = []
         for r, c in zip(self.resblocks, caches):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask, -1)
+                x = checkpoint(r, x, None, None, attn_mask, None)
             else:
                 x, attn = r(x, attn_mask=attn_mask, cache=c)
                 attentions.append(attn)
         
-        if cache != -1:
+        if cache is not None:
             return x, attentions
 
         return x
@@ -625,7 +624,7 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text, cache=-1):
+    def forward(self, text, cache=None):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -639,7 +638,7 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        if cache != -1:
+        if cache is not None:
             x, attentions = self.transformer(x, attn_mask=attn_mask, cache=cache)
         else:
             x = self.transformer(x, attn_mask=attn_mask)
@@ -657,11 +656,11 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        if self.output_tokens and cache == -1:
+        if self.output_tokens and cache is None:
             return pooled, tokens
-        elif self.output_tokens and cache != -1:
+        elif self.output_tokens and cache is not None:
             return pooled, tokens, attentions
-        elif cache != -1:
+        elif cache is not None:
              return pooled, attentions
 
         return pooled
@@ -735,7 +734,7 @@ class MultimodalTransformer(Transformer):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def forward(self, image_embs, text_embs, cache=-1):
+    def forward(self, image_embs, text_embs, cache=None):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
         seq_len = text_embs.shape[0]
@@ -744,7 +743,7 @@ class MultimodalTransformer(Transformer):
         
         # Could allow for only caching one or the other, but unsure when that
         # would be beneficial over the alternatives
-        if cache == -1 or cache["self"] == -1 or cache["self"] is None:
+        if cache == None or cache["self"] == None or cache["self"] == []:
             self_caches = [None]*len(self.resblocks)
             cross_caches = [None]*len(self.resblocks)
         else:
@@ -768,7 +767,7 @@ class MultimodalTransformer(Transformer):
         if self.text_projection is not None:
             x = x @ self.text_projection
         
-        if cache != -1:
+        if cache is not None:
             return x, attentions, cross_attentions
 
         return x

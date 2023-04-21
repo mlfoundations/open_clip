@@ -133,13 +133,13 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True, embed_cls=True, cache=-1):
+    def _encode_text(self, text, normalize=True, embed_cls=True, cache=None):
         text = text[:, :-1] if embed_cls else text # make space for CLS token
-        if cache != -1:
+        if cache is not None:
             text_latent, token_emb, attentions = self.text(text, cache)
         else:
             text_latent, token_emb = self.text(text)
-            attentions = -1
+            attentions = None
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb, attentions
 
@@ -153,7 +153,7 @@ class CoCa(nn.Module):
 
     def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, cache=None):
         #TODO: Fix encoder caching
-        text_latent, token_embs, text_attentions = self._encode_text(text, embed_cls=embed_cls, cache=-1)
+        text_latent, token_embs, text_attentions = self._encode_text(text, embed_cls=embed_cls, cache=None)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
@@ -263,9 +263,9 @@ class CoCa(nn.Module):
             out = text
             
             if caching:
-                cache = {"enc": None, "dec": {"self": None, "cross": None}}
+                cache = {"enc": [], "dec": {"self": [], "cross": []}}
             else:
-                cache = {"enc": -1, "dec": {"self": -1, "cross": -1}}
+                cache = {"enc": None, "dec": {"self": None, "cross": None}}
 
             while True:
                 x = out[:, -max_seq_len:]
@@ -362,9 +362,9 @@ class CoCa(nn.Module):
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
         if caching:
-            cache = {"enc": None, "dec": {"self": None, "cross": None}}
+            cache = {"enc": [], "dec": {"self": [], "cross": []}}
         else:
-            cache = {"enc": -1, "dec": {"self": -1, "cross": -1}}
+            cache = {"enc": None, "dec": {"self": None, "cross": None}}
 
         while True:
 
