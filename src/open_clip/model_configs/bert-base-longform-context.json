@@ -1,0 +1,15 @@
+{
+    "embed_dim": 512,
+    "quick_gelu": true,
+    "tower_b_cfg": {
+        "hf_model_name": "bert-base-uncased",
+        "hf_tokenizer_name": "bert-base-uncased",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    },
+    "tower_a_cfg": {
+        "hf_model_name": "ccdv/lsg-bert-base-uncased-4096",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}
