@@ -26,18 +26,6 @@ arch_dict = {
         },
         "pooler": "mean_pooler",
     },
-    "bert": {
-        "config_names": {
-            "context_length": "max_position_embeddings",
-            "vocab_size": "vocab_size",
-            "width": "hidden_size",
-            "heads": "num_attention_heads",
-            "layers": "num_hidden_layers",
-            "layer_attr": "layer",
-            "token_embeddings_attr": "embeddings"
-        },
-        "pooler": "mean_pooler",
-    },
     # https://huggingface.co/docs/transformers/model_doc/mt5#mt5
     "mt5": {
         "config_names": {
@@ -54,18 +42,15 @@ arch_dict = {
         },
         "pooler": "mean_pooler",
     },
-    # https://huggingface.co/docs/transformers/main/en/model_doc/gpt_neox#transformers.GPTNeoXConfig
-    "gpt_neox": {
+    # https://huggingface.co/docs/transformers/model_doc/bert
+    "bert": {
         "config_names": {
-            # https://github.com/huggingface/transformers/blob/c612628045822f909020f7eb6784c79700813eda/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L410
             "context_length": "max_position_embeddings",
             "vocab_size": "vocab_size",
             "width": "hidden_size",
             "heads": "num_attention_heads",
             "layers": "num_hidden_layers",
-            "layer_attr": "layers",
-            "token_embeddings_attr": "embed_in"
         },
-        "pooler": "weighted_mean_pooler",
+        "pooler": "cls_pooler",
     },
 }
