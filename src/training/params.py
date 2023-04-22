@@ -60,6 +60,10 @@ def parse_args(args):
         help="Number of samples in dataset. Useful for webdataset if not available in info file.",
     )
     parser.add_argument(
+        "--model_type",
+        type=str
+    )
+    parser.add_argument(
         "--dataset-type",
         choices=["webdataset", "csv", "synthetic", "auto", "textpair"],
         default="auto",

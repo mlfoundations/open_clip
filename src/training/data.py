@@ -9,6 +9,7 @@ import time
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
+import io
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,41 @@ try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
+
+from encodec import EncodecModel
+from encodec.utils import convert_audio
+
+import torchaudio
+import torch.nn.functional as F
+
+from transformers import AutoTokenizer
+
+torchaudio.set_audio_backend('soundfile')
+
+bert_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+model = EncodecModel.encodec_model_24khz()
+
+model.set_target_bandwidth(1.5)
+
+def preproc(sample, tokenizer):
+    audio, json_data = sample
+    wav, sr = torchaudio.load(io.BytesIO(audio))
+    wav = convert_audio(wav, sr, model.sample_rate, model.channels)
+    if wav.shape[1] < 480000:
+      wav = F.pad(wav, (0, 480000-wav.shape[1]), "constant", 0)
+    wav = wav.unsqueeze(0)
+    with torch.no_grad():
+        audio_tokens = model.encode(wav)[0][0].reshape(1, 3000)
+        
+    text = json.loads(json_data.decode('utf-8'))['text']
+    text = bert_tokenizer(text, return_tensors='pt', max_length=8, truncation=True, padding='max_length')['input_ids']
+    # print(text)
+    text = text.squeeze(0)
+    # text['token_type_ids'] = text['token_type_ids'].squeeze(0)
+    # text['attention_mask'] = text['attention_mask'].squeeze(0)
+    audio_tokens = audio_tokens.squeeze(0)
+    return audio_tokens, text
 
 
 class STSDataset(Dataset):
@@ -438,7 +474,13 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
         
-    if 'text' in args.model_type:
+    if 'text-audio' in args.model_type:
+        pipeline.extend([
+            wds.to_tuple("flac", "json"),
+            wds.map(lambda sample: preproc(sample, tokenizer)),
+            wds.batched(args.batch_size, partial=not is_train)
+        ])
+    elif 'text' in args.model_type:
         pipeline.extend([
             wds.to_tuple("text_a", "text_b"),
             wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
@@ -483,6 +525,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_workers=args.workers,
         persistent_workers=True,
     )
+
+    # for batch in dataloader:
+    #     print(batch)
+    #     break
 
     # FIXME not clear which approach is better, with_epoch before vs after dataloader?
     # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
