@@ -129,18 +129,18 @@ class HFTextEncoder(nn.Module):
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
-            self.config = AutoConfig.from_pretrained(model_name_or_path)
+            self.config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
             create_func, model_args = (AutoModel.from_pretrained, model_name_or_path) if pretrained else (
                 AutoModel.from_config, self.config)
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
-                self.transformer = create_func(model_args)
+                self.transformer = create_func(model_args, trust_remote_code=True)
                 self.transformer = self.transformer.encoder
             elif 'gpt' in self.config.model_type:
-                self.transformer = create_func(model_args)
+                self.transformer = create_func(model_args, trust_remote_code=True)
                 self.config.pad_token_id = 1 # this is for GPT-NeoX. It might need to be changed if other models are needed.
             else:
-                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler, trust_remote_code=True)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)

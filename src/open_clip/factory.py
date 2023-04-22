@@ -205,7 +205,7 @@ def create_model(
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         # switch to TextTextCLIP
-        if model_type=="text_dual_encoder":
+        if model_type=="text_dual_encoder" or model_type=="text-audio":
             if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
                 model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
             if 'hf_model_name' in model_cfg.get('tower_b_cfg', {}):
