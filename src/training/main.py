@@ -397,6 +397,10 @@ def main(args):
         logging.debug('Finished loading wandb.')
 
     if 'train' not in data:
+        def cond_apply_prepare_for_eval(m):
+            if hasattr(m, 'prepare_for_eval'):
+                m.prepare_for_eval()
+        model.apply(cond_apply_prepare_for_eval)
         evaluate(model, data, start_epoch, args, writer)
         return
 
