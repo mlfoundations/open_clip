@@ -70,22 +70,24 @@ class CLIPMultimodalClassifier(nn.Module):
 		image_features = self.encoder.encode_image(image)
 
 		return torch.dot(text_features, image_features)
-
-def main(args):     
-	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-	with open("kilogram/development/texts/controlled/whole+black.json") as f:
-		file_contents = json.load(f)
+def get_model(device):
 	model, preprocess_train, preprocess_val = open_clip.factory.create_model_and_transforms(
-		"ViT-B-32-quickgelu",
+		"ViT-B-32",
 		'openai',
 		precision="amp",
 		device=device,
 	)
 	clf_cls = CLIPMultimodalClassifier
 	clf = clf_cls(model).to(device)
-
 	transforms = preprocess_val
-	tokenizer = get_tokenizer("ViT-B-32-quickgelu")
+	tokenizer = get_tokenizer("ViT-B-32")
+	return clf, transforms, tokenizer
+def main(args):     
+	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+	with open("kilogram/development/texts/controlled/whole+black.json") as f:
+		file_contents = json.load(f)
+	
+	clf, transforms, tokenizer = get_model(device)
 
 	dsval = ValidationDataSet("kilogram/development/images/black/", file_contents, tokenizer, transforms)
 	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
