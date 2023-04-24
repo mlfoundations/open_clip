@@ -70,6 +70,7 @@ class CLIPMultimodalClassifier(nn.Module):
 		image_features = self.encoder.encode_image(image)
 
 		return torch.dot(text_features, image_features)
+
 def get_model(device):
 	model, preprocess_train, preprocess_val = open_clip.factory.create_model_and_transforms(
 		"ViT-B-32",
@@ -82,32 +83,91 @@ def get_model(device):
 	transforms = preprocess_val
 	tokenizer = get_tokenizer("ViT-B-32")
 	return clf, transforms, tokenizer
+
+def compute_norm(features):
+	return features / features.norm(dim=-1, keepdim=True).float()
+
+def evaluate(dlval, clf, device):
+	clf.eval()
+	num_correct = 0
+	with torch.no_grad():
+		for i, data in enumerate(tqdm(dlval)):
+			text_tokens, image_input = data[0], data[1]
+			text_tokens = torch.tensor(text_tokens).to(device)
+			image_input = torch.tensor(image_input).to(device)
+
+			I_e = clf.encoder.encode_image(image_input).float()
+			T_e = clf.encoder.encode_text(text_tokens).float()
+
+			image_features = compute_norm(I_e)
+			text_features = compute_norm(T_e)
+
+			similarity = (image_features @ text_features.t()).cpu().numpy()
+
+			if(np.argmax(similarity, axis = -1)[0] == 0):
+			num_correct += 1
+		n_contexts = len(dlval)
+		acc_i = num_correct / n_contexts
+	return acc_i
+
 def main(args):     
 	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-	with open("kilogram/development/texts/controlled/whole+black.json") as f:
-		file_contents = json.load(f)
 	
 	clf, transforms, tokenizer = get_model(device)
-
+	
+	#Development Whole + Black
+	with open("kilogram/development/texts/controlled/whole+black.json") as f:
+		file_contents = json.load(f)
 	dsval = ValidationDataSet("kilogram/development/images/black/", file_contents, tokenizer, transforms)
 	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
 
-	total_games = 0
-	total_correct = 0
-	for text_tokens, image_input in dlval:
-		text_tokens = torch.tensor(text_tokens).to(device)
-		image_input = torch.tensor(image_input).to(device)
-		clf.eval()
-		with torch.no_grad():
-			image_features = clf.encoder.encode_image(image_input).float()
-			text_features = clf.encoder.encode_text(text_tokens).float()
-		similarity = np.dot(text_features.cpu().numpy(), image_features.cpu().numpy().T)
-		total_games += 2
-		if(np.argmax(similarity, axis = 0)[0] == 0):
-			total_correct += 1
-		if(np.argmax(similarity, axis = 1)[0] == 0):
-			total_correct += 1
-	print(total_correct/total_games)
+	accuracy = evaluate(dlval, clf, device)
+	print("Development Whole + Black:", accuracy)
+	
+	#Heldout Whole + Black
+	with open("kilogram/heldout/texts/controlled/whole+black.json") as f:
+		file_contents = json.load(f)
+	dsval = ValidationDataSet("kilogram/heldout/images/black/", file_contents, tokenizer, transforms)
+	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
+
+	accuracy = evaluate(dlval, clf, device)
+	print("Heldout Whole + Black:", accuracy)
+	
+	#Development Parts + Black
+	with open("kilogram/development/texts/controlled/part+black.json") as f:
+		file_contents = json.load(f)
+	dsval = ValidationDataSet("kilogram/development/images/black/", file_contents, tokenizer, transforms)
+	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
+
+	accuracy = evaluate(dlval, clf, device)
+	print("Development Parts + Black:", accuracy)
+	
+	#Heldout Parts + Black
+	with open("kilogram/heldout/texts/controlled/part+black.json") as f:
+		file_contents = json.load(f)
+	dsval = ValidationDataSet("kilogram/heldout/images/black/", file_contents, tokenizer, transforms)
+	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
+
+	accuracy = evaluate(dlval, clf, device)
+	print("Heldout Parts + Black:", accuracy)
+	
+	#Development Whole + Color
+	with open("kilogram/development/texts/controlled/whole+color.json") as f:
+		file_contents = json.load(f)
+	dsval = ValidationDataSet("kilogram/development/images/black/", file_contents, tokenizer, transforms)
+	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
+
+	accuracy = evaluate(dlval, clf, device)
+	print("Development Whole + Color:", accuracy)
+	
+	#Heldout Whole + Color
+	with open("kilogram/heldout/texts/controlled/whole+color.json") as f:
+		file_contents = json.load(f)
+	dsval = ValidationDataSet("kilogram/heldout/images/black/", file_contents, tokenizer, transforms)
+	dlval = DataLoader(dsval, batch_size=10, shuffle=False, drop_last=True)
+
+	accuracy = evaluate(dlval, clf, device)
+	print("Heldout Whole + Color:", accuracy)
 
 if __name__ == "__main__":
 	main(sys.argv[1:])
