@@ -105,7 +105,7 @@ def evaluate(dlval, clf, device):
 			similarity = (image_features @ text_features.t()).cpu().numpy()
 
 			if(np.argmax(similarity, axis = -1)[0] == 0):
-			num_correct += 1
+				num_correct += 1
 		n_contexts = len(dlval)
 		acc_i = num_correct / n_contexts
 	return acc_i
