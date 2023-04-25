@@ -77,6 +77,7 @@ class DataInfo:
 
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
+    print(shards_list)
     dir_path = os.path.dirname(shards)
     sizes_filename = os.path.join(dir_path, 'sizes.json')
     len_filename = os.path.join(dir_path, '__len__')
@@ -288,6 +289,7 @@ class ResampledShards2(IterableDataset):
 
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
+    print(input_shards)
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
@@ -347,7 +349,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     dataset = wds.DataPipeline(*pipeline)
     if is_train:
         if not resampled:
-            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+            assert num_shards >= args.workers * args.world_size, f'number of shards must be >= total workers {num_shards}, {args.workers}, {args.world_size}'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
         global_batch_size = args.batch_size * args.world_size

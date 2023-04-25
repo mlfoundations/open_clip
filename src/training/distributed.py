@@ -66,12 +66,22 @@ def init_distributed_device(args):
     args.world_size = 1
     args.rank = 0  # global rank
     args.local_rank = 0
-    if args.horovod:
-        assert hvd is not None, "Horovod is not installed"
-        hvd.init()
-        args.local_rank = int(hvd.local_rank())
-        args.rank = hvd.rank()
-        args.world_size = hvd.size()
+    if args.horovod or args.smp:
+        if args.smp:
+            import smdistributed.modelparallel.torch as smp
+            smp_config={'ddp':True,'sharded_data_parallel_degree': int(args.sharded_data_parallel_degree), 'fp16': args.precision == 'fp16', 'bf16': args.precision == "bf16"}
+            if args.grad_clip_norm:
+                smp_config['sdp_gradient_clipping'] = args.grad_clip_norm
+            smp.init(smp_config)
+            args.local_rank = smp.local_rank()
+            args.rank = smp.rank()
+            args.world_size = smp.size()
+        if args.horovod:
+            assert hvd is not None, "Horovod is not installed"
+            hvd.init()
+            args.local_rank = int(hvd.local_rank())
+            args.rank = hvd.rank()
+            args.world_size = hvd.size()
         args.distributed = True
         os.environ['LOCAL_RANK'] = str(args.local_rank)
         os.environ['RANK'] = str(args.rank)

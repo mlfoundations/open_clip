@@ -12,11 +12,16 @@ try:
     import wandb
 except ImportError:
     wandb = None
+try:
+    import smdistributed.modelparallel.torch as smp
+except ImportError:
+    smp = None
 
 from open_clip import ClipLoss, get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
+
 
 
 class AverageMeter(object):
@@ -43,7 +48,6 @@ def unwrap_model(model):
     else:
         return model
 
-
 def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
@@ -57,7 +61,13 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         rank=args.rank,
         world_size=args.world_size,
         use_horovod=args.horovod)
-
+    if smp:
+        @smp.step
+        def smp_step(model, images, texts):
+            image_features, text_features, logit_scale = model(images, texts)
+            total_loss = loss(image_features, text_features, logit_scale)
+            model.backward(total_loss)
+            return total_loss, logit_scale
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
     num_batches_per_epoch = dataloader.num_batches
@@ -70,7 +80,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     for i, batch in enumerate(dataloader):
         step = num_batches_per_epoch * epoch + i
         
-        if not args.skip_scheduler:
+        if not args.skip_scheduler and not (args.smp and args.precision=="fp16" and optimizer.overflow):
             scheduler(step)
 
         images, texts = batch
@@ -79,35 +89,44 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
-
-        with autocast():
+    
+        logit_scale = None
+        if args.smp:
+            total_loss, logit_scale = smp_step(model, images, texts)
+            logit_scale = logit_scale.reduce_mean()
+            total_loss = total_loss.reduce_mean()
+        else:
             image_features, text_features, logit_scale = model(images, texts)
             total_loss = loss(image_features, text_features, logit_scale)
 
-        if scaler is not None:
-            scaler.scale(total_loss).backward()
-            if args.horovod:
-                optimizer.synchronize()
-                scaler.unscale_(optimizer)
-                if args.grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                with optimizer.skip_synchronize():
-                    scaler.step(optimizer)
-            else:
-                if args.grad_clip_norm is not None:
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+                if args.horovod:
+                    optimizer.synchronize()
                     scaler.unscale_(optimizer)
+                    if args.grad_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                    with optimizer.skip_synchronize():
+                        scaler.step(optimizer)
+                else:
+                    if args.grad_clip_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                    scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                if args.grad_clip_norm is not None:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                scaler.step(optimizer)
-            scaler.update()
-        else:
-            total_loss.backward()
-            if args.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-            optimizer.step()
+        optimizer.step()
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
         with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+            if args.smp:
+                m = model.get_module()
+            else:
+                m = unwrap_model(model)
+            m.logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -155,7 +174,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
 
 def evaluate(model, data, epoch, args, tb_writer=None):
     metrics = {}
-    if not is_master(args):
+    if not is_master(args) and not args.smp:
         return metrics
     device = torch.device(args.device)
     model.eval()

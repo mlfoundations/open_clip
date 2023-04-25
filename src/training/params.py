@@ -275,6 +275,8 @@ def parse_args(args):
         action="store_true",
         help="Use horovod for distributed training."
     )
+    parser.add_argument("--smp", default=False, action="store_true")
+    parser.add_argument("--sharded_data_parallel_degree", default=1, type=int)
     parser.add_argument(
         "--ddp-static-graph",
         default=False,

@@ -3,12 +3,11 @@ import os
 import sys
 import random
 from datetime import datetime
-
+logging.getLogger("torch.distributed.distributed_c10d").setLevel(logging.ERROR)
 import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
-
 try:
     import wandb
 except ImportError:
@@ -23,6 +22,11 @@ try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
+
+try:
+    import smdistributed.modelparallel.torch as smp
+except ImportError:
+    smp = None
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer
 from training.data import get_data
@@ -119,6 +123,7 @@ def main(args):
         logging.info(f'Running with a single process. Device {args.device}.')
 
     random_seed(args.seed, 0)
+
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -132,6 +137,29 @@ def main(args):
         image_std=args.image_std,
     )
     random_seed(args.seed, args.rank)
+    if args.smp:
+        # replace fused layernorm with SMP's if using bf16 or fp16
+        if args.precision != "fp32":
+            import open_clip
+            def replace_layer(module):
+                for n, m in module.named_children():
+                    if isinstance(m, open_clip.transformer.LayerNormFp32):
+                        setattr(module, n, smp.nn.FusedLayerNorm(normalized_shape=m.normalized_shape, eps=m.eps, elementwise_affine=m.elementwise_affine))
+                    replace_layer(m)
+            replace_layer(model)
+        model = smp.DistributedModel(model)
+        # there are couple of instances in the model, where a module
+        # works on params that were not created in its own module
+        # With Sharded data parallelism in SMP we need to register these parameters
+        # so they are gathered before execution
+        attnpoolmodule = model.get_module().visual.attnpool
+        for m in [attnpoolmodule.k_proj, attnpoolmodule.v_proj, attnpoolmodule.q_proj, attnpoolmodule.c_proj]:
+            smp.register_parameter(attnpoolmodule, m.weight)
+            smp.register_parameter(attnpoolmodule, m.bias)
+        resblocks = model.get_module().transformer.resblocks
+        for m in resblocks:
+            smp.register_parameter(m.attn, m.attn.out_proj.weight)
+            smp.register_parameter(m.attn, m.attn.out_proj.bias)
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
@@ -160,7 +188,7 @@ def main(args):
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
-    if args.distributed and not args.horovod:
+    if args.distributed and not args.horovod and not args.smp:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         ddp_args = {}
@@ -168,11 +196,11 @@ def main(args):
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-
+    
     # create optimizer and scaler
     optimizer = None
     scaler = None
-
+    
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
@@ -196,13 +224,17 @@ def main(args):
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
+        if args.smp:
+            optimizer = smp.DistributedOptimizer(optimizer)
         scaler = GradScaler() if args.precision == "amp" else None
-
+     
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
+        if args.smp and os.path.isdir(args.resume):
+            user_content = smp.resume_from_checkpoint(args.resume)
+            start_epoch = user_content['epoch']
+        elif os.path.isfile(args.resume):
             checkpoint = torch.load(args.resume, map_location='cpu')
             if 'epoch' in checkpoint:
                 # resuming a train checkpoint w/ epoch and optimizer state
@@ -234,7 +266,7 @@ def main(args):
         scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
-    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
+    args.save_logs = args.logs and args.logs.lower() != 'none' and (is_master(args) or args.smp)
     writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
@@ -272,31 +304,46 @@ def main(args):
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
             evaluate(model, data, completed_epoch, args, writer)
-
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
+                "name": args.name
             }
-            if scaler is not None:
-                checkpoint_dict["scaler"] = scaler.state_dict()
+            if not args.smp:
+                checkpoint_dict["state_dict"] = model.state_dict()
+                checkpoint_dict["optimizer"] = optimizer.state_dict()
+            
+                if scaler is not None:
+                    checkpoint_dict["scaler"] = scaler.state_dict()
 
             if completed_epoch == args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
             ):
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
-                )
+                if args.smp:
+                    smp.save_checkpoint(
+                        args.checkpoint_path,
+                        tag=f"epoch_{completed_epoch}.pt",
+                        partial=True,
+                        model=model,
+                        optimizer=optimizer,
+                        user_content=checkpoint_dict,
+                    )
+                else:
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+                    )
             if args.save_most_recent:
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
-                )
-
+                if args.smp:
+                    smp.save_checkpoint(args.checkpoint_path, tag="epoch_latest.pt", partial=True, 
+                            model=model, optimizer=optimizer, user_content=checkpoint_dict
+                    )
+                else:
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
+                    )
     if args.wandb and is_master(args):
         wandb.finish()
 
