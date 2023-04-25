@@ -163,7 +163,7 @@ def push_pretrained_to_hf_hub(
 def generate_readme(model_card: dict, model_name: str):
     readme_text = "---\n"
     readme_text += "tags:\n- zero-shot-image-classification\n- clip\n"
-    readme_text += "library_tag: open_clip\n"
+    readme_text += "library_name: open_clip\n"
     readme_text += f"license: {model_card.get('license', 'mit')}\n"
     if 'details' in model_card and 'Dataset' in model_card['details']:
         readme_text += 'datasets:\n'
