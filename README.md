@@ -679,7 +679,7 @@ Note: if you are using this feature with `--resume latest`, there are a few warn
 The module `open_clip.push_to_hf_hub` includes helpers for pushing models /w weights and config to the HF Hub.
 
 The tool can be run from command line, ex:
-`pytorch -m open_clip.push_to_hf_hub --model convnext_large_d_320 --pretrained /train/checkpoints/epoch_12.pt --repo-id laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft`
+`python -m open_clip.push_to_hf_hub --model convnext_large_d_320 --pretrained /train/checkpoints/epoch_12.pt --repo-id laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft`
 
 ## Scaling trends
 
