@@ -397,11 +397,10 @@ def main(args):
         logging.debug('Finished loading wandb.')
 
     if 'train' not in data:
-        # If model has attr "prepare_for_eval", run this.
-        def conditional_prepare_for_eval(m):
-            if hasattr(m, 'prepare_for_eval'):
-                m.prepare_for_eval()
-        model.apply(conditional_prepare_for_eval)
+        # If using int8, convert to inference mode.
+        if args.use_bnb_linear is not None:
+            from open_clip.utils import convert_int8_model_to_inference_model
+            convert_int8_model_to_inference_model(model)
         # Evaluate.
         evaluate(model, data, start_epoch, args, writer)
         return
