@@ -657,6 +657,8 @@ Please see the bitsandbytes library for definitions for these layers.
 For CLIP VIT-Huge this should currently correspond to a 10% training speedup with no accuracy loss.
 More speedups comin when the attention layer is refactored so that linear layers man be replaced there, too.
 
+See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb or [paper](https://arxiv.org/abs/2304.13013).
+
 ### Support for remote loading/training
 
 It is always possible to resume directly from a remote file, e.g., a file in an s3 bucket. Just set `--resume s3://<path-to-checkpoint> `.

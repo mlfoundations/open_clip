@@ -1,3 +1,7 @@
+## 2.17.3
+
+* Enable int8 inference without `.weight` attribute
+
 ## 2.17.2
 
 * Update push_to_hf_hub
