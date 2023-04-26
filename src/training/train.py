@@ -7,17 +7,20 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.parallel.distributed import DistributedDataParallel
 
 try:
     import wandb
 except ImportError:
     wandb = None
 
-from open_clip import get_cast_dtype, CLIP, CustomTextCLIP
+from open_clip import get_cast_dtype
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
+from .data import reset_wds_dataloader_state, set_wds_dataloader_shared_log_flags
+
+
+LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
 
 class AverageMeter(object):
@@ -59,6 +62,52 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
+def save_checkpoint(args, model, optimizer, scaler, completed_epoch, completed_steps=None, dataloader=None):
+    # Saving checkpoints.
+    if args.save_logs:
+        checkpoint_dict = {
+            "epoch": completed_epoch,
+            "steps": completed_steps,
+            "name": args.name,
+            "state_dict": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        }
+        if scaler is not None:
+            checkpoint_dict["scaler"] = scaler.state_dict()
+
+        if args.save_frequency_steps is not None:
+            assert completed_steps is not None
+            checkpoint_name = f"epoch_{completed_epoch}__steps_{completed_steps}.pt"
+            previous_checkpoint = f"epoch_{completed_epoch}__steps_{completed_steps - args.save_frequency_steps}.pt"
+            save_ckpt = True
+        else:
+            checkpoint_name = f"epoch_{completed_epoch}.pt"
+            previous_checkpoint = f"epoch_{completed_epoch - 1}.pt"
+            save_ckpt = (
+                completed_epoch == args.epochs or
+                (args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0)
+            )
+
+        if save_ckpt:
+            torch.save(checkpoint_dict, os.path.join(args.checkpoint_path, checkpoint_name))
+
+        # Save dataset state if needed
+        if not args.dataset_resampled and dataloader is not None:
+            set_wds_dataloader_shared_log_flags(dataloader)
+
+        if args.delete_previous_checkpoint:
+            previous_checkpoint = os.path.join(args.checkpoint_path, previous_checkpoint)
+            if os.path.exists(previous_checkpoint):
+                os.remove(previous_checkpoint)
+
+        if args.save_most_recent:
+            # try not to corrupt the latest checkpoint if save fails
+            tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+            latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+            torch.save(checkpoint_dict, tmp_save_path)
+            os.replace(tmp_save_path, latest_save_path)
+
+
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
@@ -71,6 +120,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
+
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
@@ -230,7 +280,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
+
+        if batch_count % args.save_frequency_steps == 0:
+            save_checkpoint(args, model, optimizer, scaler, epoch, steps=batch_count, dataloader=dataloader)
+
     # end for
+
+    # Reset dataloader state at the end of epoch
+    reset_wds_dataloader_state(dataloader)
 
 
 def evaluate(model, data, epoch, args, tb_writer=None):

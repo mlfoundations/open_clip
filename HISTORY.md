@@ -1,3 +1,11 @@
+## 2.19.0
+
+* Add DataComp models
+
+## 2.18.0
+
+* Enable int8 inference without `.weight` attribute
+
 ## 2.17.2
 
 * Update push_to_hf_hub

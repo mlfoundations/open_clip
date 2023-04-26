@@ -1,14 +1,18 @@
 import ast
+import braceexpand
+import collections
+import copy
+import glob
 import json
 import logging
 import math
 import os
+import pickle
 import random
 import sys
-import braceexpand
-from dataclasses import dataclass
-from multiprocessing import Value
 
+from dataclasses import dataclass
+import multiprocessing as mp
 import numpy as np
 import pandas as pd
 import torch
@@ -18,7 +22,8 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
-from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
+from webdataset.tariterators import base_plus_ext, url_opener, valid_sample, tar_file_iterator
+from webdataset.utils import PipelineStage
 
 try:
     import horovod.torch as hvd
@@ -49,7 +54,7 @@ class CsvDataset(Dataset):
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
-        self.shared_epoch = Value('i', epoch)
+        self.shared_epoch = mp.Value('i', epoch)
 
     def set_value(self, epoch):
         self.shared_epoch.value = epoch
@@ -69,6 +74,28 @@ class DataInfo:
             self.shared_epoch.set_value(epoch)
         if self.sampler is not None and isinstance(self.sampler, DistributedSampler):
             self.sampler.set_epoch(epoch)
+
+
+class WebdatasetState:
+    def __init__(self, processed_urls=None, current_urls=None):
+        self.processed_urls = processed_urls or set()
+        self.current_urls = current_urls or collections.defaultdict(int)
+
+    def __radd__(self, other):
+        if other == 0:
+            return self
+        all_processed_urls = self.processed_urls.union(other.processed_urls)
+        all_current_urls = collections.defaultdict(int)
+        for urls in (self.current_urls, other.current_urls):
+            for url, count in urls.items():
+                all_current_urls[url] += count
+        return WebdatasetState(all_processed_urls, all_current_urls)
+    
+    def __add__(self, other):
+        return self.__radd__(other)
+    
+    def __str__(self):
+        return f"WebdatasetState(\n\tprocessed_urls={self.processed_urls},\n\tcurrent_urls={self.current_urls}\n)"
 
 
 def expand_urls(urls, weights=None):
@@ -211,13 +238,97 @@ def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, h
         yield current_sample
 
 
-def tarfile_to_samples_nothrow(src, handler=log_and_continue):
-    # NOTE this is a re-impl of the webdataset impl with group_by_keys that doesn't throw
-    streams = url_opener(src, handler=handler)
-    files = tar_file_expander(streams, handler=handler)
-    samples = group_by_keys_nothrow(files, handler=handler)
-    return samples
+class TarFileToSamples(PipelineStage):
+    """Given a stream of tar files, yield samples.
+    
+    This is a modified version of the `tarfile_to_samples_nothrow` function from webdataset,
+    where we keep track of the urls that have been completely processed and the number of
+    samples that have been processed in the current urls.
+    """
 
+    def __init__(self, args, handler=log_and_continue, start_state=None):
+        super().__init__()
+        self.handler = handler
+        self.state = start_state or WebdatasetState()
+        self.start_state = copy.deepcopy(self.state)
+        self.checkpoint_path = args.checkpoint_path
+        self.rank = args.rank
+        self.write_state = not args.dataset_resampled
+        self.manager = mp.Manager()
+        self.shared_log_flags = self.manager.dict()
+        self.pid = os.getpid()
+        self.shared_log_flags[self.pid] = False
+
+    def run(self, src):
+        """Return an iterator over the samples."""
+        streams = url_opener(src, handler=self.handler)
+        files = self.tar_file_expander(streams)
+        samples = group_by_keys_nothrow(files, handler=self.handler)
+        return samples
+    
+    def reset_state(self):
+        self.state = WebdatasetState()
+        self.start_state = WebdatasetState()
+        self.shared_log_flags[self.pid] = False
+
+    def tar_file_expander(self, data):
+        """Expand tar files.
+
+        Args:
+            data: iterator over opened tar file streams.
+            handler: exception handler.
+
+        Yields:
+            a stream of samples.
+        """
+        state_folder = os.path.join(self.checkpoint_path, 'wds_states')
+        os.makedirs(state_folder, exist_ok=True)
+        state_filename = os.path.join(state_folder, f'state_{self.rank}_{self.pid}.pkl')
+
+        # Iterate over the tar files
+        for source in data:
+            url = source["url"]
+            # Skip processed urls
+            if url in self.start_state.processed_urls:
+                continue
+            try:
+                assert isinstance(source, dict)
+                assert "stream" in source
+
+                num_samples_to_skip = self.start_state.current_urls.get(url, 0)
+
+                # Iterate over the samples in the tar file
+                samples_iter = tar_file_iterator(source["stream"], handler=self.handler)
+                for idx, sample in enumerate(samples_iter):
+                    # Skip samples that have already been processed
+                    if idx < num_samples_to_skip:
+                        continue
+
+                    assert (isinstance(sample, dict) and "data" in sample and "fname" in sample)
+                    sample["__url__"] = url
+
+                    self.state.current_urls[url] += 1
+
+                    if self.write_state and self.shared_log_flags[self.pid]:
+                        logging.info(f'Logging webdataset state to {state_filename}')
+                        # Save state to disk
+                        with open(state_filename, 'wb') as f:
+                            pickle.dump(self.state, f)
+                        # Reset flag for current process
+                        self.shared_log_flags[self.pid] = False
+
+                    yield sample
+                    
+            except Exception as exn:
+                exn.args = exn.args + (source.get("stream"), source.get("url"))
+                if self.handler(exn):
+                    continue
+                else:
+                    break
+
+            self.state.processed_urls.add(url)
+            del self.state.current_urls[url]
+            
 
 def pytorch_worker_seed(increment=0):
     """get dataloader worker seed from pytorch"""
@@ -231,12 +342,6 @@ def pytorch_worker_seed(increment=0):
         return seed
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
-
-
-_SHARD_SHUFFLE_SIZE = 2000
-_SHARD_SHUFFLE_INITIAL = 500
-_SAMPLE_SHUFFLE_SIZE = 5000
-_SAMPLE_SHUFFLE_INITIAL = 1000
 
 
 class detshuffle2(wds.PipelineStage):
@@ -325,6 +430,29 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
+def set_wds_dataloader_shared_log_flags(dataloader):
+    try:
+        pipeline = dataloader.pipeline[0].dataset.pipeline
+    except:
+        return
+    for i in range(len(pipeline)):
+        if isinstance(pipeline[i], TarFileToSamples):
+            import pdb; pdb.set_trace
+            logging.info('Setting shared log flag')
+            for pid in pipeline[i].shared_log_flags:
+                pipeline[i].shared_log_flags[pid] = True
+
+
+def reset_wds_dataloader_state(dataloader):
+    try:
+        pipeline = dataloader.pipeline[0].dataset.pipeline
+    except:
+        return
+    for i in range(len(pipeline)):
+        if isinstance(pipeline[i], TarFileToSamples):
+            pipeline[i].reset_state()
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -343,6 +471,19 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     else:
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
+
+    # See if there is a logged state we should resume from
+    state = None
+    if not args.dataset_resampled:
+        state_files = glob.glob(os.path.join(args.checkpoint_path, f'wds_state_*.pkl'))
+        if len(state_files) > 0:
+            # Aggregate state from all workers
+            states = []
+            for state_file in state_files:
+                with open(state_file, 'rb') as f:
+                    states.append(pickle.load(f))
+            state = sum(states)
+            logging.info(f'Resuming from webdataset state: {state}')
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
@@ -363,8 +504,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         if not resampled:
             pipeline.extend([
                 detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
+                    bufsize=args.shard_shuffle_buffer_size,
+                    initial=args.shard_shuffle_buffer_initial_size,
                     seed=args.seed,
                     epoch=shared_epoch,
                 ),
@@ -373,10 +514,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             ])
         pipeline.extend([
             # at this point, we have an iterator over the shards assigned to each worker at each node
-            tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
+            TarFileToSamples(args, handler=log_and_continue, start_state=state),
             wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
+                bufsize=args.sample_shuffle_buffer_size,
+                initial=args.sample_shuffle_buffer_initial_size,
             ),
         ])
     else:
@@ -442,7 +583,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_csv_dataset(args, preprocess_fn, is_train, tokenizer=None, **kwargs):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
     dataset = CsvDataset(
@@ -499,7 +640,7 @@ class SyntheticDataset(Dataset):
         return image, self.preprocess_txt(self.caption)
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_synthetic_dataset(args, preprocess_fn, is_train, tokenizer=None, **kwargs):
     image_size = preprocess_fn.transforms[0].size
     dataset = SyntheticDataset(
         transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
@@ -542,12 +683,13 @@ def get_dataset_fn(data_path, dataset_type):
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
     
 
-def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
+def get_data(args, preprocess_fns, epoch=0, tokenizer=None, wds_state=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
     if args.train_data or args.dataset_type == "synthetic":
-        data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
+        dataset_fn = get_dataset_fn(args.train_data, args.dataset_type)
+        data["train"] = dataset_fn(
             args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
 
     if args.val_data:

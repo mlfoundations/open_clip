@@ -166,7 +166,10 @@ def parse_args(args):
         help="Power for polynomial cooldown schedule. Default: 1.0 (linear decay)"
     )
     parser.add_argument(
-        "--save-frequency", type=int, default=1, help="How often to save checkpoints."
+        "--save-frequency", type=int, default=1, help="How often to save checkpoints (epochs)."
+    )
+    parser.add_argument(
+        "--save-frequency-steps", type=int, default=None, help="How often to save checkpoints (steps)."
     )
     parser.add_argument(
         "--save-most-recent",
@@ -429,6 +432,30 @@ def parse_args(args):
         default=None,
         help='Replace the network linear layers from the bitsandbytes library. '
         'Allows int8 training/inference, etc.'
+    )
+    parser.add_argument(
+        '--shard-shuffle-buffer-size',
+        type=int,
+        default=2000,
+        help='Size of the buffer used to shuffle webdataset shards.'
+    )
+    parser.add_argument(
+        '--shard-shuffle-buffer-initial-size',
+        type=int,
+        default=500,
+        help='Size of the initial buffer used to shuffle webdataset shards.'
+    )
+    parser.add_argument(
+        '--sample-shuffle-buffer-size',
+        type=int,
+        default=5000,
+        help='Size of the buffer used to shuffle webdataset samples.'
+    )
+    parser.add_argument(
+        '--sample-shuffle-buffer-initial-size',
+        type=int,
+        default=1000,
+        help='Size of the initial buffer used to shuffle webdataset samples.'
     )
     args = parser.parse_args(args)
 

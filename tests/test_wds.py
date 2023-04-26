@@ -1,4 +1,6 @@
 import os
+import glob
+import pickle
 import pytest
 import util_test
 import collections
@@ -6,7 +8,7 @@ import tarfile
 import io
 from PIL import Image
 
-from training.data import get_wds_dataset
+from training.data import get_wds_dataset, set_wds_dataloader_shared_log_flags
 from training.params import parse_args
 from training.main import random_seed
 
@@ -53,15 +55,21 @@ def build_inputs(test_name):
     return input_dir
 
 
-def build_params(input_shards, seed=0):
+def build_params(input_shards, dataset_resampled=True, seed=0):
+    num_workers = 2
     args = parse_args([])
     args.train_data = input_shards
     args.train_num_samples = TRAIN_NUM_SAMPLES
-    args.dataset_resampled = True
+    args.dataset_resampled = dataset_resampled
     args.seed = seed
-    args.workers = 1
+    args.workers = num_workers
     args.world_size = 1
     args.batch_size = 1
+    args.rank = 0
+    args.sample_shuffle_buffer_size = 1
+    args.sample_shuffle_buffer_initial_size = 1
+    args.checkpoint_path = os.path.dirname(input_shards)
+    os.environ["NUM_WORKERS"] = str(num_workers)
     random_seed(seed)
 
     preprocess_img = lambda x: x
@@ -70,11 +78,37 @@ def build_params(input_shards, seed=0):
     return args, preprocess_img, tokenizer
 
 
-def get_dataloader(input_shards):
-    args, preprocess_img, tokenizer = build_params(input_shards)
+def get_dataloader(input_shards, dataset_resampled=True):
+    args, preprocess_img, tokenizer = build_params(input_shards, dataset_resampled)
     dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
     dataloader = dataset.dataloader
     return dataloader
+
+
+def test_state_checkpointing():
+    """Test state checkpointing."""
+    input_dir = build_inputs('single_source')    
+    input_shards = os.path.join(input_dir, 'test_data_{000..001}.tar')
+    dataloader = get_dataloader(input_shards, dataset_resampled=False)
+    
+    for idx, _ in enumerate(dataloader):
+        if idx == 0:
+            # Get first sample and signal the processes to save their state
+            set_wds_dataloader_shared_log_flags(dataloader)
+
+        # Wait for state file to be saved
+        state_files = glob.glob(os.path.join(input_dir, 'wds_states/state_*.pkl'))
+        if state_files:
+            break
+
+    # Check that the state was saved
+    states = []
+    for state_file in state_files:
+        with open(state_file, 'rb') as f:
+            states.append(pickle.load(f))
+
+    state = sum(states)
+    assert len(state.current_urls) > 0
 
 
 def test_single_source():
@@ -92,6 +126,7 @@ def test_single_source():
     for key, count in counts.items():
         assert count == pytest.approx(TRAIN_NUM_SAMPLES / 10, RTOL)
 
+test_state_checkpointing()
 
 def test_two_sources():
     """Test webdataset with a single two tar files."""
