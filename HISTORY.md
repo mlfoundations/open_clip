@@ -1,3 +1,35 @@
+## 2.17.2
+
+* Update push_to_hf_hub
+
+## 2.17.0
+
+* Add int8 support
+* Update notebook demo
+* Refactor zero-shot classification code
+
+## 2.16.2
+
+* Fixes for context_length and vocab_size attributes 
+
+## 2.16.1
+
+* Fixes for context_length and vocab_size attributes 
+* Fix --train-num-samples logic
+* Add HF BERT configs for PubMed CLIP model
+
+## 2.16.0
+
+* Add improved g-14 weights
+* Update protobuf version
+
+## 2.15.0
+
+* Add convnext_xxlarge weights
+* Fixed import in readme
+* Add samples per second per gpu logging
+* Fix slurm example
+
 ## 2.14.0
 
 * Move dataset mixtures logic to shard level
