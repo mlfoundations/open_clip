@@ -1,4 +1,4 @@
-## 2.17.3
+## 2.18.0
 
 * Enable int8 inference without `.weight` attribute
 
