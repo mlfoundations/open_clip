@@ -81,7 +81,7 @@ def replace_linear(model, linear_replacement, include_modules=['c_fc', 'c_proj']
 
     return model
 
-def convert_int8_model_to_inference_model(model):
+def convert_int8_model_to_inference_mode(model):
     for m in model.modules():
         if hasattr(m, 'prepare_for_eval'):
             int8_original_dtype = m.weight.dtype
