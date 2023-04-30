@@ -13,7 +13,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 @pytest.mark.parametrize("model_cfg", [("roberta-roberta")])
 def test_inference_simple(model_cfg, pretrained=None):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_dual_encoder')
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='CLANP')
     tokenizer = get_tokenizer(model_cfg)
 
     text_a = tokenizer(['this', 'is', 'a', 'document'])
@@ -36,7 +36,7 @@ def test_inference_simple(model_cfg, pretrained=None):
 
 @pytest.mark.parametrize("model_cfg", [("Siamese-xlm-roberta-large")])
 def test_inference_simple(model_cfg, pretrained=None):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_siamese_encoder')
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='SiameseCLANP')
     tokenizer = get_tokenizer(model_cfg)
 
     text_a = tokenizer(['this', 'is', 'a', 'document'])
@@ -57,7 +57,7 @@ def test_inference_simple(model_cfg, pretrained=None):
     
 @pytest.mark.parametrize("model_cfg", [("pythia-410m-pythia-410m")])
 def test_inference_simple(model_cfg, pretrained=None):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_dual_encoder')
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='CLANP')
     tokenizer = get_tokenizer(model_cfg)
 
     text_a = tokenizer(['this', 'is', 'a', 'document'])
@@ -76,7 +76,7 @@ def test_inference_simple(model_cfg, pretrained=None):
     
 @pytest.mark.parametrize("model_cfg", [("Siamese-pythia-410m")])
 def test_inference_simple(model_cfg, pretrained=None):
-    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='text_siamese_encoder')
+    model, _, preprocess = open_clip.create_model_and_transforms(model_cfg, pretrained=pretrained, jit=False, model_type='SiameseCLANP')
     tokenizer = get_tokenizer(model_cfg)
 
     text_a = tokenizer(['this', 'is', 'a', 'document'])

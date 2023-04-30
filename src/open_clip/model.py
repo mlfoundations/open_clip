@@ -290,7 +290,7 @@ class CustomTextCLIP(nn.Module):
 
 
 
-class TextTextCLIP(nn.Module):
+class CLANP(nn.Module):
     def __init__(
             self,
             embed_dim: int,
@@ -339,7 +339,7 @@ class TextTextCLIP(nn.Module):
 
 
 
-class SiameseTextCLIP(nn.Module):
+class SiameseCLANP(nn.Module):
     def __init__(
             self,
             embed_dim: int,

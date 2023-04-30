@@ -453,7 +453,7 @@ def parse_args(args):
     parser.add_argument(
         "--model-type",
         type=str,
-        choices=["CLIP", "text_dual_encoder", "text_siamese_encoder"],
+        choices=["CLIP", "CLANP", "SiameseCLANP"],
         default="CLIP",
         help="Specify the model type",
     )
@@ -504,6 +504,45 @@ def parse_args(args):
         "--distill-pretrained",
         default=None,
         help='Which pre-trained weights to distill from, if any.'
+    )
+
+    '''
+    Arguments related to training a contriever-like text-to-text model
+    '''
+    parser.add_argument(
+        "--unsupervised-pretraining",
+        action="store_true",
+        help="Whether to run contriever-style unupservised contrastive pretraining"    
+    )
+    parser.add_argument(
+        "--text-augmentation",
+        default='delete',
+        choices=['delete','mask','replace','shuffle'],
+        help='Which text augmentation to create postive pairs for training unsupervised text retreival models'                
+    )
+    parser.add_argument(
+        "--text-aug-ratio-min",
+        default=0.1,
+        type=float,
+        help='min ratio for random cropping of texts (only applies to unsupervised text retreival models)'
+    )
+    parser.add_argument(
+        "--text-aug-ratio-max",
+        default=0.5,
+        type=float,
+        help='max ratio for random cropping of texts (only applies to unsupervised text retreival models)'
+    )
+    parser.add_argument(
+        "--text-prob-augmentation",
+        default=0.1,
+        type=float,
+        help='probability of applying augmentations to texts (only applies to unsupervised text retreival models)'
+    )    
+    parser.add_argument(
+        "--context-length",
+        default=77,
+        type=int,
+        help="max number of tokens in the input text"
     )
     args = parser.parse_args(args)
 

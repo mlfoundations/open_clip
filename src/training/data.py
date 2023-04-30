@@ -21,6 +21,7 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableD
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
+from open_clip.text_augmentation import create_unsupervised_sample
 
 try:
     import horovod.torch as hvd
@@ -438,14 +439,19 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
         
-    if 'text' in args.model_type:
+    if 'CLANP' in args.model_type and not args.unsupervised_pretraining:
         pipeline.extend([
-            wds.to_tuple("text_a", "text_b"),
+            wds.to_tuple(args.text_a_key, args.text_b_key),
             wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
             wds.batched(args.batch_size, partial=not is_train),
         ])
-
-        
+    elif 'CLANP' in args.model_type and args.unsupervised_pretraining:
+        pipeline.extend([
+            wds.to_tuple(args.text_a_key, args.text_b_key),
+            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
+            wds.map_tuple(lambda text: create_unsupervised_sample(text,tokenizer,args), lambda text: create_unsupervised_sample(text,tokenizer,args)),
+            wds.batched(args.batch_size, partial=not is_train),
+        ])
     else:
         pipeline.extend([
             wds.select(filter_no_caption_or_no_image),
