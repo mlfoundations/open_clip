@@ -22,6 +22,7 @@ We have trained the following ViT CLIP models:
   * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
   * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
   * ViT-g/14 on LAION-2B with an accuracy of **78.5**. Full 34B samples seen schedule.
+  * ViT-L/14 on [DataComp-1B](https://github.com/mlfoundations/datacomp) with an accuracy of **79.2**. 13B samples seen schedule.
   * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
 
 And the following ConvNeXt CLIP models:
@@ -550,6 +551,65 @@ On zero shot classification on imagenet with translated prompts this model reach
 * 55.7% in chinese (to be compared with https://github.com/OFA-Sys/Chinese-CLIP)
 
 
+### CommonPool and DataComp models
+
+As part of [DataComp](https://github.com/mlfoundations/datacomp), we trained models on CommonPool using various data filtering strategies.
+We release models for all four scales of the competition, small, medium, large and xlarge, corresponding to a pool size and number of samples seen of 12.8M, 128M, 1.28B and 12.8B, respectively.
+
+The models are specified below, see our paper [DataComp: In seearch of the next generation of multimodal datasets](https://arxiv.org/abs/2304.14108) for more details.
+
+* `datacomp_xl_s13b_b90k`: A ViT-L/14 trained on DataComp-1B for 12.8B steps and batch size 90k. Achieves 79.2% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K. 
+
+* `commonpool_xl_clip_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL filtered using CLIP scores, for 12.8B steps and batch size 90k. Achieves 76.4% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL.clip-s13B-b90K.
+
+* `commonpool_xl_laion_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL filtered using the LAION-2B filtering scheme, for 12.8B steps and batch size 90k. Achieves 75.5% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL.laion-s13B-b90K.
+
+* `commonpool_xl_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL without any filtering, for 12.8B steps and batch size 90k. Achieves 72.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K.
+
+* `datacomp_l_s1b_b8k`: A ViT-B/16 trained on a 140M subset of DataComp-1B, for 1.28B steps and batch size 8k. Achieves 63.1% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-DataComp.L-s1B-b8K.
+
+* `commonpool_l_clip_s1b_b8k`: A ViT-B/16 trained on CommonPool-L filtered using CLIP scores, for 1.28B steps and batch size 8k. Achieves 57.8% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L.clip-s1B-b8K.
+
+* `commonpool_l_laion_s1b_b8k`: A ViT-B/16 trained on CommonPool-L filtered using the LAION-2B filtering scheme, for 1.28B steps and batch size 8k. Achieves 55.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L.laion-s1B-b8K.
+
+* `commonpool_l_image_s1b_b8k`: A ViT-B/16 trained on CommonPool-L filtered using image-based filtering, for 1.28B steps and batch size 8k. Achieves 57.2% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L.image-s1B-b8K.
+
+* `commonpool_l_text_s1b_b8k`: A ViT-B/16 trained on CommonPool-L filtered using text-based filtering, for 1.28B steps and batch size 8k. Achieves 56.1% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L.text-s1B-b8K.
+
+* `commonpool_l_basic_s1b_b8k`: A ViT-B/16 trained on CommonPool-L filtered using basic filtering (English filtering + caption length and image size filtering), for 1.28B steps and batch size 8k. Achieves 51.6% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L.basic-s1B-b8K.
+
+* `commonpool_l_s1b_b8k`: A ViT-B/16 trained on CommonPool-L without any filtering, for 1.28B steps and batch size 8k. Achieves 45.9% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-16-CommonPool.L-s1B-b8K.
+
+* `datacomp_m_s128m_b4k`: A ViT-B/32 trained on a 14M subset of DataComp-1B, for 128M steps and batch size 4k. Achieves 29.7% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.M-s128M-b4K.
+
+* `commonpool_m_clip_s128m_b4k`: A ViT-B/32 trained on CommonPool-M filtered using CLIP scores, for 128M steps and batch size 4k. Achieves 27.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M.clip-s128M-b4K.
+
+* `commonpool_m_laion_s128m_b4k`: A ViT-B/32 trained on CommonPool-M filtered using the LAION-2B filtering scheme, for 128M steps and batch size 4k. Achieves 23.0% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M.laion-s128M-b4K.
+
+* `commonpool_m_image_s128m_b4k`: A ViT-B/32 trained on CommonPool-M filtered using image-based filtering, for 128M steps and batch size 4k. Achieves 26.8% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M.image-s128M-b4K.
+
+* `commonpool_m_text_s128m_b4k`:  A ViT-B/32 trained on CommonPool-M filtered using text-based filtering, for 128M steps and batch size 4k. Achieves 25.5% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M.text-s128M-b4K.
+
+* `commonpool_m_basic_s128m_b4k`:  A ViT-B/32 trained on CommonPool-M filtered using basic filtering (English filtering + caption length and image size filtering), for 128M steps and batch size 4k. Achieves 22.6% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M.basic-s128M-b4K.
+
+* `commonpool_m_s128m_b4k`: A ViT-B/32 trained on CommonPool-M without any filtering, for 128M steps and batch size 4k. Achieves 17.6% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.M-s128M-b4K.
+
+* `datacomp_s_s13m_b4k`: A ViT-B/32 trained on a 1.4M subset of DataComp-1B, for 12.8M steps and batch size 4k. Achieves 3.9% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.S-s13M-b4K.
+
+* `commonpool_s_clip_s13m_b4k`: A ViT-B/32 trained on CommonPool-S filtered using CLIP scores, for 12.8M steps and batch size 4k. Achieves 5.1% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S.clip-s13M-b4K.
+
+* `commonpool_s_laion_s13m_b4k`: A ViT-B/32 trained on CommonPool-S filtered using the LAION-2B filtering scheme scores, for 12.8M steps and batch size 4k. Achieves 3.1% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S.laion-s13M-b4K.
+
+* `commonpool_s_image_s13m_b4k`: A ViT-B/32 trained on CommonPool-S filtered using image-based filtering, for 12.8M steps and batch size 4k. Achieves 4.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S.image-s13M-b4K.
+
+* `commonpool_s_text_s13m_b4k`: A ViT-B/32 trained on CommonPool-S filtered using text-based filtering, for 12.8M steps and batch size 4k. Achieves 4.6% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S.text-s13M-b4K.
+
+* `commonpool_s_basic_s13m_b4k`: A ViT-B/32 trained on CommonPool-S filtered using basic filtering (English filtering + caption length and image size filtering), for 12.8M steps and batch size 4k. Achieves 3.0% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S.basic-s13M-b4K.
+
+* `commonpool_s_s13m_b4k`: A ViT-B/32 trained on CommonPool-S without any filtering, for 12.8M steps and batch size 4k. Achieves 2.5% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-B-32-CommonPool.S-s13M-b4K.
+
+
+
 #### YFCC-15M
 
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
@@ -573,60 +633,86 @@ Future trained models will use nn.GELU.
 >>> import open_clip
 >>> open_clip.list_pretrained()
 [('RN50', 'openai'),
- ('RN50', 'yfcc15m'),
- ('RN50', 'cc12m'),
- ('RN50-quickgelu', 'openai'),
- ('RN50-quickgelu', 'yfcc15m'),
- ('RN50-quickgelu', 'cc12m'),
- ('RN101', 'openai'),
- ('RN101', 'yfcc15m'),
- ('RN101-quickgelu', 'openai'),
- ('RN101-quickgelu', 'yfcc15m'),
- ('RN50x4', 'openai'),
- ('RN50x16', 'openai'),
- ('RN50x64', 'openai'),
- ('ViT-B-32', 'openai'),
- ('ViT-B-32', 'laion400m_e31'),
- ('ViT-B-32', 'laion400m_e32'),
- ('ViT-B-32', 'laion2b_e16'),
- ('ViT-B-32', 'laion2b_s34b_b79k'),
- ('ViT-B-32-quickgelu', 'openai'),
- ('ViT-B-32-quickgelu', 'laion400m_e31'),
- ('ViT-B-32-quickgelu', 'laion400m_e32'),
- ('ViT-B-16', 'openai'),
- ('ViT-B-16', 'laion400m_e31'),
- ('ViT-B-16', 'laion400m_e32'),
- ('ViT-B-16', 'laion2b_s34b_b88k'),
- ('ViT-B-16-plus-240', 'laion400m_e31'),
- ('ViT-B-16-plus-240', 'laion400m_e32'),
- ('ViT-L-14', 'openai'),
- ('ViT-L-14', 'laion400m_e31'),
- ('ViT-L-14', 'laion400m_e32'),
- ('ViT-L-14', 'laion2b_s32b_b82k'),
- ('ViT-L-14-336', 'openai'),
- ('ViT-H-14', 'laion2b_s32b_b79k'),
- ('ViT-g-14', 'laion2b_s12b_b42k'),
- ('ViT-g-14', 'laion2b_s34b_b88k'),
- ('ViT-bigG-14', 'laion2b_s39b_b160k'),
- ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
- ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
- ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
- ('convnext_base', 'laion400m_s13b_b51k'),
- ('convnext_base_w', 'laion2b_s13b_b82k'),
- ('convnext_base_w', 'laion2b_s13b_b82k_augreg'),
- ('convnext_base_w', 'laion_aesthetic_s13b_b82k'),
- ('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'),
- ('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'),
- ('convnext_large_d', 'laion2b_s26b_b102k_augreg'),
- ('convnext_large_d_320', 'laion2b_s29b_b131k_ft'),
- ('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'),
- ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'),
- ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'),
- ('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'),
- ('coca_ViT-B-32', 'laion2b_s13b_b90k'),
- ('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'),
- ('coca_ViT-L-14', 'laion2b_s13b_b90k'),
- ('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k')]
+('RN50', 'yfcc15m'),
+('RN50', 'cc12m'),
+('RN50-quickgelu', 'openai'),
+('RN50-quickgelu', 'yfcc15m'),
+('RN50-quickgelu', 'cc12m'),
+('RN101', 'openai'),
+('RN101', 'yfcc15m'),
+('RN101-quickgelu', 'openai'),
+('RN101-quickgelu', 'yfcc15m'),
+('RN50x4', 'openai'),
+('RN50x16', 'openai'),
+('RN50x64', 'openai'),
+('ViT-B-32', 'openai'),
+('ViT-B-32', 'laion400m_e31'),
+('ViT-B-32', 'laion400m_e32'),
+('ViT-B-32', 'laion2b_e16'),
+('ViT-B-32', 'laion2b_s34b_b79k'),
+('ViT-B-32', 'datacomp_m_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_clip_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_laion_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_image_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_text_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_basic_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_s128m_b4k'),
+('ViT-B-32', 'datacomp_s_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_clip_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_laion_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_image_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_text_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_basic_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_s13m_b4k'),
+('ViT-B-32-quickgelu', 'openai'),
+('ViT-B-32-quickgelu', 'laion400m_e31'),
+('ViT-B-32-quickgelu', 'laion400m_e32'),
+('ViT-B-16', 'openai'),
+('ViT-B-16', 'laion400m_e31'),
+('ViT-B-16', 'laion400m_e32'),
+('ViT-B-16', 'laion2b_s34b_b88k'),
+('ViT-B-16', 'datacomp_l_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_clip_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_laion_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_image_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_text_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_basic_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_s1b_b8k'),
+('ViT-B-16-plus-240', 'laion400m_e31'),
+('ViT-B-16-plus-240', 'laion400m_e32'),
+('ViT-L-14', 'openai'),
+('ViT-L-14', 'laion400m_e31'),
+('ViT-L-14', 'laion400m_e32'),
+('ViT-L-14', 'laion2b_s32b_b82k'),
+('ViT-L-14', 'datacomp_xl_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_clip_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_laion_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_s13b_b90k'),
+('ViT-L-14-336', 'openai'),
+('ViT-H-14', 'laion2b_s32b_b79k'),
+('ViT-g-14', 'laion2b_s12b_b42k'),
+('ViT-g-14', 'laion2b_s34b_b88k'),
+('ViT-bigG-14', 'laion2b_s39b_b160k'),
+('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
+('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
+('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
+('convnext_base', 'laion400m_s13b_b51k'),
+('convnext_base_w', 'laion2b_s13b_b82k'),
+('convnext_base_w', 'laion2b_s13b_b82k_augreg'),
+('convnext_base_w', 'laion_aesthetic_s13b_b82k'),
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'),
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'),
+('convnext_large_d', 'laion2b_s26b_b102k_augreg'),
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft'),
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'),
+('coca_ViT-B-32', 'laion2b_s13b_b90k'),
+('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'),
+('coca_ViT-L-14', 'laion2b_s13b_b90k'),
+('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k')
+]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
