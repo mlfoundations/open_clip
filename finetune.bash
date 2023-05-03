@@ -1,0 +1,24 @@
+.venv/bin/torchrun --nproc_per_node 4 -m training.main \
+  --dataset-type webdataset \
+  --train-data '/local/scratch/cv_datasets/inat21/pretrain-webdataset/train/shards/shard-{000000..000231}.tar' \
+  --train-num-samples 2416310 \
+  --dataset-resampled \
+  --workers 8 \
+  --precision amp \
+  --warmup 1000 \
+  --epochs 32 \
+  --batch-size 1024 \
+  --accum-freq 4 \
+  --grad-checkpointing \
+  --local-loss \
+  --gather-with-grad \
+  --save-frequency 2 \
+  --log-every-n-steps 10 \
+  --lr 1e-4 \
+  --model ViT-B-16 \
+  --pretrained openai \
+  --image-mean 0.4632 0.4800 0.3762 \
+  --image-std 0.2375 0.2291 0.2474 \
+  --report-to wandb \
+  --wandb-project-name open_clip \
+  --seed 42
