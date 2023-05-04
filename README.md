@@ -8,7 +8,7 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
+We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with larger datasets such as [LAION-2B](https://laion.ai/blog/laion-5b/) and [DataComp-1B](https://arxiv.org/abs/2304.14108) datasets. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 
 We have trained the following ViT CLIP models:
   * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet-1k
@@ -18,12 +18,12 @@ We have trained the following ViT CLIP models:
   * ViT-B/16 on LAION-2B with a accuracy of **70.2%**.
   * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
-  * ViT-L/14 on [DataComp-1B](https://github.com/mlfoundations/datacomp) with an accuracy of **79.2**. 13B samples seen schedule.
+  * ViT-L/14 on [DataComp-1B](https://github.com/mlfoundations/datacomp) with an accuracy of **79.2%**. 13B samples seen schedule.
   * CoCa ViT-L/14 on LAION-2B with an accuracy of **75.5%** (currently only 13B samples seen) vs. CLIP ViT-L/14 73.1% (on the same dataset and samples seen)
-  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
-  * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
-  * ViT-g/14 on LAION-2B with an accuracy of **78.5**. Full 34B samples seen schedule.
-  * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
+  * ViT-H/14 on LAION-2B with an accuracy of **78.0%**. The second best in1k zero-shot for released, open-source weights thus far.
+  * ViT-g/14 on LAION-2B with an accuracy of **76.6%**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
+  * ViT-g/14 on LAION-2B with an accuracy of **78.5%**. Full 34B samples seen schedule.
+  * ViT-G/14 on LAION-2B with an accuracy of **80.1%**. The best in1k zero-shot for released, open-source weights thus far.
 
 And the following ConvNeXt CLIP models:
   * ConvNext-Base @ 224x224 on LAION-400M with an ImageNet-1k zero-shot top-1 of **66.3%**
