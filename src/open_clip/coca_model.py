@@ -55,6 +55,7 @@ def _build_text_decoder_tower(
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        is_decoder=True
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -68,9 +69,12 @@ def _build_text_decoder_tower(
         heads=multimodal_cfg.heads,
         layers=multimodal_cfg.layers,
         ls_init_value=multimodal_cfg.ls_init_value,
+        cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
+        is_encoder_decoder=multimodal_cfg.is_encoder_decoder,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
+        is_decoder=is_decoder
     )
 
     return decoder

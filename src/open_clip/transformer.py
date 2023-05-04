@@ -9,6 +9,8 @@ from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
 
+_TRANSFORMER_TYPES = ["transformer", "cross_attn"]
+
 
 class LayerNormFp32(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
@@ -312,14 +314,24 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, y: torch.Tensor = None, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask)
+                x = checkpoint(r, x, y, y, attn_mask)
             else:
-                x = r(x, attn_mask=attn_mask)
+                x = r(x, y, y, attn_mask=attn_mask)
         return x
+    
+    def init_parameters(self):
+        proj_std = (self.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.width ** -0.5
+        fc_std = (2 * self.width) ** -0.5
+        for block in self.resblocks:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
 
 class VisionTransformer(nn.Module):
@@ -396,7 +408,7 @@ class VisionTransformer(nn.Module):
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         for param in self.parameters():
-            param.requires_grad = False
+            param.requires_grad = FalseFalse
 
         if unlocked_groups != 0:
             groups = [
@@ -518,8 +530,10 @@ class TextTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             embed_cls: bool = False,
+            transformer_type: str = "transformer",
             pad_id: int = 0,
             output_tokens: bool = False,
+            **transformer_kwargs
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -540,14 +554,24 @@ class TextTransformer(nn.Module):
 
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
-        self.transformer = Transformer(
+        
+        if transformer_type == "transformer":
+            _transformer_type = Transformer
+        elif transformer_type == "multimodal":
+            _transformer_type = MultimodalTransformer
+        elif transformer_type not in _TRANSFORMER_TYPES:
+            assert False, "this transformer type does not exist"
+             
+        self.transformer = _transformer_type(
             width=width,
             layers=layers,
             heads=heads,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            **transformer_kwargs
         )
+
         self.ln_final = norm_layer(width)
 
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
@@ -560,15 +584,7 @@ class TextTransformer(nn.Module):
         if self.cls_emb is not None:
             nn.init.normal_(self.cls_emb, std=0.01)
 
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
-        fc_std = (2 * self.transformer.width) ** -0.5
-        for block in self.transformer.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-
+        self.transformer.init_parameters()
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
 
@@ -596,12 +612,13 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text):
+    def forward(self, text, cross_embs=None, attn_mask=None):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        attn_mask = self.attn_mask
+        if attn_mask is None:
+            attn_mask = self.attn_mask 
         if self.cls_emb is not None:
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
@@ -610,7 +627,7 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask)
+        x = self.transformer(x, cross_embs, cross_embs, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -618,6 +635,9 @@ class TextTransformer(nn.Module):
         if self.cls_emb is not None:
             pooled, tokens = x[:, -1], x[:, :-1]
             pooled = self.ln_final(pooled)
+        elif self.token_average_pool:
+            tokens = self.ln_final(tokens)
+            pooled = tokens.mean(1)
         else:
             x = self.ln_final(x)
             pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
@@ -637,11 +657,13 @@ class MultimodalTransformer(Transformer):
             width: int,
             layers: int,
             heads: int,
-            context_length: int = 77,
-            mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            mlp_ratio: float = 4.0,
+            n_cross_ratio = 1,
+            is_decoder: bool = False, # if this is false remaining params are useless
+            context_length: int = 77,
             output_dim: int = 512,
     ):
 
@@ -652,8 +674,13 @@ class MultimodalTransformer(Transformer):
             mlp_ratio=mlp_ratio,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
-            norm_layer=norm_layer,
+            norm_layer=norm_layer
         )
+
+
+        n_cross_attn, _ = divmod(layers, n_cross_ratio)
+        self.cross_step, _ = divmod(layers, n_cross_attn)
+
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
             ResidualAttentionBlock(
@@ -665,62 +692,81 @@ class MultimodalTransformer(Transformer):
                 norm_layer=norm_layer,
                 is_cross_attention=True,
             )
-            for _ in range(layers)
+            for _ in range(n_cross_attn)
         ])
 
-        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
-
-        self.ln_final = norm_layer(width)
-        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-
-    def init_parameters(self):
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
-        fc_std = (2 * self.transformer.width) ** -0.5
-        for block in self.transformer.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        for block in self.transformer.cross_attn:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-
-        if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+        self.is_decoder = is_decoder
+        if self.is_decoder:
+            self.ln_final = norm_layer(width)
+            self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+            self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+        else:
+            self.ln_final = None
+            self.text_projection = None
+            self.attn_mask = None
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
         # pytorch uses additive attention mask; fill with -inf
         mask = torch.empty(self.context_length, self.context_length)
         mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
+        mask.triu_(1) # zero out the lower diagonal
         return mask
 
-    def forward(self, image_embs, text_embs):
-        text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
+    def forward(self, image_embs, text_embs, attn_mask=None):
+        text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
         seq_len = text_embs.shape[0]
 
-        for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
+        if self.attn_mask is not None and attn_mask is None:
+            attn_mask = self.attn_mask
+
+        for idx, resblock in enumerate(self.resblocks):
+            cross_attn_idx, _r = divmod(idx, self.cross_step)
+            do_cross_attn = _r == 0
+
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
-                text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
+                text_embs = checkpoint(resblock, text_embs, None, None, attn_mask[:seq_len, :seq_len])
+                if do_cross_attn:
+                    cross_attn = self.cross_attn[cross_attn_idx]
+                    text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
             else:
-                text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
-                text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
+                text_embs = resblock(text_embs, None, None, attn_mask=attn_mask[:seq_len, :seq_len])
+                if do_cross_attn:
+                    cross_attn = self.cross_attn[cross_attn_idx]
+                    text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
+
+        assert cross_attn_idx == len(self.cross_attn) - 1, "some cross attentions are being skipped"
 
         x = text_embs.permute(1, 0, 2)  # LND -> NLD
+
+        if not self.is_decoder:
+            return x
+
         x = self.ln_final(x)
 
         if self.text_projection is not None:
-            x = x @ self.text_projection
+                x = x @ self.text_projection
 
         return x
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
+
+    def init_parameters(self):
+        proj_std = (self.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.width ** -0.5
+        fc_std = (2 * self.width) ** -0.5
+        for block in self.resblocks:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        for block in self.cross_attn:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+

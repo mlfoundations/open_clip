@@ -61,6 +61,7 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    transformer_type: str = "transformer"
 
 
 def get_cast_dtype(precision: str):
@@ -139,6 +140,7 @@ def _build_text_tower(
         text_cfg: CLIPTextCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        **transformer_kwargs
 ):
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
@@ -169,7 +171,9 @@ def _build_text_tower(
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            **transformer_kwargs
         )
+
     return text
 
 
