@@ -1,3 +1,7 @@
+## 2.19.0
+
+* Add DataComp models
+
 ## 2.18.0
 
 * Enable int8 inference without `.weight` attribute
