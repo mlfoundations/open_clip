@@ -7,6 +7,7 @@ import html
 import os
 from functools import lru_cache
 from typing import Union, List
+from torch import nn
 
 import ftfy
 import regex as re
@@ -212,3 +213,65 @@ class HFTokenizer:
             truncation=True,
         ).input_ids
         return input_ids
+
+
+# TEMPORARY WIP
+import importlib
+import torch.nn.functional as F
+from omegaconf import OmegaConf
+from taming.models.vqgan import VQModel # I don't love this part
+from einops import rearrange
+from math import sqrt
+
+def get_obj_from_str(string, reload=False):
+    module, cls = string.rsplit(".", 1)
+    if reload:
+        module_imp = importlib.import_module(module)
+        importlib.reload(module_imp)
+    return getattr(importlib.import_module(module, package=None), cls)
+
+def instantiate_from_config(config):
+    if not "target" in config:
+        raise KeyError("Expected key `target` to instantiate.")
+    return get_obj_from_str(config["target"])(**config.get("params", dict()))
+
+
+class VQGANTokenizer(nn.Module):
+    """VQGAN image tokenizer"""
+
+    def __init__(self, config_path, model_path, split_batch):
+        super().__init__()
+        config = OmegaConf.load(config_path)
+        self.vqgan = VQModel(**config.model.params)
+        sd = torch.load(model_path, map_location="cpu")["state_dict"]
+        missing, unexpected = self.vqgan.load_state_dict(sd, strict=False)
+        self.num_tokens = config["model"]["params"]["n_embed"]
+        self.split_batch = split_batch
+
+        self.vqgan.eval()
+        
+    def encode(self, image):
+        tot_indices = []
+        for img in torch.split(image, self.split_batch):
+            _, _, [_, _, indices] = self.vqgan.encode(img)
+            tot_indices.append(indices.reshape(img.shape[0], -1))
+        indices = torch.cat(tot_indices)
+        return indices # [bs, ctx_len]
+
+    def _get_embeddings(self, tokens):
+        one_hot_indices = F.one_hot(tokens, num_classes = self.num_tokens).float()
+        z = one_hot_indices @ self.vqgan.quantize.embedding.weight
+        return z
+
+    def decode(self, tokens):
+        b, n = tokens.shape
+        z = self._get_embeddings(tokens)
+
+        z = rearrange(z, 'b (h w) c -> b c h w', h = int(sqrt(n)))
+        img = self.vqgan.decode(z)
+
+        img = (img.clamp(-1., 1.) + 1) * 0.5
+        return img
+
+    def __call__(self, image):
+        return self.encode(image)

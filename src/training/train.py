@@ -88,8 +88,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if not args.skip_scheduler:
             scheduler(step)
 
-        images, texts = batch
+        images, images_vqgan, texts = batch
+
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
+        images_vqgan = images_vqgan.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -97,7 +99,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
+                model_out = model(images, texts, image_tok=images_vqgan)
                 logit_scale = model_out["logit_scale"]
                 if args.distill:
                     with torch.no_grad():

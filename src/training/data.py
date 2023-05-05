@@ -92,6 +92,22 @@ def expand_urls(urls, weights=None):
         all_urls = list(urls)
         return all_urls, weights
 
+# TODO: remove temp, figure out better way
+import PIL
+import torchvision.transforms as T
+import torchvision.transforms.functional as TF
+def preprocess_vqgan(img):
+    target_img_size=256
+    s = min(img.size)
+    r = target_img_size / s
+    s = (round(r * img.size[1]), round(r * img.size[0]))
+    img = TF.resize(img, s, interpolation=PIL.Image.LANCZOS)
+    img = TF.center_crop(img, output_size=2 * [target_img_size])
+    img = T.ToTensor()(img)
+
+    img = 2. * img - 1.
+    return img
+
 
 def get_dataset_size(shards):
     shards_list, _ = expand_urls(shards)
@@ -388,9 +404,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
+        wds.rename(image="jpg;png;jpeg;webp", image_vqgan="jpg;png;jpeg;webp", text="txt"),
+        wds.map_dict(image=preprocess_img, image_vqgan=preprocess_vqgan, text=lambda text: tokenizer(text)[0]),
+        wds.to_tuple("image", "image_vqgan", "text"),
         wds.batched(args.batch_size, partial=not is_train)
     ])
 

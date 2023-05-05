@@ -136,6 +136,7 @@ class CoCaLoss(ClipLoss):
             self,
             caption_loss_weight,
             clip_loss_weight,
+            image_generation_loss_weight=0.0,
             pad_id=0,  # pad_token for open_clip custom tokenizer
             local_loss=False,
             gather_with_grad=False,
@@ -155,22 +156,33 @@ class CoCaLoss(ClipLoss):
 
         self.clip_loss_weight = clip_loss_weight
         self.caption_loss_weight = caption_loss_weight
-        self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
+        self.image_generation_loss_weight = image_generation_loss_weight
+        self.generative_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
-    def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
+    def forward(self, image_features, text_features, logits_text, labels_text, logit_scale, logits_image=None, labels_image=None, output_dict=False):
         clip_loss = super().forward(image_features, text_features, logit_scale)
         clip_loss = self.clip_loss_weight * clip_loss
 
-        caption_loss = self.caption_loss(
-            logits.permute(0, 2, 1),
-            labels,
+        caption_loss = self.generative_loss(
+            logits_text.permute(0, 2, 1),
+            labels_text,
         )
         caption_loss = caption_loss * self.caption_loss_weight
+        out_dict = {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
+
+        image_gen_loss = None
+        if labels_image is not None and logits_image is not None:
+            image_gen_loss = self.generative_loss(
+                logits_image.permute(0, 2, 1),
+                labels_image,
+            )
+            image_gen_loss = image_gen_loss * self.image_generation_loss_weight
+            out_dict["image_gen_loss"] = image_gen_loss
 
         if output_dict:
-            return {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
+            return out_dict
 
-        return clip_loss, caption_loss
+        return (clip_loss, caption_loss) if image_gen_loss is None else (clip_loss, caption_loss, image_gen_loss)
 
 
 class DistillClipLoss(ClipLoss):
