@@ -8,15 +8,17 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
+from .video_model import VideoCLIP # TODO: change once full model is implemented
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
-from .transform import image_transform, AugmentationCfg
+from .transform import image_transform, video_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
 
@@ -100,7 +102,18 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
     resize_pos_embed(state_dict, model)
-    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+
+    incompatible_keys = []
+    # TODO: find better way of doing this
+    if isinstance(model, VideoCLIP):
+        text_state_dict = dict([(k[len("text."):], v) for (k, v) in state_dict.items() if k.startswith("text")])
+        visual_state_dict = dict([(k[len("visual."):], v) for (k, v) in state_dict.items() if k.startswith("visual")])
+
+        incompatible_keys += model.text.load_state_dict(text_state_dict, strict=strict)
+        incompatible_keys += model.visual.spatial.load_state_dict(visual_state_dict, strict=strict)
+    else:
+        incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+
     return incompatible_keys
 
 
@@ -191,11 +204,20 @@ def create_model(
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            if "ViViT" in model_name: # TODO better way of detecting video configs
+                model = VideoCLIP(**model_cfg)
+            else:
+                model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_loaded = False
         if pretrained:
             checkpoint_path = ''
+
+            # TODO: not sure how to initialize components nicely
+            # idea for now: model_name:pretrained
+            if ":" in pretrained:
+                model_name, pretrained = pretrained.split(":")
+
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
             if pretrained_cfg:
                 checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
@@ -305,21 +327,40 @@ def create_model_and_transforms(
         output_dict=output_dict,
     )
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(
-        model.visual.image_size,
-        is_train=True,
-        mean=image_mean,
-        std=image_std,
-        aug_cfg=aug_cfg,
-    )
-    preprocess_val = image_transform(
-        model.visual.image_size,
-        is_train=False,
-        mean=image_mean,
-        std=image_std,
-    )
+    # TODO: better way of getting modality specific transforms
+    if "ViViT" in model_name:
+        preprocess_train = video_transform( 
+            frame_size=model.visual.spatial.image_size,
+            n_frames=model.visual.context_length,
+            take_every_nth=5,
+            is_train=False, # TODO: figre out if frame augmentations make sense
+            frame_mean=None,
+            frame_std=None,
+        )
+        preprocess_val = video_transform(
+            frame_size=model.visual.spatial.image_size,
+            n_frames=model.visual.context_length,
+            take_every_nth=5,
+            is_train=False,
+            frame_mean=None,
+            frame_std=None,
+        )
+    else:
+        image_mean = image_mean or getattr(model.visual, 'image_mean', None)
+        image_std = image_std or getattr(model.visual, 'image_std', None)
+        preprocess_train = image_transform(
+            model.visual.image_size,
+            is_train=True,
+            mean=image_mean,
+            std=image_std,
+            aug_cfg=aug_cfg,
+        )
+        preprocess_val = image_transform(
+            model.visual.image_size,
+            is_train=False,
+            mean=image_mean,
+            std=image_std,
+        )
 
     return model, preprocess_train, preprocess_val
 

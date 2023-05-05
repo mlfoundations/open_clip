@@ -29,6 +29,7 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
+from training.video_data import get_video_data # TODO: maybe we don't need separate files
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
 from training.params import parse_args
@@ -345,7 +346,12 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    # TODO: come up with a way of getting alternative modality data based on model config
+    if "ViViT" in args.model:
+        data = get_video_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    else:
+        data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
