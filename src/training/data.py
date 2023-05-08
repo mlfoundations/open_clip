@@ -418,7 +418,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=True,
+        persistent_workers=args.workers > 0,
     )
 
     # FIXME not clear which approach is better, with_epoch before vs after dataloader?
