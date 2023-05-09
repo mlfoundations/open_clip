@@ -70,7 +70,6 @@ def _build_text_decoder_tower(
         layers=multimodal_cfg.layers,
         ls_init_value=multimodal_cfg.ls_init_value,
         cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
-        is_encoder_decoder=multimodal_cfg.is_encoder_decoder,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,

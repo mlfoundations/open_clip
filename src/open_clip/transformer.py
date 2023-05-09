@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
 
-_TRANSFORMER_TYPES = ["transformer", "cross_attn"]
+_TRANSFORMER_TYPES = ["transformer", "multimodal"]
 
 
 class LayerNormFp32(nn.LayerNorm):
@@ -314,13 +314,13 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor = None, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, y, y, attn_mask)
+                x = checkpoint(r, x, None, None, attn_mask)
             else:
-                x = r(x, y, y, attn_mask=attn_mask)
+                x = r(x, attn_mask=attn_mask)
         return x
     
     def init_parameters(self):
@@ -408,7 +408,7 @@ class VisionTransformer(nn.Module):
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         for param in self.parameters():
-            param.requires_grad = FalseFalse
+            param.requires_grad = False
 
         if unlocked_groups != 0:
             groups = [
@@ -533,6 +533,7 @@ class TextTransformer(nn.Module):
             transformer_type: str = "transformer",
             pad_id: int = 0,
             output_tokens: bool = False,
+            token_average_pool: bool = False,
             **transformer_kwargs
     ):
         super().__init__()
@@ -545,6 +546,7 @@ class TextTransformer(nn.Module):
         self.pad_id = pad_id
 
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        self.token_average_pool = token_average_pool
 
         if embed_cls:
             self.cls_emb = nn.Parameter(torch.empty(width))
@@ -618,7 +620,7 @@ class TextTransformer(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         if attn_mask is None:
-            attn_mask = self.attn_mask 
+            attn_mask = self.attn_mask
         if self.cls_emb is not None:
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
@@ -627,7 +629,10 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, cross_embs, cross_embs, attn_mask=attn_mask)
+        if cross_embs is not None:
+            x = self.transformer(x, cross_embs, cross_embs, attn_mask=attn_mask)
+        else:
+            x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -747,7 +752,7 @@ class MultimodalTransformer(Transformer):
         x = self.ln_final(x)
 
         if self.text_projection is not None:
-                x = x @ self.text_projection
+            x = x @ self.text_projection
 
         return x
 

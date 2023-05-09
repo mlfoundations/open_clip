@@ -255,7 +255,7 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
-    elif any(m in args.model.lower() for m in ["coca", "mammut"]):
+    elif any(m in args.model.lower() for m in _IMAGE_CAPTIONING_MODELS):
         return CoCaLoss(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
