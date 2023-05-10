@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
-from .model import CLIP, CustomTextCLIP, TextTextCLIP, SiameseTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, CustomTextCLIP, CLANP, SiameseCLANP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
@@ -204,18 +204,18 @@ def create_model(
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
-        # switch to TextTextCLIP
+        # switch to CLANP
         if model_type=="CLANP":
             if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
                 model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
             if 'hf_model_name' in model_cfg.get('tower_b_cfg', {}):
                 model_cfg['tower_b_cfg']['hf_model_pretrained'] = pretrained_hf
-            model = TextTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+            model = CLANP(**model_cfg, cast_dtype=cast_dtype)
 
         elif model_type=="SiameseCLANP":
             if 'hf_model_name' in model_cfg.get('tower_a_cfg', {}):
                 model_cfg['tower_a_cfg']['hf_model_pretrained'] = pretrained_hf
-            model = SiameseTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+            model = SiameseCLANP(**model_cfg, cast_dtype=cast_dtype)
             
         elif model_type=="CLIP":
         

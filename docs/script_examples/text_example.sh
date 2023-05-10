@@ -53,7 +53,7 @@ srun --comment laion --cpu_bind=v --accel-bind=gn python3 -m training.main \
     --gather-with-grad \
     --ddp-static-graph \
     --grad-checkpointing \
-    --model_type="text_siamese_encoder" \
+    --model_type="Siamese_CLANP" \
     --debug \
     --sts-val-data="lingjzhu/sts17-crosslingual" 
 

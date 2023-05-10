@@ -1,0 +1,28 @@
+torchrun --standalone --nnodes=1  src/training/main.py \
+    --save-frequency 1 \
+    --dataset-type="webdataset" \
+    --text-a-key="txt" \
+    --text-b-key="txt" \
+    --report-to wandb \
+    --wandb-project-name="TextTextCLIP" \
+    --train-data="../text.tar" \
+    --train-num-samples 13560 \
+    --warmup 2000 \
+    --batch-size=4 \
+    --precision amp_bfloat16 \
+    --lr=0.001 \
+    --wd=0.2 \
+    --epochs=9 \
+    --workers=1 \
+    --model "pythia-70m-pythia-70m" \
+    --seed 0 \
+    --log-every-n-steps 5 \
+    --model-type "CLANP" \
+    --sts-val-data "lingjzhu/sts17-crosslingual" \
+    --local-loss \
+    --gather-with-grad \
+    --ddp-static-graph \
+    --grad-checkpointing \
+    --debug \
+    --unsupervised-pretraining
+

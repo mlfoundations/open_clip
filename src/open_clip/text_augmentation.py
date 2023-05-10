@@ -85,23 +85,17 @@ def add_bos_eos(x, bos_token_id, eos_token_id):
 
 def create_unsupervised_sample(text,tokenizer,args):
     # remove padding
-    text = text[text!=tokenizer.pad_token_id]
-    if text[0] == tokenizer.bos_token_id:
+    text = text[text!=tokenizer.tokenizer.pad_token_id]
+    if text[0] == tokenizer.tokenizer.bos_token_id:
         text == text[1:]
-    if text[-1] == tokenizer.eos_token_id:
+    if text[-1] == tokenizer.tokenizer.eos_token_id:
         text = text[:-1]
     # perform data augmentation
     text = randomcrop(text, args.text_aug_ratio_min, args.text_aug_ratio_max)
-    text = apply_augmentation(text, tokenizer, args)
+    text = apply_augmentation(text, tokenizer.tokenizer, args)
     # add bos/eos tokens back
-    text = add_bos_eos(text, tokenizer.bos_token_id, tokenizer.eos_token_id)
+    text = add_bos_eos(text, tokenizer.tokenizer.bos_token_id, tokenizer.tokenizer.eos_token_id)
     # padding back to max length
-    text = tokenizer(
-            text,
-            return_tensors='pt',
-            max_length=args.context_length,
-            padding='max_length',
-            truncation=True,
-        ).input_ids
-    
-    return text
+    output = torch.zeros(args.context_length)
+    output[:len(text)] = text
+    return output.long()
