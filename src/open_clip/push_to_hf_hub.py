@@ -3,9 +3,10 @@ import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
+from typing_extensions import Literal
 
 try:
     from huggingface_hub import (
