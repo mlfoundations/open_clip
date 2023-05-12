@@ -14,7 +14,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import get_cast_dtype, CLIP, CustomTextCLIP
+from open_clip import get_input_dtype, CLIP, CustomTextCLIP
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -62,7 +62,7 @@ def backward(total_loss, scaler):
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
+    input_dtype = get_input_dtype(args.precision)
 
 
     model.train()
@@ -89,7 +89,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             scheduler(step)
 
         images, texts = batch
-        images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
+        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -244,7 +244,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
+    input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
@@ -259,7 +259,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
                 images, texts = batch
-                images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
+                images = images.to(device=device, dtype=input_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():

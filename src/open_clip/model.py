@@ -28,13 +28,16 @@ class CLIPVisionCfg:
     mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
+
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
-    input_patchnorm: bool = False # whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design
+    input_patchnorm: bool = False  # whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design
     global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
-    attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
-    n_queries: int = 256 # n_queries for attentional pooler
-    attn_pooler_heads: int = 8 # n heads for attentional_pooling
+    attentional_pool: bool = False  # whether to use attentional pooler in the last embedding layer
+    n_queries: int = 256  # n_queries for attentional pooler
+    attn_pooler_heads: int = 8  # n heads for attentional_pooling
+    output_tokens: bool = False
+
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -42,7 +45,6 @@ class CLIPVisionCfg:
     timm_proj_bias: bool = False  # enable bias final projection
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
-    output_tokens: bool = False
 
 
 @dataclass
@@ -72,6 +74,15 @@ def get_cast_dtype(precision: str):
     return cast_dtype
 
 
+def get_input_dtype(precision: str):
+    input_dtype = None
+    if precision in ('bf16', 'pure_bf16'):
+        input_dtype = torch.bfloat16
+    elif precision in ('fp16', 'pure_fp16'):
+        input_dtype = torch.float16
+    return input_dtype
+
+
 def _build_vision_tower(
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
@@ -95,10 +106,10 @@ def _build_vision_tower(
             proj_bias=vision_cfg.timm_proj_bias,
             drop=vision_cfg.timm_drop,
             drop_path=vision_cfg.timm_drop_path,
+            patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
         )
-        act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
         visual = ModifiedResNet(
@@ -228,9 +239,13 @@ class CLIP(nn.Module):
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
+    def forward(
+            self,
+            image: Optional[torch.Tensor] = None,
+            text: Optional[torch.Tensor] = None,
+    ):
+        image_features = self.encode_image(image, normalize=True) if image is not None else None
+        text_features = self.encode_text(text, normalize=True) if text is not None else None
         if self.output_dict:
             return {
                 "image_features": image_features,
@@ -280,9 +295,13 @@ class CustomTextCLIP(nn.Module):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def forward(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
+    def forward(
+            self,
+            image: Optional[torch.Tensor] = None,
+            text: Optional[torch.Tensor] = None,
+    ):
+        image_features = self.encode_image(image, normalize=True) if image is not None else None
+        text_features = self.encode_text(text, normalize=True) if text is not None else None
         if self.output_dict:
             return {
                 "image_features": image_features,
@@ -307,11 +326,17 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
                 if tensor is not None:
                     tensor.data = tensor.data.to(dtype)
 
-        for name in ["text_projection", "proj"]:
-            if hasattr(l, name):
-                attr = getattr(l, name)
-                if attr is not None:
-                    attr.data = attr.data.to(dtype)
+        if isinstance(l, (CLIP, TextTransformer)):
+            # convert text nn.Parameter projections
+            attr = getattr(l, "text_projection", None)
+            if attr is not None:
+                attr.data = attr.data.to(dtype)
+
+        if isinstance(l, VisionTransformer):
+            # convert vision nn.Parameter projections
+            attr = getattr(l, "proj", None)
+            if attr is not None:
+                attr.data = attr.data.to(dtype)
 
     model.apply(_convert_weights)
 
