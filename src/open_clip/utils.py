@@ -61,7 +61,8 @@ to_4tuple = _ntuple(4)
 to_ntuple = lambda n, x: _ntuple(n)(x)
 
 # Replaces all linear layers with linear_replacement
-def replace_linear(model, linear_replacement, include_modules=['in_proj_linear', 'out_proj', 'c_fc', 'c_proj'], copy_weights=True):
+# TODO: add int8 support for other linear layers including attn and convnets
+def replace_linear(model, linear_replacement, include_modules=['c_fc', 'c_proj'], copy_weights=True):
     for name, module in model.named_children():
         if len(list(module.children())) > 0:
             replace_linear(module, linear_replacement, include_modules, copy_weights)
@@ -79,3 +80,10 @@ def replace_linear(model, linear_replacement, include_modules=['in_proj_linear',
                     model._modules[name].bias.data.copy_(old_module.bias)
 
     return model
+
+def convert_int8_model_to_inference_mode(model):
+    for m in model.modules():
+        if hasattr(m, 'prepare_for_eval'):
+            int8_original_dtype = m.weight.dtype
+            m.prepare_for_eval()
+            m.int8_original_dtype = int8_original_dtype

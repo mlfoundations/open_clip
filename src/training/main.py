@@ -401,6 +401,11 @@ def main(args):
         model = torch.compile(model)
 
     if 'train' not in data:
+        # If using int8, convert to inference mode.
+        if args.use_bnb_linear is not None:
+            from open_clip.utils import convert_int8_model_to_inference_mode
+            convert_int8_model_to_inference_mode(model)
+        # Evaluate.
         evaluate(model, data, start_epoch, args, writer)
         return
 
