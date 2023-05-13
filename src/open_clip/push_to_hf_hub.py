@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 
@@ -59,7 +59,7 @@ def save_for_hf(
     tokenizer: HFTokenizer,
     model_config: dict,
     save_directory: str,
-    safe_serialization: Union[bool, Literal["both"]] = False,
+    safe_serialization: Union[bool, str] = False,
     skip_weights : bool = False,
 ):
     config_filename = HF_CONFIG_NAME
@@ -92,7 +92,7 @@ def push_to_hf_hub(
     private: bool = False,
     create_pr: bool = False,
     model_card: Optional[dict] = None,
-    safe_serialization: Union[bool, Literal["both"]] = False,
+    safe_serialization: Union[bool, str] = False,
 ):
     if not isinstance(tokenizer, HFTokenizer):
         # default CLIP tokenizers use https://huggingface.co/openai/clip-vit-large-patch14
