@@ -7,4 +7,3 @@ huggingface_hub
 sentencepiece
 protobuf<4
 timm
-typing_extensions
