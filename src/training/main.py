@@ -334,7 +334,9 @@ def main(args):
                 for layer in args.fsdp_layers_to_wrap:
                     if re.match(layer, name):
                         layers.add(module.__class__)
-            logging.info(f"FSDP Wrapped layers: {layers}")
+
+            if is_master(args):
+                logging.info(f"FSDP Wrapped layers: {layers}")
 
             wrapper_kwargs = dict(
                 mixed_precision=mixed_precision,
@@ -357,6 +359,7 @@ def main(args):
             if is_master(args):
                 logging.info(f"After FSDP number of params: {sum(p.numel() for p in model.parameters())}")
                 logging.info(f"After FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.4} GB")
+                
             if args.grad_checkpointing:
                 layers_grad_checkpoint = set()
                 for module in model.modules():
