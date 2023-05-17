@@ -53,7 +53,7 @@ def build_inputs(test_name):
     return input_dir
 
 
-def build_params(input_shards, seed=0):
+def build_params(input_shards, seed=0, **kwargs):
     args = parse_args([])
     args.train_data = input_shards
     args.train_num_samples = TRAIN_NUM_SAMPLES
@@ -67,14 +67,43 @@ def build_params(input_shards, seed=0):
     preprocess_img = lambda x: x
     tokenizer = lambda x: [x.strip()]
 
+    for key, value in kwargs.items():
+        setattr(args, key, value)
+
     return args, preprocess_img, tokenizer
 
 
-def get_dataloader(input_shards):
-    args, preprocess_img, tokenizer = build_params(input_shards)
+def get_dataloader(input_shards, return_dataset=False, **kwargs):
+    args, preprocess_img, tokenizer = build_params(input_shards, **kwargs)
     dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
+    if return_dataset:
+        return dataset
     dataloader = dataset.dataloader
     return dataloader
+
+
+def test_sampling_without_replacement():
+    """Test webdataset with a single tar file."""
+    input_dir = build_inputs('single_source')    
+    input_shards = os.path.join(input_dir, 'test_data_{000..001}.tar')
+    dataset = get_dataloader(input_shards, dataset_resampled=False, num_subepochs_per_epoch=2, return_dataset=True)
+    
+    for epoch in [0, 1]:
+        dataset.set_epoch(epoch)
+
+        dataloader = dataset.dataloader
+
+        counts = collections.defaultdict(int)
+        for sample in dataloader:
+            txts = sample[1]
+            for txt in txts:
+                counts[txt] += 1
+        
+        expected_prefix = f'{epoch:03d}'
+        expected_count = TRAIN_NUM_SAMPLES / 10 if epoch == 0 else TRAIN_NUM_SAMPLES / 5
+        for key, count in counts.items():
+            assert key.startswith(expected_prefix)
+            assert count == pytest.approx(expected_count, RTOL)
 
 
 def test_single_source():

@@ -126,7 +126,7 @@ def parse_args(args):
         "--batch-size", type=int, default=64, help="Batch size per GPU."
     )
     parser.add_argument(
-        "--epochs", type=int, default=32, help="Number of epochs to train for."
+        "--epochs", type=float, default=32, help="Number of epochs to train for."
     )
     parser.add_argument(
         "--epochs-cooldown", type=int, default=None,
@@ -173,6 +173,12 @@ def parse_args(args):
         action="store_true",
         default=False,
         help="Always save the most recent model trained to epoch_latest.pt.",
+    )
+    parser.add_argument(
+        "--num-subepochs-per-epoch",
+        type=int,
+        default=None,
+        help="Number of subepochs per epoch. This can be used to save checkpoints more frequently when --dataset-resampled is False.",
     )
     parser.add_argument(
         "--zeroshot-frequency", type=int, default=2, help="How often to run zero shot."
