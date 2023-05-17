@@ -12,9 +12,13 @@ import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
+
+
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
 from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+
 try:
     import wandb
 except ImportError:
@@ -419,10 +423,12 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-        scaler = GradScaler() if args.precision == "amp" else None
+        if args.distributed_engine == "fsdp":
+            scaler = ShardedGradScaler()
+        else:
+            scaler = GradScaler() if args.precision == "amp" else None
     # optionally resume from a checkpoint
     start_epoch = 0
-    
     if args.resume is not None:
         checkpoint = pt_load(args.resume, map_location='cpu')
         if 'epoch' in checkpoint:
