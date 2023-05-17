@@ -357,6 +357,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
 
+    # Adjust num_samples if saving multiple times per epoch when sampling without replacement
+    if not resampled and args.num_subepochs_per_epoch is not None:
+        num_samples = int(num_samples / args.num_subepochs_per_epoch)
+
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
