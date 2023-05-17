@@ -178,7 +178,11 @@ def parse_args(args):
         "--num-subepochs-per-epoch",
         type=int,
         default=None,
-        help="Number of subepochs per epoch. This can be used to save checkpoints more frequently when --dataset-resampled is False.",
+        help=(
+            "Number of subepochs per epoch. This can be used to save checkpoints more frequently when --dataset-resampled is False. "
+            "When this flag is used, checkpointing will act as if there are `args.num_subepochs_per_epoch` times more epochs. "
+            "E.g. if `args.num_subepochs_per_epoch` is 2, `args.epochs` is 1 and `args.save_frequency` is 1, it'll save checkpoints epoch_1.pt and epoch_2.pt."
+        )
     )
     parser.add_argument(
         "--zeroshot-frequency", type=int, default=2, help="How often to run zero shot."

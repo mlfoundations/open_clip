@@ -183,7 +183,11 @@ numerical results as the naïve method.
 
 #### Epochs
 
-For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with --dataset-resampled to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
+For larger datasets (eg Laion2B), we recommend setting `--train-num-samples` to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with `--dataset-resampled` to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
+
+Alternatively, you can use `--num-subepochs-per-epoch` to save checkpoints more frequently without `--dataset-resampled`.
+When this `--num-subepochs-per-epoch` is used, checkpointing will act as if there are that many times more epochs.
+For example, if `args.num_subepochs_per_epoch` is set to 2, `args.epochs` is set to  1 and `args.save_frequency` is also set to 1, the code will save 2 checkpoints `epoch_1.pt` and `epoch_2.pt`.
 
 #### Patch Dropout
 
