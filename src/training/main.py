@@ -14,10 +14,20 @@ from torch import optim
 from torch.cuda.amp import GradScaler
 
 
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
-from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
-from torch.distributed.fsdp.wrap import ModuleWrapPolicy
-from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+# FSDP
+major, minor, *rest = torch.__version__.split(".")
+if (int(major), int(minor)) >= (2, 1):
+    # FSDP is only supported for torch >= 2.1
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, MixedPrecision
+    from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
+    from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+    from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+        checkpoint_wrapper,
+        offload_wrapper,
+        CheckpointImpl,
+        apply_activation_checkpointing,
+    )
 
 try:
     import wandb
@@ -311,15 +321,9 @@ def main(args):
             if args.distill:
                 dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
         elif args.distributed_engine == 'fsdp':
-            from torch.distributed.fsdp.wrap import (
-                enable_wrap,
-                wrap,
-            )
-            print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
-            #print(f"Before FSTP TEXT parameter num: {sum(p.numel() for p in model.transformer.parameters())}")
-
-            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            logging.info(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            logging.info(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
+            logging.info(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             mp = MixedPrecision(
                 #param_dtype=torch.bfloat16,
                 reduce_dtype=torch.bfloat16,
@@ -331,7 +335,7 @@ def main(args):
                 for layer in args.fsdp_layers_to_wrap:
                     if re.match(layer, name):
                         layers.add(module.__class__)
-            print("Wrapped layers", layers)
+            logging.info(f"FSDP Wrapped layers: {layers}")
 
             wrapper_kwargs = dict(
                 mixed_precision=mp,
@@ -359,8 +363,8 @@ def main(args):
                     unlocked_layers=args.lock_text_unlocked_layers,
                     freeze_layer_norm=args.lock_text_freeze_layer_norm)
             model = FSDP(model, **wrapper_kwargs)
-            print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            logging.info(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            logging.info(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
                 #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
                 layers_grad_checkpoint = set()
@@ -369,12 +373,6 @@ def main(args):
                     for layer in args.fsdp_layers_to_grad_checkpoint:
                         if re.match(layer, name):
                             layers_grad_checkpoint.add(module.__class__)
-                from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-                    checkpoint_wrapper,
-                    offload_wrapper,
-                    CheckpointImpl,
-                    apply_activation_checkpointing,
-                )
                 non_reentrant_wrapper = partial(
                     checkpoint_wrapper,
                     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
