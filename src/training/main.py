@@ -14,8 +14,7 @@ from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
 from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-
+from torch.distributed.fsdp.wrap import ModuleWrapPolicy
 try:
     import wandb
 except ImportError:
@@ -334,11 +333,9 @@ def main(args):
                 mixed_precision=mp,
                 limit_all_gathers=args.fsdp_limit_allgathers,
                 cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
-                auto_wrap_policy=partial(
-                   transformer_auto_wrap_policy,
-                   transformer_layer_cls=layers,
-                ),
+                auto_wrap_policy=ModuleWrapPolicy(layers),
                 use_orig_params=True,
+                sync_module_states=True,
                 device_id=device,
             )
             # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
@@ -370,17 +367,21 @@ def main(args):
                             layers_grad_checkpoint.add(module.__class__)
                 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
                     checkpoint_wrapper,
+                    offload_wrapper,
                     CheckpointImpl,
                     apply_activation_checkpointing,
                 )
                 non_reentrant_wrapper = partial(
                     checkpoint_wrapper,
-                    offload_to_cpu=args.fsdp_cpu_offload,
                     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
                 )
+                if args.fsdp_cpu_offload:
+                    wrapper = lambda module:offload_wrapper(non_reentrant_wrapper(module))
+                else:
+                    wrapper = non_reentrant_wrapper
                 check_fn = lambda submodule: (any(isinstance(submodule, layer) for layer in layers_grad_checkpoint))
                 apply_activation_checkpointing(
-                    model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
+                    model, checkpoint_wrapper_fn=wrapper, check_fn=check_fn
                 )
         else:
             print("--distrubted_engine should be either 'ddp or 'fsdp'")
@@ -403,6 +404,7 @@ def main(args):
         else:
             gain_or_bias_params = [p for n, p in named_parameters if n not in parameters_to_decay and p.requires_grad] 
             rest_params = [p for n, p in named_parameters if n in parameters_to_decay and p.requires_grad]
+            
         optimizer = optim.AdamW(
             [
                 {"params": gain_or_bias_params, "weight_decay": 0.},
