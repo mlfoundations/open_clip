@@ -17,7 +17,7 @@ def zero_shot_classifier(model, classnames, templates, args):
             texts = [template(classname) for template in templates]  # format with class
             texts = tokenizer(texts).to(args.device)  # tokenize
             if args.distributed and not args.horovod:
-                if args.distributed_engine == 'fsdp':
+                if args.fsdp:
                     _, class_embeddings, _ = model(image=None, text=texts)
                 else:
                     class_embeddings = model.module.encode_text(texts)
@@ -49,7 +49,7 @@ def run(model, classifier, dataloader, args):
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
-                    if args.distributed_engine == 'fsdp':
+                    if args.fsdp:
                         image_features, _, _ = model(image=images, text=None)
                     else:
                         image_features = model.module.encode_image(images)
