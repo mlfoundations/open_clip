@@ -313,9 +313,9 @@ def main(args):
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if args.fsdp:
-            logging.info(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
-            logging.info(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
-            logging.info(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            if is_master(args):
+                logging.info(f"Before FSDP number of params: {sum(p.numel() for p in model.parameters())}")
+                logging.info(f"Before FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.3} GB")
             type_name_to_class = {
                 "amp": torch.float16,
                 "amp_bf16": torch.bfloat16,
@@ -354,8 +354,9 @@ def main(args):
                     unlocked_layers=args.lock_text_unlocked_layers,
                     freeze_layer_norm=args.lock_text_freeze_layer_norm)
             model = FSDP(model, **wrapper_kwargs)
-            logging.info(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
-            logging.info(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            if is_master(args):
+                logging.info(f"After FSDP number of params: {sum(p.numel() for p in model.parameters())}")
+                logging.info(f"After FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
                 layers_grad_checkpoint = set()
                 for module in model.modules():
