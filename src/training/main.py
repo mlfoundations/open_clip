@@ -315,7 +315,7 @@ def main(args):
         if args.fsdp:
             if is_master(args):
                 logging.info(f"Before FSDP number of params: {sum(p.numel() for p in model.parameters())}")
-                logging.info(f"Before FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.3} GB")
+                logging.info(f"Before FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.4} GB")
             type_name_to_class = {
                 "amp": torch.float16,
                 "amp_bf16": torch.bfloat16,
@@ -356,7 +356,7 @@ def main(args):
             model = FSDP(model, **wrapper_kwargs)
             if is_master(args):
                 logging.info(f"After FSDP number of params: {sum(p.numel() for p in model.parameters())}")
-                logging.info(f"After FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.3} GB")
+                logging.info(f"After FSDP memory allocated: {torch.cuda.memory_allocated()/1024**3:.4} GB")
             if args.grad_checkpointing:
                 layers_grad_checkpoint = set()
                 for module in model.modules():
