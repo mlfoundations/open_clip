@@ -410,6 +410,19 @@ def parse_args(args):
         nargs='+'
     )
     parser.add_argument(
+        "--fsdp-buffer-precision",
+        choices=["bf16", "fp16", "fp32"],
+        default="fp32",
+        help="FSDP floating point precision for buffers"
+    )
+    parser.add_argument(
+        "--fsdp-reduce-precision",
+        choices=["bf16", "fp16", "fp32"],
+        default="fp16",
+        help="FSDP floating point precision for gradient reduction"
+    )
+
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",

@@ -324,10 +324,17 @@ def main(args):
             logging.info(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             logging.info(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
             logging.info(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
-            mp = MixedPrecision(
-                #param_dtype=torch.bfloat16,
-                reduce_dtype=torch.bfloat16,
-                #buffer_dtype=torch.bfloat16,
+            type_name_to_class = {
+                "amp": torch.float16,
+                "amp_bf16": torch.bfloat16,
+                "amp_bfloat16": torch.bfloat16,
+                "fp16":  torch.float16,
+                "fp32": torch.float32,
+            }
+            mixed_precision = MixedPrecision(
+                param_dtype=type_name_to_class[args.precision],
+                reduce_dtype=type_name_to_class[args.fsdp_reduce_precision],
+                buffer_dtype=type_name_to_class[args.fsdp_buffer_precision],
             )
             layers = set()
             for module in model.modules():
@@ -338,7 +345,7 @@ def main(args):
             logging.info(f"FSDP Wrapped layers: {layers}")
 
             wrapper_kwargs = dict(
-                mixed_precision=mp,
+                mixed_precision=mixed_precision,
                 limit_all_gathers=args.fsdp_limit_allgathers,
                 cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
                 auto_wrap_policy=ModuleWrapPolicy(layers),
@@ -346,15 +353,7 @@ def main(args):
                 sync_module_states=True,
                 device_id=device,
             )
-            # avoid "RuntimeError: The tensor has a non-zero number of elements, but its data is not allocated yet. Caffe2 uses a lazy allocation, so you will need to call mutable_data() or raw_mutable_data() to actually allocate memory."
-            #model.transformer = FSDP(model.transformer, device_id=device)
-            #model.token_embedding = FSDP(model.token_embedding, device_id=device)
-            #model.tp = FSDP(model.tp, device_id=device)
-            #model.visual = FSDP(model.visual, device_id=device)
-            #model.text_projection = FSDP(model.text_projection) ???
-            #model.ln_final = FSDP(model.ln_final, device_id=device)
             if args.lock_image:
-                # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
                 model.lock_image_tower(
                     unlocked_groups=args.lock_image_unlocked_groups,
                     freeze_bn_stats=args.lock_image_freeze_bn_stats)
@@ -366,7 +365,6 @@ def main(args):
             logging.info(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             logging.info(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
-                #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
                 layers_grad_checkpoint = set()
                 for module in model.modules():
                     name = module.__class__.__name__
