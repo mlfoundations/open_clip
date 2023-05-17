@@ -234,7 +234,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             data_time_m.reset()
 
         # Exit early if we've hit our epoch limit
-        if epoch + 1 == math.ceil(args.epochs) and percent_complete >= args.epochs % 1:
+        if args.epochs % 1 > 0 and epoch + 1 == math.ceil(args.epochs) and percent_complete >= args.epochs % 1:
             return
 
     # end for

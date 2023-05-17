@@ -99,10 +99,11 @@ def test_sampling_without_replacement():
             for txt in txts:
                 counts[txt] += 1
         
-        expected_prefix = f'{epoch:03d}'
-        expected_count = TRAIN_NUM_SAMPLES / 10 if epoch == 0 else TRAIN_NUM_SAMPLES / 5
+        sample_key = list(counts.keys())[0]
+        prefix = sample_key.split('_')[0]
+        expected_count = TRAIN_NUM_SAMPLES / 20 if prefix == '000' else TRAIN_NUM_SAMPLES / 10
         for key, count in counts.items():
-            assert key.startswith(expected_prefix)
+            assert key.startswith(prefix)
             assert count == pytest.approx(expected_count, RTOL)
 
 

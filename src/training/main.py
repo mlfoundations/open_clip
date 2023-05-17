@@ -351,7 +351,7 @@ def main(args):
 
     # when sampling without replacement and saving subepochs, we need to adjust args.epochs
     if not args.dataset_resampled and args.num_subepochs_per_epoch is not None:
-        args.epoch *= args.num_subepochs_per_epoch
+        args.epochs *= args.num_subepochs_per_epoch
 
     # create scheduler if train
     scheduler = None
