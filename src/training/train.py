@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.parallel.distributed import DistributedDataParallel
 
+
 try:
     import wandb
 except ImportError:
@@ -185,7 +186,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        if args.distributed_engine == 'fsdp':
+        if args.fsdp:
             model(image=None, text=None, clamp_logit_scale_to=math.log(100))
         else:
             with torch.no_grad():
@@ -253,7 +254,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
 def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
-    if not is_master(args) and args.distributed_engine != 'fsdp':
+    if not is_master(args) and not args.fsdp:
         return metrics
     device = torch.device(args.device)
     model.eval()

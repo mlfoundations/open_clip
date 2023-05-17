@@ -284,7 +284,7 @@ def main(args):
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
-    if args.distributed_engine != 'fsdp':
+    if not args.fsdp:
         if args.lock_image:
             # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
             model.lock_image_tower(
@@ -312,15 +312,7 @@ def main(args):
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        if args.distributed_engine == 'ddp':
-            ddp_args = {}
-            if args.ddp_static_graph:
-                # this doesn't exist in older PyTorch, arg only added if enabled
-                ddp_args['static_graph'] = True
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-            if args.distill:
-                dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
-        elif args.distributed_engine == 'fsdp':
+        if args.fsdp:
             logging.info(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
             logging.info(f"Before FSTP VISUAL parameter num: {sum(p.numel() for p in model.visual.parameters())}")
             logging.info(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
@@ -384,8 +376,13 @@ def main(args):
                     model, checkpoint_wrapper_fn=wrapper, check_fn=check_fn
                 )
         else:
-            print("--distrubted_engine should be either 'ddp or 'fsdp'")
-            sys.exit(1)
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+            if args.distill:
+                dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
@@ -394,7 +391,7 @@ def main(args):
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
         named_parameters = list(model.named_parameters())
-        if args.distributed_engine == "fsdp":
+        if args.fsdp:
             def _param_name_without_fsdp_prefix(n):
                 n = n.replace("_fsdp_wrapped_module.", "")
                 n = n.replace("._checkpoint_wrapped_module", "")
@@ -419,7 +416,7 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-        if args.distributed_engine == "fsdp":
+        if args.fsdp:
             scaler = ShardedGradScaler()
         else:
             scaler = GradScaler() if args.precision == "amp" else None
@@ -435,7 +432,7 @@ def main(args):
                 sd = {k[len('module.'):]: v for k, v in sd.items()}
             model.load_state_dict(sd)
             if optimizer is not None:
-                if args.distributed_engine == 'fsdp':
+                if args.fsdp:
                     sharded_state_dict = FSDP.optim_state_dict_to_load(checkpoint["optimizer"], model, optimizer)
                     optimizer.load_state_dict(sharded_state_dict)
                 else:
@@ -448,7 +445,7 @@ def main(args):
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
-    if args.distributed_engine == 'fsdp':
+    if args.fsdp:
         FSDP.set_state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
@@ -486,7 +483,7 @@ def main(args):
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
-    args.save_logs = args.logs and args.logs.lower() != 'none' and (is_master(args) or args.distributed_engine == 'fsdp')
+    args.save_logs = args.logs and args.logs.lower() != 'none' and (is_master(args) or args.fsdp)
     writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
@@ -547,7 +544,7 @@ def main(args):
                 "epoch": completed_epoch,
                 "name": args.name,
                 "state_dict": original_model.state_dict(),
-                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.distributed_engine == 'fsdp' else optimizer.state_dict()
+                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict()
 
             }
             if scaler is not None:
