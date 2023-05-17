@@ -83,7 +83,7 @@ def get_dataloader(input_shards, return_dataset=False, **kwargs):
 
 
 def test_sampling_without_replacement():
-    """Test webdataset with a single tar file."""
+    """Test webdataset when sampling without replacement."""
     input_dir = build_inputs('single_source')    
     input_shards = os.path.join(input_dir, 'test_data_{000..001}.tar')
     dataset = get_dataloader(input_shards, dataset_resampled=False, num_subepochs_per_epoch=2, return_dataset=True)
