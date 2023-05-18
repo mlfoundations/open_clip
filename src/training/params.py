@@ -416,7 +416,7 @@ def parse_args(args):
         help="FSDP floating point precision for buffers"
     )
     parser.add_argument(
-        "--fsdp-reduce-precision",
+        "--fsdp-gradient-reduction-precision",
         choices=["bf16", "fp16", "fp32"],
         default="fp16",
         help="FSDP floating point precision for gradient reduction"
