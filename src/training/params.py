@@ -370,16 +370,19 @@ def parse_args(args):
         "--fsdp-init-on-cpu",
         default=False,
         action="store_true",
+        help="Initialize the model on CPUs rather than GPUs, useful for large models",
     )
     parser.add_argument(
         "--fsdp-cpu-offload",
         default=False,
         action="store_true",
+        help="Use CPU offloading",
     )
     parser.add_argument(
         "--fsdp-limit-allgathers",
         default=False,
         action="store_true",
+        help="Prevent too many allgathers",
     )
     parser.add_argument(
         "--fsdp-layers-to-wrap",
@@ -398,7 +401,8 @@ def parse_args(args):
             'TimmModel',
         ),
         type=str,
-        nargs='+'
+        nargs='+',
+        help="Regular expression to match module names to wrap in FSDP, this affects communication and peak memory.",
     )
     parser.add_argument(
         "--fsdp-layers-to-grad-checkpoint",
@@ -407,7 +411,8 @@ def parse_args(args):
             'Bottleneck',
         ),
         type=str,
-        nargs='+'
+        nargs='+',
+        help="Module names to wrap for gradient checkpointing when FSDP is used",
     )
     parser.add_argument(
         "--fsdp-buffer-precision",
@@ -421,7 +426,6 @@ def parse_args(args):
         default="fp16",
         help="FSDP floating point precision for gradient reduction"
     )
-
     parser.add_argument(
         "--no-set-device-rank",
         default=False,
