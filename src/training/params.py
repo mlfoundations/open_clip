@@ -386,7 +386,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--text-unlocked-biases",
-        type=bool,
+        action='store_true',
         default=False,
         help="Only unlock model biases",
     )
@@ -434,13 +434,13 @@ def parse_args(args):
     )
     parser.add_argument(
         "--text-b-unlocked-biases",
-        type=bool,
+        action='store_true',
         default=False,
         help="Only unlock model biases",
     )
     parser.add_argument(
         "--text-a-unlocked-biases",
-        type=bool,
+        action='store_true',
         default=False,
         help="Only unlock model biases",
     )

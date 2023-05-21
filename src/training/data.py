@@ -442,13 +442,13 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     if 'CLANP' in args.model_type and not args.unsupervised_pretraining:
         pipeline.extend([
             wds.to_tuple(args.text_a_key, args.text_b_key),
-            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
+            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'),context_length=args.context_length)[0], lambda text: tokenizer(text.decode('utf8'),context_length=args.context_length)[0]),
             wds.batched(args.batch_size, partial=not is_train),
         ])
     elif 'CLANP' in args.model_type and args.unsupervised_pretraining:
         pipeline.extend([
             wds.to_tuple(args.text_a_key, args.text_b_key),
-            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'))[0], lambda text: tokenizer(text.decode('utf8'))[0]),
+            wds.map_tuple(lambda text: tokenizer(text.decode('utf8'),context_length=args.context_length)[0], lambda text: tokenizer(text.decode('utf8'),context_length=args.context_length)[0]),
             wds.map_tuple(lambda text: create_unsupervised_sample(text,tokenizer,args), lambda text: create_unsupervised_sample(text,tokenizer,args)),
             wds.batched(args.batch_size, partial=not is_train),
         ])

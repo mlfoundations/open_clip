@@ -86,10 +86,10 @@ def add_bos_eos(x, bos_token_id, eos_token_id):
 def create_unsupervised_sample(text,tokenizer,args):
     # remove padding
     text = text[text!=tokenizer.tokenizer.pad_token_id]
-    if text[0] == tokenizer.tokenizer.bos_token_id:
-        text == text[1:]
-    if text[-1] == tokenizer.tokenizer.eos_token_id:
-        text = text[:-1]
+    if tokenizer.tokenizer.bos_token_id is not None:
+        text = text[text!=tokenizer.tokenizer.bos_token_id]
+    if tokenizer.tokenizer.eos_token_id is not None:
+        text = text[text!=tokenizer.tokenizer.eos_token_id]
     # perform data augmentation
     text = randomcrop(text, args.text_aug_ratio_min, args.text_aug_ratio_max)
     text = apply_augmentation(text, tokenizer.tokenizer, args)
