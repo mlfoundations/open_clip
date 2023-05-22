@@ -544,6 +544,12 @@ def parse_args(args):
         type=int,
         help="max number of tokens in the input text"
     )
+    parser.add_argument(
+        "--mteb-output",
+        default=None,
+        type=str,
+        help="location to store MTEB evaluation results"
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

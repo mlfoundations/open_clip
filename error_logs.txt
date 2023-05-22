@@ -1,0 +1,2987 @@
+2023-05-21 22:14:41.116492 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:43.063198 >>> ArxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:46.659623 >>> BiorxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:47.605287 >>> BiorxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:49.655345 >>> MedrxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:50.423953 >>> MedrxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:14:51.993315 >>> RedditClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:15:01.074955 >>> RedditClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:15:03.724835 >>> StackExchangeClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:15:06.890844 >>> StackExchangeClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:15:07.588629 >>> TwentyNewsgroupsClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 35, in encode
+    features = self.tokenize(sentences_batch)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1269, in __getattr__
+    raise AttributeError("'{}' object has no attribute '{}'".format(
+AttributeError: 'CLANP_For_MTEB' object has no attribute 'tokenize'
+
+
+2023-05-21 22:15:07.592022 >>> ArguAna
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.595497 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.597198 >>> CQADupstackAndroidRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.598847 >>> CQADupstackEnglishRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.600403 >>> CQADupstackGamingRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.602096 >>> CQADupstackGisRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.603802 >>> CQADupstackMathematicaRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.605398 >>> CQADupstackPhysicsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.606962 >>> CQADupstackProgrammersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.608499 >>> CQADupstackStatsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.610021 >>> CQADupstackTexRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.611630 >>> CQADupstackUnixRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.613429 >>> CQADupstackWebmastersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.614980 >>> CQADupstackWordpressRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.616518 >>> DBPedia
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.618017 >>> FEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.619576 >>> FiQA2018
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.621133 >>> HotpotQA
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.622719 >>> MSMARCO
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.624253 >>> MSMARCOv2
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.625774 >>> NFCorpus
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.627625 >>> NQ
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.629457 >>> QuoraRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.631024 >>> SCIDOCS
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.632535 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.634130 >>> Touche2020
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:15:07.635689 >>> TRECCOVID
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:07.819906 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 1673 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:08.270324 >>> ArxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 25074 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:08.768140 >>> BiorxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 380 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:09.064860 >>> BiorxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 28521 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:09.547762 >>> MedrxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 998 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:09.830162 >>> MedrxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 998 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:10.178599 >>> RedditClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 35 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:10.718680 >>> RedditClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 56 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:11.112059 >>> StackExchangeClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 2513 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:11.606707 >>> StackExchangeClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 1694 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:12.282844 >>> TwentyNewsgroupsClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 46 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:18:12.285650 >>> ArguAna
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.288074 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.289633 >>> CQADupstackAndroidRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.291188 >>> CQADupstackEnglishRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.292730 >>> CQADupstackGamingRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.294196 >>> CQADupstackGisRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.295704 >>> CQADupstackMathematicaRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.297226 >>> CQADupstackPhysicsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.298715 >>> CQADupstackProgrammersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.300210 >>> CQADupstackStatsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.301720 >>> CQADupstackTexRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.303295 >>> CQADupstackUnixRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.304907 >>> CQADupstackWebmastersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.306460 >>> CQADupstackWordpressRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.307999 >>> DBPedia
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.309583 >>> FEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.311148 >>> FiQA2018
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.312693 >>> HotpotQA
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.314289 >>> MSMARCO
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.315852 >>> MSMARCOv2
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.317538 >>> NFCorpus
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.319044 >>> NQ
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.320612 >>> QuoraRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.322100 >>> SCIDOCS
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.323566 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.325068 >>> Touche2020
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:18:12.326566 >>> TRECCOVID
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:13.233910 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:13.672080 >>> ArxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:14.092847 >>> BiorxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:14.347831 >>> BiorxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:14.747403 >>> MedrxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:14.992638 >>> MedrxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:15.311379 >>> RedditClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:15.762837 >>> RedditClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:16.138870 >>> StackExchangeClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:16.554528 >>> StackExchangeClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:16.769926 >>> TwentyNewsgroupsClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 34, in encode
+    print(sentences_batch.shape)
+AttributeError: 'list' object has no attribute 'shape'
+
+
+2023-05-21 22:26:16.772275 >>> ArguAna
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.775636 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.777437 >>> CQADupstackAndroidRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.778978 >>> CQADupstackEnglishRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.780513 >>> CQADupstackGamingRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.782036 >>> CQADupstackGisRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.783554 >>> CQADupstackMathematicaRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.785117 >>> CQADupstackPhysicsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.786643 >>> CQADupstackProgrammersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.788211 >>> CQADupstackStatsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.789983 >>> CQADupstackTexRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.791514 >>> CQADupstackUnixRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.793020 >>> CQADupstackWebmastersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.794537 >>> CQADupstackWordpressRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.796097 >>> DBPedia
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.797619 >>> FEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.799175 >>> FiQA2018
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.800729 >>> HotpotQA
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.802244 >>> MSMARCO
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.803751 >>> MSMARCOv2
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.805325 >>> NFCorpus
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.806855 >>> NQ
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.808415 >>> QuoraRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.809923 >>> SCIDOCS
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.811601 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.813134 >>> Touche2020
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:26:16.814639 >>> TRECCOVID
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:22.007826 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 1673 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:22.261201 >>> ArxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 25074 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:22.544696 >>> BiorxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 380 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:23.258645 >>> BiorxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 28521 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:23.632457 >>> MedrxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 998 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:23.983727 >>> MedrxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 998 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:24.197034 >>> RedditClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 35 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:24.545544 >>> RedditClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 1620 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:24.917339 >>> StackExchangeClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 2513 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:25.195054 >>> StackExchangeClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 1694 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:25.435361 >>> TwentyNewsgroupsClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 36, in encode
+    features = self.batch_to_device(features, self.device)
+  File "src/training/mteb_eval.py", line 53, in batch_to_device
+    if isinstance(batch[key], Tensor):
+IndexError: index 46 is out of bounds for dimension 0 with size 32
+
+
+2023-05-21 22:27:25.437428 >>> ArguAna
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.439691 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.440930 >>> CQADupstackAndroidRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.442174 >>> CQADupstackEnglishRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.443383 >>> CQADupstackGamingRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.444590 >>> CQADupstackGisRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.445818 >>> CQADupstackMathematicaRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.447101 >>> CQADupstackPhysicsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.448322 >>> CQADupstackProgrammersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.449536 >>> CQADupstackStatsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.450682 >>> CQADupstackTexRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.451912 >>> CQADupstackUnixRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.453140 >>> CQADupstackWebmastersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.454311 >>> CQADupstackWordpressRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.455513 >>> DBPedia
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.456750 >>> FEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.457911 >>> FiQA2018
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.459269 >>> HotpotQA
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.460568 >>> MSMARCO
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.461740 >>> MSMARCOv2
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.462949 >>> NFCorpus
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.464165 >>> NQ
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.465347 >>> QuoraRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.466498 >>> SCIDOCS
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.467773 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.469019 >>> Touche2020
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:27:25.470211 >>> TRECCOVID
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:19.439473 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:19.700152 >>> ArxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:19.977665 >>> BiorxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:20.230267 >>> BiorxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:20.733546 >>> MedrxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:20.977127 >>> MedrxivClusteringS2S
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:21.200248 >>> RedditClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:21.507616 >>> RedditClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:21.764115 >>> StackExchangeClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:22.154970 >>> StackExchangeClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:22.423249 >>> TwentyNewsgroupsClustering
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "src/training/mteb_eval.py", line 37, in encode
+    text_features = model.encode_text(features)
+NameError: name 'model' is not defined
+
+
+2023-05-21 22:28:22.425438 >>> ArguAna
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.427412 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.428703 >>> CQADupstackAndroidRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.430040 >>> CQADupstackEnglishRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.431280 >>> CQADupstackGamingRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.432470 >>> CQADupstackGisRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.433670 >>> CQADupstackMathematicaRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.434858 >>> CQADupstackPhysicsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.436104 >>> CQADupstackProgrammersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.437305 >>> CQADupstackStatsRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.438490 >>> CQADupstackTexRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.439876 >>> CQADupstackUnixRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.441061 >>> CQADupstackWebmastersRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.442262 >>> CQADupstackWordpressRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.443481 >>> DBPedia
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.444719 >>> FEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.445916 >>> FiQA2018
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.447140 >>> HotpotQA
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.448406 >>> MSMARCO
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.449612 >>> MSMARCOv2
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.450877 >>> NFCorpus
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.452045 >>> NQ
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.453390 >>> QuoraRetrieval
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.454588 >>> SCIDOCS
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.455874 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.457095 >>> Touche2020
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:28:22.458297 >>> TRECCOVID
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 16, in load_data
+    from beir import util
+ModuleNotFoundError: No module named 'beir'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 225, in run
+    task.load_data(eval_splits=task_eval_splits)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/BeIRTask.py", line 18, in load_data
+    raise Exception("Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`")
+Exception: Retrieval tasks require beir package. Please install it with `pip install mteb[beir]`
+
+
+2023-05-21 22:30:44.495512 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/torch/_tensor.py", line 956, in __array__
+    return self.numpy()
+TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
+
+
+2023-05-21 22:33:15.493726 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (8,) + inhomogeneous part.
+
+
+2023-05-21 22:36:46.248030 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (25000,) + inhomogeneous part.
+
+
+2023-05-21 22:42:50.337546 >>> ArxivClusteringP2P
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskClustering.py", line 19, in evaluate
+    metrics = evaluator(model)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/evaluators/ClusteringEvaluator.py", line 25, in __call__
+    corpus_embeddings = np.asarray(model.encode(self.sentences))
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (25000,) + inhomogeneous part.
+
+
