@@ -297,6 +297,7 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            **kwargs
     ):
         super().__init__()
         self.width = width
@@ -324,7 +325,7 @@ class Transformer(nn.Module):
         return x
     
     def init_parameters(self):
-        proj_std = (self.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
         attn_std = self.width ** -0.5
         fc_std = (2 * self.width) ** -0.5
         for block in self.resblocks:

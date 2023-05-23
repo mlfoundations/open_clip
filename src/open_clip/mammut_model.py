@@ -6,9 +6,10 @@ import torch.nn.functional as F
 import numpy as np
 
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .generation_utils import Generator
 
 
-class MaMMUT(nn.Module):
+class MaMMUT(nn.Module, Generator):
     def __init__(
         self,
         embed_dim: int,
@@ -49,6 +50,7 @@ class MaMMUT(nn.Module):
         self.map_viz2txt_kv = nn.Parameter(torch.randn(vision_cfg.width, text_cfg.width))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
+        self._encode_image = self.encode_image
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -58,7 +60,7 @@ class MaMMUT(nn.Module):
     def encode_text(
         self,
         text,
-        cross_embs=None,
+        image_embs=None,
         normalize=True,
         attn_mask=None,
         cross_attn_mask=None,
@@ -66,7 +68,7 @@ class MaMMUT(nn.Module):
     ):
         text_latent, token_logits = self.text(
             text,
-            cross_embs=cross_embs,
+            cross_embs=image_embs,
             attn_mask=attn_mask,
             cross_attn_mask=cross_attn_mask,
         )
@@ -77,15 +79,23 @@ class MaMMUT(nn.Module):
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent
 
-    def encode_image(self, image, normalize: bool = True, output_tokens = False):
+    def _encode_text(self, text, image_embs, attn_mask, cross_attn_mask):
+        return self.text(
+            text,
+            cross_embs=image_embs,
+            attn_mask=attn_mask,
+            cross_attn_mask=cross_attn_mask,
+        )
+
+    def encode_image(self, image, normalize: bool = True):
         pooled, tokens = self.visual(image)
         if normalize:
             pooled = F.normalize(pooled, dim=-1) if normalize else pooled
         return pooled, tokens
 
-    def _forward(self, text, out, image_tokens=None, contrastive=True):
+    def _forward(self, text, out, image_embs=None, contrastive=True, embed_cls=True):
 
-        image_tokens = image_tokens @ self.map_viz2txt_kv
+        image_embs = image_embs @ self.map_viz2txt_kv
         if contrastive:
             text_features = self.encode_text(text)
             out["text_features"] = text_features
@@ -93,17 +103,19 @@ class MaMMUT(nn.Module):
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
-        text = text[:, :-1]  # drop last tok because it has no label
+        text = text[:, :-1] if embed_cls else text# drop last tok because it has no label
 
         # adjust image output size for cross_attn
-        out["logits"] = self.encode_text(text, cross_embs=image_tokens, output_logits=True)
+        out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
 
         return out
 
-    def forward(self, image, text):
+    def forward(self, image, text, image_latent=None, image_embs=None, embed_cls=False):
         out = {"logit_scale": self.logit_scale.exp()}
-        pooled_image, image_tokens = self.encode_image(image)
-        out["image_features"] = pooled_image
-        out = self._forward(text, out, image_tokens=image_tokens)
-        out = self._forward(text, out, image_tokens=image_tokens, contrastive=False)
+        if image_latent is None or image_embs is None:
+            image_latent, image_embs = self.encode_image(image)
+        out["image_features"] = image_latent
+        out = self._forward(text, out, image_embs=image_embs)
+        out = self._forward(text, out, image_embs=image_embs, contrastive=False, embed_cls=embed_cls)
+        print(out["logits"].shape)
         return out
