@@ -62,19 +62,20 @@ class MaMMUT(nn.Module):
         normalize=True,
         attn_mask=None,
         cross_attn_mask=None,
+        output_logits=False
     ):
-        text_latent, token_emb = self.text(
+        text_latent, token_logits = self.text(
             text,
             cross_embs=cross_embs,
             attn_mask=attn_mask,
             cross_attn_mask=cross_attn_mask,
         )
 
-        if cross_embs is None:
-            text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-            return text_latent
+        if output_logits:
+            return token_logits
 
-        return token_emb
+        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
+        return text_latent
 
     def encode_image(self, image, normalize: bool = True, output_tokens = False):
         pooled, tokens = self.visual(image)
@@ -86,16 +87,16 @@ class MaMMUT(nn.Module):
 
         image_tokens = image_tokens @ self.map_viz2txt_kv
         if contrastive:
-            text_features = self.encode_text(text, cross_embs=None)
+            text_features = self.encode_text(text)
             out["text_features"] = text_features
             return out
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
-        text = text[:, :-1]  # drop last tok because it has not label
+        text = text[:, :-1]  # drop last tok because it has no label
 
         # adjust image output size for cross_attn
-        out["logits"] = self.encode_text(text, cross_embs=image_tokens)
+        out["logits"] = self.encode_text(text, cross_embs=image_tokens, output_logits=True)
 
         return out
 
