@@ -415,12 +415,6 @@ def parse_args(args):
         help="Module names to wrap for gradient checkpointing when FSDP is used",
     )
     parser.add_argument(
-        "--fsdp-buffer-precision",
-        choices=["bf16", "fp16", "fp32"],
-        default="fp32",
-        help="FSDP floating point precision for buffers"
-    )
-    parser.add_argument(
         "--fsdp-gradient-reduction-precision",
         choices=["bf16", "fp16", "fp32"],
         default="fp16",

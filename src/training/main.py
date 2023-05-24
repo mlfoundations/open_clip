@@ -87,7 +87,6 @@ def get_latest_checkpoint(path: str, remote : bool):
 
 def main(args):
     args = parse_args(args)
-
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
         # float16 and almost as accurate as float32
@@ -324,9 +323,7 @@ def main(args):
                 "fp32": torch.float32,
             }
             mixed_precision = MixedPrecision(
-                param_dtype=type_name_to_class[args.precision],
                 reduce_dtype=type_name_to_class[args.fsdp_gradient_reduction_precision],
-                buffer_dtype=type_name_to_class[args.fsdp_buffer_precision],
             )
             layers = set()
             for module in model.modules():
@@ -426,6 +423,13 @@ def main(args):
             scaler = GradScaler() if args.precision == "amp" else None
     # optionally resume from a checkpoint
     start_epoch = 0
+    if args.fsdp:
+        FSDP.set_state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
+                FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
+        )
     if args.resume is not None:
         checkpoint = pt_load(args.resume, map_location='cpu')
         if 'epoch' in checkpoint:
@@ -437,7 +441,10 @@ def main(args):
             model.load_state_dict(sd)
             if optimizer is not None:
                 if args.fsdp:
-                    sharded_state_dict = FSDP.optim_state_dict_to_load(checkpoint["optimizer"], model, optimizer)
+                    optimizer_state_dict = checkpoint["optimizer"]
+                    optimizer_state_dict['state']['logit_scale']['exp_avg'] = optimizer_state_dict['state']['logit_scale']['exp_avg'].view(1)
+                    optimizer_state_dict['state']['logit_scale']['exp_avg_sq'] = optimizer_state_dict['state']['logit_scale']['exp_avg_sq'].view(1)
+                    sharded_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, optimizer_state_dict)
                     optimizer.load_state_dict(sharded_state_dict)
                 else:
                     optimizer.load_state_dict(checkpoint["optimizer"])
@@ -449,13 +456,7 @@ def main(args):
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
-    if args.fsdp:
-        FSDP.set_state_dict_type(
-            model,
-            StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
-            FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True),
-        )
+  
     # initialize datasets
     tokenizer = get_tokenizer(args.model)
     data = get_data(
@@ -543,14 +544,14 @@ def main(args):
 
         # Saving checkpoints.
         if args.save_logs:
-            
+
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": original_model.state_dict(),
-                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict()
-
+                "state_dict": model.state_dict(),
+                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict(),
             }
+
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
             if is_master(args):
