@@ -554,6 +554,9 @@ class TextTransformer(nn.Module):
 
         self.init_parameters()
 
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        lock_text_transformer(self, unlocked_layers, freeze_layer_norm)
+
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
@@ -629,6 +632,36 @@ class TextTransformer(nn.Module):
             return pooled, tokens
 
         return pooled
+
+
+def lock_text_transformer(
+    transformer: TextTransformer, unlocked_layers: int = 0, freeze_layer_norm: bool = True
+):
+    groups = [
+        [transformer.token_embedding, transformer.positional_embedding],
+        *transformer.transformer.resblocks[:-1],
+        [transformer.transformer.resblocks[ -1], transformer.ln_final],
+        transformer.text_projection,
+    ]
+
+    def _freeze(modules, freeze_layer_norm: bool = True):
+        for module in modules:
+            # `CLIP.text_projection` and `CLIP.positional_embedding`
+            if isinstance(module, nn.Parameter):
+                module.requires_grad = False
+
+            # All other modules
+            elif isinstance(module, nn.Module):
+                for n, p in module.named_parameters():
+                    p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+
+            else:
+                raise TypeError(f"Encountered unexpected module type {type(module)} for module {module}")
+
+    if (not unlocked_layers) or (unlocked_layers == 0):  # full freezing
+        _freeze(groups, freeze_layer_norm)
+    else:
+        _freeze(groups[:-unlocked_layers], freeze_layer_norm)
 
 
 class MultimodalTransformer(Transformer):
