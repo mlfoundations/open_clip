@@ -16,7 +16,8 @@ from .mammut_model import MaMMUT
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, list_pretrained_tags_by_model, download_pretrained_from_hf
+from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
+    list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
 from .tokenizer import HFTokenizer, tokenize
 
@@ -148,13 +149,8 @@ def create_model(
             model_name,
             precision=precision,
             device=device,
-            jit=jit,
             cache_dir=cache_dir,
         )
-
-        # to always output dict even if it is clip
-        if output_dict and hasattr(model, "output_dict"):
-            model.output_dict = True
     else:
         model_cfg = model_cfg or get_model_config(model_name)
         if model_cfg is not None:
@@ -175,13 +171,15 @@ def create_model(
             # override model config's image size
             model_cfg["vision_cfg"]["image_size"] = force_image_size
 
+        is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
         if pretrained_image:
-            if 'timm_model_name' in model_cfg.get('vision_cfg', {}):
+            if is_timm_model:
                 # pretrained weight loading for timm models set via vision_cfg
                 model_cfg['vision_cfg']['timm_model_pretrained'] = True
             else:
                 assert False, 'pretrained image towers currently only supported for timm models'
 
+        # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp' or 'pure' modes
         cast_dtype = get_cast_dtype(precision)
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
@@ -197,6 +195,29 @@ def create_model(
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+
+        if precision in ("fp16", "bf16"):
+            dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
+            # manual mixed precision that matches original OpenAI behaviour
+            if is_timm_model:
+                # FIXME this is a bit janky, create timm based model in low-precision and
+                # then cast only LayerNormFp32 instances back to float32 so they don't break.
+                # Why? The convert_weights_to_lp fn only works with native models.
+                model.to(device=device, dtype=dtype)
+                from .transformer import LayerNormFp32
+                def _convert_ln(m):
+                    if isinstance(m, LayerNormFp32):
+                        m.weight.data = m.weight.data.to(torch.float32)
+                        m.bias.data = m.bias.data.to(torch.float32)
+                model.apply(_convert_ln)
+            else:
+                model.to(device=device)
+                convert_weights_to_lp(model, dtype=dtype)
+        elif precision in ("pure_fp16", "pure_bf16"):
+            dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
+            model.to(device=device, dtype=dtype)
+        else:
+            model.to(device=device)
 
         pretrained_loaded = False
         if pretrained:
@@ -227,20 +248,15 @@ def create_model(
             raise RuntimeError(
                 f'Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded.')
 
-        model.to(device=device)
-        if precision in ("fp16", "bf16"):
-            convert_weights_to_lp(model, dtype=torch.bfloat16 if precision == 'bf16' else torch.float16)
-
         # set image / mean metadata from pretrained_cfg if available, or use default
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
 
-        # to always output dict even if it is clip
-        if output_dict and hasattr(model, "output_dict"):
-            model.output_dict = True
+    if output_dict and hasattr(model, "output_dict"):
+        model.output_dict = True
 
-        if jit:
-            model = torch.jit.script(model)
+    if jit:
+        model = torch.jit.script(model)
 
     return model
 

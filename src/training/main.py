@@ -396,6 +396,10 @@ def main(args):
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
+    if args.torchcompile:
+        logging.info('Compiling model...')
+        model = torch.compile(model)
+
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
