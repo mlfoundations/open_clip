@@ -50,12 +50,20 @@ class MaMMUT(nn.Module, Generator):
         self.map_viz2txt_kv = nn.Parameter(torch.randn(vision_cfg.width, text_cfg.width))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
-        self._encode_image = self.encode_image
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
+
+    def _encode_text(self, text, image_embs, attn_mask, cross_attn_mask):
+        text_latent, text_logits = self.text(
+            text,
+            cross_embs=image_embs,
+            attn_mask=attn_mask,
+            cross_attn_mask=cross_attn_mask,
+        )
+        return text_latent, text_logits
 
     def encode_text(
         self,
@@ -66,9 +74,9 @@ class MaMMUT(nn.Module, Generator):
         cross_attn_mask=None,
         output_logits=False
     ):
-        text_latent, token_logits = self.text(
+        text_latent, token_logits = self._encode_text(
             text,
-            cross_embs=image_embs,
+            image_embs,
             attn_mask=attn_mask,
             cross_attn_mask=cross_attn_mask,
         )
@@ -79,19 +87,14 @@ class MaMMUT(nn.Module, Generator):
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent
 
-    def _encode_text(self, text, image_embs, attn_mask, cross_attn_mask):
-        return self.text(
-            text,
-            cross_embs=image_embs,
-            attn_mask=attn_mask,
-            cross_attn_mask=cross_attn_mask,
-        )
+    def _encode_image(self, image, normalize: bool=True):
+        image_latent, image_embs = self.visual(image)
+        image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
+        return image_latent, image_embs
 
-    def encode_image(self, image, normalize: bool = True):
-        pooled, tokens = self.visual(image)
-        if normalize:
-            pooled = F.normalize(pooled, dim=-1) if normalize else pooled
-        return pooled, tokens
+    def encode_image(self, image, normalize: bool = True, output_tokens=False):
+        image_latent, _ = self._encode_image(image, normalize=normalize)
+        return image_latent
 
     def _forward(self, text, out, image_embs=None, contrastive=True, embed_cls=True):
 
@@ -103,7 +106,7 @@ class MaMMUT(nn.Module, Generator):
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
-        text = text[:, :-1] if embed_cls else text# drop last tok because it has no label
+        text = text[:, :-1] if embed_cls else text # drop last tok because it has no label
 
         # adjust image output size for cross_attn
         out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
@@ -113,9 +116,8 @@ class MaMMUT(nn.Module, Generator):
     def forward(self, image, text, image_latent=None, image_embs=None, embed_cls=False):
         out = {"logit_scale": self.logit_scale.exp()}
         if image_latent is None or image_embs is None:
-            image_latent, image_embs = self.encode_image(image)
+            image_latent, image_embs = self._encode_image(image)
         out["image_features"] = image_latent
         out = self._forward(text, out, image_embs=image_embs)
         out = self._forward(text, out, image_embs=image_embs, contrastive=False, embed_cls=embed_cls)
-        print(out["logits"].shape)
         return out
