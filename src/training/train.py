@@ -20,6 +20,10 @@ from .zero_shot import zero_shot_eval
 from .precision import get_autocast
 
 
+OPENAI_DATASET_MEAN = torch.tensor([0.48145466, 0.4578275, 0.40821073])
+OPENAI_DATASET_STD = torch.tensor([0.26862954, 0.26130258, 0.27577711])
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -90,7 +94,19 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         # TODO: generalize train loop to modality1, modality2 instead of image,text maybe
         # images, texts = batch
-        images, texts = batch["mp4"], batch["txt"]
+        # images, texts = batch["mp4"], batch["txt"]
+        images, texts = batch["video"], batch["txt"]
+        # texts = batch['txt']
+        # images = torch.zeros((32, 8, 3, 224, 224))
+        print(images.shape)
+
+        original_means = images.mean(dim=(0, 1, 3, 4), keepdim=True)
+        original_stds = images.std(dim=(0, 1, 3, 4), keepdim=True)
+        images = (images - original_means) / original_stds
+
+        images = images * OPENAI_DATASET_STD[..., None, None] + OPENAI_DATASET_MEAN[..., None, None]
+
+        texts = data['tokenizer'](texts)
 
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
@@ -229,6 +245,22 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
+
+            # Saving checkpoints every 1M steps
+            if is_master(args) and (i_accum % 1000000 == 0 or batch_count == num_batches_per_epoch):
+                checkpoint_dict = {
+                    "epoch": epoch,
+                    "name": args.name,
+                    "state_dict": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                }
+                if scaler is not None:
+                    checkpoint_dict["scaler"] = scaler.state_dict()
+
+                torch.save(
+                    checkpoint_dict,
+                    os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
+                )
     # end for
 
 

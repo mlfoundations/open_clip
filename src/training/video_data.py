@@ -16,6 +16,8 @@ from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
 from video2dataset.dataloader import get_video_dataset
+from omegaconf import OmegaConf
+from sdata import create_dataset, create_loader
 
 
 class SharedEpoch:
@@ -186,6 +188,7 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
     num_samples = args.train_num_samples
     shared_epoch = SharedEpoch(epoch=epoch)
 
+    '''
     decoder_kwargs = { # TODO: update with params
         "n_frames": 8,
         "fps": 1,
@@ -206,6 +209,7 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
         resize_size=224,
         crop_size=224,
         keys_to_remove=["m4a"],
+        handler=wds.warn_and_continue,
     )
 
     dataloader = wds.WebLoader(
@@ -215,6 +219,16 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
         num_workers=args.workers,
         persistent_workers=True,
     )
+    '''
+
+    # config = OmegaConf.load("/admin/home-iejmac/stable-datasets/examples/configs/debug.yaml")
+    config = OmegaConf.load("/admin/home-iejmac/stable-datasets/examples/configs/video_test.yaml")
+
+    # build config
+    datapipeline = create_dataset(**config.dataset)
+
+    # build loader
+    dataloader = create_loader(datapipeline, **config.loader)
 
     round_fn = math.floor
     global_batch_size = args.batch_size * args.world_size
@@ -227,7 +241,6 @@ def get_wds_dataset2(args, preprocess_vid, is_train, epoch=0, floor=False, token
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
@@ -238,5 +251,6 @@ def get_video_data(args, preprocess_fns, epoch=0, tokenizer=None):
     if args.train_data:
         # data["train"] = get_wds_dataset(args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
         data["train"] = get_wds_dataset2(args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+    data["tokenizer"] = tokenizer
 
     return data
