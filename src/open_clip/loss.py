@@ -159,7 +159,7 @@ class CoCaLoss(ClipLoss):
 
     def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
         
-        clip_loss = 0
+        clip_loss = torch.tensor(0.0)
         
         if self.clip_loss_weight:
             clip_loss = super().forward(image_features, text_features, logit_scale)
