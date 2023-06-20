@@ -2985,3 +2985,132 @@ Traceback (most recent call last):
 ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (25000,) + inhomogeneous part.
 
 
+2023-05-29 16:35:30.769925 >>> ClimateFEVER
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 39, in search
+    query_embeddings = self.model.encode_queries(
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 148, in encode_queries
+    return self.model.encode(queries, batch_size=batch_size, **kwargs)
+  File "src/training/mteb_eval.py", line 42, in encode
+    return np.stack(all_embeddings,0)
+NameError: name 'np' is not defined
+
+
+2023-05-29 17:10:01.510309 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 65, in search
+    cos_scores = self.score_functions[score_function](query_embeddings, sub_corpus_embeddings)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/util.py", line 24, in cos_sim
+    return torch.mm(a_norm, b_norm.transpose(0, 1)) #TODO: this keeps allocating GPU memory
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x153600 and 2653696x1)
+
+
+2023-05-29 17:15:31.249976 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 39, in search
+    query_embeddings = self.model.encode_queries(
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 148, in encode_queries
+    return self.model.encode(queries, batch_size=batch_size, **kwargs)
+  File "src/training/mteb_eval.py", line 40, in encode
+    all_embeddings.extend(embeddings.detach())
+NameError: name 'embeddings' is not defined
+
+
+2023-05-29 17:20:08.362515 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 65, in search
+    cos_scores = self.score_functions[score_function](query_embeddings, sub_corpus_embeddings)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/util.py", line 24, in cos_sim
+    return torch.mm(a_norm, b_norm.transpose(0, 1)) #TODO: this keeps allocating GPU memory
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x153600 and 2653696x1)
+
+
+2023-05-29 17:28:59.689506 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 65, in search
+    cos_scores = self.score_functions[score_function](query_embeddings, sub_corpus_embeddings)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/util.py", line 11, in cos_sim
+    a = torch.tensor(a)
+RuntimeError: Could not infer dtype of NoneType
+
+
+2023-05-29 17:39:05.588611 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 65, in search
+    cos_scores = self.score_functions[score_function](query_embeddings, sub_corpus_embeddings)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/util.py", line 11, in cos_sim
+    a = torch.tensor(a)
+RuntimeError: Could not infer dtype of NoneType
+
+
+2023-05-29 17:48:00.556928 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 39, in search
+    query_embeddings = self.model.encode_queries(
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 148, in encode_queries
+    return self.model.encode(queries, batch_size=batch_size, **kwargs)
+  File "src/training/mteb_eval.py", line 41, in encode
+    all_embeddings = np.stack(all_embeddings,0)
+  File "<__array_function__ internals>", line 200, in stack
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/numpy/core/shape_base.py", line 464, in stack
+    raise ValueError('all input arrays must have the same shape')
+ValueError: all input arrays must have the same shape
+
+
+2023-05-29 18:00:29.464698 >>> SciFact
+Traceback (most recent call last):
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/evaluation/MTEB.py", line 235, in run
+    results = task.evaluate(model, split, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/mteb/abstasks/AbsTaskRetrieval.py", line 95, in evaluate
+    results = retriever.retrieve(corpus, queries)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/evaluation.py", line 23, in retrieve
+    return self.retriever.search(corpus, queries, self.top_k, self.score_function, **kwargs)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/exact_search.py", line 65, in search
+    cos_scores = self.score_functions[score_function](query_embeddings, sub_corpus_embeddings)
+  File "/admin/home-jianz/.local/lib/python3.8/site-packages/beir/retrieval/search/dense/util.py", line 11, in cos_sim
+    a = torch.tensor(a)
+RuntimeError: Could not infer dtype of NoneType
+
+
