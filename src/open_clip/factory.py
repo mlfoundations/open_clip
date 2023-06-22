@@ -351,6 +351,7 @@ def create_model(
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         with init_on_device(torch.device("meta")) if (pretrained or has_hf_hub_prefix) else nullcontext():
+            print("initializing on meta device with openclip fork")
             if custom_text:
                 if is_hf_model:
                     model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
@@ -360,6 +361,8 @@ def create_model(
                     model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
             else:
                 model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+                print(list(model.state_dict().items())[0][1].device)
+
 
         pretrained_loaded = False
         if pretrained:
