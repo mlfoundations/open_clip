@@ -5,7 +5,6 @@ import math
 import os
 import random
 import sys
-import time
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
@@ -79,7 +78,8 @@ def expand_urls(urls, weights=None):
     if isinstance(urls, str):
         urllist = urls.split("::")
         weights = weights.split('::')
-        assert len(weights) == len(urllist), f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
+        assert len(weights) == len(urllist),\
+            f"Expected the number of data components ({len(urllist)}) and weights({len(weights)}) to match."
         weights = [float(weight) for weight in weights]
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
@@ -292,7 +292,8 @@ class ResampledShards2(IterableDataset):
         self.urls = urls
         self.weights = weights
         if self.weights is not None:
-            assert len(self.urls) == len(self.weights), f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
+            assert len(self.urls) == len(self.weights),\
+                f"Number of urls {len(self.urls)} and weights {len(self.weights)} should match."
         assert isinstance(self.urls[0], str)
         self.nshards = nshards
         self.rng = random.Random()
@@ -329,23 +330,32 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
-    num_samples, num_shards = get_dataset_size(input_shards)
-    if not num_samples:
-        if is_train:
+    num_shards = None
+    if is_train:
+        if args.train_num_samples is not None:
             num_samples = args.train_num_samples
+        else:
+            num_samples, num_shards = get_dataset_size(input_shards)
             if not num_samples:
                 raise RuntimeError(
-                    'Currently, number of dataset samples must be specified for training dataset. '
-                    'Please specify via `--train-num-samples` if no dataset length info present.')
-        else:
-            num_samples = args.val_num_samples or 0  # eval will just exhaust the iterator if not specified
+                    'Currently, the number of dataset samples must be specified for the training dataset. '
+                    'Please specify it via `--train-num-samples` if no dataset length info is present.')
+    else:
+        # Eval will just exhaust the iterator if the size is not specified.
+        num_samples = args.val_num_samples or 0 
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
-        pipeline = [ResampledShards2(input_shards, weights=args.train_data_upsampling_factors, deterministic=True, epoch=shared_epoch)]
+        pipeline = [ResampledShards2(
+            input_shards,
+            weights=args.train_data_upsampling_factors,
+            deterministic=True,
+            epoch=shared_epoch,
+        )]
     else:
-        assert args.train_data_upsampling_factors is None, "--train_data_upsampling_factors is only supported when sampling with replacement (together with --dataset-resampled)."
+        assert args.train_data_upsampling_factors is None,\
+            "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # at this point we have an iterator over all the shards
@@ -388,6 +398,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     if is_train:
         if not resampled:
+            num_shards = num_shards or len(expand_urls(input_shards)[0])
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
@@ -407,7 +418,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=True,
+        persistent_workers=args.workers > 0,
     )
 
     # FIXME not clear which approach is better, with_epoch before vs after dataloader?
@@ -463,7 +474,14 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
 
 class SyntheticDataset(Dataset):
 
-    def __init__(self, transform=None, image_size=(224, 224), caption="Dummy caption", dataset_size=100, tokenizer=None):
+    def __init__(
+            self,
+            transform=None,
+            image_size=(224, 224),
+            caption="Dummy caption",
+            dataset_size=100,
+            tokenizer=None,
+    ):
         self.transform = transform
         self.image_size = image_size
         self.caption = caption

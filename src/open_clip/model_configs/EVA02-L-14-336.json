@@ -1,0 +1,18 @@
+{
+    "embed_dim": 768,
+    "vision_cfg": {
+        "image_size": 336,
+        "timm_model_name": "eva02_large_patch14_clip_336",
+        "timm_model_pretrained": false,
+        "timm_pool": "token",
+        "timm_proj": null
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 768,
+        "heads": 12,
+        "layers": 12
+    },
+    "custom_text": true
+}

@@ -8,7 +8,7 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 The goal of this repository is to enable training models with contrastive image-text supervision, and to investigate their properties such as robustness to distribution shift. Our starting point is an implementation of CLIP that matches the accuracy of the original CLIP models when trained on the same dataset.
 Specifically, a ResNet-50 model trained with our codebase on OpenAI's [15 million image subset of YFCC](https://github.com/openai/CLIP/blob/main/data/yfcc100m.md) achieves **32.7%** top-1 accuracy on ImageNet. OpenAI's CLIP model reaches **31.3%** when trained on the same subset of YFCC. For ease of experimentation, we also provide code for training on the 3 million images in the [Conceptual Captions](https://ai.google.com/research/ConceptualCaptions/download) dataset, where a ResNet-50x4 trained with our codebase reaches 22.2% top-1 ImageNet accuracy.
 
-We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with the larger [LAION-2B](https://laion.ai/blog/laion-5b/) superset. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
+We further this with a replication study on a dataset of comparable size to OpenAI's, [LAION-400M](https://arxiv.org/abs/2111.02114), and with larger datasets such as [LAION-2B](https://laion.ai/blog/laion-5b/) and [DataComp-1B](https://arxiv.org/abs/2304.14108) datasets. In addition, we study scaling behavior in a paper on [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 
 We have trained the following ViT CLIP models:
   * ViT-B/32 on LAION-400M with a accuracy of **62.9%**, comparable to OpenAI's **63.2%**, zero-shot top-1 on ImageNet-1k
@@ -18,11 +18,12 @@ We have trained the following ViT CLIP models:
   * ViT-B/16 on LAION-2B with a accuracy of **70.2%**.
   * ViT-L/14 on LAION-400M with an accuracy of **72.77%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
   * ViT-L/14 on LAION-2B with an accuracy of **75.3%**, vs OpenAI's **75.5%** (as measured here, 75.3% in paper)
+  * ViT-L/14 on [DataComp-1B](https://github.com/mlfoundations/datacomp) with an accuracy of **79.2%**. Our best ViT-L/14 so far, trained with a 13B samples seen schedule.
   * CoCa ViT-L/14 on LAION-2B with an accuracy of **75.5%** (currently only 13B samples seen) vs. CLIP ViT-L/14 73.1% (on the same dataset and samples seen)
-  * ViT-H/14 on LAION-2B with an accuracy of **78.0**. The second best in1k zero-shot for released, open-source weights thus far.
-  * ViT-g/14 on LAION-2B with an accuracy of **76.6**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
-  * ViT-g/14 on LAION-2B with an accuracy of **78.5**. Full 34B samples seen schedule.
-  * ViT-G/14 on LAION-2B with an accuracy of **80.1**. The best in1k zero-shot for released, open-source weights thus far.
+  * ViT-H/14 on LAION-2B with an accuracy of **78.0%**.
+  * ViT-g/14 on LAION-2B with an accuracy of **76.6%**. This was trained on reduced 12B samples seen schedule, same samples seen as 400M models.
+  * ViT-g/14 on LAION-2B with an accuracy of **78.5%**. Full 34B samples seen schedule.
+  * ViT-G/14 on LAION-2B with an accuracy of **80.1%**. The best in1k zero-shot for released, open-source weights thus far.
 
 And the following ConvNeXt CLIP models:
   * ConvNext-Base @ 224x224 on LAION-400M with an ImageNet-1k zero-shot top-1 of **66.3%**
@@ -63,8 +64,8 @@ import torch
 from PIL import Image
 import open_clip
 
-model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32-quickgelu', pretrained='laion400m_e32')
-tokenizer = open_clip.get_tokenizer('ViT-B-32-quickgelu')
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+tokenizer = open_clip.get_tokenizer('ViT-B-32')
 
 image = preprocess(Image.open("CLIP.png")).unsqueeze(0)
 text = tokenizer(["a diagram", "a dog", "a cat"])
@@ -550,6 +551,24 @@ On zero shot classification on imagenet with translated prompts this model reach
 * 55.7% in chinese (to be compared with https://github.com/OFA-Sys/Chinese-CLIP)
 
 
+### CommonPool and DataComp models
+
+As part of [DataComp](https://github.com/mlfoundations/datacomp), we trained models on CommonPool using various data filtering strategies.
+
+The best performing models are specified below for the xlarge scale, see our paper [DataComp: In seearch of the next generation of multimodal datasets](https://arxiv.org/abs/2304.14108) for more details.
+
+Additional models and more information can be found at [/docs/datacomp_models.md](/docs/datacomp_models.md).
+
+
+* `datacomp_xl_s13b_b90k`: A ViT-L/14 trained on DataComp-1B for 12.8B steps and batch size 90k. Achieves 79.2% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K. 
+
+* `commonpool_xl_clip_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL filtered using CLIP scores, for 12.8B steps and batch size 90k. Achieves 76.4% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL.clip-s13B-b90K.
+
+* `commonpool_xl_laion_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL filtered using the LAION-2B filtering scheme, for 12.8B steps and batch size 90k. Achieves 75.5% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL.laion-s13B-b90K.
+
+* `commonpool_xl_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL without any filtering, for 12.8B steps and batch size 90k. Achieves 72.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K.
+
+
 #### YFCC-15M
 
 Below are checkpoints of models trained on YFCC-15M, along with their zero-shot top-1 accuracies on ImageNet and ImageNetV2. These models were trained using 8 GPUs and the same hyperparameters described in the "Sample running code" section, with the exception of `lr=5e-4` and `epochs=32`.
@@ -573,46 +592,86 @@ Future trained models will use nn.GELU.
 >>> import open_clip
 >>> open_clip.list_pretrained()
 [('RN50', 'openai'),
- ('RN50', 'yfcc15m'),
- ('RN50', 'cc12m'),
- ('RN50-quickgelu', 'openai'),
- ('RN50-quickgelu', 'yfcc15m'),
- ('RN50-quickgelu', 'cc12m'),
- ('RN101', 'openai'),
- ('RN101', 'yfcc15m'),
- ('RN101-quickgelu', 'openai'),
- ('RN101-quickgelu', 'yfcc15m'),
- ('RN50x4', 'openai'),
- ('RN50x16', 'openai'),
- ('RN50x64', 'openai'),
- ('ViT-B-32', 'openai'),
- ('ViT-B-32', 'laion400m_e31'),
- ('ViT-B-32', 'laion400m_e32'),
- ('ViT-B-32', 'laion2b_e16'),
- ('ViT-B-32', 'laion2b_s34b_b79k'),
- ('ViT-B-32-quickgelu', 'openai'),
- ('ViT-B-32-quickgelu', 'laion400m_e31'),
- ('ViT-B-32-quickgelu', 'laion400m_e32'),
- ('ViT-B-16', 'openai'),
- ('ViT-B-16', 'laion400m_e31'),
- ('ViT-B-16', 'laion400m_e32'),
- ('ViT-B-16-plus-240', 'laion400m_e31'),
- ('ViT-B-16-plus-240', 'laion400m_e32'),
- ('ViT-L-14', 'openai'),
- ('ViT-L-14', 'laion400m_e31'),
- ('ViT-L-14', 'laion400m_e32'),
- ('ViT-L-14', 'laion2b_s32b_b82k'),
- ('ViT-L-14-336', 'openai'),
- ('ViT-H-14', 'laion2b_s32b_b79k'),
- ('ViT-g-14', 'laion2b_s12b_b42k'),
- ('ViT-bigG-14', 'laion2b_s39b_b160k'),
- ('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
- ('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
- ('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
- ('coca_ViT-B-32', 'laion2B-s13B-b90k'),
- ('coca_ViT-B-32', 'mscoco_finetuned_laion2B-s13B-b90k'), # finetuned models lose contrastive capabilities
- ('coca_ViT-L-14', 'laion2B-s13B-b90k'),
- ('coca_ViT-L-14', 'mscoco_finetuned_laion2B-s13B-b90k'),] # finetuned models lose contrastive capabilities
+('RN50', 'yfcc15m'),
+('RN50', 'cc12m'),
+('RN50-quickgelu', 'openai'),
+('RN50-quickgelu', 'yfcc15m'),
+('RN50-quickgelu', 'cc12m'),
+('RN101', 'openai'),
+('RN101', 'yfcc15m'),
+('RN101-quickgelu', 'openai'),
+('RN101-quickgelu', 'yfcc15m'),
+('RN50x4', 'openai'),
+('RN50x16', 'openai'),
+('RN50x64', 'openai'),
+('ViT-B-32', 'openai'),
+('ViT-B-32', 'laion400m_e31'),
+('ViT-B-32', 'laion400m_e32'),
+('ViT-B-32', 'laion2b_e16'),
+('ViT-B-32', 'laion2b_s34b_b79k'),
+('ViT-B-32', 'datacomp_m_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_clip_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_laion_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_image_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_text_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_basic_s128m_b4k'),
+('ViT-B-32', 'commonpool_m_s128m_b4k'),
+('ViT-B-32', 'datacomp_s_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_clip_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_laion_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_image_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_text_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_basic_s13m_b4k'),
+('ViT-B-32', 'commonpool_s_s13m_b4k'),
+('ViT-B-32-quickgelu', 'openai'),
+('ViT-B-32-quickgelu', 'laion400m_e31'),
+('ViT-B-32-quickgelu', 'laion400m_e32'),
+('ViT-B-16', 'openai'),
+('ViT-B-16', 'laion400m_e31'),
+('ViT-B-16', 'laion400m_e32'),
+('ViT-B-16', 'laion2b_s34b_b88k'),
+('ViT-B-16', 'datacomp_l_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_clip_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_laion_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_image_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_text_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_basic_s1b_b8k'),
+('ViT-B-16', 'commonpool_l_s1b_b8k'),
+('ViT-B-16-plus-240', 'laion400m_e31'),
+('ViT-B-16-plus-240', 'laion400m_e32'),
+('ViT-L-14', 'openai'),
+('ViT-L-14', 'laion400m_e31'),
+('ViT-L-14', 'laion400m_e32'),
+('ViT-L-14', 'laion2b_s32b_b82k'),
+('ViT-L-14', 'datacomp_xl_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_clip_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_laion_s13b_b90k'),
+('ViT-L-14', 'commonpool_xl_s13b_b90k'),
+('ViT-L-14-336', 'openai'),
+('ViT-H-14', 'laion2b_s32b_b79k'),
+('ViT-g-14', 'laion2b_s12b_b42k'),
+('ViT-g-14', 'laion2b_s34b_b88k'),
+('ViT-bigG-14', 'laion2b_s39b_b160k'),
+('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
+('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
+('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
+('convnext_base', 'laion400m_s13b_b51k'),
+('convnext_base_w', 'laion2b_s13b_b82k'),
+('convnext_base_w', 'laion2b_s13b_b82k_augreg'),
+('convnext_base_w', 'laion_aesthetic_s13b_b82k'),
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'),
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'),
+('convnext_large_d', 'laion2b_s26b_b102k_augreg'),
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft'),
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'),
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'),
+('coca_ViT-B-32', 'laion2b_s13b_b90k'),
+('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'),
+('coca_ViT-L-14', 'laion2b_s13b_b90k'),
+('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k')
+]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
@@ -634,6 +693,16 @@ There is some additional GPU memory required --- the features and data from all 
 There are also `m` loss computations instead of the usual 1.
 
 For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham et al. (https://arxiv.org/abs/2111.10050).
+
+### Int8 Support
+
+We have beta support for int8 training and inference.
+You can enable int8 training with `--use-bnb-linear SwitchBackLinearGlobal` or `--use-bnb-linear SwitchBackLinearGlobalMemEfficient`.
+Please see the bitsandbytes library for definitions for these layers.
+For CLIP VIT-Huge this should currently correspond to a 10% training speedup with no accuracy loss.
+More speedups comin when the attention layer is refactored so that linear layers man be replaced there, too.
+
+See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb or [paper](https://arxiv.org/abs/2304.13013).
 
 ### Support for remote loading/training
 
@@ -657,7 +726,7 @@ Note: if you are using this feature with `--resume latest`, there are a few warn
 The module `open_clip.push_to_hf_hub` includes helpers for pushing models /w weights and config to the HF Hub.
 
 The tool can be run from command line, ex:
-`pytorch -m open_clip.push_to_hf_hub --model convnext_large_d_320 --pretrained /train/checkpoints/epoch_12.pt --repo-id laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft`
+`python -m open_clip.push_to_hf_hub --model convnext_large_d_320 --pretrained /train/checkpoints/epoch_12.pt --repo-id laion/CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft`
 
 ## Scaling trends
 
