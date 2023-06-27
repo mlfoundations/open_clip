@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
+from torch.nn.init import xavier_uniform_, constant_, xavier_normal_
 
 from .utils import to_2tuple
 
@@ -176,11 +177,22 @@ class AttentionalPooler(nn.Module):
         self.n_head = n_head
         self.d_model = d_model
         self.context_dim = context_dim
-        self.q_proj_weight = nn.Parameter(torch.randn(d_model, d_model))
-        self.k_proj_weight = nn.Parameter(torch.randn(d_model, context_dim))
-        self.v_proj_weight = nn.Parameter(torch.randn(d_model, context_dim))
-        self.in_proj_bias = nn.Parameter(torch.randn(d_model * 3))
+        self.q_proj_weight = nn.Parameter(torch.empty(d_model, d_model))
+        self.k_proj_weight = nn.Parameter(torch.empty(d_model, context_dim))
+        self.v_proj_weight = nn.Parameter(torch.empty(d_model, context_dim))
+        self.in_proj_bias = nn.Parameter(torch.empty(d_model * 3))
         self.out_proj = nn.Linear(d_model, d_model)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+
+        xavier_uniform_(self.q_proj_weight)
+        xavier_uniform_(self.k_proj_weight)
+        xavier_uniform_(self.v_proj_weight)
+        constant_(self.in_proj_bias, 0.)
+        constant_(self.out_proj.bias, 0.)
+
 
     def attention(self, q, k, v):
         bq, bk, bv = self.in_proj_bias.chunk(3)
