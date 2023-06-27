@@ -93,7 +93,12 @@ jobs:
     - name: Unit tests
       run: |
         source .env/bin/activate
-        touch .test_durations
+        if [[ -f .test_durations]]
+        then
+          touch .test_durations
+        else
+          echo {} > .test_durations
+        fi
         cp .test_durations durations_1
         mv .test_durations durations_2
         python -m pytest \
