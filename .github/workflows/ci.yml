@@ -29,7 +29,7 @@ on:
         type: string
 
 env:
-  REVISION_REFERENCE: v2.19
+  REVISION_REFERENCE: v2.16.2
   #9d31b2ec4df6d8228f370ff20c8267ec6ba39383 earliest compatible v2.7.0 + pretrained_hf param
 
 jobs:
