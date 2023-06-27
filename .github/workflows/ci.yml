@@ -93,9 +93,9 @@ jobs:
     - name: Unit tests
       run: |
         source .env/bin/activate
-        touch .test_durations
-        cp .test_durations durations_1
-        mv .test_durations durations_2
+        # touch .test_durations
+        # cp .test_durations durations_1
+        # mv .test_durations durations_2
         python -m pytest \
           -x -s -v \
           --splitting-algorithm least_duration \
