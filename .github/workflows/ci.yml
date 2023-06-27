@@ -93,10 +93,8 @@ jobs:
     - name: Unit tests
       run: |
         source .env/bin/activate
-        if [[ -f .test_durations ]]
+        if [[ ! -f .test_durations ]]
         then
-          touch .test_durations
-        else
           echo {} > .test_durations
         fi
         cp .test_durations durations_1
