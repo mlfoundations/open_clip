@@ -172,8 +172,6 @@ class AttentionalPooler(nn.Module):
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
-        self.ln_q = norm_layer(d_model)
-        self.ln_k = norm_layer(context_dim)
         self.n_head = n_head
         self.d_model = d_model
         self.context_dim = context_dim
@@ -184,6 +182,8 @@ class AttentionalPooler(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
+        self.ln_q = norm_layer(d_model)
+        self.ln_k = norm_layer(context_dim)
 
     def _reset_parameters(self):
 
