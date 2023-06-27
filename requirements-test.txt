@@ -1,4 +1,4 @@
 pytest-split==0.8.0
 pytest==7.2.0
-transformers
+transformers==4.27.0
 timm==0.6.11
