@@ -384,11 +384,13 @@ class VisionTransformer(nn.Module):
 
         self.global_average_pool = global_average_pool
         if attentional_pool:
-            self.attn_pool = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=n_queries)
+            self.attn_pool_cls = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=1)
+            self.attn_pool_tokens = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=n_queries)
             self.ln_post = norm_layer(output_dim)
             self.proj = nn.Parameter(scale * torch.randn(output_dim, output_dim))
         else:
-            self.attn_pool = None
+            self.attn_pool_cls = None
+            self.attn_pool_tokens = None
             self.ln_post = norm_layer(width)
             self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -486,20 +488,19 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        if self.attn_pool is not None:
-            x = self.attn_pool(x)
-            x = self.ln_post(x)
-            pooled, tokens = self._global_pool(x)
-        else:
-            pooled, tokens = self._global_pool(x)
-            pooled = self.ln_post(pooled)
+        pooled, tokens = self._global_pool(x)
+        if self.attn_pool_cls is not None:
+            pooled = self.attn_pool_cls(pooled.unsqueeze(1)).squeeze(1)
+            tokens = self.attn_pool_tokens(tokens)
+
+        pooled = self.ln_post(pooled)
 
         if self.proj is not None:
             pooled = pooled @ self.proj
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
