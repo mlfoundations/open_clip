@@ -384,11 +384,13 @@ class VisionTransformer(nn.Module):
 
         self.global_average_pool = global_average_pool
         if attentional_pool:
-            self.attn_pool = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=n_queries)
+            self.attn_pool_cls = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=1)
+            self.attn_pool_tokens = AttentionalPooler(output_dim, width, n_head=attn_pooler_heads, n_queries=n_queries)
             self.ln_post = norm_layer(output_dim)
             self.proj = nn.Parameter(scale * torch.randn(output_dim, output_dim))
         else:
-            self.attn_pool = None
+            self.attn_pool_cls = None
+            self.attn_pool_tokens = None
             self.ln_post = norm_layer(width)
             self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
@@ -486,20 +488,19 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        if self.attn_pool is not None:
-            x = self.attn_pool(x)
-            x = self.ln_post(x)
-            pooled, tokens = self._global_pool(x)
-        else:
-            pooled, tokens = self._global_pool(x)
-            pooled = self.ln_post(pooled)
+        pooled, tokens = self._global_pool(x)
+        if self.attn_pool_cls is not None:
+            pooled = self.attn_pool_cls(pooled.unsqueeze(1)).squeeze(1)
+            tokens = self.attn_pool_tokens(tokens)
+
+        pooled = self.ln_post(pooled)
 
         if self.proj is not None:
             pooled = pooled @ self.proj
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
@@ -586,7 +587,7 @@ class TextTransformer(nn.Module):
 
     def build_cls_mask(self, text, cast_dtype: torch.dtype):
         cls_mask = (text != self.pad_id).unsqueeze(1)
-        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=1.0)
+        cls_mask = F.pad(cls_mask, (0, 1, cls_mask.shape[2], 0), value=1.0)
         additive_mask = torch.empty(cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
         additive_mask.fill_(0)
         additive_mask.masked_fill_(~cls_mask, float("-inf"))
@@ -673,23 +674,25 @@ class MultimodalTransformer(Transformer):
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
+        self.init_parameters()
+
     def init_parameters(self):
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
-        fc_std = (2 * self.transformer.width) ** -0.5
-        for block in self.transformer.resblocks:
+        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
+        attn_std = self.width ** -0.5
+        fc_std = (2 * self.width) ** -0.5
+        for block in self.resblocks:
             nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
             nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
             nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        for block in self.transformer.cross_attn:
+        for block in self.cross_attn:
             nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
             nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
             nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+            nn.init.normal_(self.text_projection, std=self.width ** -0.5)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
