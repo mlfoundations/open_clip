@@ -518,7 +518,7 @@ class VisionTransformer(nn.Module):
 
 class TextTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
-    
+
     def __init__(
             self,
             context_length: int = 77,
