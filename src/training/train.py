@@ -90,7 +90,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         images, texts = batch
         images = images.to(device=device, dtype=input_dtype, non_blocking=True)
-        texts = texts.to(device=device, non_blocking=True)
+
+        if isinstance(texts, list):
+            texts = [txt.to(device=device, non_blocking=True) for txt in texts]
+        else:
+            texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
@@ -260,8 +264,12 @@ def evaluate(model, data, epoch, args, tb_writer=None):
             for i, batch in enumerate(dataloader):
                 images, texts = batch
                 images = images.to(device=device, dtype=input_dtype, non_blocking=True)
-                texts = texts.to(device=device, non_blocking=True)
 
+                if isinstance(texts, list):
+                    texts = [txt.to(device=device, non_blocking=True) for txt in texts]
+                else:
+                    texts = texts.to(device=device, non_blocking=True)
+                    
                 with autocast():
                     model_out = model(images, texts)
                     image_features = model_out["image_features"]

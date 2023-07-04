@@ -228,8 +228,17 @@ class CLIP(nn.Module):
     def encode_text(self, text, normalize: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
 
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        # text is a list of tensors
+        # get the first dimension of each so we know how to get the right shapes 
+        # after we take the embeddings
 
+        lens = [text[idx].shape[0] for idx in range(len(text))]
+
+        # now concat along first dimension to parallelize
+        text = torch.cat(text, dim=0)
+
+        # get embeddings
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=self.attn_mask)
@@ -237,6 +246,17 @@ class CLIP(nn.Module):
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # reconstruct original shapes and then take means
+        result = []
+        end = 0
+        for idx in range(len(lens)):
+            start = end
+            end = start + lens[idx]
+            result.append(x[start:end, :])
+
+        result = torch.cat([torch.mean(result[idx], dim=0, keepdim=True) for idx in range(len(result))])
+
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(

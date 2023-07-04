@@ -156,7 +156,7 @@ def decode(output_ids: torch.Tensor):
     output_ids = output_ids.cpu().numpy()
     return _tokenizer.decode(output_ids)
 
-def tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+def tokenize(texts: Union[str, List[str]], context_length: int = 5) -> torch.LongTensor:
     """
     Returns the tokenized representation of given input string(s)
 

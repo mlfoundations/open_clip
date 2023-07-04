@@ -25,6 +25,8 @@ try:
 except ImportError:
     hvd = None
 
+from torch import Tensor as TorchTensor
+
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
@@ -325,6 +327,37 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
+def bow_collation_fn(samples, combine_tensors=True, combine_scalars=True):
+    """Take a collection of samples (dictionaries) and create a batch.
+
+    If `tensors` is True, `ndarray` objects are combined into
+    tensor batches.
+
+    :param dict samples: list of samples
+    :param bool tensors: whether to turn lists of ndarrays into a single ndarray
+    :returns: single sample consisting of a batch
+    :rtype: dict
+
+    """
+    assert isinstance(samples[0], (list, tuple)), type(samples[0])
+    batched = list(zip(*samples))
+    result = []
+
+    for idx in range(len(batched)):
+
+        b = batched[idx]
+
+        # image
+        if idx == 0:
+            if combine_tensors:
+                import torch
+                b = torch.stack(list(b))
+
+        result.append(b)
+
+    return result
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -385,13 +418,30 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
+
+    def txt_filter(txt):
+
+        invalid_chars = ['`', '~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '=', '+']
+        invalid_chars += ['[', '{', ']', '}', '\\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?']
+
+        for c in invalid_chars:
+            txt = txt.replace(c, ' ')
+        return txt
+
+    def preprocess_txt(txt):
+
+        if isinstance(txt, list):
+            txt = txt[0]
+
+        return tokenizer(txt_filter(txt).split(' '))
+
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+        wds.map_dict(image=preprocess_img, text=preprocess_txt),
         wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train)
+        wds.batched(args.batch_size, partial=not is_train, collation_fn=bow_collation_fn),
     ])
 
     dataset = wds.DataPipeline(*pipeline)
