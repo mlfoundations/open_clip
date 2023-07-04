@@ -784,19 +784,3 @@ class MultimodalTransformer(Transformer):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
-
-    def init_parameters(self):
-        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
-        attn_std = self.width ** -0.5
-        fc_std = (2 * self.width) ** -0.5
-        for block in self.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        for block in self.cross_attn:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-
