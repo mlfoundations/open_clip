@@ -710,6 +710,7 @@ class MultimodalTransformer(Transformer):
 
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        self.is_decoder = is_decoder
 
         self.init_parameters()
 
