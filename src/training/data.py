@@ -385,11 +385,36 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
+
+    def txt_filter(txt):
+
+        invalid_chars = ['`', '~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '=', '+']
+        invalid_chars += ['[', '{', ']', '}', '\\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?']
+
+        for c in invalid_chars:
+            txt = txt.replace(c, ' ')
+        return txt
+
+    def preprocess_txt(txt):
+        # 10 here is the max bag size
+        max_bag_size = 10
+        tokens = tokenizer(txt_filter(txt).split(' '))[:max_bag_size, :]
+        bag_size = tokens.shape[0]
+        context_len = tokens.shape[1]
+        tokens = [tokens.reshape(1, -1)]
+
+        if bag_size < max_bag_size:
+            diff = max_bag_size - bag_size
+            zero_pad = [torch.zeros((1,context_len), dtype=torch.long)]*diff
+            tokens += zero_pad
+
+        return torch.cat(tokens, dim=-1)
+
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+        wds.map_dict(image=preprocess_img, text=preprocess_txt),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train)
     ])

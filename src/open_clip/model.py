@@ -228,6 +228,10 @@ class CLIP(nn.Module):
     def encode_text(self, text, normalize: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
 
+        # collapse into first dimension
+        og_shape = text.shape
+        text = text.reshape(-1, self.context_length)
+
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.to(cast_dtype)
@@ -237,6 +241,12 @@ class CLIP(nn.Module):
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # reconstruct then take the mean
+        # [batch_size, bag_size, embed_dim]
+        x = x.reshape(og_shape[0], -1, x.shape[-1])
+        x = torch.mean(x, dim=1)
+
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(
