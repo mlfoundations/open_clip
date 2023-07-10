@@ -97,7 +97,8 @@ class MaMMUT(nn.Module, Generator):
         return image_latent
 
     def _forward(self, text, out, image_embs=None, contrastive=True, embed_cls=True):
-
+        
+        # adjust image output size for cross_attn
         image_embs = image_embs @ self.map_viz2txt_kv
         if contrastive:
             text_features = self.encode_text(text)
@@ -107,13 +108,11 @@ class MaMMUT(nn.Module, Generator):
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
         text = text[:, :-1] if embed_cls else text # drop last tok because it has no label
-
-        # adjust image output size for cross_attn
         out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
 
         return out
 
-    def forward(self, image, text, image_latent=None, image_embs=None, embed_cls=False):
+    def forward(self, image, text, image_latent=None, image_embs=None, embed_cls=True):
         out = {"logit_scale": self.logit_scale.exp()}
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
