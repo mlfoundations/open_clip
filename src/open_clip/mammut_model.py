@@ -33,6 +33,7 @@ def _build_multimodal_decoder_tower(
         ls_init_value=multimodal_cfg.ls_init_value,
         cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
         does_full_decoding=multimodal_cfg.does_full_decoding,
+        output_tokens=multimodal_cfg.output_tokens,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
@@ -87,11 +88,12 @@ class MaMMUT(nn.Module, Generator):
         self.text.set_grad_checkpointing(enable)
 
     def _encode_text(self, text, image_embs):
-        text_latent = self.text(
+        token_logits, text_latent = self.text(
             text_embs=text,
             image_embs=image_embs,
         )
-        return text_latent
+        return token_logits, text_latent
+        
 
     def encode_text(
         self,
@@ -100,16 +102,15 @@ class MaMMUT(nn.Module, Generator):
         normalize=True,
         output_logits=False
     ):
-        token_logits = self._encode_text(
+        token_logits, text_latent = self._encode_text(
             text=text,
             image_embs=image_embs,
         )
-        
+
         if output_logits:
             return token_logits
 
-        text_latent = token_logits.mean(dim=1)
-
+        text_latent = text_latent.mean(1)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent
 

@@ -657,6 +657,7 @@ class MultimodalTransformer(Transformer):
             output_dim: int = 512,
             does_full_decoding: bool = False, # if this is false below values are useless
             vocab_size: int = 49408,
+            output_tokens: bool = False,
     ):
 
         super().__init__(
@@ -701,6 +702,8 @@ class MultimodalTransformer(Transformer):
             self.num_pos = None
             self.token_embedding = None
             self.positional_embedding = None
+        
+        self.output_tokens = output_tokens
 
         self.init_parameters()
 
@@ -770,9 +773,12 @@ class MultimodalTransformer(Transformer):
         x = self.ln_final(x)
 
         if self.text_projection is not None:
-            x = x @ self.text_projection
+            logits = x @ self.text_projection
+            
+        if self.output_tokens:
+            return logits, x
 
-        return x
+        return logits
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
