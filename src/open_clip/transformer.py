@@ -748,9 +748,11 @@ class MultimodalTransformer(Transformer):
 
         # TODO: handle different cases better, currently 
         # differentiates coca from mammut based on image_embs
-        if self.attn_mask is not None and attn_mask is None and image_embs is not None:
+        if image_embs is not None:
             attn_mask = self.attn_mask
-        attn_mask = attn_mask[:seq_len, :seq_len]
+            attn_mask = attn_mask[:seq_len, :seq_len]
+        else:
+            attn_mask = None
 
         for idx, resblock in enumerate(self.resblocks):
             cross_attn_idx, _r = divmod(idx, self.cross_step)

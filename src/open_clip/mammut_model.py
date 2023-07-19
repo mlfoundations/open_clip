@@ -74,7 +74,7 @@ class MaMMUT(nn.Module, Generator):
     ):
         text_latent, token_logits = self._encode_text(
             text,
-            image_embs,
+            image_embs=image_embs,
             attn_mask=attn_mask,
         )
 
@@ -89,7 +89,7 @@ class MaMMUT(nn.Module, Generator):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, image_embs
 
-    def encode_image(self, image, normalize: bool = True):
+    def encode_image(self, image, normalize: bool=True):
         image_latent, _ = self._encode_image(image, normalize=normalize)
         return image_latent
 
