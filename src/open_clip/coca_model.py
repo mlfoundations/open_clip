@@ -23,6 +23,8 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
+    cross_attn_ratio: int = 1
+    does_full_decoding: bool = False
 
 
 def _build_text_decoder_tower(
@@ -48,7 +50,6 @@ def _build_text_decoder_tower(
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
-        is_decoder=is_decoder
     )
 
     return decoder

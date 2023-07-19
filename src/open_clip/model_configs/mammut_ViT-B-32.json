@@ -16,8 +16,7 @@
         "layers": 12,
         "output_tokens": true,
         "cross_attn_ratio": 2,
-        "token_average_pool": true,
-        "is_multimodal_decoder": true
+        "does_full_decoding": true
     },
     "custom_text": true
 }

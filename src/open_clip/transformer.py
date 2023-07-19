@@ -9,8 +9,6 @@ from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
 
-_TRANSFORMER_TYPES = ["transformer", "multimodal"]
-
 
 class LayerNormFp32(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
@@ -297,7 +295,6 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
-            **kwargs
     ):
         super().__init__()
         self.width = width
@@ -533,15 +530,10 @@ class TextTransformer(nn.Module):
             embed_cls: bool = False,
             pad_id: int = 0,
             output_tokens: bool = False,
-            token_average_pool: bool = False,
-            language_modeling: bool = False,
-            is_multimodal_decoder = False,
-            **transformer_kwargs
     ):
 
         super().__init__()
         self.output_tokens = output_tokens
-        self.is_multimodal_decoder = is_multimodal_decoder
         self.num_pos = self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -562,18 +554,14 @@ class TextTransformer(nn.Module):
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
 
-        _transformer_type = (
-            Transformer if not self.is_multimodal_decoder else MultimodalTransformer
-        )
 
-        self.transformer = _transformer_type(
+        self.transformer = Transformer(
             width=width,
             layers=layers,
             heads=heads,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
-            **transformer_kwargs
         )
 
         self.ln_final = norm_layer(width)
@@ -616,13 +604,11 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text, cross_embs=None, attn_mask=None):
+    def forward(self, text):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        if self.attn_mask is not None and attn_mask is None:
-            attn_mask = self.attn_mask
 
         if self.cls_emb is not None:
             seq_len += 1
@@ -631,12 +617,9 @@ class TextTransformer(nn.Module):
             attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
-        if self.is_multimodal_decoder:
-            x = self.transformer(cross_embs, x, attn_mask=attn_mask)
-        else:
-            x = x.permute(1, 0, 2)  # NLD -> LND
-            x = self.transformer(x, attn_mask=attn_mask)
-            x = x.permute(1, 0, 2)  # LND -> NLD
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x, attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
@@ -651,10 +634,7 @@ class TextTransformer(nn.Module):
             pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
 
         if self.text_projection is not None:
-            if self.language_modeling:
-                tokens = tokens @ self.text_projection
-            else:
-                pooled = pooled @ self.text_projection
+            pooled = pooled @ self.text_projection
 
         if self.output_tokens:
             return pooled, tokens
@@ -663,19 +643,22 @@ class TextTransformer(nn.Module):
 
 
 class MultimodalTransformer(Transformer):
+    does_full_decoding: torch.jit.Final[bool]
+
     def __init__(
             self,
             width: int,
             layers: int,
             heads: int,
+            context_length: int = 77,
+            mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-            mlp_ratio: float = 4.0,
+            norm_layer: Callable = LayerNorm,            
             cross_attn_ratio = 1,
-            is_decoder: bool = False, # if this is false below values are useless
-            context_length: int = 77,
+            does_full_decoding: bool = False, # if this is false below values are useless
             output_dim: int = 512,
+            vocab_size: int = 49408,
     ):
 
         super().__init__(
@@ -710,7 +693,16 @@ class MultimodalTransformer(Transformer):
 
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-        self.is_decoder = is_decoder
+        self.does_full_decoding = does_full_decoding
+        
+        if self.does_full_decoding:
+            self.num_pos = self.context_length
+            self.token_embedding = nn.Embedding(vocab_size, width)
+            self.positional_embedding = nn.Parameter(torch.randn(self.num_pos, width))
+        else:
+            self.num_pos = None
+            self.token_embedding = None
+            self.positional_embedding = None
 
         self.init_parameters()
 
@@ -740,11 +732,18 @@ class MultimodalTransformer(Transformer):
         mask.triu_(1) # zero out the lower diagonal
         return mask
 
-    def forward(self, image_embs, text_embs, attn_mask=None):
+    def forward(self, image_embs, text_embs):
+        seq_len = text_embs.shape[1]
+        if self.does_full_decoding:
+            cast_dtype = self.get_cast_dtype()
+            text_embs = self.token_embedding(text_embs).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+            text_embs = text_embs + self.positional_embedding[:seq_len].to(cast_dtype)
+
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
         if image_embs is not None:
             image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
-        seq_len = text_embs.shape[0]
+
+        
 
         # TODO: handle different cases better, currently 
         # differentiates coca from mammut based on image_embs
@@ -773,10 +772,6 @@ class MultimodalTransformer(Transformer):
         assert cross_attn_idx == len(self.cross_attn) - 1, "some cross attentions are being skipped"
 
         x = text_embs.permute(1, 0, 2)  # LND -> NLD
-
-        if not self.is_decoder:
-            return x
-
         x = self.ln_final(x)
 
         if self.text_projection is not None:

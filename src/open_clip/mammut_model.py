@@ -6,37 +6,67 @@ import torch.nn.functional as F
 import numpy as np
 
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .coca_model import MultimodalCfg
+from .transformer import QuickGELU, LayerNormFp32, LayerNorm, MultimodalTransformer
 from .generation_utils import Generator
 
+
+
+def _build_multimodal_decoder_tower(
+        embed_dim,
+        multimodal_cfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+        is_decoder=True
+):
+    multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = (
+        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    )
+
+    decoder = MultimodalTransformer(
+        context_length=multimodal_cfg.context_length,
+        width=multimodal_cfg.width,
+        heads=multimodal_cfg.heads,
+        layers=multimodal_cfg.layers,
+        ls_init_value=multimodal_cfg.ls_init_value,
+        cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
+        does_full_decoding=multimodal_cfg.does_full_decoding,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+    )
+
+    return decoder
 
 class MaMMUT(nn.Module, Generator):
     def __init__(
         self,
         embed_dim: int,
-        text_cfg: CLIPTextCfg,
+        text_cfg: MultimodalCfg,
         vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
         pad_id: int = 0,
     ):
         super().__init__()
-        text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
+        multimodal_cfg = MultimodalCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = (
             CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
         )
 
         vocab_size = (
             self.text.config.vocab_size  # for hf models
-            if text_cfg.__dict__.get("hf_model_name", None) is not None
-            else text_cfg.vocab_size
+            if multimodal_cfg.__dict__.get("hf_model_name", None) is not None
+            else multimodal_cfg.vocab_size
         )
 
-        self.text = _build_text_tower(
+        self.text = _build_multimodal_decoder_tower(
             vocab_size,
-            text_cfg=text_cfg,
+            multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
-            language_modeling=True,
             is_decoder=False,
         )
 
@@ -47,7 +77,7 @@ class MaMMUT(nn.Module, Generator):
             cast_dtype=cast_dtype,
         )
 
-        self.map_viz2txt_kv = nn.Parameter(torch.randn(vision_cfg.width, text_cfg.width))
+        self.map_viz2txt_kv = nn.Parameter(torch.randn(vision_cfg.width, multimodal_cfg.width))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
 
@@ -56,30 +86,29 @@ class MaMMUT(nn.Module, Generator):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
-    def _encode_text(self, text, image_embs, attn_mask):
-        text_latent, text_logits = self.text(
-            text,
-            cross_embs=image_embs,
-            attn_mask=attn_mask,
+    def _encode_text(self, text, image_embs):
+        text_latent = self.text(
+            text_embs=text,
+            image_embs=image_embs,
         )
-        return text_latent, text_logits
+        return text_latent
 
     def encode_text(
         self,
         text,
         image_embs=None,
         normalize=True,
-        attn_mask=None,
         output_logits=False
     ):
-        text_latent, token_logits = self._encode_text(
-            text,
+        token_logits = self._encode_text(
+            text=text,
             image_embs=image_embs,
-            attn_mask=attn_mask,
         )
-
+        
         if output_logits:
             return token_logits
+
+        text_latent = token_logits.mean(dim=1)
 
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent
