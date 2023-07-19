@@ -616,7 +616,7 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text, cross_embs=None, attn_mask=None, cross_attn_mask=None):
+    def forward(self, text, cross_embs=None, attn_mask=None):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 

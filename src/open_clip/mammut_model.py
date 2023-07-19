@@ -56,12 +56,11 @@ class MaMMUT(nn.Module, Generator):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
-    def _encode_text(self, text, image_embs, attn_mask, cross_attn_mask):
+    def _encode_text(self, text, image_embs, attn_mask):
         text_latent, text_logits = self.text(
             text,
             cross_embs=image_embs,
             attn_mask=attn_mask,
-            cross_attn_mask=cross_attn_mask,
         )
         return text_latent, text_logits
 
@@ -71,14 +70,12 @@ class MaMMUT(nn.Module, Generator):
         image_embs=None,
         normalize=True,
         attn_mask=None,
-        cross_attn_mask=None,
         output_logits=False
     ):
         text_latent, token_logits = self._encode_text(
             text,
             image_embs,
             attn_mask=attn_mask,
-            cross_attn_mask=cross_attn_mask,
         )
 
         if output_logits:
@@ -92,7 +89,7 @@ class MaMMUT(nn.Module, Generator):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, image_embs
 
-    def encode_image(self, image, normalize: bool = True, output_tokens=False):
+    def encode_image(self, image, normalize: bool = True):
         image_latent, _ = self._encode_image(image, normalize=normalize)
         return image_latent
 
@@ -118,6 +115,6 @@ class MaMMUT(nn.Module, Generator):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
         out["image_features"] = image_latent
-        out = self._forward(text, out, image_embs=image_embs)
+        out = self._forward(text, out)
         out = self._forward(text, out, image_embs=image_embs, contrastive=False, embed_cls=embed_cls)
         return out
