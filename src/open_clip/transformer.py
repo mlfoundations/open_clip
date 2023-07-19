@@ -708,7 +708,7 @@ class MultimodalTransformer(Transformer):
 
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.width ** -0.5)
-            
+
         if self.does_full_decoding:
             nn.init.normal_(self.token_embedding.weight, std=0.02)
             nn.init.normal_(self.positional_embedding, std=0.01)
