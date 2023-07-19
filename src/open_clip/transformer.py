@@ -411,7 +411,13 @@ class VisionTransformer(nn.Module):
             param.requires_grad = False
 
         if unlocked_groups != 0:
-            groups = [proj_std, attn_std, fc_std
+            groups = [
+                [
+                    self.conv1,
+                    self.class_embedding,
+                    self.positional_embedding,
+                    self.ln_pre,
+                ],
                 *self.transformer.resblocks[:-1],
                 [
                     self.transformer.resblocks[-1],
