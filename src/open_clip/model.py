@@ -177,7 +177,6 @@ def _build_text_tower(
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
             output_tokens=text_cfg.output_tokens,
-            token_average_pool=text_cfg.token_average_pool,
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,

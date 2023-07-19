@@ -542,8 +542,6 @@ class TextTransformer(nn.Module):
         self.pad_id = pad_id
 
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-        self.token_average_pool = token_average_pool
-        self.language_modeling = language_modeling
 
         if embed_cls:
             self.cls_emb = nn.Parameter(torch.empty(width))
@@ -610,6 +608,7 @@ class TextTransformer(nn.Module):
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
 
+        attn_mask = self.attn_mask
         if self.cls_emb is not None:
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
@@ -626,9 +625,6 @@ class TextTransformer(nn.Module):
         if self.cls_emb is not None:
             pooled, tokens = x[:, -1], x[:, :-1]
             pooled = self.ln_final(pooled)
-        elif self.token_average_pool:
-            x = self.ln_final(x)
-            pooled, tokens = x.mean(1), x
         else:
             x = self.ln_final(x)
             pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
