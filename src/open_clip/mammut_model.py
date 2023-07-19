@@ -97,13 +97,14 @@ class MaMMUT(nn.Module, Generator):
         return image_latent
 
     def _forward(self, text, out, image_embs=None, contrastive=True, embed_cls=True):
-        
-        # adjust image output size for cross_attn
-        image_embs = image_embs @ self.map_viz2txt_kv
+
         if contrastive:
             text_features = self.encode_text(text)
             out["text_features"] = text_features
             return out
+
+        # adjust image output size for cross_attn
+        image_embs = image_embs @ self.map_viz2txt_kv
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
