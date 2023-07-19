@@ -331,6 +331,8 @@ class Transformer(nn.Module):
             nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
+        return proj_std, attn_std, fc_std
+
 
 class VisionTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
@@ -409,13 +411,7 @@ class VisionTransformer(nn.Module):
             param.requires_grad = False
 
         if unlocked_groups != 0:
-            groups = [
-                [
-                    self.conv1,
-                    self.class_embedding,
-                    self.positional_embedding,
-                    self.ln_pre,
-                ],
+            groups = [proj_std, attn_std, fc_std
                 *self.transformer.resblocks[:-1],
                 [
                     self.transformer.resblocks[-1],
@@ -703,15 +699,7 @@ class MultimodalTransformer(Transformer):
         self.init_parameters()
 
     def init_parameters(self):
-        
-        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
-        attn_std = self.width ** -0.5
-        fc_std = (2 * self.width) ** -0.5
-        for block in self.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        proj_std, attn_std, fc_std = super().init_parameters()
         for block in self.cross_attn:
             nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
             nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
