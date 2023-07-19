@@ -652,8 +652,8 @@ class MultimodalTransformer(Transformer):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,            
             cross_attn_ratio = 1,
-            does_full_decoding: bool = False, # if this is false below values are useless
             output_dim: int = 512,
+            does_full_decoding: bool = False, # if this is false below values are useless
             vocab_size: int = 49408,
     ):
 
@@ -694,7 +694,7 @@ class MultimodalTransformer(Transformer):
         if self.does_full_decoding:
             self.num_pos = self.context_length
             self.token_embedding = nn.Embedding(vocab_size, width)
-            self.positional_embedding = nn.Parameter(torch.randn(self.num_pos, width))
+            self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
         else:
             self.num_pos = None
             self.token_embedding = None
@@ -703,6 +703,7 @@ class MultimodalTransformer(Transformer):
         self.init_parameters()
 
     def init_parameters(self):
+        
         proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
         attn_std = self.width ** -0.5
         fc_std = (2 * self.width) ** -0.5
@@ -719,6 +720,10 @@ class MultimodalTransformer(Transformer):
 
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.width ** -0.5)
+            
+        if self.does_full_decoding:
+            nn.init.normal_(self.token_embedding.weight, std=0.02)
+            nn.init.normal_(self.positional_embedding, std=0.01)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
