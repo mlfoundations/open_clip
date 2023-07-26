@@ -6,19 +6,20 @@ import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+from functools import partial
 
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
-    resize_pos_embed, get_cast_dtype
+    resize_pos_embed, get_cast_dtype, resize_text_pos_embed
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
-from .tokenizer import HFTokenizer, tokenize
+from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -79,8 +80,15 @@ def get_tokenizer(model_name):
         tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
     else:
         config = get_model_config(model_name)
-        tokenizer = HFTokenizer(
-            config['text_cfg']['hf_tokenizer_name']) if 'hf_tokenizer_name' in config['text_cfg'] else tokenize
+        if 'hf_tokenizer_name' in config['text_cfg']:
+            tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name'])
+        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask']:
+            assert config['text_cfg']['text_mask'] == 'syntax', 'for now, only support syntax masking!'
+            tokenizer = syntax_mask_tokenize
+        else:
+            tokenizer = tokenize
+    context_length = get_model_config(model_name)['text_cfg']['context_length']
+    tokenizer = partial(tokenizer, context_length=context_length)
     return tokenizer
 
 
@@ -109,6 +117,7 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     if position_id_key in state_dict and not hasattr(model, position_id_key):
         del state_dict[position_id_key]
     resize_pos_embed(state_dict, model)
+    resize_text_pos_embed(state_dict, model)
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
     return incompatible_keys
 

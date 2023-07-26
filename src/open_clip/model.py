@@ -63,6 +63,7 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    text_mask: str = 'first' # default first truncate in bpe_tokenizer
 
 
 def get_cast_dtype(precision: str):
@@ -496,3 +497,35 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
     else:
         new_pos_embed = pos_emb_img
     state_dict['visual.positional_embedding'] = new_pos_embed
+
+
+def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
+    old_pos_embed = state_dict.get('positional_embedding', None)
+    if old_pos_embed is None:
+        return
+    # FIXME add support for text cls_token
+    model_pos_embed = getattr(model, 'positional_embedding', None)
+    if model_pos_embed is None:
+        model_pos_embed = getattr(model.text, 'positional_embedding', None)
+
+    old_num_pos = old_pos_embed.shape[0]
+    old_width = old_pos_embed.shape[1]
+    num_pos = model_pos_embed.shape[0]
+    width = model_pos_embed.shape[1]
+    assert old_width == width, 'text pos_embed width changed!'
+    if old_num_pos == num_pos:
+        return
+
+    logging.info('Resizing text position embedding num_pos from %s to %s', old_num_pos, num_pos)
+    old_pos_embed = old_pos_embed.reshape(1, old_num_pos, old_width).permute(0, 2, 1)
+    old_pos_embed = F.interpolate(
+        old_pos_embed,
+        size=num_pos,
+        mode=interpolation,
+        antialias=antialias,
+        align_corners=False,
+    )
+    old_pos_embed = old_pos_embed.permute(0, 2, 1)[0]
+    new_pos_embed = old_pos_embed
+
+    state_dict['positional_embedding'] = new_pos_embed
