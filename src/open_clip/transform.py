@@ -2,12 +2,13 @@ import warnings
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
+import random
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as F
 
 from torchvision.transforms import Normalize, Compose, RandomResizedCrop, InterpolationMode, ToTensor, Resize, \
-    CenterCrop
+    CenterCrop, ColorJitter, Grayscale
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
@@ -16,11 +17,14 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 class AugmentationCfg:
     scale: Tuple[float, float] = (0.9, 1.0)
     ratio: Optional[Tuple[float, float]] = None
-    color_jitter: Optional[Union[float, Tuple[float, float, float]]] = None
+    color_jitter: Optional[Union[float, Tuple[float, float, float], Tuple[float, float, float, float]]] = None
     interpolation: Optional[str] = None
     re_prob: Optional[float] = None
     re_count: Optional[int] = None
     use_timm: bool = False
+    # params for simclr_jitter_gray
+    color_jitter_prob: float = None
+    gray_scale_prob: float = None
 
 
 class ResizeMaxSize(nn.Module):
@@ -52,6 +56,37 @@ class ResizeMaxSize(nn.Module):
 def _convert_to_rgb(image):
     return image.convert('RGB')
 
+
+class color_jitter(object):
+    """
+    Apply Color Jitter to the PIL image with a specified probability.
+    """
+    def __init__(self, brightness=0., contrast=0., saturation=0., hue=0., p=0.8):
+        assert 0. <= p <= 1.
+        self.p = p
+        self.transf = ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return self.transf(img)
+        else:
+            return img
+
+
+class gray_scale(object):
+    """
+    Apply Gray Scale to the PIL image with a specified probability.
+    """
+    def __init__(self, p=0.2):
+        assert 0. <= p <= 1.
+        self.p = p
+        self.transf = Grayscale(num_output_channels=3)
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return self.transf(img)
+        else:
+            return img
 
 def image_transform(
         image_size: int,
@@ -92,6 +127,11 @@ def image_transform(
             # by default, timm aug randomly alternates bicubic & bilinear for better robustness at inference time
             aug_cfg_dict.setdefault('interpolation', 'random')
             aug_cfg_dict.setdefault('color_jitter', None)  # disable by default
+
+            # drop extra item
+            aug_cfg_dict.pop('color_jitter_prob', False)
+            aug_cfg_dict.pop('gray_scale_prob', False)
+
             train_transform = create_transform(
                 input_size=input_size,
                 is_training=True,
@@ -102,16 +142,28 @@ def image_transform(
                 **aug_cfg_dict,
             )
         else:
-            train_transform = Compose([
+            train_transform = [
                 RandomResizedCrop(
                     image_size,
                     scale=aug_cfg_dict.pop('scale'),
                     interpolation=InterpolationMode.BICUBIC,
                 ),
                 _convert_to_rgb,
+            ]
+            if aug_cfg.color_jitter_prob:
+                assert aug_cfg.color_jitter is not None and len(aug_cfg.color_jitter) == 4
+                train_transform.extend([
+                    color_jitter(*aug_cfg.color_jitter, p=aug_cfg.color_jitter_prob)
+                ])
+            if aug_cfg.gray_scale_prob:
+                train_transform.extend([
+                    gray_scale(aug_cfg.gray_scale_prob)
+                ])
+            train_transform.extend([
                 ToTensor(),
                 normalize,
             ])
+            train_transform = Compose(train_transform)
             if aug_cfg_dict:
                 warnings.warn(f'Unused augmentation cfg items, specify `use_timm` to use ({list(aug_cfg_dict.keys())}).')
         return train_transform
