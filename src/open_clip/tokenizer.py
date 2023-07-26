@@ -11,10 +11,23 @@ from typing import Union, List
 import ftfy
 import regex as re
 import torch
+import numpy as np
+
+import tensorflow as tf
+import tensorflow_text
+tf.config.set_visible_devices([], 'GPU')  # Hands off my GPU! (or pip install tensorflow-cpu)
 
 # https://stackoverflow.com/q/62691279
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+try:
+    import nltk
+    # run them for the first time
+    nltk.download('punkt')
+    nltk.download('averaged_perceptron_tagger')
+except:
+    nltk = None
 
 
 @lru_cache()
@@ -212,3 +225,54 @@ class HFTokenizer:
             truncation=True,
         ).input_ids
         return input_ids
+
+
+def _create_bert_tokenizer(vocab_path):
+  with tf.io.gfile.GFile(vocab_path) as f:
+    vocab = f.read().split("\n")
+  cls_token = vocab.index("[CLS]")
+  return cls_token, tensorflow_text.BertTokenizer(
+      vocab_path,
+      token_out_type=tf.int32,
+      lower_case=True,
+  )
+
+def get_pp_bert_tokenize(vocab_path, max_len):
+  """Extracts tokens with tensorflow_text.BertTokenizer.
+  copied from big_vision. modified to deal with multiple text
+  Args:
+    vocab_path: Path to a file containing the vocabulry for the WordPiece
+      tokenizer. It's the "vocab.txt" file in the zip file downloaded from
+      the original repo https://github.com/google-research/bert
+    max_len: Number of tokens after tokenization.
+    sample_if_multi: Whether the first text should be taken (if set to `False`),
+      or whether a random text should be tokenized.
+
+  Returns:
+    A preprocessing Op.
+  """
+
+  cls_token, tokenizer = _create_bert_tokenizer(vocab_path)
+
+  def _pp_bert_tokenize(labels):
+    if isinstance(labels, str):
+        labels = [labels]
+
+    labels = tf.reshape(labels, (-1,))
+    output_list = []
+    for i in range(tf.shape(labels)[0]):
+        txt = labels[i]
+
+        token_ids = tokenizer.tokenize(txt[None])
+        padded_token_ids, mask = tensorflow_text.pad_model_inputs(
+            token_ids, max_len - 1)
+        del mask  # Recovered from zero padding in model.
+        count = tf.shape(padded_token_ids)[0]
+        padded_token_ids = tf.concat(
+            [tf.fill([count, 1], cls_token), padded_token_ids], axis=1)
+        output = padded_token_ids[0].numpy()
+        output_list.append(output[None, :])
+    output = np.concatenate(output_list, axis=0)
+    return torch.tensor(output)
+
+  return _pp_bert_tokenize

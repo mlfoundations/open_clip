@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from functools import partial
 
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
@@ -45,6 +46,10 @@ class CLIPVisionCfg:
     timm_proj_bias: bool = False  # enable bias final projection
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
+    pos_embed: str = 'learnable'
+    gelu_approximate: str = 'none'
+    ln_pre: bool = True
+    pool_style: str = 'open_clip'
 
 
 @dataclass
@@ -63,6 +68,11 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    gelu_approximate: str = 'none'
+    pool_style: str = 'open_clip'
+    bert_tokenizer: bool = False
+    vocab_path: str = None
+    attention_mask: bool = True
 
 
 def get_cast_dtype(precision: str):
@@ -122,6 +132,8 @@ def _build_vision_tower(
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        if act_layer==nn.GELU:
+            act_layer = partial(act_layer, approximate=vision_cfg.gelu_approximate)
         visual = VisionTransformer(
             image_size=vision_cfg.image_size,
             patch_size=vision_cfg.patch_size,
@@ -140,6 +152,9 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            pos_embed=vision_cfg.pos_embed,
+            ln_pre=vision_cfg.ln_pre,
+            pool_style=vision_cfg.pool_style,
         )
 
     return visual
@@ -167,6 +182,9 @@ def _build_text_tower(
         act_layer = QuickGELU if quick_gelu else nn.GELU
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
 
+        if act_layer==nn.GELU:
+            act_layer = partial(act_layer, approximate=text_cfg.gelu_approximate)
+
         text = TextTransformer(
             context_length=text_cfg.context_length,
             vocab_size=text_cfg.vocab_size,
@@ -180,6 +198,8 @@ def _build_text_tower(
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            pool_style=text_cfg.pool_style,
+            attention_mask=text_cfg.attention_mask,
         )
     return text
 
@@ -208,6 +228,7 @@ class CLIP(nn.Module):
         self.positional_embedding = text.positional_embedding
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
+        self.pool_style = text.pool_style
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -236,7 +257,16 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        if self.pool_style == 'open_clip':
+            x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        elif self.pool_style == 'big_vision_tok':
+            pooled = x[:, 0]
+            x = pooled @ self.text_projection
+        elif self.pool_style == 'big_vision_last':
+            pooled = x[:, -1]
+            x = pooled @ self.text_projection
+        else:
+            raise ValueError
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(
@@ -471,3 +501,35 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
     else:
         new_pos_embed = pos_emb_img
     state_dict['visual.positional_embedding'] = new_pos_embed
+
+
+def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
+    old_pos_embed = state_dict.get('positional_embedding', None)
+    if old_pos_embed is None:
+        return
+    # FIXME add support for text cls_token
+    model_pos_embed = getattr(model, 'positional_embedding', None)
+    if model_pos_embed is None:
+        model_pos_embed = getattr(model.text, 'positional_embedding', None)
+
+    old_num_pos = old_pos_embed.shape[0]
+    old_width = old_pos_embed.shape[1]
+    num_pos = model_pos_embed.shape[0]
+    width = model_pos_embed.shape[1]
+    assert old_width == width, 'text pos_embed width changed!'
+    if old_num_pos == num_pos:
+        return
+
+    logging.info('Resizing text position embedding num_pos from %s to %s', old_num_pos, num_pos)
+    old_pos_embed = old_pos_embed.reshape(1, old_num_pos, old_width).permute(0, 2, 1)
+    old_pos_embed = F.interpolate(
+        old_pos_embed,
+        size=num_pos,
+        mode=interpolation,
+        antialias=antialias,
+        align_corners=False,
+    )
+    old_pos_embed = old_pos_embed.permute(0, 2, 1)[0]
+    new_pos_embed = old_pos_embed
+
+    state_dict['positional_embedding'] = new_pos_embed

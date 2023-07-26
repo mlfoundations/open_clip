@@ -61,6 +61,8 @@ def image_transform(
         resize_longest_max: bool = False,
         fill_color: int = 0,
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+        interpolation: str = 'bicubic',  # only effective for inference
+        square_resize_only: bool = False,
 ):
     mean = mean or OPENAI_DATASET_MEAN
     if not isinstance(mean, (list, tuple)):
@@ -92,6 +94,11 @@ def image_transform(
             # by default, timm aug randomly alternates bicubic & bilinear for better robustness at inference time
             aug_cfg_dict.setdefault('interpolation', 'random')
             aug_cfg_dict.setdefault('color_jitter', None)  # disable by default
+
+            # drop extra item
+            aug_cfg_dict.pop('interpolation', False)
+            aug_cfg_dict.pop('square_resize_only', False)
+
             train_transform = create_transform(
                 input_size=input_size,
                 is_training=True,
@@ -116,13 +123,21 @@ def image_transform(
                 warnings.warn(f'Unused augmentation cfg items, specify `use_timm` to use ({list(aug_cfg_dict.keys())}).')
         return train_transform
     else:
+        assert interpolation in ['bicubic', 'bilinear']
+        assert not (resize_longest_max and square_resize_only)
         if resize_longest_max:
             transforms = [
                 ResizeMaxSize(image_size, fill=fill_color)
             ]
+        elif square_resize_only:
+            if isinstance(image_size, int):
+                image_size = (image_size, image_size)
+            transforms = [
+                Resize(image_size, interpolation=InterpolationMode.BICUBIC if interpolation == 'bicubic' else InterpolationMode.BILINEAR),
+            ]
         else:
             transforms = [
-                Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+                Resize(image_size, interpolation=InterpolationMode.BICUBIC if interpolation == 'bicubic' else InterpolationMode.BILINEAR),
                 CenterCrop(image_size),
             ]
         transforms.extend([

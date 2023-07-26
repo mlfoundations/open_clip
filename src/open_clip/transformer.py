@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence, Tuple
+from functools import partial
 
 import torch
 from torch import nn
@@ -8,6 +9,7 @@ from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple
+from .pos_embed import get_2d_sincos_pos_embed
 
 
 class LayerNormFp32(nn.LayerNorm):
@@ -343,7 +345,10 @@ class VisionTransformer(nn.Module):
             input_patchnorm: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False
+            output_tokens: bool = False,
+            pos_embed: str = 'learnable',
+            ln_pre: bool = True,
+            pool_style: str = 'open_clip',  # only effective when attention_pool is None
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -366,12 +371,21 @@ class VisionTransformer(nn.Module):
         # class embeddings and positional embeddings
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
+        if pos_embed == 'learnable':
+            self.positional_embedding = nn.Parameter(scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
+        elif pos_embed == 'sin_cos_2d':
+            # fixed sin-cos embedding
+            assert self.grid_size[0] == self.grid_size[1], 'currently sin cos 2d pos embedding only supports square input'
+            self.positional_embedding = nn.Parameter(torch.zeros(self.grid_size[0] * self.grid_size[1] + 1, width), requires_grad=False)
+            pos_embed = get_2d_sincos_pos_embed(width, self.grid_size[0], cls_token=True)
+            self.positional_embedding.data.copy_(torch.from_numpy(pos_embed).float())
+        else:
+            raise ValueError
 
         # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
         self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
 
-        self.ln_pre = norm_layer(width)
+        self.ln_pre = norm_layer(width) if ln_pre else nn.Identity()
         self.transformer = Transformer(
             width,
             layers,
@@ -391,6 +405,8 @@ class VisionTransformer(nn.Module):
             self.attn_pool = None
             self.ln_post = norm_layer(width)
             self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+
+            self.pool_style = pool_style
 
         self.init_parameters()
 
@@ -451,8 +467,10 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
-    def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.global_average_pool:
+    def _global_pool(self, x: torch.Tensor, include_cls=True) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.global_average_pool and not include_cls:
+            return x[:, 1:].mean(dim=1), x[:, 1:]
+        elif self.global_average_pool and include_cls:
             return x.mean(dim=1), x
         else:
             return x[:, 0], x[:, 1:]
@@ -491,8 +509,19 @@ class VisionTransformer(nn.Module):
             x = self.ln_post(x)
             pooled, tokens = self._global_pool(x)
         else:
-            pooled, tokens = self._global_pool(x)
-            pooled = self.ln_post(pooled)
+            if self.pool_style == 'open_clip':
+                pooled, tokens = self._global_pool(x)
+                pooled = self.ln_post(pooled)
+            elif self.pool_style == 'big_vision_tok':
+                assert not self.global_average_pool
+                x = self.ln_post(x)
+                pooled, tokens = self._global_pool(x)
+            elif self.pool_style == 'big_vision_gap':
+                assert self.global_average_pool
+                pooled, tokens = self._global_pool(x, include_cls=False)
+                pooled = self.ln_post(pooled)
+            else:
+                raise ValueError
 
         if self.proj is not None:
             pooled = pooled @ self.proj
@@ -520,6 +549,8 @@ class TextTransformer(nn.Module):
             embed_cls: bool = False,
             pad_id: int = 0,
             output_tokens: bool = False,
+            pool_style: str = 'open_clip',
+            attention_mask: bool = True,
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -537,6 +568,9 @@ class TextTransformer(nn.Module):
             self.num_pos += 1
         else:
             self.cls_emb = None
+        self.pool_style = pool_style
+        if self.pool_style == 'big_vision':
+            assert not embed_cls, 'bert tokenizer in big_vision already append a cls token, so do not use cls_embed in text transformer!'
 
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
@@ -550,7 +584,10 @@ class TextTransformer(nn.Module):
         )
         self.ln_final = norm_layer(width)
 
-        self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+        if attention_mask:
+            self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
+        else:
+            self.attn_mask = None
 
         self.init_parameters()
 
@@ -619,8 +656,19 @@ class TextTransformer(nn.Module):
             pooled, tokens = x[:, -1], x[:, :-1]
             pooled = self.ln_final(pooled)
         else:
-            x = self.ln_final(x)
-            pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
+            if self.pool_style == 'open_clip':
+                x = self.ln_final(x)
+                pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
+            elif self.pool_style == 'big_vision_tok':
+                x = self.ln_final(x)
+                # not sure what is the tokens here
+                pooled, tokens = x[:, 0],  x
+            elif self.pool_style == 'big_vision_last':
+                x = self.ln_final(x)
+                # not sure what is the tokens here
+                pooled, tokens = x[:, -1],  x
+            else:
+                raise ValueError
 
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection

@@ -230,6 +230,9 @@ def main(args):
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
         output_dict=True,
+        pos_embed=args.pos_embed,
+        interpolation=args.interpolation,  # only effective for inference
+        square_resize_only=args.square_resize_only,  # only effective for inference
     )
     if args.distill:
         # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
