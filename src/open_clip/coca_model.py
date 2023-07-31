@@ -150,10 +150,10 @@ class CoCa(nn.Module):
     def forward(self, image, text=None, embed_cls=True, image_latent=None, image_embs=None):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
-            
+
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
-            
+
         text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
 
         # TODO: add assertion to avoid bugs?
