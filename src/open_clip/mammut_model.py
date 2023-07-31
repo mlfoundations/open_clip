@@ -140,11 +140,13 @@ class MaMMUT(nn.Module, Generator):
 
         return out
 
-    def forward(self, image, text, image_latent=None, image_embs=None, embed_cls=True):
+    def forward(self, image, text=None, image_latent=None, image_embs=None, embed_cls=True):
         out = {"logit_scale": self.logit_scale.exp()}
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
         out["image_features"] = image_latent
+        if text is None:
+            return out
         out = self._forward(text, out)
         out = self._forward(text, out, image_embs=image_embs, contrastive=False, embed_cls=embed_cls)
         return out
