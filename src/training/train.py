@@ -179,12 +179,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
-        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
-            batch_size = len(images)
-            num_samples = batch_count * batch_size * args.accum_freq * args.world_size
-            samples_per_epoch = dataloader.num_samples
-            percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
+        batch_size = len(images)
+        num_samples = batch_count * batch_size * args.accum_freq * args.world_size
+        samples_per_epoch = dataloader.num_samples
+        percent_complete = 100.0 * batch_count / num_batches_per_epoch
+
+        # Log training progress
+        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
             # NOTE loss is coarsely sampled, just master node and per log update
             for key, val in losses.items():
                 if key not in losses_m:
@@ -230,6 +232,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
+
+        # Exit early if we've hit our epoch limit
+        if args.epochs % 1 > 0 and epoch + 1 == math.ceil(args.epochs) and percent_complete >= args.epochs % 1:
+            return
+
     # end for
 
 

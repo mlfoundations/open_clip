@@ -233,26 +233,31 @@ def pytorch_worker_seed(increment=0):
     return wds.utils.pytorch_worker_seed()
 
 
-_SHARD_SHUFFLE_SIZE = 2000
-_SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
-class detshuffle2(wds.PipelineStage):
-    def __init__(
-            self,
-            bufsize=1000,
-            initial=100,
-            seed=0,
-            epoch=-1,
-    ):
-        self.bufsize = bufsize
-        self.initial = initial
+class SimpleShardList2(IterableDataset):
+    """An iterable dataset yielding a list of urls."""
+
+    def __init__(self, urls, epoch=-1, seed=0, num_sub_epochs=None):
+        """Iterate through the list of shards."""
+        super().__init__()
+        urls, _ = expand_urls(urls)
+        self.urls = urls
+        assert isinstance(self.urls[0], str)
         self.seed = seed
+        self.num_sub_epochs = num_sub_epochs
         self.epoch = epoch
 
-    def run(self, src):
+    def __len__(self):
+        return len(self.urls)
+
+    def __iter__(self):
+        """Return an iterator over the shards."""
+        urls = self.urls.copy()
+
+        # Set epoch
         if isinstance(self.epoch, SharedEpoch):
             epoch = self.epoch.get_value()
         else:
@@ -260,15 +265,23 @@ class detshuffle2(wds.PipelineStage):
             # situation as different workers may wrap at different times (or not at all).
             self.epoch += 1
             epoch = self.epoch
-        rng = random.Random()
-        if self.seed < 0:
-            # If seed is negative, we use the worker's seed, this will be different across all nodes/workers
-            seed = pytorch_worker_seed(epoch)
-        else:
-            # This seed to be deterministic AND the same across all nodes/workers in each epoch
+
+        # Shuffle with the same seed across all nodes/workers in each epoch or super epoch
+        if self.num_sub_epochs is None:
             seed = self.seed + epoch
-        rng.seed(seed)
-        return _shuffle(src, self.bufsize, self.initial, rng)
+        else:
+            # Keep shuffling consistent across the super epochs
+            seed = self.seed + (epoch // self.num_sub_epochs)
+        random.Random(seed).shuffle(urls)
+
+        # Restrict to shards in the sub epoch if needed
+        if self.num_sub_epochs is not None:
+            urls = urls[epoch % self.num_sub_epochs::self.num_sub_epochs]
+    
+        # Yield shards
+        for url in urls:
+            yield dict(url=url)
+
 
 
 class ResampledShards2(IterableDataset):
@@ -344,6 +357,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
 
+    # Adjust num_samples if saving multiple times per epoch when sampling without replacement
+    if not resampled and args.num_subepochs_per_epoch is not None:
+        num_samples = int(num_samples / args.num_subepochs_per_epoch)
+
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
@@ -356,18 +373,12 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     else:
         assert args.train_data_upsampling_factors is None,\
             "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
-        pipeline = [wds.SimpleShardList(input_shards)]
+        pipeline = [SimpleShardList2(input_shards, epoch=shared_epoch, num_sub_epochs=args.num_subepochs_per_epoch)]
 
     # at this point we have an iterator over all the shards
     if is_train:
         if not resampled:
             pipeline.extend([
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
                 wds.split_by_node,
                 wds.split_by_worker,
             ])

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import random
 from datetime import datetime
+import math
 
 import numpy as np
 import torch
@@ -348,6 +349,10 @@ def main(args):
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
     assert len(data), 'At least one train or eval dataset must be specified.'
 
+    # when sampling without replacement and saving subepochs, we need to adjust args.epochs
+    if not args.dataset_resampled and args.num_subepochs_per_epoch is not None:
+        args.epochs *= args.num_subepochs_per_epoch
+
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
@@ -411,7 +416,7 @@ def main(args):
 
     loss = create_loss(args)
 
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(start_epoch, math.ceil(args.epochs)):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
@@ -432,7 +437,7 @@ def main(args):
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
 
-            if completed_epoch == args.epochs or (
+            if completed_epoch >= args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
             ):
                 torch.save(
