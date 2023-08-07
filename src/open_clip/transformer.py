@@ -692,8 +692,8 @@ class MultimodalTransformer(Transformer):
 
         if self.text_projection is not None:
             # nn.init.normal_(self.text_projection, std=self.width ** -0.5)
-            # nn.init.zeros_(self.text_projection)
-            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5)) # nn.Linear default
+            nn.init.zeros_(self.text_projection)
+            # nn.init.kaiming_uniform_(self.text_projection, a=math.sqrt(5)) # nn.Linear default
 
 
     def build_attention_mask(self):
