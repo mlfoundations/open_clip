@@ -121,7 +121,7 @@ You can then install openclip for training with `pip install 'open_clip_torch[tr
 
 #### Development
 
-If you want to make changes to contribute code, you can close openclip then run `make install` in openclip folder (after creating a virtualenv)
+If you want to make changes to contribute code, you can clone openclip then run `make install` in openclip folder (after creating a virtualenv)
 
 Install pip PyTorch as per https://pytorch.org/get-started/locally/
 
