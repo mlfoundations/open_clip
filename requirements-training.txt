@@ -7,6 +7,6 @@ tqdm
 pandas
 braceexpand
 huggingface_hub
-transformers
+transformers<=0.30
 timm
 fsspec
