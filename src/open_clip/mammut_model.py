@@ -17,7 +17,6 @@ def _build_multimodal_decoder_tower(
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
-        is_decoder=True
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -34,6 +33,7 @@ def _build_multimodal_decoder_tower(
         cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
         does_full_decoding=multimodal_cfg.does_full_decoding,
         output_tokens=multimodal_cfg.output_tokens,
+        has_mlp=multimodal_cfg.has_mlp,
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
@@ -68,7 +68,6 @@ class MaMMUT(nn.Module, Generator):
             multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
-            is_decoder=False,
         )
 
         self.visual = _build_vision_tower(
@@ -93,7 +92,7 @@ class MaMMUT(nn.Module, Generator):
             image_embs=image_embs,
         )
         return token_logits, text_latent
-        
+
 
     def encode_text(
         self,
@@ -142,11 +141,22 @@ class MaMMUT(nn.Module, Generator):
 
     def forward(self, image, text=None, image_latent=None, image_embs=None, embed_cls=True):
         out = {"logit_scale": self.logit_scale.exp()}
+
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
+
         out["image_features"] = image_latent
+
         if text is None:
             return out
-        out = self._forward(text, out)
-        out = self._forward(text, out, image_embs=image_embs, contrastive=False, embed_cls=embed_cls)
+
+        out = self._forward(text=text, out=out)
+        out = self._forward(
+            text=text,
+            out=out,
+            image_embs=image_embs,
+            contrastive=False,
+            embed_cls=embed_cls
+        )
+
         return out

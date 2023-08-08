@@ -26,6 +26,7 @@ class MultimodalCfg(CLIPTextCfg):
     cross_attn_ratio: int = 1
     does_full_decoding: bool = False
     output_tokens: bool = False
+    has_mlp: bool = True
 
 
 def _build_text_decoder_tower(
@@ -33,7 +34,7 @@ def _build_text_decoder_tower(
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
-        is_decoder=True
+        is_decoder=True,
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -48,6 +49,7 @@ def _build_text_decoder_tower(
         layers=multimodal_cfg.layers,
         ls_init_value=multimodal_cfg.ls_init_value,
         cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
+        has_mlp=multimodal_cfg.has_mlp,
         output_dim=embed_dim,
         output_tokens=multimodal_cfg.output_tokens,
         act_layer=act_layer,

@@ -196,6 +196,7 @@ class ResidualAttentionBlock(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             is_cross_attention: bool = False,
+            has_mlp: bool = True,
     ):
         super().__init__()
 
@@ -205,14 +206,20 @@ class ResidualAttentionBlock(nn.Module):
         if is_cross_attention:
             self.ln_1_kv = norm_layer(d_model)
 
-        self.ln_2 = norm_layer(d_model)
-        mlp_width = int(d_model * mlp_ratio)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, mlp_width)),
-            ("gelu", act_layer()),
-            ("c_proj", nn.Linear(mlp_width, d_model))
-        ]))
-        self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
+        self.has_mlp = has_mlp
+        if self.has_mlp:
+            self.ln_2 = norm_layer(d_model)
+            mlp_width = int(d_model * mlp_ratio)
+            self.mlp = nn.Sequential(OrderedDict([
+                ("c_fc", nn.Linear(d_model, mlp_width)),
+                ("gelu", act_layer()),
+                ("c_proj", nn.Linear(mlp_width, d_model))
+            ]))
+            self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
+        else:
+            self.ln2 = None
+            self.mlp = None
+            self.ls_2 = None
 
     def attention(
             self,
@@ -240,7 +247,8 @@ class ResidualAttentionBlock(nn.Module):
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
 
         x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
-        x = x + self.ls_2(self.mlp(self.ln_2(x)))
+        if self.has_mlp:
+            x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
 
@@ -640,7 +648,7 @@ class TextTransformer(nn.Module):
         return pooled
 
 
-class MultimodalTransformer(Transformer):
+class MultimodalTransformer(nn.Module):
     does_full_decoding: torch.jit.Final[bool]
 
     def __init__(
@@ -658,35 +666,53 @@ class MultimodalTransformer(Transformer):
             does_full_decoding: bool = False, # if this is false below values are useless
             vocab_size: int = 49408,
             output_tokens: bool = False,
+            has_mlp: bool = True,
     ):
 
-        super().__init__(
-            width=width,
-            layers=layers,
-            heads=heads,
-            mlp_ratio=mlp_ratio,
-            ls_init_value=ls_init_value,
-            act_layer=act_layer,
-            norm_layer=norm_layer
-        )
-
+        super().__init__()
+        
+        self.width = width
+        self.layers = layers
+        self.grad_checkpointing = False
+        self.context_length = context_length
 
         n_cross_attn, _ = divmod(layers, cross_attn_ratio)
         self.cross_step, _ = divmod(layers, n_cross_attn)
 
-        self.context_length = context_length
-        self.cross_attn = nn.ModuleList([
-            ResidualAttentionBlock(
-                width,
-                heads,
-                mlp_ratio,
-                ls_init_value=ls_init_value,
-                act_layer=act_layer,
-                norm_layer=norm_layer,
-                is_cross_attention=True,
+        self.resblocks = nn.ModuleList([])
+        self.cross_attn = nn.ModuleList([])
+        
+        for l_idx in range(layers):
+
+            _, _r = divmod(l_idx, self.cross_step)
+            has_cross_attn = _r == 0
+
+            self.resblocks.append(
+                ResidualAttentionBlock(
+                    width, 
+                    heads, 
+                    mlp_ratio, 
+                    ls_init_value=ls_init_value, 
+                    act_layer=act_layer, 
+                    norm_layer=norm_layer,
+                    has_mlp=has_cross_attn or has_mlp,
+                )
             )
-            for _ in range(n_cross_attn)
-        ])
+
+            if has_cross_attn:
+                self.cross_attn.append(
+                    ResidualAttentionBlock(
+                        width,
+                        heads,
+                        mlp_ratio,
+                        ls_init_value=ls_init_value,
+                        act_layer=act_layer,
+                        norm_layer=norm_layer,
+                        is_cross_attention=True,
+                    )
+                )
+        
+        assert len(self.cross_attn) == n_cross_attn, "the number of cross attn is incorrect"
 
         self.register_buffer('attn_mask', self.build_attention_mask(), persistent=False)
 
@@ -708,15 +734,9 @@ class MultimodalTransformer(Transformer):
         self.init_parameters()
 
     def init_parameters(self):
-        proj_std, attn_std, fc_std = super().init_parameters()
-        for block in self.cross_attn:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.width ** -0.5)
+            nn.init.zeros_(self.text_projection)
 
         if self.does_full_decoding:
             nn.init.normal_(self.token_embedding.weight, std=0.02)
@@ -729,6 +749,11 @@ class MultimodalTransformer(Transformer):
         mask.fill_(float("-inf"))
         mask.triu_(1) # zero out the lower diagonal
         return mask
+    
+    def get_cast_dtype(self) -> torch.dtype:
+        if hasattr(self.resblocks[0].mlp.c_fc, 'int8_original_dtype'):
+            return self.resblocks[0].mlp.c_fc.int8_original_dtype
+        return self.resblocks[0].mlp.c_fc.weight.dtype
 
     def forward(self, image_embs, text_embs):
         seq_len = text_embs.shape[1]
@@ -752,8 +777,8 @@ class MultimodalTransformer(Transformer):
             attn_mask = None
 
         for idx, resblock in enumerate(self.resblocks):
-            cross_attn_idx, _r = divmod(idx, self.cross_step)
-            do_cross_attn = _r == 0 and image_embs is not None
+            cross_attn_idx, r = divmod(idx, self.cross_step)
+            do_cross_attn = r == 0 and image_embs is not None
 
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
