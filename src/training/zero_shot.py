@@ -16,7 +16,7 @@ def accuracy(output, target, topk=(1,)):
 
 
 def run(model, classifier, dataloader, args):
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(args.precision, device=args.device)
     input_dtype = get_input_dtype(args.precision)
 
     with torch.no_grad():
@@ -55,7 +55,7 @@ def zero_shot_eval(model, data, epoch, args):
     logging.info('Starting zero-shot imagenet.')
 
     logging.info('Building zero-shot classifier')
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(args.precision, device=args.device)
     with autocast():
         tokenizer = get_tokenizer(args.model)
         classifier = build_zero_shot_classifier(
