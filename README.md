@@ -196,7 +196,7 @@ In the paper, they also finetuned without the patch dropout at the end. You can 
 #### Multiple data sources
 
 OpenCLIP supports using multiple data sources, by separating different data paths with `::`.
-For instance, to train on CC12M and on LAION, one might use `--train-data '/data/cc12m/cc12m-train-{0000..2175}.tar'::'/data/LAION-400M/{00000..41455}.tar'`.
+For instance, to train on CC12M and on LAION, one might use `--train-data "/data/cc12m/cc12m-train-{0000..2175}.tar::/data/LAION-400M/{00000..41455}.tar"`.
 Using `--dataset-resampled` is recommended for these cases.
 
 By default, on expectation the amount of times the model will see a sample from each source is proportional to the size of the source.
