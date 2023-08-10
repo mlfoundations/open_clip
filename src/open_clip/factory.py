@@ -225,7 +225,7 @@ def create_model(
 
             if checkpoint_path:
                 logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-                load_checkpoint(model, checkpoint_path)
+                load_checkpoint(model, checkpoint_path, strict=False)
             else:
                 error_str = (
                     f'Pretrained weights ({pretrained}) not found for model {model_name}.'
@@ -235,7 +235,7 @@ def create_model(
             pretrained_loaded = True
         elif has_hf_hub_prefix:
             logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-            load_checkpoint(model, checkpoint_path)
+            load_checkpoint(model, checkpoint_path, strict=False)
             pretrained_loaded = True
 
         if require_pretrained and not pretrained_loaded:
