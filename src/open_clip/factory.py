@@ -19,7 +19,7 @@ from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
-from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize
+from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize, random_mask_tokenize, block_mask_tokenize
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -82,9 +82,12 @@ def get_tokenizer(model_name):
         config = get_model_config(model_name)
         if 'hf_tokenizer_name' in config['text_cfg']:
             tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name'])
-        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask']:
-            assert config['text_cfg']['text_mask'] == 'syntax', 'for now, only support syntax masking!'
+        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'syntax':
             tokenizer = syntax_mask_tokenize
+        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'random':
+            tokenizer = random_mask_tokenize
+        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'block':
+            tokenizer = block_mask_tokenize
         else:
             tokenizer = tokenize
     context_length = get_model_config(model_name)['text_cfg']['context_length']

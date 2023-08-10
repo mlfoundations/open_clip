@@ -222,6 +222,74 @@ class HFTokenizer:
         ).input_ids
         return input_ids
 
+
+def random_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    """
+    Returns the tokenized representation of given input string(s)
+
+    Parameters
+    ----------
+    texts : Union[str, List[str]]
+        An input string or a list of input strings to tokenize
+    context_length : int
+        The context length to use; all CLIP models use 77 as the context length
+
+    Returns
+    -------
+    A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+
+    sot_token = _tokenizer.encoder["<start_of_text>"]
+    eot_token = _tokenizer.encoder["<end_of_text>"]
+    all_tokens = [_tokenizer.encode(text) for text in texts]
+    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+    for i, tokens in enumerate(all_tokens):
+        if len(tokens) > context_length - 2: # 2 for sot and eot token
+            indices = np.random.permutation(len(tokens)).tolist()
+            indices = indices[:context_length - 2]
+            tokens = tokens[indices]
+        tokens = [sot_token,] + tokens + [eot_token,]
+        result[i, :len(tokens)] = torch.tensor(tokens)
+
+    return result
+
+
+def block_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    """
+    Returns the tokenized representation of given input string(s)
+
+    Parameters
+    ----------
+    texts : Union[str, List[str]]
+        An input string or a list of input strings to tokenize
+    context_length : int
+        The context length to use; all CLIP models use 77 as the context length
+
+    Returns
+    -------
+    A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+
+    sot_token = _tokenizer.encoder["<start_of_text>"]
+    eot_token = _tokenizer.encoder["<end_of_text>"]
+    all_tokens = [_tokenizer.encode(text) for text in texts]
+    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+    for i, tokens in enumerate(all_tokens):
+        if len(tokens) > context_length - 2: # 2 for sot and eot token
+            start_index = np.random.randint(len(tokens) - context_length + 3)
+            tokens = tokens[start_index : start_index + context_length - 2]
+        tokens = [sot_token,] + tokens + [eot_token,]
+        result[i, :len(tokens)] = torch.tensor(tokens)
+
+    return result
+
+
 def syntax_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
     """
     Returns the tokenized representation of given input string(s).
