@@ -68,13 +68,20 @@ class CsvDataset_video(Dataset):
         # images = self.transforms(Image.open(str(self.images[idx])))
         videos = self.process_video(self.videos[idx])
         texts = self.tokenize([str(self.captions[idx])])[0]
-        return images, texts
+        return videos, texts
 
     def process_video(self, video_url):
         response = requests(video_url, timeout=10)
+        video_data = None
+        videos = []
         if response.status_code == 200:
             video_data = response.content
             response.close()
+        if video_data:
+            video_array = VideoReader(io.BytesIO(video_data))[:].asnumpy()
+            for v in video_array:
+                videos.append(self.transforms(Image.fromarray(v)))
+        return torch.stack(videos)
 
 
 class SharedEpoch:
