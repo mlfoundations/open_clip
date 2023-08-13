@@ -131,3 +131,47 @@ def image_transform(
             normalize,
         ])
         return Compose(transforms)
+
+
+def video_transform(
+        image_size: int,
+        is_train: bool,
+        mean: Optional[Tuple[float, ...]] = None,
+        std: Optional[Tuple[float, ...]] = None,
+        resize_longest_max: bool = False,
+        fill_color: int = 0,
+        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+):
+    mean = mean or OPENAI_DATASET_MEAN
+    if not isinstance(mean, (list, tuple)):
+        mean = (mean,) * 3
+
+    std = std or OPENAI_DATASET_STD
+    if not isinstance(std, (list, tuple)):
+        std = (std,) * 3
+
+    if isinstance(image_size, (list, tuple)) and image_size[0] == image_size[1]:
+        # for square size, pass size as int so that Resize() uses aspect preserving shortest edge
+        image_size = image_size[0]
+
+    if isinstance(aug_cfg, dict):
+        aug_cfg = AugmentationCfg(**aug_cfg)
+    else:
+        aug_cfg = aug_cfg or AugmentationCfg()
+    normalize = Normalize(mean=mean, std=std)
+    # FIXME: train - val transform 똑같이 설정됨 -> video 용 설정이 필요 (같은 곳 Crop etc.)
+    if resize_longest_max:
+        transforms = [
+            ResizeMaxSize(image_size, fill=fill_color)
+        ]
+    else:
+        transforms = [
+            Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+            CenterCrop(image_size),
+        ]
+    transforms.extend([
+        _convert_to_rgb,
+        ToTensor(),
+        normalize,
+    ])
+    return Compose(transforms)
