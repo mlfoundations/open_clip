@@ -19,6 +19,9 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableD
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
+from decord import VideoReader, cpu
+import requests
+
 
 try:
     import horovod.torch as hvd
@@ -45,6 +48,33 @@ class CsvDataset(Dataset):
         images = self.transforms(Image.open(str(self.images[idx])))
         texts = self.tokenize([str(self.captions[idx])])[0]
         return images, texts
+    
+class CsvDataset_video(Dataset):
+    def __init__(self, input_filename, transforms, img_key="contentUrl", caption_key="name", sep="\t", tokenizer=None):
+        logging.debug(f'Loading csv data from {input_filename}.')
+        df = pd.read_csv(input_filename, sep=sep)
+
+        self.videos = df[img_key].tolist() # contentUrl
+        self.captions = df[caption_key].tolist() # name
+        self.transforms = transforms
+        logging.debug('Done loading data.')
+
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return len(self.captions)
+
+    def __getitem__(self, idx):
+        # images = self.transforms(Image.open(str(self.images[idx])))
+        videos = self.process_video(self.videos[idx])
+        texts = self.tokenize([str(self.captions[idx])])[0]
+        return images, texts
+
+    def process_video(self, video_url):
+        response = requests(video_url, timeout=10)
+        if response.status_code == 200:
+            video_data = response.content
+            response.close()
 
 
 class SharedEpoch:
