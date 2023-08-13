@@ -508,6 +508,35 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
 
     return DataInfo(dataloader, sampler)
 
+def get_csv_video_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+    input_filename = args.train_data if is_train else args.val_data
+    assert input_filename
+    dataset = CsvDataset_video(
+        input_filename,
+        preprocess_fn,
+        img_key=args.csv_img_key,
+        caption_key=args.csv_caption_key,
+        sep=args.csv_separator,
+        tokenizer=tokenizer
+    )
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
 
 class SyntheticDataset(Dataset):
 
@@ -566,6 +595,8 @@ def get_dataset_fn(data_path, dataset_type):
         return get_csv_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "video":
+        return get_csv_video_dataset
     elif dataset_type == "auto":
         ext = data_path.split('.')[-1]
         if ext in ['csv', 'tsv']:
@@ -582,7 +613,7 @@ def get_dataset_fn(data_path, dataset_type):
 def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
-
+    assert args.dataset_type == "video", "비디오만 실행되도록"
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
             args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
