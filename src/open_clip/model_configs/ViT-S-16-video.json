@@ -14,7 +14,7 @@
         "layers": 12
     },
     "video_cfg": {
-        "context_length": 77,
+        "context_length": 128,
         "width": 384,
         "heads": 6,
         "layers": 3

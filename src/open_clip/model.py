@@ -10,6 +10,7 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
@@ -259,6 +260,7 @@ class CLIP_video(nn.Module):
 
     def __init__(
             self,
+            video_cfg,
             embed_dim: int,
             vision_cfg: CLIPVisionCfg,
             text_cfg: CLIPTextCfg,
@@ -279,7 +281,18 @@ class CLIP_video(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
-
+        
+        video = _build_text_tower(embed_dim, video_cfg, quick_gelu, cast_dtype)
+        self.transformer_video = video.transformer
+        self.context_length_video = video.context_length
+        self.vocab_size_video = video.vocab_size
+        self.token_embedding_video = video.token_embedding
+        self.positional_embedding_video = video.positional_embedding
+        self.ln_final_video = video.ln_final
+        self.video_projection = video.text_projection
+        self.register_buffer('attn_mask_video', video.attn_mask, persistent=False)
+        self.video_embed_dim = embed_dim
+        
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
@@ -291,9 +304,27 @@ class CLIP_video(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
 
-    def encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
-        return F.normalize(features, dim=-1) if normalize else features
+    def encode_video(self, video, normalize: bool = False):
+        # video = rearrange(video, 'b l c h w -> (b l) c h w') #FIXME: batch 크기가 b -> b * l 로 커짐
+        video = video
+        video_len = (video == torch.zeros(video.shape[2:], device=video.device)).sum((2,3,4))
+        features = []
+        for i in range(video.shape[1]): # 0 ~ l # FIXME: video_len 찾아서 최소만큼만
+            features.append(self.visual(video[:,i])) # b 1 d
+        features = torch.stack(features, dim=1) # b l d
+        
+        cast_dtype = self.transformer_video.get_cast_dtype()
+
+        x = features.to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        x = x + self.positional_embedding_video.to(cast_dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer_video(x, attn_mask=self.attn_mask_video)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final_video(x)  # [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), video_len.argmax(dim=-1)] @ self.video_projection
+        
+        return F.normalize(x, dim=-1) if normalize else x
 
     def encode_text(self, text, normalize: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
@@ -311,18 +342,18 @@ class CLIP_video(nn.Module):
 
     def forward(
             self,
-            image: Optional[torch.Tensor] = None,
+            video: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
+        video_features = self.encode_video(video, normalize=True) if video is not None else None
         text_features = self.encode_text(text, normalize=True) if text is not None else None
         if self.output_dict:
             return {
-                "image_features": image_features,
+                "video_features": video_features,
                 "text_features": text_features,
                 "logit_scale": self.logit_scale.exp()
             }
-        return image_features, text_features, self.logit_scale.exp()
+        return video_features, text_features, self.logit_scale.exp()
 
 
 class CustomTextCLIP(nn.Module):

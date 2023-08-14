@@ -78,9 +78,11 @@ class CsvDataset_video(Dataset):
             video_data = response.content
             response.close()
         if video_data:
-            video_array = VideoReader(io.BytesIO(video_data))[:].asnumpy()
+            video_array = VideoReader(io.BytesIO(video_data))[::4].asnumpy() # FIXME: hyperparameter (stride)
             for v in video_array:
                 videos.append(self.transforms(Image.fromarray(v)))
+        # padding
+        videos = np.pad(videos, [[128-len(video)], [0,0], [0,0], [0,0]]) # FIXME: hyperparameter (len)
         return torch.stack(videos)
 
 
