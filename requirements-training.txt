@@ -10,3 +10,4 @@ huggingface_hub
 transformers
 timm
 fsspec
+decord

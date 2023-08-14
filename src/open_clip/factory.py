@@ -17,7 +17,7 @@ from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
-from .transform import image_transform, AugmentationCfg
+from .transform import image_transform, AugmentationCfg, video_transform
 from .tokenizer import HFTokenizer, tokenize
 
 
@@ -323,14 +323,14 @@ def create_model_and_transforms(
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
     image_std = image_std or getattr(model.visual, 'image_std', None)
-    preprocess_train = image_transform(
+    preprocess_train = video_transform(
         model.visual.image_size,
         is_train=True,
         mean=image_mean,
         std=image_std,
         aug_cfg=aug_cfg,
     )
-    preprocess_val = image_transform(
+    preprocess_val = video_transform(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,

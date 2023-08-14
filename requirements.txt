@@ -7,3 +7,4 @@ huggingface_hub
 sentencepiece
 protobuf<4
 timm
+decord
