@@ -36,7 +36,9 @@ class CLIPVisionCfg:
     attentional_pool: bool = False  # whether to use attentional pooler in the last embedding layer
     n_queries: int = 256  # n_queries for attentional pooler
     attn_pooler_heads: int = 8  # n heads for attentional_pooling
-    output_tokens: bool = False
+    output_tokens: bool = False,
+    qk_norm: bool = False,
+    qk_norm_eps: float = 1e-5
 
     timm_model_name: str = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
@@ -63,6 +65,8 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    qk_norm: bool = False,
+    qk_norm_eps: float = 1e-5
 
 
 def get_cast_dtype(precision: str):
@@ -120,6 +124,7 @@ def _build_vision_tower(
             width=vision_cfg.width,
         )
     else:
+        ## QK norm only makes sense for VisionTransformer
         vision_heads = vision_cfg.width // vision_cfg.head_width
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         visual = VisionTransformer(
@@ -140,6 +145,8 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            qk_norm=vision_cfg.qk_norm,
+            qk_norm_eps=vision_cfg.qk_norm_eps
         )
 
     return visual

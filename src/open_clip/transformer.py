@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence, Tuple
+from functools import partial
 
 import torch
 from torch import nn
@@ -94,7 +95,9 @@ class Attention(nn.Module):
             scale_heads=False,
             logit_scale_max=math.log(1. / 0.01),
             attn_drop=0.,
-            proj_drop=0.
+            proj_drop=0.,
+            apply_qk_norm=False,
+            qk_norm_eps=1e-5
     ):
         super().__init__()
         self.scaled_cosine = scaled_cosine
@@ -104,6 +107,7 @@ class Attention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.logit_scale_max = logit_scale_max
+        self.apply_qk_norm = apply_qk_norm
 
         # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
         self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
@@ -121,6 +125,17 @@ class Attention(nn.Module):
             self.head_scale = nn.Parameter(torch.ones((num_heads, 1, 1)))
         else:
             self.head_scale = None
+
+        # initialize norm layers for queries and keys if needed
+        if self.apply_qk_norm:
+            self.q_norm = nn.LayerNorm(
+                self.head_dim,
+                eps=qk_norm_eps,
+            )
+            self.k_norm =  nn.LayerNorm(
+                self.head_dim,
+                eps=qk_norm_eps,
+            )
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
@@ -130,6 +145,10 @@ class Attention(nn.Module):
         q = q.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         k = k.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
         v = v.contiguous().view(L, N * self.num_heads, -1).transpose(0, 1)
+
+        if self.apply_qk_norm:
+            queries = self.q_norm(q)
+            keys = self.k_norm(k)
 
         if self.logit_scale is not None:
             attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))
@@ -257,6 +276,8 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_heads: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
+            qk_norm: bool = False,
+            qk_norm_eps: float = 1e-5
     ):
         super().__init__()
 
@@ -265,6 +286,8 @@ class CustomResidualAttentionBlock(nn.Module):
             d_model, n_head,
             scaled_cosine=scale_cosine_attn,
             scale_heads=scale_heads,
+            qk_norm=qk_norm,
+            qk_norm_eps=qk_norm_eps
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
@@ -295,14 +318,20 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            qk_norm: bool = False,
+            qk_norm_eps: float = 1e-5
     ):
         super().__init__()
         self.width = width
         self.layers = layers
         self.grad_checkpointing = False
+        if qk_norm:
+            attention_block = partial(CustomResidualAttentionBlock, qk_norm=qk_norm, qk_norm_eps=qk_norm_eps)
+        else:
+            attention_block = ResidualAttentionBlock
 
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(
+            attention_block(
                 width, heads, mlp_ratio, ls_init_value=ls_init_value, act_layer=act_layer, norm_layer=norm_layer)
             for _ in range(layers)
         ])
@@ -343,7 +372,9 @@ class VisionTransformer(nn.Module):
             input_patchnorm: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False
+            output_tokens: bool = False,
+            qk_norm: bool = False,
+            qk_norm_eps: float = 1e-5
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -380,6 +411,8 @@ class VisionTransformer(nn.Module):
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            qk_norm=qk_norm,
+            qk_norm_eps=qk_norm_eps
         )
 
         self.global_average_pool = global_average_pool
@@ -499,7 +532,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 

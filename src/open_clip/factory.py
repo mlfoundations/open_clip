@@ -120,6 +120,8 @@ def create_model(
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
+        force_qk_norm: bool = False,
+        force_qk_norm_eps: float = 1e-5
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -155,7 +157,6 @@ def create_model(
         else:
             logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
             raise RuntimeError(f'Model config for {model_name} not found.')
-
         if force_quick_gelu:
             # override for use of QuickGELU on non-OpenAI transformer models
             model_cfg["quick_gelu"] = True
@@ -163,6 +164,12 @@ def create_model(
         if force_patch_dropout is not None:
             # override the default patch dropout value
             model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
+
+        if force_qk_norm:
+            model_cfg["vision_cfg"]["qk_norm"] = True
+            model_cfg["vision_cfg"]["qk_norm_eps"] = force_qk_norm_eps
+            model_cfg["text_cfg"]["qk_norm"] = True
+            model_cfg["text_cfg"]["qk_norm_eps"] = force_qk_norm_eps
 
         if force_image_size is not None:
             # override model config's image size
@@ -304,6 +311,8 @@ def create_model_and_transforms(
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        force_qk_norm: bool = False,
+        force_qk_norm_eps: float = 1e-5
 ):
     model = create_model(
         model_name,
@@ -319,6 +328,8 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
+        force_qk_norm=False,
+        force_qk_norm_eps=1e-5
     )
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)

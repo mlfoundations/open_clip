@@ -436,6 +436,15 @@ def parse_args(args):
         help='Replace the network linear layers from the bitsandbytes library. '
         'Allows int8 training/inference, etc.'
     )
+    parser.add_argument(
+        "--qk_norm",
+        default=None,
+        help='add qk_norm'
+    )
+    parser.add_argument(
+        "--qk_norm_eps",
+        default=1e-5
+    )
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.
