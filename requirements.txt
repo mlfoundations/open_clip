@@ -6,4 +6,4 @@ tqdm
 huggingface_hub
 sentencepiece
 protobuf<4
-timm
+timm>=0.9.5
