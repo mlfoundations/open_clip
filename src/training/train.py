@@ -225,7 +225,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     tb_writer.add_scalar(name, val, step)
                 if args.wandb:
                     assert wandb is not None, 'Please install wandb.'
-                    wandb.log({name: val, 'step': step})
+                    wandb.log({name: val}, step=step)
 
             # resetting batch / data time meters per log window
             batch_time_m.reset()
