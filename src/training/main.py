@@ -232,7 +232,7 @@ def main(args):
         output_dict=True,
     )
     if args.distill:
-        # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
+        # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
             args.distill_model, 
             args.distill_pretrained,
