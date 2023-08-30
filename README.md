@@ -814,6 +814,16 @@ If you found this repository useful, please consider citing:
 ```
 
 ```bibtex
+@inproceedings{cherti2023reproducible,
+  title={Reproducible scaling laws for contrastive language-image learning},
+  author={Cherti, Mehdi and Beaumont, Romain and Wightman, Ross and Wortsman, Mitchell and Ilharco, Gabriel and Gordon, Cade and Schuhmann, Christoph and Schmidt, Ludwig and Jitsev, Jenia},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={2818--2829},
+  year={2023}
+}
+```
+
+```bibtex
 @inproceedings{Radford2021LearningTV,
   title={Learning Transferable Visual Models From Natural Language Supervision},
   author={Alec Radford and Jong Wook Kim and Chris Hallacy and A. Ramesh and Gabriel Goh and Sandhini Agarwal and Girish Sastry and Amanda Askell and Pamela Mishkin and Jack Clark and Gretchen Krueger and Ilya Sutskever},
