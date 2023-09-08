@@ -136,7 +136,9 @@ def create_model(
         pretrained_cfg = config['preprocess_cfg']
         model_cfg = config['model_cfg']
     else:
-        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
+        # for callers using old naming with / in ViT names
+        if not os.path.isfile(model_name):
+            model_name = model_name.replace('/', '-') 
         checkpoint_path = None
         pretrained_cfg = {}
         model_cfg = None
