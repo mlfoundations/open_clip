@@ -1,4 +1,24 @@
-# OpenCLIP
+# Imageomics Fork Info:
+
+Most of the code within this repository is from the original CLIP model. There are, however, multiple scripts that have been added for data processing and our interactions with the CLIP model and data in the development of EvoBio10M/BioCLIP. There are Imageomics folders under some of the original directories (eg., `src` and `docs`); `scripts` and `data` are new top-level folders added for the Imageomics project.
+
+## Imageomics-Specific Folders:
+
+- [Imageomics Version Docs](https://github.com/Imageomics/open_clip/tree/main/docs/imageomics) are in the `docs/imageomics` folder. This folder has multiple markdown files explaining how to get started and various processes we've used:
+    - [`getting-started.md`](https://github.com/Imageomics/open_clip/blob/main/docs/imageomics/getting-started.md)
+    - [`training-data.md`](https://github.com/Imageomics/open_clip/blob/main/docs/imageomics/training-data.md)
+    - [`evaluation.md`](https://github.com/Imageomics/open_clip/blob/main/docs/imageomics/evaluation.md)
+    - [`cub2011-eval.md`](https://github.com/Imageomics/open_clip/blob/main/docs/imageomics/cub2011-eval.md)
+- [Imageomics source files](https://github.com/Imageomics/open_clip/tree/main/src/imageomics) are in `src/imageomics`. This folder has useful source-code tools (helpers for the scripts).
+- `scripts`: Imageomics-specific top-level folder with scripts for data processing and other functions. See the [scripts README](https://github.com/Imageomics/open_clip/tree/main/scripts#readme) for more information.
+- `data`: Imageomics-specific top-level folder with benchmarks on training organized by dataset. See the [data README](https://github.com/Imageomics/open_clip/tree/main/data#readme) for more information.
+    - Data is housed on the [Imageomics Hugging Face](https://huggingface.co/imageomics) (note that these are currently private, but there are plans to publish once the model is published and links will be provided here in the interest of FAIR). 
+
+
+<Hr></HR>
+
+
+# OpenCLIP (ORIGINAL/FORKED)
 
 [[Paper]](https://arxiv.org/abs/2212.07143) [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb) [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 [![pypi](https://img.shields.io/pypi/v/open_clip_torch.svg)](https://pypi.python.org/pypi/open_clip_torch)
