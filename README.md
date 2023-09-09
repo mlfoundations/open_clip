@@ -168,7 +168,7 @@ python -m training.main \
 ```
 
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
-You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it doest not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
+You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it does not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
 ### Multi-GPU and Beyond
 
@@ -183,7 +183,7 @@ numerical results as the naïve method.
 
 #### Epochs
 
-For larger datasets (eg Laion2B), we recommend setting --train-num-samples to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with --dataset-resampled to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
+For larger datasets (eg Laion2B), we recommend setting `--train-num-samples` to a lower value than the full epoch, for example `--train-num-samples 135646078` to 1/16 of an epoch in conjunction with `--dataset-resampled` to do sampling with replacement. This allows having frequent checkpoints to evaluate more often.
 
 #### Patch Dropout
 
@@ -196,7 +196,7 @@ In the paper, they also finetuned without the patch dropout at the end. You can 
 #### Multiple data sources
 
 OpenCLIP supports using multiple data sources, by separating different data paths with `::`.
-For instance, to train on CC12M and on LAION, one might use `--train-data '/data/cc12m/cc12m-train-{0000..2175}.tar'::/data/LAION-400M/{00000..41455}.tar"`.
+For instance, to train on CC12M and on LAION, one might use `--train-data "/data/cc12m/cc12m-train-{0000..2175}.tar::/data/LAION-400M/{00000..41455}.tar"`.
 Using `--dataset-resampled` is recommended for these cases.
 
 By default, on expectation the amount of times the model will see a sample from each source is proportional to the size of the source.
@@ -591,86 +591,93 @@ Future trained models will use nn.GELU.
 ```python
 >>> import open_clip
 >>> open_clip.list_pretrained()
-[('RN50', 'openai'),
-('RN50', 'yfcc15m'),
-('RN50', 'cc12m'),
-('RN50-quickgelu', 'openai'),
-('RN50-quickgelu', 'yfcc15m'),
-('RN50-quickgelu', 'cc12m'),
-('RN101', 'openai'),
-('RN101', 'yfcc15m'),
-('RN101-quickgelu', 'openai'),
-('RN101-quickgelu', 'yfcc15m'),
-('RN50x4', 'openai'),
-('RN50x16', 'openai'),
-('RN50x64', 'openai'),
-('ViT-B-32', 'openai'),
-('ViT-B-32', 'laion400m_e31'),
-('ViT-B-32', 'laion400m_e32'),
-('ViT-B-32', 'laion2b_e16'),
-('ViT-B-32', 'laion2b_s34b_b79k'),
-('ViT-B-32', 'datacomp_m_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_clip_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_laion_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_image_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_text_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_basic_s128m_b4k'),
-('ViT-B-32', 'commonpool_m_s128m_b4k'),
-('ViT-B-32', 'datacomp_s_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_clip_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_laion_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_image_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_text_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_basic_s13m_b4k'),
-('ViT-B-32', 'commonpool_s_s13m_b4k'),
-('ViT-B-32-quickgelu', 'openai'),
-('ViT-B-32-quickgelu', 'laion400m_e31'),
-('ViT-B-32-quickgelu', 'laion400m_e32'),
-('ViT-B-16', 'openai'),
-('ViT-B-16', 'laion400m_e31'),
-('ViT-B-16', 'laion400m_e32'),
-('ViT-B-16', 'laion2b_s34b_b88k'),
-('ViT-B-16', 'datacomp_l_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_clip_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_laion_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_image_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_text_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_basic_s1b_b8k'),
-('ViT-B-16', 'commonpool_l_s1b_b8k'),
-('ViT-B-16-plus-240', 'laion400m_e31'),
-('ViT-B-16-plus-240', 'laion400m_e32'),
-('ViT-L-14', 'openai'),
-('ViT-L-14', 'laion400m_e31'),
-('ViT-L-14', 'laion400m_e32'),
-('ViT-L-14', 'laion2b_s32b_b82k'),
-('ViT-L-14', 'datacomp_xl_s13b_b90k'),
-('ViT-L-14', 'commonpool_xl_clip_s13b_b90k'),
-('ViT-L-14', 'commonpool_xl_laion_s13b_b90k'),
-('ViT-L-14', 'commonpool_xl_s13b_b90k'),
-('ViT-L-14-336', 'openai'),
-('ViT-H-14', 'laion2b_s32b_b79k'),
-('ViT-g-14', 'laion2b_s12b_b42k'),
-('ViT-g-14', 'laion2b_s34b_b88k'),
-('ViT-bigG-14', 'laion2b_s39b_b160k'),
-('roberta-ViT-B-32', 'laion2b_s12b_b32k'),
-('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'),
-('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'),
-('convnext_base', 'laion400m_s13b_b51k'),
-('convnext_base_w', 'laion2b_s13b_b82k'),
-('convnext_base_w', 'laion2b_s13b_b82k_augreg'),
-('convnext_base_w', 'laion_aesthetic_s13b_b82k'),
-('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'),
-('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'),
-('convnext_large_d', 'laion2b_s26b_b102k_augreg'),
-('convnext_large_d_320', 'laion2b_s29b_b131k_ft'),
-('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'),
-('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'),
-('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'),
-('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'),
-('coca_ViT-B-32', 'laion2b_s13b_b90k'),
-('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'),
-('coca_ViT-L-14', 'laion2b_s13b_b90k'),
-('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k')
+[('RN50', 'openai'), 
+('RN50', 'yfcc15m'), 
+('RN50', 'cc12m'), 
+('RN50-quickgelu', 'openai'), 
+('RN50-quickgelu', 'yfcc15m'), 
+('RN50-quickgelu', 'cc12m'), 
+('RN101', 'openai'), 
+('RN101', 'yfcc15m'), 
+('RN101-quickgelu', 'openai'), 
+('RN101-quickgelu', 'yfcc15m'), 
+('RN50x4', 'openai'), 
+('RN50x16', 'openai'), 
+('RN50x64', 'openai'), 
+('ViT-B-32', 'openai'), 
+('ViT-B-32', 'laion400m_e31'), 
+('ViT-B-32', 'laion400m_e32'), 
+('ViT-B-32', 'laion2b_e16'), 
+('ViT-B-32', 'laion2b_s34b_b79k'), 
+('ViT-B-32', 'datacomp_m_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_clip_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_laion_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_image_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_text_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_basic_s128m_b4k'), 
+('ViT-B-32', 'commonpool_m_s128m_b4k'), 
+('ViT-B-32', 'datacomp_s_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_clip_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_laion_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_image_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_text_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_basic_s13m_b4k'), 
+('ViT-B-32', 'commonpool_s_s13m_b4k'), 
+('ViT-B-32-quickgelu', 'openai'), 
+('ViT-B-32-quickgelu', 'laion400m_e31'), 
+('ViT-B-32-quickgelu', 'laion400m_e32'), 
+('ViT-B-16', 'openai'), 
+('ViT-B-16', 'laion400m_e31'), 
+('ViT-B-16', 'laion400m_e32'), 
+('ViT-B-16', 'laion2b_s34b_b88k'), 
+('ViT-B-16', 'datacomp_l_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_clip_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_laion_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_image_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_text_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_basic_s1b_b8k'), 
+('ViT-B-16', 'commonpool_l_s1b_b8k'), 
+('ViT-B-16-plus-240', 'laion400m_e31'), 
+('ViT-B-16-plus-240', 'laion400m_e32'), 
+('ViT-L-14', 'openai'), 
+('ViT-L-14', 'laion400m_e31'), 
+('ViT-L-14', 'laion400m_e32'), 
+('ViT-L-14', 'laion2b_s32b_b82k'), 
+('ViT-L-14', 'datacomp_xl_s13b_b90k'), 
+('ViT-L-14', 'commonpool_xl_clip_s13b_b90k'), 
+('ViT-L-14', 'commonpool_xl_laion_s13b_b90k'), 
+('ViT-L-14', 'commonpool_xl_s13b_b90k'), 
+('ViT-L-14-336', 'openai'), 
+('ViT-H-14', 'laion2b_s32b_b79k'), 
+('ViT-g-14', 'laion2b_s12b_b42k'), 
+('ViT-g-14', 'laion2b_s34b_b88k'), 
+('ViT-bigG-14', 'laion2b_s39b_b160k'), 
+('roberta-ViT-B-32', 'laion2b_s12b_b32k'), 
+('xlm-roberta-base-ViT-B-32', 'laion5b_s13b_b90k'), 
+('xlm-roberta-large-ViT-H-14', 'frozen_laion5b_s13b_b90k'), 
+('convnext_base', 'laion400m_s13b_b51k'), 
+('convnext_base_w', 'laion2b_s13b_b82k'), 
+('convnext_base_w', 'laion2b_s13b_b82k_augreg'), 
+('convnext_base_w', 'laion_aesthetic_s13b_b82k'), 
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k'), 
+('convnext_base_w_320', 'laion_aesthetic_s13b_b82k_augreg'), 
+('convnext_large_d', 'laion2b_s26b_b102k_augreg'), 
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft'), 
+('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup'), 
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg'), 
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_rewind'), 
+('convnext_xxlarge', 'laion2b_s34b_b82k_augreg_soup'), 
+('coca_ViT-B-32', 'laion2b_s13b_b90k'), 
+('coca_ViT-B-32', 'mscoco_finetuned_laion2b_s13b_b90k'), 
+('coca_ViT-L-14', 'laion2b_s13b_b90k'), 
+('coca_ViT-L-14', 'mscoco_finetuned_laion2b_s13b_b90k'), 
+('EVA01-g-14', 'laion400m_s11b_b41k'), 
+('EVA01-g-14-plus', 'merged2b_s11b_b114k'), 
+('EVA02-B-16', 'merged2b_s8b_b131k'), 
+('EVA02-L-14', 'merged2b_s4b_b131k'), 
+('EVA02-L-14-336', 'merged2b_s6b_b61k'), 
+('EVA02-E-14', 'laion2b_s4b_b115k'), 
+('EVA02-E-14-plus', 'laion2b_s9b_b144k')
 ]
 
 >>> model, train_transform, eval_transform = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
@@ -803,6 +810,16 @@ If you found this repository useful, please consider citing:
   version      = {0.1},
   doi          = {10.5281/zenodo.5143773},
   url          = {https://doi.org/10.5281/zenodo.5143773}
+}
+```
+
+```bibtex
+@inproceedings{cherti2023reproducible,
+  title={Reproducible scaling laws for contrastive language-image learning},
+  author={Cherti, Mehdi and Beaumont, Romain and Wightman, Ross and Wortsman, Mitchell and Ilharco, Gabriel and Gordon, Cade and Schuhmann, Christoph and Schmidt, Ludwig and Jitsev, Jenia},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={2818--2829},
+  year={2023}
 }
 ```
 
