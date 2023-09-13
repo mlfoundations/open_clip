@@ -12,9 +12,7 @@ class ShardWriter:
         shard_counter: multiprocessing.Value,
         maxcount: int = 100000,
         maxsize: float = 3e9,
-        post=None,
-        start_shard: int = 0,
-        verbose=True,
+        verbose: bool = True,
         **kw,
     ):
         """Create a ShardWriter.
@@ -28,7 +26,6 @@ class ShardWriter:
         self.kw = kw
         self.maxcount = maxcount
         self.maxsize = maxsize
-        self.post = post
 
         self.tarstream = None
         self.pattern = pattern
@@ -82,10 +79,9 @@ class ShardWriter:
     def finish(self):
         """Finish all writing (use close instead)."""
         if self.tarstream is not None:
+            print(f"Closing shard {self.fname}.")
             self.tarstream.close()
             assert self.fname is not None
-            if callable(self.post):
-                self.post(self.fname)
             self.tarstream = None
 
     def close(self):

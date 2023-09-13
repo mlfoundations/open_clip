@@ -17,7 +17,6 @@ Warnings:
 /users/PAS1576/samuelstevens/projects/open_clip/.venv/lib/python3.10/site-packages/PIL/Image.py:3157: DecompressionBombWarning: Image size (154508376 pixels) exceeds limit of 89478485 pixels, could be decompression bomb DOS attack.
   warnings.warn(
 """
-import concurrent.futures
 import csv
 import json
 import logging
@@ -31,7 +30,7 @@ import uuid
 from PIL import Image, ImageFile
 from tqdm import tqdm
 
-from imageomics import concurrency, naming, wds
+from imageomics import naming, wds, eol
 
 ########
 # CONFIG
@@ -45,11 +44,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 max_workers = 32
 
-eol_root_dir = "/fs/scratch/PAS2136/eol/data/interim/media_cargo_archive"
+eol_root_dir = "/fs/ess/PAS2136/eol/data/interim/media_cargo_archive"
 inat_root_dir = "/fs/ess/PAS2136/foundation_model/inat21/raw/train"
 bioscan_root_dir = "/fs/scratch/PAS2136/bioscan/cropped_256"
 bioscan_metadata_path = (
-    "/fs/ess/PAS2136/BIOSCAN/google_drive/BIOSCAN_Insect_Dataset_metadata.jsonld"
+    "/fs/scratch/PAS2136/bioscan/BIOSCAN_Insect_Dataset_metadata.jsonld"
 )
 
 resize_size = (224, 224)
@@ -99,24 +98,6 @@ def get_global_id():
     return str(uuid.uuid4())
 
 
-sink = None
-
-
-def init_sink(shard_counter: multiprocessing.Value):
-    global sink
-    sink = wds.ShardWriter(
-        os.path.join(output_dir, "shard-%06d.tar"),
-        shard_counter,
-        verbose=False,
-        maxsize=3e9,  # 3 GB
-    )
-
-
-def close_sink():
-    global sink
-    sink.close()
-
-
 ######################
 # Encyclopedia of Life
 ######################
@@ -130,41 +111,100 @@ VALUES
 """
 
 
-hierarchies_path = "/fs/scratch/PAS2136/eol/data/interim/all_hierarchies_in_graph.csv"
-eol_hierarchies_lookup = {}
+class EolNameLookup:
+    media_cargo_archive_map_csv = (
+        "/fs/ess/PAS2136/eol/data/interim/media_cargo_archive_map.csv"
+    )
+    taxon_tab = "data/eol/dh21/taxon.tab"
+    provider_ids_csv = "data/eol/provider_ids.csv"
+    pages_csv = "data/eol/trait_bank/pages.csv"
+    vernacularnames_csv = "data/eol/vernacularnames.csv"
+    hierarchies_path = (
+        "/fs/scratch/PAS2136/eol/data/interim/all_hierarchies_in_graph.csv"
+    )
+    scraped_page_ids_csv = "data/eol/scraped_page_ids.csv"
 
+    def __init__(self):
+        self.common = {}
+        self.taxonomic = {}
+        self.scientific = {}
 
-def init_eol_hierarchies_lookup():
-    with open(hierarchies_path) as fd:
-        reader = csv.reader(fd)
-        next(reader)  # skip header row
-        for page_id, raw_canonical_chain, raw_rank_chain, raw_page_id_chain in tqdm(
-            reader
-        ):
-            canonical_chain = raw_canonical_chain.split("->")
-            rank_chain = raw_rank_chain.split("->")
-            page_id_chain = [int(i) for i in raw_page_id_chain.split("->")]
-            eol_hierarchies_lookup[int(page_id)] = canonical_chain
+        # scientific names
+        with open(self.provider_ids_csv) as fd:
+            reader = csv.DictReader(fd)
+            for row in tqdm(reader, desc="provider_ids.csv"):
+                if not row["page_id"] or not row["preferred_canonical_for_page"]:
+                    continue
+                page_id = int(row["page_id"])
+                if page_id not in self.scientific:
+                    self.scientific[page_id] = row["preferred_canonical_for_page"]
 
+        # scientific names
+        with open(self.taxon_tab) as fd:
+            reader = csv.DictReader(fd, delimiter="\t")
+            for row in tqdm(reader, desc="taxon.tab"):
+                if not row["eolID"] or not row["scientificName"]:
+                    continue
+                page_id = int(row["eolID"])
+                if page_id not in self.scientific:
+                    self.scientific[page_id] = row["scientificName"]
 
-def get_taxonomic_name(eol_page_id):
-    if eol_page_id not in eol_hierarchies_lookup:
+        with open(self.pages_csv) as fd:
+            reader = csv.DictReader(fd)
+            for row in tqdm(reader, desc="trait_bank/pages.csv"):
+                if not row["page_id"] or not row["canonical"]:
+                    continue
+                page_id = int(row["page_id"])
+                if page_id not in self.scientific:
+                    self.scientific[page_id] = row["canonical"]
+
+        vernacular_names = eol.VernacularNameLookup(self.vernacularnames_csv)
+        for page_id in vernacular_names:
+            name = vernacular_names[page_id]
+            if page_id not in self.scientific:
+                self.scientific[page_id] = name.canonical
+
+            if page_id not in self.common:
+                self.common[page_id] = name.common
+
+        with open(self.hierarchies_path) as fd:
+            reader = csv.reader(fd)
+            next(reader)  # skip header row
+            for page_id, raw_canonical, _, _ in tqdm(
+                reader, desc=self.hierarchies_path
+            ):
+                canonical_chain = raw_canonical.split("->")
+                page_id = int(page_id)
+                if page_id not in self.taxonomic:
+                    self.taxonomic[page_id] = " ".join(canonical_chain)
+
+                if page_id not in self.scientific:
+                    self.scientific[page_id] = " ".join(canonical_chain[-2:])
+
+        with open(self.scraped_page_ids_csv) as fd:
+            reader = csv.DictReader(fd)
+            for row in tqdm(reader, desc="scraped_page_ids.csv"):
+                page_id = int(row["page_id"])
+
+                if page_id not in self.scientific:
+                    self.scientific[page_id] = row["scientific_name"]
+
+    def get(self, page_id, *, preferred=("common", "taxonomic", "scientific")):
+        for kind in preferred:
+            if not hasattr(self, kind):
+                raise ValueError(
+                    f"{self.__class__.__name__} has no lookup called {kind}!"
+                )
+
+            lookup = getattr(self, kind)
+            if page_id in lookup:
+                return lookup[page_id]
+
+        # Couldn't find it
         return None
 
-    return " ".join(eol_hierarchies_lookup[eol_page_id])
 
-
-eol_filename_pattern = re.compile(r"(\d+)_(\d+)_eol.*jpg")
-
-
-def parse_eol_filename(filename):
-    match = eol_filename_pattern.match(filename)
-    if not match:
-        raise ValueError(filename)
-    return int(match.group(1)), int(match.group(2)), "jpg"
-
-
-def copy_from_imgset(imgset_path):
+def copy_eol_from_tar(sink, imgset_path):
     """
     Copies all the files out of an imgset (.tar.gz file), resizes the images, then
     copies them to a new, unique path in images/. Stores the mapping between image id
@@ -183,14 +223,16 @@ def copy_from_imgset(imgset_path):
     # r|gz indcates reading from a gzipped file, streaming only
     with tarfile.open(imgset_path, "r|gz") as tar:
         for i, member in enumerate(tar):
-            content_id, page_id, ext = parse_eol_filename(member.name)
-            taxonomic_name = get_taxonomic_name(page_id)
-            if not taxonomic_name:
+            eol_img = eol.ImageFilename.from_filename(member.name)
+            scientific_name = eol_name_lookup.get(
+                eol_img.page_id, preferred=("scientific",)
+            )
+            if not scientific_name:
                 continue
 
             global_id = get_global_id()
 
-            insert_values.append((content_id, page_id, global_id))
+            insert_values.append((eol_img.content_id, eol_img.page_id, global_id))
 
             file = tar.extractfile(member)
             try:
@@ -201,7 +243,7 @@ def copy_from_imgset(imgset_path):
                 )
                 continue
 
-            sink.write({"__key__": global_id, "jpg": img, "txt": taxonomic_name})
+            sink.write({"__key__": global_id, "jpg": img, "txt": scientific_name})
 
             if i % db_write_frequency == 0:
                 try:
@@ -243,13 +285,7 @@ def parse_inat_filename(filename):
     return match.group(1), "jpg"
 
 
-def parse_inat_clsdir(clsdir):
-    taxon = naming.dataset_class_to_taxon(clsdir)
-
-    return taxon
-
-
-def copy_from_inat_clsdir(clsdir):
+def copy_inat_from_clsdir(sink, clsdir):
     # each process get its own db connection.
     db = get_db()
 
@@ -257,7 +293,7 @@ def copy_from_inat_clsdir(clsdir):
 
     insert_values = []
     for i, filename in enumerate(os.listdir(os.path.join(inat_root_dir, clsdir))):
-        taxon = parse_inat_clsdir(clsdir)
+        taxon = naming.dataset_class_to_taxon(clsdir)
         image_id, ext = parse_inat_filename(filename)
         global_id = get_global_id()
 
@@ -266,7 +302,7 @@ def copy_from_inat_clsdir(clsdir):
         img = Image.open(filepath).resize(resize_size)
         txt = taxon.scientific_name
         insert_values.append(
-            (image_id, taxon.scientific_name, taxon.dataset_id, global_id)
+            (image_id, taxon.taxonomic_name, taxon.dataset_id, global_id)
         )
 
         sink.write({"__key__": global_id, "jpg": img, "txt": txt})
@@ -318,11 +354,12 @@ def init_bioscan_metadata():
             row["species"],
         )
 
-        txt = " ".join(label for label in taxon if label != "not_classified")
+        # scientific name
+        txt = " ".join(label for label in taxon[-2:] if label != "not_classified")
         bioscan_txt_lookup[row["image_file"]] = txt
 
 
-def copy_bioscan_from_part(part):
+def copy_bioscan_from_part(sink, part):
     # each process get its own db connection.
     db = get_db()
 
@@ -374,40 +411,51 @@ def copy_bioscan_from_part(part):
 # MAIN
 ######
 
+sentinel = "STOP"
+
+
+def worker(input):
+    shard_pattern = os.path.join(output_dir, "shard-%06d.tar")
+    with wds.ShardWriter(shard_pattern, shard_counter, maxsize=3e9) as sink:
+        for func, args in iter(input.get, sentinel):
+            func(sink, *args)
+
 
 if __name__ == "__main__":
-    init_eol_hierarchies_lookup()
+    eol_name_lookup = EolNameLookup()
     init_bioscan_metadata()
 
-    try:
-        shard_counter = multiprocessing.Value("I", 0, lock=True)
+    # Creates a shared integer
+    shard_counter = multiprocessing.Value("I", 0, lock=True)
 
-        pool = concurrency.BoundedExecutor(
-            pool_cls=concurrent.futures.ProcessPoolExecutor,
-            max_workers=max_workers,
-            initializer=init_sink,
-            initargs=(shard_counter,),
-        )
+    task_queue = multiprocessing.Queue()
 
-        # EOL
-        for imgset_name in sorted(os.listdir(eol_root_dir)):
-            assert imgset_name.endswith(".tar.gz")
-            imgset_path = os.path.join(eol_root_dir, imgset_name)
-            pool.submit(copy_from_imgset, imgset_path)
-        pool.finish(desc="Copying EOL images")
+    # Submit all tasks
+    # EOL
+    for imgset_name in sorted(os.listdir(eol_root_dir)):
+        assert imgset_name.endswith(".tar.gz")
+        imgset_path = os.path.join(eol_root_dir, imgset_name)
+        task_queue.put((copy_eol_from_tar, (imgset_path,)))
 
-        # Bioscan
-        # 113 parts in bioscan
-        for i in range(1, 114):
-            pool.submit(copy_bioscan_from_part, i)
-        pool.finish(desc="Copying BioScan images")
+    # Bioscan
+    # 113 parts in bioscan
+    for i in range(1, 114):
+        task_queue.put((copy_bioscan_from_part, (i,)))
 
-        # iNat
-        for clsdir in os.listdir(inat_root_dir):
-            pool.submit(copy_from_inat_clsdir, clsdir)
-        pool.finish(desc="Copying iNat21 images")
-        
-        pool.submit(close_sink)
-        pool.finish(desc="Writing all .tar files.")
-    finally:
-        pool.shutdown()
+    # iNat
+    for clsdir in os.listdir(inat_root_dir):
+        task_queue.put((copy_inat_from_clsdir, (clsdir,)))
+
+    processes = []
+    # Start worker processes
+    for i in range(max_workers):
+        p = multiprocessing.Process(target=worker, args=(task_queue,))
+        processes.append(p)
+        p.start()
+
+    # Stop worker processes
+    for i in range(max_workers):
+        task_queue.put(sentinel)
+
+    for p in processes:
+        p.join()

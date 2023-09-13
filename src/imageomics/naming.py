@@ -1,8 +1,8 @@
 """
 Helpers and utilities for manipulating scientific and common names of species.
 """
-import json
 import dataclasses
+import json
 
 mapping_file = "data/inat/common-names-mapping.json"
 
@@ -26,9 +26,9 @@ def write_mapping(mapping):
         assert isinstance(key, int)
         assert key < 10000
         assert isinstance(value, str)
-        assert '_' not in value
+        assert "_" not in value
 
-    with open(mapping_file, 'w') as fd:
+    with open(mapping_file, "w") as fd:
         json.dump(mapping, fd, indent=4)
 
 
@@ -49,19 +49,25 @@ class Taxon:
     common_name: str = ""
 
     @property
+    def taxonomic_name(self):
+        return " ".join(
+            [
+                self.kingdom.capitalize(),
+                self.phylum.capitalize(),
+                self.cls.capitalize(),
+                self.order.capitalize(),
+                self.family.capitalize(),
+                self.genus.capitalize(),
+                self.species.lower(),
+            ]
+        )
+
+    @property
     def scientific_name(self):
-        return " ".join([
-            self.kingdom.capitalize(),
-            self.phylum.capitalize(),
-            self.cls.capitalize(),
-            self.order.capitalize(),
-            self.family.capitalize(),
-            self.genus.capitalize(),
-            self.species.lower(),
-        ])
+        return " ".join([self.genus.capitalize(), self.species.lower()])
+
 
 def dataset_class_to_taxon(cls):
     index, *tiers = cls.split("_")
     index = int(index, base=10)
     return Taxon(*tiers, dataset_id=index)
-
