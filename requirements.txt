@@ -4,6 +4,7 @@ regex
 ftfy
 tqdm
 huggingface_hub
+scikit-learn
 sentencepiece
 protobuf<4
 timm
