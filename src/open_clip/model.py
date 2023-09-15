@@ -264,9 +264,8 @@ class CLIP(nn.Module):
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp()
-        else:
             return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+        return image_features, text_features, self.logit_scale.exp()
 
 
 class CustomTextCLIP(nn.Module):
@@ -334,9 +333,8 @@ class CustomTextCLIP(nn.Module):
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp()
-        else:
             return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+        return image_features, text_features, self.logit_scale.exp()
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):

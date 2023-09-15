@@ -292,12 +292,13 @@ class SigLipLoss(nn.Module):
 
                 # FIXME having issues with distributed exchange, possibly gradient flow, three approaches
                 # 1. no intervention, do isend/irecv in forward, avg loss, leave up to DDP to reduce grads
-                # 2. extra all_reduce (sum) (nn. ver w/ grads) of loss in final set
+                # 2. extra all_reduce (sum) (nn. ver w/ grads) of loss in final step
                 # 3. custom autograd.Function Exchange (gradient passed back in reverse right -> left)
 
                 # approach #3
                 text_features_from_left = _Exchange.apply(left_rank, right_rank, text_features_to_right)
 
+                # approach #1
                 # text_features_from_left = torch.zeros_like(text_features_to_right)
                 # send_op = torch.distributed.P2POp(
                 #     torch.distributed.isend,  # send to the right
