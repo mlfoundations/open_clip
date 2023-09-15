@@ -214,3 +214,118 @@ class DistillClipLoss(ClipLoss):
             return {"contrastive_loss": contrastive_loss, "distill_loss": distill_loss}
 
         return contrastive_loss, distill_loss
+
+
+class _Exchange(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, left_rank, right_rank, group, tensor):
+        ctx.group = group
+        ctx.left_rank = left_rank
+        ctx.right_rank = right_rank
+        tensor_from_left = torch.zeros_like(tensor)
+        send_op = torch.distributed.P2POp(
+            torch.distributed.isend,
+            tensor,
+            right_rank,  # send to the right
+        )
+        recv_op = torch.distributed.P2POp(
+            torch.distributed.irecv,
+            tensor_from_left,
+            left_rank,  # recv from left
+        )
+        reqs = torch.distributed.batch_isend_irecv([send_op, recv_op])
+        for req in reqs:
+            req.wait()
+        return tensor_from_left
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return (None, None, None) + (_Exchange.apply(ctx.right_rank, ctx.left_rank, ctx.group, grad_output),)
+
+
+class SigLipLoss(nn.Module):
+
+    def __init__(
+            self,
+            cache_labels=False,
+            rank=0,
+            world_size=1,
+            use_horovod=False,
+    ):
+        super().__init__()
+        self.cache_labels = cache_labels
+        self.rank = rank
+        self.world_size = world_size
+        self.use_horovod = use_horovod  # FIXME need to look at hvd ops for ring transfers
+
+        # cache state FIXME cache not currently used, worthwhile?
+        self.prev_num_logits = 0
+        self.labels = {}
+
+    def get_ground_truth(self, device, num_logits, negative_only=False) -> torch.Tensor:
+        labels = -torch.ones((num_logits, num_logits), device=device)
+        if not negative_only:
+            labels = 2 * torch.eye(num_logits, device=device) + labels
+        return labels
+
+    def get_logits(self, image_features, text_features, logit_scale, logit_bias=None):
+        logits = logit_scale * image_features @ text_features.T
+        if logit_bias is not None:
+            logits += logit_bias
+        return logits
+
+    def _loss(self, image_features, text_features, logit_scale, logit_bias=None, negative_only=False):
+        logits = self.get_logits(image_features, text_features, logit_scale, logit_bias)
+        labels = self.get_ground_truth(image_features.device, image_features.shape[0], negative_only=negative_only)
+        loss = -F.logsigmoid(labels * logits).sum() / image_features.shape[0]
+        return loss
+
+    def forward(self, image_features, text_features, logit_scale, logit_bias, output_dict=False):
+        loss = self._loss(image_features, text_features, logit_scale, logit_bias)
+
+        if self.world_size > 1:
+            # exchange text features w/ neighbour world_size - 1 times
+            text_features_to_right = text_features
+            for i in range(self.world_size - 1):
+                right_rank = (self.rank + 1) % self.world_size
+                left_rank = (self.rank - 1 + self.world_size) % self.world_size
+
+                # FIXME having issues with distributed exchange, possibly gradient flow, three approaches
+                # 1. no intervention, do isend/irecv in forward, avg loss, leave up to DDP to reduce grads
+                # 2. extra all_reduce (sum) (nn. ver w/ grads) of loss in final set
+                # 3. custom autograd.Function Exchange (gradient passed back in reverse right -> left)
+
+                # approach #3
+                text_features_from_left = _Exchange.apply(left_rank, right_rank, text_features_to_right)
+
+                # text_features_from_left = torch.zeros_like(text_features_to_right)
+                # send_op = torch.distributed.P2POp(
+                #     torch.distributed.isend,  # send to the right
+                #     text_features_to_right,
+                #     right_rank,
+                # )
+                # recv_op = torch.distributed.P2POp(
+                #     torch.distributed.irecv,  # recv from left
+                #     text_features_from_left,
+                #     left_rank,
+                # )
+                # reqs = torch.distributed.batch_isend_irecv([send_op, recv_op])
+                # for req in reqs:
+                #     req.wait()
+
+                neg_loss = self._loss(
+                    image_features,
+                    text_features_from_left,
+                    logit_scale,
+                    logit_bias,
+                    negative_only=True,
+                )
+                loss += neg_loss
+                text_features_to_right = text_features_from_left
+
+            loss /= self.world_size  # not 100% clear if this should be here
+
+            # approach #2
+            # loss = torch.distributed.nn.all_reduce(loss)
+
+        return {"contrastive_loss": loss} if output_dict else loss
