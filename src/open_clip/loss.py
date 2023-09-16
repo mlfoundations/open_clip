@@ -324,7 +324,7 @@ class SigLipLoss(nn.Module):
                 loss += neg_loss
                 text_features_to_right = text_features_from_left
 
-            loss /= self.world_size  # not 100% clear if this should be here
+            # loss /= self.world_size  # better without this
 
             # approach #2
             # loss = torch.distributed.nn.all_reduce(loss)
