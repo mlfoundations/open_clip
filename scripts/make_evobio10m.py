@@ -17,7 +17,7 @@ Warnings:
 /users/PAS1576/samuelstevens/projects/open_clip/.venv/lib/python3.10/site-packages/PIL/Image.py:3157: DecompressionBombWarning: Image size (154508376 pixels) exceeds limit of 89478485 pixels, could be decompression bomb DOS attack.
   warnings.warn(
 """
-import csv
+import argparse
 import json
 import logging
 import multiprocessing
@@ -28,9 +28,8 @@ import tarfile
 import uuid
 
 from PIL import Image, ImageFile
-from tqdm import tqdm
 
-from imageomics import naming, wds, eol
+from imageomics import eol, naming, wds
 
 ########
 # CONFIG
@@ -42,24 +41,17 @@ logging.basicConfig(level=logging.INFO, format=log_format)
 Image.MAX_IMAGE_PIXELS = 30_000**2  # 30_000 pixels per side
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-max_workers = 32
+max_workers = 64
 
 eol_root_dir = "/fs/ess/PAS2136/eol/data/interim/media_cargo_archive"
 inat_root_dir = "/fs/ess/PAS2136/foundation_model/inat21/raw/train"
 bioscan_root_dir = "/fs/scratch/PAS2136/bioscan/cropped_256"
-bioscan_metadata_path = (
-    "/fs/scratch/PAS2136/bioscan/BIOSCAN_Insect_Dataset_metadata.jsonld"
-)
 
-resize_size = (224, 224)
-output_dir = os.path.join(
-    "/fs/ess/PAS2136/open_clip/data/evobio10m/", f"{resize_size[0]}x{resize_size[1]}"
-)
-os.makedirs(output_dir, exist_ok=True)
 
-db_path = os.path.join(output_dir, "mapping.sqlite")
+seen_in_training_json = "data/rarespecies/seen_in_training.json"
+unseen_in_training_json = "data/rarespecies/unseen_in_training.json"
+
 db_write_frequency = 1000
-
 
 schema = """
 CREATE TABLE IF NOT EXISTS eol (
@@ -98,6 +90,66 @@ def get_global_id():
     return str(uuid.uuid4())
 
 
+########
+# SHARED
+########
+
+
+def load_img(file):
+    img = Image.open(file)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    return img.resize(resize_size, resample=Image.BICUBIC)
+
+
+# A dictionary of scientific name (str) to taxonomic name (str)
+class TaxonomicNameLookup(dict):
+    def add(self, lookup: naming.NameLookup):
+        """Adds all taxonomic names from an naming.NameLookup instance."""
+
+        for key in lookup.keys():
+            scientific = lookup.scientific(key)
+            taxonomic = lookup.taxonomic(key)
+
+            if scientific in self:
+                continue
+
+            if scientific is not None and taxonomic is not None:
+                self[scientific] = taxonomic
+
+
+# A dictionary of scientific name (str) to common name (str)
+class CommonNameLookup(dict):
+    def add(self, lookup: naming.NameLookup):
+        """Adds all common names from an naming.NameLookup instance."""
+
+        for key in lookup.keys():
+            scientific = lookup.scientific(key)
+            common = lookup.common(key)
+
+            if scientific in self:
+                continue
+
+            if scientific is not None and common is not None:
+                self[scientific] = common
+
+
+class ImageFilter:
+    """Filters images based on a black list."""
+
+    def __init__(self, blacklist):
+        self.blacklist = set(blacklist)
+
+    def passes(self, file):
+        return file not in self.blacklist
+
+
+class SpeciesFilter:
+    """Filters species based on a"""
+
+    pass
+
+
 ######################
 # Encyclopedia of Life
 ######################
@@ -109,99 +161,6 @@ INSERT INTO eol
 VALUES
     (?, ?, ?);
 """
-
-
-class EolNameLookup:
-    media_cargo_archive_map_csv = (
-        "/fs/ess/PAS2136/eol/data/interim/media_cargo_archive_map.csv"
-    )
-    taxon_tab = "data/eol/dh21/taxon.tab"
-    provider_ids_csv = "data/eol/provider_ids.csv"
-    pages_csv = "data/eol/trait_bank/pages.csv"
-    vernacularnames_csv = "data/eol/vernacularnames.csv"
-    hierarchies_path = (
-        "/fs/scratch/PAS2136/eol/data/interim/all_hierarchies_in_graph.csv"
-    )
-    scraped_page_ids_csv = "data/eol/scraped_page_ids.csv"
-
-    def __init__(self):
-        self.common = {}
-        self.taxonomic = {}
-        self.scientific = {}
-
-        # scientific names
-        with open(self.provider_ids_csv) as fd:
-            reader = csv.DictReader(fd)
-            for row in tqdm(reader, desc="provider_ids.csv"):
-                if not row["page_id"] or not row["preferred_canonical_for_page"]:
-                    continue
-                page_id = int(row["page_id"])
-                if page_id not in self.scientific:
-                    self.scientific[page_id] = row["preferred_canonical_for_page"]
-
-        # scientific names
-        with open(self.taxon_tab) as fd:
-            reader = csv.DictReader(fd, delimiter="\t")
-            for row in tqdm(reader, desc="taxon.tab"):
-                if not row["eolID"] or not row["scientificName"]:
-                    continue
-                page_id = int(row["eolID"])
-                if page_id not in self.scientific:
-                    self.scientific[page_id] = row["scientificName"]
-
-        with open(self.pages_csv) as fd:
-            reader = csv.DictReader(fd)
-            for row in tqdm(reader, desc="trait_bank/pages.csv"):
-                if not row["page_id"] or not row["canonical"]:
-                    continue
-                page_id = int(row["page_id"])
-                if page_id not in self.scientific:
-                    self.scientific[page_id] = row["canonical"]
-
-        vernacular_names = eol.VernacularNameLookup(self.vernacularnames_csv)
-        for page_id in vernacular_names:
-            name = vernacular_names[page_id]
-            if page_id not in self.scientific:
-                self.scientific[page_id] = name.canonical
-
-            if page_id not in self.common:
-                self.common[page_id] = name.common
-
-        with open(self.hierarchies_path) as fd:
-            reader = csv.reader(fd)
-            next(reader)  # skip header row
-            for page_id, raw_canonical, _, _ in tqdm(
-                reader, desc=self.hierarchies_path
-            ):
-                canonical_chain = raw_canonical.split("->")
-                page_id = int(page_id)
-                if page_id not in self.taxonomic:
-                    self.taxonomic[page_id] = " ".join(canonical_chain)
-
-                if page_id not in self.scientific:
-                    self.scientific[page_id] = " ".join(canonical_chain[-2:])
-
-        with open(self.scraped_page_ids_csv) as fd:
-            reader = csv.DictReader(fd)
-            for row in tqdm(reader, desc="scraped_page_ids.csv"):
-                page_id = int(row["page_id"])
-
-                if page_id not in self.scientific:
-                    self.scientific[page_id] = row["scientific_name"]
-
-    def get(self, page_id, *, preferred=("common", "taxonomic", "scientific")):
-        for kind in preferred:
-            if not hasattr(self, kind):
-                raise ValueError(
-                    f"{self.__class__.__name__} has no lookup called {kind}!"
-                )
-
-            lookup = getattr(self, kind)
-            if page_id in lookup:
-                return lookup[page_id]
-
-        # Couldn't find it
-        return None
 
 
 def copy_eol_from_tar(sink, imgset_path):
@@ -224,10 +183,14 @@ def copy_eol_from_tar(sink, imgset_path):
     with tarfile.open(imgset_path, "r|gz") as tar:
         for i, member in enumerate(tar):
             eol_img = eol.ImageFilename.from_filename(member.name)
-            scientific_name = eol_name_lookup.get(
-                eol_img.page_id, preferred=("scientific",)
-            )
-            if not scientific_name:
+            if eol_img.raw in image_blacklist:
+                continue
+
+            scientific = eol_name_lookup.scientific(eol_img.page_id)
+            if scientific is None:
+                continue
+
+            if scientific in species_blacklist:
                 continue
 
             global_id = get_global_id()
@@ -236,14 +199,20 @@ def copy_eol_from_tar(sink, imgset_path):
 
             file = tar.extractfile(member)
             try:
-                img = Image.open(file).resize(resize_size)
+                img = load_img(file).resize(resize_size)
             except OSError as err:
                 logger.warning(
                     "Error opening file. Skipping. [tar: %s, err: %s]", imgset_path, err
                 )
                 continue
 
-            sink.write({"__key__": global_id, "jpg": img, "txt": scientific_name})
+            taxonomic = eol_name_lookup.taxonomic(eol_img.page_id)
+            tagged = eol_name_lookup.tagged(eol_img.page_id)
+            txt_dct = make_txt(
+                scientific=scientific, taxonomic=taxonomic, tagged=tagged
+            )
+
+            sink.write({"__key__": global_id, "jpg": img, **txt_dct})
 
             if i % db_write_frequency == 0:
                 try:
@@ -293,19 +262,25 @@ def copy_inat_from_clsdir(sink, clsdir):
 
     insert_values = []
     for i, filename in enumerate(os.listdir(os.path.join(inat_root_dir, clsdir))):
-        taxon = naming.dataset_class_to_taxon(clsdir)
+        filepath = os.path.join(inat_root_dir, clsdir, filename)
+        img = load_img(filepath).resize(resize_size)
+
         image_id, ext = parse_inat_filename(filename)
         global_id = get_global_id()
 
-        filepath = os.path.join(inat_root_dir, clsdir, filename)
+        scientific = inat21_name_lookup.scientific(clsdir)
+        if scientific in species_blacklist:
+            continue
 
-        img = Image.open(filepath).resize(resize_size)
-        txt = taxon.scientific_name
-        insert_values.append(
-            (image_id, taxon.taxonomic_name, taxon.dataset_id, global_id)
-        )
+        taxonomic = inat21_name_lookup.taxonomic(clsdir)
+        tagged = inat21_name_lookup.tagged(clsdir)
+        txt_dct = make_txt(scientific=scientific, taxonomic=taxonomic, tagged=tagged)
 
-        sink.write({"__key__": global_id, "jpg": img, "txt": txt})
+        sink.write({"__key__": global_id, "jpg": img, **txt_dct})
+
+        index, *_ = clsdir.split("_")
+        index = int(index)
+        insert_values.append((image_id, taxonomic, index, global_id))
 
         if i % db_write_frequency == 0:
             try:
@@ -336,28 +311,6 @@ VALUES
     (?, ?, ?);
 """
 
-bioscan_txt_lookup = {}
-
-
-def init_bioscan_metadata():
-    with open(bioscan_metadata_path) as fd:
-        bioscan_metadata = json.load(fd)
-
-    for row in tqdm(bioscan_metadata, desc="Loading Bioscan metadata"):
-        taxon = (
-            "Animalia",
-            "Arthropoda",
-            "Insecta",
-            row["order"],
-            row["family"],
-            row["genus"],
-            row["species"],
-        )
-
-        # scientific name
-        txt = " ".join(label for label in taxon[-2:] if label != "not_classified")
-        bioscan_txt_lookup[row["image_file"]] = txt
-
 
 def copy_bioscan_from_part(sink, part):
     # each process get its own db connection.
@@ -366,9 +319,6 @@ def copy_bioscan_from_part(sink, part):
     logger = logging.getLogger(f"p{os.getpid()}")
 
     logger = logging.getLogger(f"p{os.getpid()}")
-    if not bioscan_txt_lookup:
-        logger.error("bioscan_txt_lookup is empty!")
-    assert bioscan_txt_lookup, "bioscan_txt_lookup is empty"
 
     insert_values = []
     partdir = os.path.join(bioscan_root_dir, f"part{part}")
@@ -376,18 +326,20 @@ def copy_bioscan_from_part(sink, part):
         global_id = get_global_id()
         insert_values.append((part, filename, global_id))
 
-        if filename not in bioscan_txt_lookup:
+        tagged = bioscan_name_lookup.tagged(filename)
+        if tagged is None:
             logger.warning(
                 "Cannot find taxon. Skipping. [part: %s, filename: %s]", part, filename
             )
             continue
 
-        txt = bioscan_txt_lookup[filename]
+        if bioscan_name_lookup.scientific(filename) in species_blacklist:
+            continue
 
         filepath = os.path.join(partdir, filename)
-        img = Image.open(filepath).resize(resize_size)
+        img = load_img(filepath).resize(resize_size)
 
-        sink.write({"__key__": global_id, "jpg": img, "txt": txt})
+        sink.write({"__key__": global_id, "jpg": img, **make_txt(tagged=tagged)})
 
         if i % db_write_frequency == 0:
             try:
@@ -411,6 +363,94 @@ def copy_bioscan_from_part(sink, part):
 # MAIN
 ######
 
+
+def make_txt(*, scientific=None, taxonomic=None, common=None, tagged=None):
+    """
+    From tagged, we can construct the scientific and the taxonomic names.
+    Common names have to come from scientific names.
+    """
+
+    # 1. Make sure scientific name is not empty
+    # 1.1. Try using tagged.
+    if not scientific and tagged:
+        scientific = naming.tagged_to_scientific(tagged)
+
+    # 1.2. Try using taxonomic
+    if not scientific and taxonomic:
+        scientific = naming.taxonomic_to_scientific(taxonomic)
+
+    # 1.3. Give up.
+    if not scientific:
+        scientific = ""
+
+    # 2. Make sure taxonomic name is not empty.
+    # 2.1. Try using the taxonomic lookup.
+    if not taxonomic and scientific and scientific in taxonomic_name_lookup:
+        taxonomic = taxonomic_name_lookup[scientific]
+        tiers = ("kingdom", "phylum", "class", "order", "genus", "species")
+
+        # If we use the taxonomic_name_lookup, set up tagged
+        if not tagged:
+            tagged = [(tag, value) for tag, value in zip(taxonomic.split(), tiers)]
+
+    # 2.2. Try using the tagged name
+    if not taxonomic and tagged:
+        # Don't both doing capitalize/lower because this likely came from naming.Taxon
+        taxonomic = " ".join(value for _, value in tagged)
+
+    # 2.3 Give up
+    if not taxonomic:
+        taxonomic = scientific
+
+    # 3. Make sure tagged is not empty.
+    if not tagged:
+        values = scientific.split()
+        if len(values) == 1:
+            tagged = [("genus", scientific)]
+        elif len(values) == 2:
+            genus, species = values
+            tagged = [("genus", genus.capitalize()), ("species", species.lower())]
+        else:
+            genus, *species = values  # sometimes there is a space in a species name
+            species = " ".join(species)
+            tagged = [("genus", genus.capitalize()), ("species", species.lower())]
+
+    # 4. Make sure common is not empty
+    # 4.1. Try the common name lookup
+    if not common and scientific in common_name_lookup:
+        common = common_name_lookup[scientific]
+
+    # 4.2. Give up.
+    if not common:
+        common = scientific
+
+    taxonomic_tag = " ".join(f"{tier} {value}" for tier, value in tagged)
+
+    sci = f"a photo of {scientific}."
+    taxon = f"a photo of {taxonomic}."
+    taxon_tag = f"a photo of {taxonomic_tag}."
+
+    com = f"a photo of {common}."
+    sci_com = f"a photo of {scientific} with common name {common}."
+    taxon_com = f"a photo of {taxonomic} with common name {common}."
+    taxon_tag_com = f"a photo of {taxonomic_tag} with common name {common}."
+
+    return {
+        # Names
+        "scientific_name.txt": scientific,
+        "taxonomic_name.txt": taxonomic,
+        "common_name.txt": common,
+        # "A photo of"... captions
+        "sci.txt": sci,
+        "com.txt": com,
+        "taxon.txt": taxon,
+        "taxonTag.txt": taxon_tag,
+        "sci_com.txt": sci_com,
+        "taxon_com.txt": taxon_com,
+        "taxonTag_com.txt": taxon_tag_com,
+    }
+
+
 sentinel = "STOP"
 
 
@@ -422,8 +462,60 @@ def worker(input):
 
 
 if __name__ == "__main__":
-    eol_name_lookup = EolNameLookup()
-    init_bioscan_metadata()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--width", type=int, default=224, help="Width of resized images."
+    )
+    parser.add_argument(
+        "--height", type=int, default=224, help="Height of resized images."
+    )
+
+    parser.add_argument("--tag", default="dev", help="The suffix for the directory.")
+
+    args = parser.parse_args()
+
+    # Set up some global variables that depend on CLI args.
+    resize_size = (args.width, args.height)
+    output_dir = f"/fs/ess/PAS2136/open_clip/data/evobio10m-{args.tag}/{args.width}x{args.height}"
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Writing images to {output_dir}.")
+
+    db_path = os.path.join(output_dir, "mapping.sqlite")
+
+    taxonomic_name_lookup = TaxonomicNameLookup()
+    common_name_lookup = CommonNameLookup()
+
+    # Add Bioscan
+    bioscan_name_lookup = naming.BioscanNameLookup()
+    taxonomic_name_lookup.add(bioscan_name_lookup)
+    common_name_lookup.add(bioscan_name_lookup)
+
+    # Add EOL
+    eol_name_lookup = eol.EolNameLookup()
+    taxonomic_name_lookup.add(eol_name_lookup)
+    common_name_lookup.add(eol_name_lookup)
+
+    # Add iNaturalist
+    inaturalist_name_lookup = naming.iNaturalistNameLookup()
+    taxonomic_name_lookup.add(inaturalist_name_lookup)
+    common_name_lookup.add(inaturalist_name_lookup)
+
+    # Add iNat21
+    inat21_name_lookup = naming.iNat21NameLookup()
+    taxonomic_name_lookup.add(inat21_name_lookup)
+    common_name_lookup.add(inat21_name_lookup)
+
+    image_blacklist = set()
+    species_blacklist = set()
+
+    with open(seen_in_training_json) as fd:
+        for scientific, images in json.load(fd).items():
+            image_blacklist |= set(os.path.basename(img) for img in images)
+
+    with open(unseen_in_training_json) as fd:
+        for scientific, images in json.load(fd).items():
+            image_blacklist |= set(os.path.basename(img) for img in images)
+            species_blacklist.add(scientific)
 
     # Creates a shared integer
     shard_counter = multiprocessing.Value("I", 0, lock=True)
