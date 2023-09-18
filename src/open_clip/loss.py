@@ -305,7 +305,15 @@ def neighbour_exchange_bidir_with_grad(left_rank, right_rank, tensor_to_left, te
 
 
 class SigLipLoss(nn.Module):
+    """ Sigmoid Loss for Language Image Pre-Training (SigLIP) - https://arxiv.org/abs/2303.15343
 
+    @article{zhai2023sigmoid,
+      title={Sigmoid loss for language image pre-training},
+      author={Zhai, Xiaohua and Mustafa, Basil and Kolesnikov, Alexander and Beyer, Lucas},
+      journal={arXiv preprint arXiv:2303.15343},
+      year={2023}
+    }
+    """
     def __init__(
             self,
             cache_labels=False,
