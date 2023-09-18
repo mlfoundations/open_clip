@@ -2,7 +2,7 @@
 
 `cub2011_to_splits.py` converts 12K images from the raw CUB-200 format into train/test splits and resizes the images. [cub2011-eval.md](https://github.com/Imageomics/open_clip/blob/main/docs/imageomics/cub2011-eval.md) has more documentation on exactly how to use it, but it is <100 lines. It is very straightforward.
 
-`inat21_to_wds.py` converts raw iNat21 images to a webdataset format and holds 1K classes out for an unseen evaluation. To use it, you will have to edit some variables in the script (`inat_root`, `output_root`). **Note: this script is outdated because we use a combination of scripts in `scripts/evobio10m/`, described in [training-data-osc.md](/docs/imageomics/training-data-osc.md)
+`inat21_to_wds.py` converts raw iNat21 images to a webdataset format and holds 1K classes out for an unseen evaluation. To use it, you will have to edit some variables in the script (`inat_root`, `output_root`). **Note: this script is outdated because we use a combination of scripts in `scripts/evobio10m/`, described in [training-data-osc.md](/docs/imageomics/training-data-osc.md)**
 
 `inat_common_names.py` gets a mapping of scientific names to common names for all species in the iNat21 dataset. In the future, this will be expanded to all species on iNaturalist, not just those in the iNat21 splits. You don't need to run this script because the mapping is already committed to version control.
 
