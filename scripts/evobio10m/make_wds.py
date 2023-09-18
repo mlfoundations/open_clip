@@ -364,7 +364,9 @@ if __name__ == "__main__":
 
     # Set up some global variables that depend on CLI args.
     resize_size = (args.width, args.height)
-    output_dir = f"{evobio10m.get_output_dir(args.tag)}/{args.width}x{args.height}/{args.split}"
+    output_dir = (
+        f"{evobio10m.get_output_dir(args.tag)}/{args.width}x{args.height}/{args.split}"
+    )
     os.makedirs(output_dir, exist_ok=True)
     print(f"Writing images to {output_dir}.")
 

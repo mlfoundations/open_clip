@@ -18,7 +18,6 @@ import time
 
 from imageomics import eol, evobio10m
 
-max_workers = 16
 
 db_write_frequency = 50_000
 
@@ -189,9 +188,9 @@ def read_inat21_from_clsdir(clsdir):
 def worker(queue):
     logger = get_logger()
     for func, args in iter(queue.get, sentinel):
-        logger.info(f"Started {func.__name__}({' '.join(args)})")
+        logger.info(f"Started {func.__name__}({', '.join(args)})")
         func(*args)
-        logger.info(f"Finished {func.__name__}({' '.join(args)})")
+        logger.info(f"Finished {func.__name__}({', '.join(args)})")
 
 
 sentinel = "STOP"
@@ -199,6 +198,9 @@ sentinel = "STOP"
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", default="dev", help="The suffix for the directory.")
+    parser.add_argument(
+        "--workers", type=int, default=32, help="Number of processes to use."
+    )
     args = parser.parse_args()
 
     # Set up some global variables that depend on CLI args.
@@ -228,13 +230,13 @@ if __name__ == "__main__":
 
     processes = []
     # Start worker processes
-    for i in range(max_workers):
+    for i in range(args.workers):
         p = multiprocessing.Process(target=worker, args=(task_queue,))
         processes.append(p)
         p.start()
 
     # Stop worker processes
-    for i in range(max_workers):
+    for i in range(args.workers):
         task_queue.put(sentinel)
 
     for p in processes:

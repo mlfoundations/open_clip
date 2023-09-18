@@ -4,8 +4,10 @@ eol_root_dir = "/fs/ess/PAS2136/eol/data/interim/media_cargo_archive"
 inat21_root_dir = "/fs/ess/PAS2136/foundation_model/inat21/raw/train"
 bioscan_root_dir = "/fs/scratch/PAS2136/bioscan/cropped_256"
 
+
 def get_output_dir(tag):
     return f"/fs/ess/PAS2136/open_clip/data/evobio10m-{tag}"
+
 
 schema = """
 CREATE TABLE IF NOT EXISTS eol (
