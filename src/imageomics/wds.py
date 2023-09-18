@@ -1,4 +1,6 @@
+import logging
 import multiprocessing
+import os
 
 import webdataset
 
@@ -12,7 +14,6 @@ class ShardWriter:
         shard_counter: multiprocessing.Value,
         maxcount: int = 100000,
         maxsize: float = 3e9,
-        verbose: bool = True,
         **kw,
     ):
         """Create a ShardWriter.
@@ -22,7 +23,6 @@ class ShardWriter:
         :param maxsize: maximum size of each shard (Default value = 3e9)
         :param kw: other options passed to TarWriter
         """
-        self.verbose = verbose
         self.kw = kw
         self.maxcount = maxcount
         self.maxsize = maxsize
@@ -35,6 +35,7 @@ class ShardWriter:
         self.fname = None
 
         self.shard_counter = shard_counter
+        self.logger = logging.getLogger(f"shard-writer(p{os.getpid()})")
 
         self.next_stream()
 
@@ -47,15 +48,8 @@ class ShardWriter:
             self.shard_counter.value += 1
 
         self.fname = self.pattern % self.shard
-        if self.verbose:
-            print(
-                "# writing",
-                self.fname,
-                self.count,
-                "%.1f GB" % (self.size / 1e9),
-                self.total,
-            )
         stream = open(self.fname, "wb")
+        self.logger.info("Opened shard %s.", self.fname)
         self.tarstream = webdataset.TarWriter(stream, **self.kw)
         self.count = 0
         self.size = 0
@@ -79,8 +73,8 @@ class ShardWriter:
     def finish(self):
         """Finish all writing (use close instead)."""
         if self.tarstream is not None:
-            print(f"Closing shard {self.fname}.")
             self.tarstream.close()
+            self.logger.info("Closed shard %s.", self.fname)
             assert self.fname is not None
             self.tarstream = None
 

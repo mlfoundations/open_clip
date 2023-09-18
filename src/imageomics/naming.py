@@ -206,10 +206,10 @@ class iNaturalistNameLookup(NameLookup):
 
 
 class iNat21NameLookup(NameLookup):
-    def __init__(self, inat_root="/fs/ess/PAS2136/foundation_model/inat21/raw/train"):
+    def __init__(self, inat21_root="/fs/ess/PAS2136/foundation_model/inat21/raw/train"):
         self._taxa = {}
 
-        for clsdir in os.listdir(inat_root):
+        for clsdir in os.listdir(inat21_root):
             index, king, phyl, cls, ord, fam, genus, species = clsdir.split("_")
             index = int(index, base=10)
             taxon = Taxon(king, phyl, cls, ord, fam, genus, species)
