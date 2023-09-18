@@ -396,9 +396,13 @@ def main(args):
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
+    # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
+    # For compatibility, we save state_dict() of the original model, which shares the
+    # weights without the prefix.
+    original_model = model
     if args.torchcompile:
         logging.info('Compiling model...')
-        model = torch.compile(model)
+        model = torch.compile(original_model)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
@@ -426,7 +430,7 @@ def main(args):
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": model.state_dict(),
+                "state_dict": original_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
             if scaler is not None:
