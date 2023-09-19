@@ -10,16 +10,12 @@ import argparse
 import logging
 import multiprocessing
 import os
-import sqlite3
 import tarfile
 import uuid
-import random
-import time
 
-from imageomics import eol, evobio10m
+from imageomics import eol, evobio10m, helpers
 
-
-db_write_frequency = 50_000
+db_write_frequency = 10_000
 
 log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=log_format)
@@ -33,32 +29,21 @@ def get_logger():
     return logging.getLogger(f"p{os.getpid()}")
 
 
-def randsleep(max, logger):
-    sleep = random.randrange(max)
-    logger.info("Sleeping to avoid database lock error. [seconds: %d]", sleep)
-    time.sleep(sleep)
-
-
 ######################
 # Encyclopedia of Life
 ######################
 
 
-eol_insert_stmt = """
-INSERT INTO eol
-    (content_id, page_id, evobio10m_id)
-VALUES
-    (?, ?, ?);
-"""
-
-
 def read_eol_from_tar(imgset_path):
     """
-    Reads all filenames from an imgset (.tar.gz file), assigns a uuid, then inserts
-    it into a sqlite database.
+    Reads all filenames from an imgset (.tar.gz file), assigns a uuid, then inserts it into a sqlite database.
     """
-    logger = get_logger()
-
+    eol_insert_stmt = """
+    INSERT INTO eol
+        (content_id, page_id, evobio10m_id)
+    VALUES
+        (?, ?, ?);
+    """
     db = evobio10m.get_db(db_path)
 
     insert_values = []
@@ -73,22 +58,11 @@ def read_eol_from_tar(imgset_path):
             insert_values.append((eol_img.content_id, eol_img.page_id, global_id))
 
             if i % db_write_frequency == 0:
-                randsleep(10, logger)
-                try:
-                    db.executemany(eol_insert_stmt, insert_values)
-                    db.commit()
-                    # If we throw an err on executemany, then we don't reset
-                    # insert_values so we can try again next round.
-                    insert_values = []
-                except sqlite3.OperationalError as err:
-                    logger.warning(
-                        "Error inserting. [len: %d, err: %s]", len(insert_values), err
-                    )
+                helpers.executerobustly(db, eol_insert_stmt, insert_values)
+                insert_values = []
 
     # flush any leftover values
-    randsleep(100, logger)
-    db.executemany(eol_insert_stmt, insert_values)
-    db.commit()
+    helpers.executerobustly(db, eol_insert_stmt, insert_values)
     db.close()
 
 
@@ -96,19 +70,16 @@ def read_eol_from_tar(imgset_path):
 # BIOSCAN
 #########
 
-bioscan_insert_stmt = """
-INSERT INTO bioscan
-    (part, filename, evobio10m_id)
-VALUES
-    (?, ?, ?);
-"""
-
 
 def read_bioscan_from_part(part):
+    bioscan_insert_stmt = """
+    INSERT INTO bioscan
+        (part, filename, evobio10m_id)
+    VALUES
+        (?, ?, ?);
+    """
     # each process get its own db connection.
     db = evobio10m.get_db(db_path)
-
-    logger = get_logger()
 
     insert_values = []
     partdir = os.path.join(evobio10m.bioscan_root_dir, f"part{part}")
@@ -117,22 +88,11 @@ def read_bioscan_from_part(part):
         insert_values.append((part, filename, global_id))
 
         if i % db_write_frequency == 0:
-            randsleep(10, logger)
-            try:
-                db.executemany(bioscan_insert_stmt, insert_values)
-                db.commit()
-                # If we throw an err on executemany, then we don't reset
-                # insert_values so we can try again next round.
-                insert_values = []
-            except sqlite3.OperationalError as err:
-                logger.warning(
-                    "Error inserting. [len: %d, err: %s]", len(insert_values), err
-                )
+            helpers.executerobustly(db, bioscan_insert_stmt, insert_values)
+            insert_values = []
 
     # flush any leftover values
-    randsleep(100, logger)
-    db.executemany(bioscan_insert_stmt, insert_values)
-    db.commit()
+    helpers.executerobustly(db, bioscan_insert_stmt, insert_values)
     db.close()
 
 
@@ -140,19 +100,16 @@ def read_bioscan_from_part(part):
 # INAT21
 ########
 
-inat21_insert_stmt = """
-INSERT INTO inat21
-    (filename, cls_name, cls_num, evobio10m_id)
-VALUES
-    (?, ?, ?, ?);
-"""
-
 
 def read_inat21_from_clsdir(clsdir):
+    inat21_insert_stmt = """
+    INSERT INTO inat21
+        (filename, cls_name, cls_num, evobio10m_id)
+    VALUES
+        (?, ?, ?, ?);
+    """
     # each process get its own db connection.
     db = evobio10m.get_db(db_path)
-
-    logger = get_logger()
 
     insert_values = []
     for i, filename in enumerate(
@@ -166,31 +123,20 @@ def read_inat21_from_clsdir(clsdir):
         insert_values.append((filename, taxon, index, global_id))
 
         if i % db_write_frequency == 0:
-            randsleep(10, logger)
-            try:
-                db.executemany(inat21_insert_stmt, insert_values)
-                db.commit()
-                # If we throw an err on executemany, then we don't reset
-                # insert_values so we can try again next round.
-                insert_values = []
-            except sqlite3.OperationalError as err:
-                logger.warning(
-                    "Error inserting. [len: %d, err: %s]", len(insert_values), err
-                )
+            helpers.executerobustly(db, inat21_insert_stmt, insert_values)
+            insert_values = []
 
     # flush any leftover values
-    randsleep(100, logger)
-    db.executemany(inat21_insert_stmt, insert_values)
-    db.commit()
+    helpers.executerobustly(db, inat21_insert_stmt, insert_values)
     db.close()
 
 
 def worker(queue):
-    logger = get_logger()
+    logger = logging.getLogger(f"p{os.getpid()}")
     for func, args in iter(queue.get, sentinel):
-        logger.info(f"Started {func.__name__}({', '.join(args)})")
+        logger.info(f"Started {func.__name__}({', '.join(map(str, args))})")
         func(*args)
-        logger.info(f"Finished {func.__name__}({', '.join(args)})")
+        logger.info(f"Finished {func.__name__}({', '.join(map(str, args))})")
 
 
 sentinel = "STOP"
