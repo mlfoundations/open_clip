@@ -5,7 +5,7 @@ inat21_root_dir = "/fs/ess/PAS2136/foundation_model/inat21/raw/train"
 bioscan_root_dir = "/fs/scratch/PAS2136/bioscan/cropped_256"
 
 
-def get_output_dir(tag):
+def get_outdir(tag):
     return f"/fs/ess/PAS2136/open_clip/data/evobio10m-{tag}"
 
 
@@ -29,9 +29,11 @@ CREATE TABLE IF NOT EXISTS bioscan (
     evobio10m_id TEXT NOT NULL PRIMARY KEY
 );
 
+-- evobio10m_id is a foreign key for one of the three other tables.
 CREATE TABLE IF NOT EXISTS split (
     evobio10m_id TEXT NOT NULL PRIMARY KEY,
-    is_train INTEGER NOT NULL
+    is_val INTEGER NOT NULL,
+    is_train_small INTEGER NOT NULL
 );
 
 PRAGMA journal_mode=WAL;  -- write-ahead log

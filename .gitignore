@@ -150,4 +150,5 @@ src/debug
 core.*
 
 # Allow
-!src/evaluation/misc/results_dbs/*
+!src/evaluation/misc/results_dbs/*owens-venv/
+pitzer-venv/

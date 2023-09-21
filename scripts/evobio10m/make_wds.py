@@ -2,6 +2,7 @@
 Writes the training and validation data to webdataset format.
 """
 import argparse
+import collections
 import json
 import logging
 import multiprocessing
@@ -19,11 +20,10 @@ from imageomics import eol, evobio10m, naming, wds
 
 log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=log_format)
+rootlogger = logging.getLogger("root")
 
 Image.MAX_IMAGE_PIXELS = 30_000**2  # 30_000 pixels per side
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-max_workers = 64
 
 seen_in_training_json = "data/rarespecies/seen_in_training.json"
 unseen_in_training_json = "data/rarespecies/unseen_in_training.json"
@@ -115,7 +115,7 @@ def copy_eol_from_tar(sink, imgset_path):
                 continue
 
             global_id = evobio10m_id_lookup[(eol_img.content_id, eol_img.page_id)]
-            if global_id not in splits[args.split]:
+            if global_id not in splits[args.split] or global_id in finished_ids:
                 continue
 
             file = tar.extractfile(member)
@@ -165,7 +165,6 @@ def copy_inat21_from_clsdir(sink, clsdir):
     clsdir_path = os.path.join(evobio10m.inat21_root_dir, clsdir)
     for i, filename in enumerate(os.listdir(clsdir_path)):
         filepath = os.path.join(clsdir_path, filename)
-        img = load_img(filepath).resize(resize_size)
 
         cls_num, *_ = clsdir.split("_")
         cls_num = int(cls_num)
@@ -177,7 +176,7 @@ def copy_inat21_from_clsdir(sink, clsdir):
             continue
 
         global_id = evobio10m_id_lookup[(filename, cls_num)]
-        if global_id not in splits[args.split]:
+        if global_id not in splits[args.split] or global_id in finished_ids:
             continue
 
         scientific = inat21_name_lookup.scientific(clsdir)
@@ -187,6 +186,8 @@ def copy_inat21_from_clsdir(sink, clsdir):
         taxonomic = inat21_name_lookup.taxonomic(clsdir)
         tagged = inat21_name_lookup.tagged(clsdir)
         txt_dct = make_txt(scientific=scientific, taxonomic=taxonomic, tagged=tagged)
+
+        img = load_img(filepath).resize(resize_size)
 
         sink.write({"__key__": global_id, "jpg": img, **txt_dct})
 
@@ -216,7 +217,7 @@ def copy_bioscan_from_part(sink, part):
             continue
 
         global_id = evobio10m_id_lookup[(part, filename)]
-        if global_id not in splits[args.split]:
+        if global_id not in splits[args.split] or global_id in finished_ids:
             continue
 
         tagged = bioscan_name_lookup.tagged(filename)
@@ -242,13 +243,60 @@ def copy_bioscan_from_part(sink, part):
 
 def load_splits():
     db = evobio10m.get_db(db_path)
-    split_stmt = "SELECT evobio10m_id FROM split WHERE is_train = (?)"
+    train_stmt = "SELECT evobio10m_id FROM split WHERE is_val = 0;"
+    train_small_stmt = (
+        "SELECT evobio10m_id FROM split WHERE is_val = 0 AND is_train_small = 1;"
+    )
+    val_stmt = "SELECT evobio10m_id FROM split WHERE is_val = 1;"
+
     splits = {
-        "train": {row[0] for row in db.execute(split_stmt, (1,)).fetchall()},
-        "val": {row[0] for row in db.execute(split_stmt, (0,)).fetchall()},
+        "train": {row[0] for row in db.execute(train_stmt).fetchall()},
+        "val": {row[0] for row in db.execute(val_stmt).fetchall()},
+        "train_small": {row[0] for row in db.execute(train_small_stmt).fetchall()},
     }
     db.close()
     return splits
+
+
+def check_status():
+    finished_ids, bad_shards = set(), set()
+    for root, dirs, files in os.walk(os.path.join(outdir, args.split)):
+        for file in files:
+            if not file.endswith(".tar"):
+                continue
+
+            written = collections.defaultdict(set)
+            with tarfile.open(os.path.join(root, file), "r|") as tar:
+                for member in tar:
+                    global_id, *rest = member.name.split(".")
+                    rest = ".".join(rest)
+                    written[global_id].add(rest)
+
+            # If you change make_txt, update these expected_exts
+            expected_exts = {
+                "scientific_name.txt",
+                "taxonomic_name.txt",
+                "common_name.txt",
+                "sci.txt",
+                "com.txt",
+                "taxon.txt",
+                "taxonTag.txt",
+                "sci_com.txt",
+                "taxon_com.txt",
+                "taxonTag_com.txt",
+                "jpg",
+            }
+            for global_id, exts in written.items():
+                if exts != expected_exts:
+                    # Delete all the files with this global_id. But this is impossible
+                    # with the .tar format. So instead, we delete this entire shard.
+                    bad_shards.add(os.path.join(root, file))
+                    break
+            else:
+                # If we didn't early break, then this file is clean.
+                finished_ids.update(set(written.keys()))
+
+    return finished_ids, bad_shards
 
 
 def make_txt(*, scientific=None, taxonomic=None, common=None, tagged=None):
@@ -322,6 +370,9 @@ def make_txt(*, scientific=None, taxonomic=None, common=None, tagged=None):
     taxon_com = f"a photo of {taxonomic} with common name {common}."
     taxon_tag_com = f"a photo of {taxonomic_tag} with common name {common}."
 
+    # IF YOU UPDATE THE KEYS HERE, BE SURE TO UPDATE check_status() TO LOOK FOR ALL OF
+    # THESE KEYS. IF YOU DO NOT, THEN check_status() MIGHT ASSUME AN EXAMPLE IS WRITTEN
+    # EVEN IF NOT ALL KEYS ARE PRESENT.
     return {
         # Names
         "scientific_name.txt": scientific,
@@ -342,10 +393,12 @@ sentinel = "STOP"
 
 
 def worker(input):
-    shard_pattern = os.path.join(output_dir, "shard-%06d.tar")
-    with wds.ShardWriter(shard_pattern, shard_counter, maxsize=3e9) as sink:
+    logger = logging.getLogger(f"p{os.getpid()}")
+    with wds.ShardWriter(outdir, shard_counter, digits=6, maxsize=3e9) as sink:
         for func, args in iter(input.get, sentinel):
+            logger.info(f"Started {func.__name__}({', '.join(map(str, args))})")
             func(sink, *args)
+            logger.info(f"Finished {func.__name__}({', '.join(map(str, args))})")
 
 
 if __name__ == "__main__":
@@ -356,22 +409,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--height", type=int, default=224, help="Height of resized images."
     )
-
-    parser.add_argument("--split", choices=["train", "val"], default="val")
+    parser.add_argument(
+        "--split", choices=["train", "val", "train_small"], default="val"
+    )
     parser.add_argument("--tag", default="dev", help="The suffix for the directory.")
-
+    parser.add_argument(
+        "--workers", type=int, default=32, help="Number of processes to use."
+    )
     args = parser.parse_args()
 
     # Set up some global variables that depend on CLI args.
     resize_size = (args.width, args.height)
-    output_dir = (
-        f"{evobio10m.get_output_dir(args.tag)}/{args.width}x{args.height}/{args.split}"
-    )
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"Writing images to {output_dir}.")
+    outdir = f"{evobio10m.get_outdir(args.tag)}/{args.width}x{args.height}/{args.split}"
+    os.makedirs(outdir, exist_ok=True)
+    print(f"Writing images to {outdir}.")
 
-    db_path = f"{evobio10m.get_output_dir(args.tag)}/mapping.sqlite"
+    db_path = f"{evobio10m.get_outdir(args.tag)}/mapping.sqlite"
 
+    # Load train/val/train_small splits
+    splits = load_splits()
+
+    # Load images already written to tar files to avoid duplicate work.
+    # Delete any unfinished shards.
+    finished_ids, bad_shards = check_status()
+    rootlogger.info("Found %d finished examples.", len(finished_ids))
+    if bad_shards:
+        rootlogger.warning("Found %d bad shards. Deleting them.", len(bad_shards))
+        for shard in bad_shards:
+            os.remove(shard)
+            rootlogger.warning("Deleted shard %d", shard)
+
+    # Load lookups
     taxonomic_name_lookup = TaxonomicNameLookup()
     common_name_lookup = CommonNameLookup()
 
@@ -395,9 +463,7 @@ if __name__ == "__main__":
     taxonomic_name_lookup.add(inat21_name_lookup)
     common_name_lookup.add(inat21_name_lookup)
 
-    # Load train/val splits
-    splits = load_splits()
-
+    # Load image and species blacklists for rare-species
     image_blacklist = set()
     species_blacklist = set()
 
@@ -433,13 +499,13 @@ if __name__ == "__main__":
 
     processes = []
     # Start worker processes
-    for i in range(max_workers):
+    for i in range(args.workers):
         p = multiprocessing.Process(target=worker, args=(task_queue,))
         processes.append(p)
         p.start()
 
     # Stop worker processes
-    for i in range(max_workers):
+    for i in range(args.workers):
         task_queue.put(sentinel)
 
     for p in processes:

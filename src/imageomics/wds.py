@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import os
+import re
 
 import webdataset
 
@@ -10,10 +11,13 @@ class ShardWriter:
 
     def __init__(
         self,
-        pattern: str,
-        shard_counter: multiprocessing.Value,
+        outdir: str,
+        next_shard: multiprocessing.Value,
+        *,
+        digits: int = 6,
         maxcount: int = 100000,
         maxsize: float = 3e9,
+        no_init: bool = False,
         **kw,
     ):
         """Create a ShardWriter.
@@ -28,26 +32,55 @@ class ShardWriter:
         self.maxsize = maxsize
 
         self.tarstream = None
-        self.pattern = pattern
+        self.outdir = outdir
+        self.pattern = f"shard-%0{digits}d.tar"
+        self.parse_pattern = re.compile(f"shard-(\\d{{{digits}}})\\.tar")
         self.total = 0
         self.count = 0
         self.size = 0
         self.fname = None
 
-        self.shard_counter = shard_counter
+        self.next_shard = next_shard
         self.logger = logging.getLogger(f"shard-writer(p{os.getpid()})")
 
-        self.next_stream()
+        if not no_init:
+            self.next_stream()
+
+    def choose_next_shard(self, existing):
+        existing = set(existing)
+        for i in range(max(existing)):
+            if i < self.next_shard.value:
+                continue
+
+            if i in existing:
+                continue
+
+            self.shard = i
+            self.next_shard.value = self.shard + 1
+            return
+
+        self.shard = max(self.next_shard.value, i + 2)
+        self.next_shard.value = self.shard + 1
 
     def next_stream(self):
         """Close the current stream and move to the next."""
         self.finish()
 
-        with self.shard_counter.get_lock():
-            self.shard = self.shard_counter.value
-            self.shard_counter.value += 1
+        with self.next_shard.get_lock():
+            # Get a list of existing files
+            existing = []
+            for file in os.listdir(self.outdir):
+                match = self.parse_pattern.match(file)
+                if match is None:
+                    continue
+                num = int(match.group(1), base=10)
+                existing.append(num)
+            existing = sorted(existing)
 
-        self.fname = self.pattern % self.shard
+            # Choose next shard
+            self.choose_next_shard(existing)
+
+        self.fname = os.path.join(self.outdir, self.pattern % self.shard)
         stream = open(self.fname, "wb")
         self.logger.info("Opened shard %s.", self.fname)
         self.tarstream = webdataset.TarWriter(stream, **self.kw)
