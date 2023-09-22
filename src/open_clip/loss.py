@@ -328,7 +328,7 @@ class SigLipLoss(nn.Module):
         self.world_size = world_size
         assert not use_horovod  # FIXME need to look at hvd ops for ring transfers
         self.use_horovod = use_horovod
-        self.bidir = bidir  # FIXME need further verification & benchmarking of bidirectional mode
+        self.bidir = bidir  # FIXME need further benchmarking of bidirectional mode needed
 
         # cache state FIXME cache not currently used, worthwhile?
         self.prev_num_logits = 0
@@ -399,17 +399,8 @@ class SigLipLoss(nn.Module):
             else:
                 text_features_to_right = text_features
                 for i in range(self.world_size - 1):
-                    # FIXME having issues with distributed exchange, possibly gradient flow, three approaches
-                    # 1. no intervention, do isend/irecv in forward, avg loss, leave up to DDP to reduce grads
-                    # 2. extra all_reduce (sum) (nn. ver w/ grads) of loss in final step
-                    # 3. custom autograd.Function Exchange (gradient passed back in reverse right -> left)
-
-                    # approach #3
                     text_features_from_left = neighbour_exchange_with_grad(
                         left_rank, right_rank, text_features_to_right)
-
-                    # approach #1
-                    # text_features_from_left = neighbour_exchange(left_rank, right_rank, text_features_to_right)
 
                     loss += self._loss(
                         image_features,
@@ -419,9 +410,5 @@ class SigLipLoss(nn.Module):
                         negative_only=True,
                     )
                     text_features_to_right = text_features_from_left
-
-            # approach #2
-            # loss /= self.world_size
-            # loss = torch.distributed.nn.all_reduce(loss)
 
         return {"contrastive_loss": loss} if output_dict else loss
