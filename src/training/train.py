@@ -88,7 +88,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if not args.skip_scheduler:
             scheduler(step)
 
-        images, texts = batch
+        # Randomly choose a text type for this batch
+        images, scientific, taxonomic, common = batch
+        texts = random.choice([scientific, taxonomic, common])
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 

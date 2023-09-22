@@ -47,6 +47,11 @@ class ShardWriter:
             self.next_stream()
 
     def choose_next_shard(self, existing):
+        if not existing:
+            self.shard = 0
+            self.next_shard.value = self.shard + 1
+            return
+
         existing = set(existing)
         for i in range(max(existing)):
             if i < self.next_shard.value:
@@ -59,7 +64,7 @@ class ShardWriter:
             self.next_shard.value = self.shard + 1
             return
 
-        self.shard = max(self.next_shard.value, i + 2)
+        self.shard = max(self.next_shard.value, max(existing) + 1)
         self.next_shard.value = self.shard + 1
 
     def next_stream(self):

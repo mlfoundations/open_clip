@@ -100,6 +100,10 @@ def get_dataset_size(shards):
     len_filename = os.path.join(dir_path, '__len__')
     if os.path.exists(sizes_filename):
         sizes = json.load(open(sizes_filename, 'r'))
+        # Lisa wants the shard sizes under the per_shard key.
+        # But this is not always the case.
+        if "per_shard" in sizes:
+            sizes = sizes["per_shard"]
         total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
     elif os.path.exists(len_filename):
         # FIXME this used to be eval(open(...)) but that seemed rather unsafe
@@ -378,9 +382,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+        wds.rename(image="jpg", taxonomic="taxonomic_name.txt", common="common_name.txt", scientific="scientific_name.txt"),
         wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
+        wds.to_tuple("image", "scientific", "taxonomic", "common"),
         wds.batched(args.batch_size, partial=not is_train)
     ])
 

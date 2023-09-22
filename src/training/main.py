@@ -373,6 +373,7 @@ def main(args):
         # you will have to configure this for your project!
         wandb.init(
             project=args.wandb_project_name,
+            dir="./.wandb",
             name=args.name,
             id=args.name,
             notes=args.wandb_notes,
