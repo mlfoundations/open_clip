@@ -328,7 +328,7 @@ class SigLipLoss(nn.Module):
         self.world_size = world_size
         assert not use_horovod  # FIXME need to look at hvd ops for ring transfers
         self.use_horovod = use_horovod
-        self.bidir = bidir  # FIXME need further benchmarking of bidirectional mode needed
+        self.bidir = True
 
         # cache state FIXME cache not currently used, worthwhile?
         self.prev_num_logits = 0
