@@ -38,12 +38,14 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def postprocess_clip_output(model_out):
     return {
         "image_features": model_out[0],
         "text_features": model_out[1],
         "logit_scale": model_out[2]
     }
+
 
 def unwrap_model(model):
     if hasattr(model, 'module'):
@@ -63,7 +65,6 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     input_dtype = get_input_dtype(args.precision)
-
 
     model.train()
     if args.distill:
@@ -102,7 +103,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}' : v for k, v in dist_model_out.items()})
+                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
@@ -114,7 +115,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             with torch.no_grad():
                 with autocast():
                     model_out = model(images, texts)
-                    model_out.pop("logit_scale")
+
+                    for f in ("logit_scale", "logit_bias"):
+                        model_out.pop(f, None)
+
                     for key, val in model_out.items():
                         if key in accum_features:
                             accum_features[key].append(val)
@@ -138,15 +142,23 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 texts = accum_texts[j]
                 with autocast():
                     model_out = model(images, texts)
-                    logit_scale = model_out.pop("logit_scale")
+
+                    inputs_no_accum = {}
+                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                    if "logit_bias" in model_out:
+                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+
                     inputs = {}
                     for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] +  [model_out[key]] + accumulated[j + 1:])
-                    losses = loss(**inputs, logit_scale=logit_scale, output_dict=True)
+                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+
+                    losses = loss(**inputs, **inputs_no_accum, output_dict=True)
                     del inputs
+                    del inputs_no_accum
                     total_loss = sum(losses.values())
                     losses["loss"] = total_loss
+
                 backward(total_loss, scaler)
 
         if scaler is not None:

@@ -13,7 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype
 from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -128,6 +128,7 @@ def create_model(
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
+        **model_kwargs,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
@@ -193,11 +194,11 @@ def create_model(
             if is_hf_model:
                 model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             if "coca" in model_name:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+                model = CoCa(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
             else:
-                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = CustomTextCLIP(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            model = CLIP(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
 
         if precision in ("fp16", "bf16"):
             dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
@@ -285,6 +286,12 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
+    elif args.siglip:
+        assert not args.horovod, "Horovod not currently supported for SigLip"
+        return SigLipLoss(
+            rank=args.rank,
+            world_size=args.world_size,
+        )
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
@@ -312,6 +319,7 @@ def create_model_and_transforms(
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        **model_kwargs,
 ):
     model = create_model(
         model_name,
@@ -327,6 +335,7 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
+        **model_kwargs,
     )
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
@@ -361,6 +370,7 @@ def create_model_from_pretrained(
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         cache_dir: Optional[str] = None,
+        **model_kwargs,
 ):
     model = create_model(
         model_name,
@@ -373,6 +383,7 @@ def create_model_from_pretrained(
         force_image_size=force_image_size,
         cache_dir=cache_dir,
         require_pretrained=True,
+        **model_kwargs,
     )
 
     if not return_transform:
