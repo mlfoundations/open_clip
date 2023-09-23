@@ -18,7 +18,6 @@ class LayerNormFp32(nn.LayerNorm):
         x = F.layer_norm(x.to(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
         return x.to(orig_type)
 
-
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm (with cast back to input dtype)."""
 
@@ -503,6 +502,15 @@ class VisionTransformer(nn.Module):
         return pooled
 
 
+def to_autocast_dtype(x: torch.Tensor):
+    if x.device.type == 'cpu' and torch.is_autocast_cpu_enabled():
+        return x.to(torch.get_autocast_cpu_dtype())
+    elif torch.is_autocast_enabled():
+        return x.to(torch.get_autocast_gpu_dtype())
+    # NOTE this doesn't cover possible xpu / hpu + autocast use
+    return x
+
+
 class TextTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
@@ -609,6 +617,8 @@ class TextTransformer(nn.Module):
             attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
+        x = to_autocast_dtype(x)
+
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
