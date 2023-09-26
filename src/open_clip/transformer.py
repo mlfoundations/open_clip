@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Sequence, Tuple, List, Union
 
 import torch
 from torch import nn
@@ -220,14 +220,30 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            cache: Optional[torch.Tensor] = None,
     ):
+    
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
+        if cache is not None:
+            q_x = q_x[-1:]
+            if attn_mask is not None:
+                if attn_mask.dim() == 2:
+                    attn_mask = attn_mask[-1:]
+                elif attn_mask.dim() == 3:
+                    attn_mask = attn_mask[:,-1:]
+
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
-        return self.attn(
+
+        out = self.attn(
             q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
         )[0]
+
+        if cache is not None:
+            out = torch.cat((cache, out), dim=0)
+        
+        return out
 
     def forward(
             self,
@@ -235,13 +251,16 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            cache: Optional[torch.Tensor] = None,
     ):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
-
-        x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
+        
+        # print(q_x)
+        attn = self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask, cache=cache)
+        x = q_x + self.ls_1(attn)
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
-        return x
+        return x, attn
 
 
 class CustomResidualAttentionBlock(nn.Module):
@@ -312,13 +331,21 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        for r in self.resblocks:
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, cache: Optional[List[torch.Tensor]] = None):
+        attentions = []
+        for i, r, in enumerate(self.resblocks):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask)
+                x, _ = checkpoint(r, x, None, None, attn_mask, None)
+            elif cache is None or len(cache) != len(self.resblocks):
+                x, _ = r(x, attn_mask=attn_mask, cache=None)
             else:
-                x = r(x, attn_mask=attn_mask)
+                x, attn = r(x, attn_mask=attn_mask, cache=cache[i])
+                attentions.append(attn)
+        
+        if cache is not None:
+            return x, attentions
+
         return x
 
 
@@ -499,7 +526,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
@@ -596,7 +623,7 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text):
+    def forward(self, text, cache=None):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -610,7 +637,10 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask)
+        if cache is not None:
+            x, attentions = self.transformer(x, attn_mask=attn_mask, cache=cache)
+        else:
+            x = self.transformer(x, attn_mask=attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -625,8 +655,12 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        if self.output_tokens:
+        if self.output_tokens and cache is None:
             return pooled, tokens
+        elif self.output_tokens and cache is not None:
+            return pooled, tokens, attentions
+        elif cache is not None:
+             return pooled, attentions
 
         return pooled
 
@@ -699,25 +733,42 @@ class MultimodalTransformer(Transformer):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def forward(self, image_embs, text_embs):
+    def forward(self, image_embs, text_embs, cache=None):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
         seq_len = text_embs.shape[0]
+        attentions = []
+        cross_attentions = []
+        
+        valid_cache = True
+        if cache is None or cache["self"] is None or cache["self"] == []:
+            valid_cache = False
 
-        for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
+        for i, (resblock, cross_attn) in enumerate(zip(self.resblocks, self.cross_attn)):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
                 text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
             else:
-                text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
-                text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
+                # Could allow for only caching one or the other, but unsure when that
+                # would be beneficial over the alternatives
+                if not valid_cache:
+                    text_embs, attn = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len], cache=None)
+                    text_embs, x_attn = cross_attn(text_embs, k_x=image_embs, v_x=image_embs, cache=None)
+                else:
+                    text_embs, attn = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len], cache=cache["self"][i])
+                    text_embs, x_attn = cross_attn(text_embs, k_x=image_embs, v_x=image_embs, cache=cache["cross"][i])
+                attentions.append(attn)
+                cross_attentions.append(x_attn)
 
         x = text_embs.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)
 
         if self.text_projection is not None:
             x = x @ self.text_projection
+        
+        if cache is not None:
+            return x, attentions, cross_attentions
 
         return x
 

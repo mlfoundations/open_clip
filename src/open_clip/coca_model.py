@@ -133,11 +133,15 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True, embed_cls=True):
+    def _encode_text(self, text, normalize=True, embed_cls=True, cache=None):
         text = text[:, :-1] if embed_cls else text # make space for CLS token
-        text_latent, token_emb = self.text(text)
+        if cache is not None:
+            text_latent, token_emb, attentions = self.text(text, cache)
+        else:
+            text_latent, token_emb = self.text(text)
+            attentions = None
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        return text_latent, token_emb
+        return text_latent, token_emb, attentions
 
     def encode_image(self, images, normalize=True):
         image_latent, _ = self._encode_image(images, normalize=normalize)
@@ -147,19 +151,22 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
         return text_latent
 
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None, cache=None):
+        #TODO: Fix encoder caching
+        text_latent, token_embs, text_attentions = self._encode_text(text, embed_cls=embed_cls, cache=None)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
-
-        logits = self.text_decoder(image_embs, token_embs)
+        logits, attentions, cross_attentions = self.text_decoder(image_embs, token_embs, cache=cache["dec"])
         return {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
+            "text_attentions": text_attentions,
+            "attentions": attentions,
+            "cross_attentions": cross_attentions,
             "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
@@ -182,7 +189,8 @@ class CoCa(nn.Module):
         min_seq_len=5,
         stopping_criteria=None,
         repetition_penalty=1.0,
-        fixed_output_length=False # if True output.shape == (batch_size, seq_len)
+        fixed_output_length=False, # if True output.shape == (batch_size, seq_len)
+        caching=False, # cache previously computed attentions
     ):
         # taking many ideas and components from HuggingFace GenerationMixin
         # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
@@ -220,6 +228,7 @@ class CoCa(nn.Module):
                     min_seq_len=min_seq_len,
                     stopping_criteria=stopping_criteria,
                     logit_processor=logit_processor,
+                    caching=caching
                 )
                 if fixed_output_length and output.shape[1] < seq_len:
                     return torch.cat(
@@ -252,11 +261,24 @@ class CoCa(nn.Module):
             cur_len = text.shape[1]
             self.eval()
             out = text
+            
+            if caching:
+                cache = {"enc": [], "dec": {"self": [], "cross": []}}
+            else:
+                cache = {"enc": None, "dec": {"self": None, "cross": None}}
 
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+
+                outputs = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False, cache=cache)
+
+                if caching:
+                    cache["enc"] = outputs["text_attentions"]
+                    cache["dec"]["self"] = outputs["attentions"]
+                    cache["dec"]["cross"] = outputs["cross_attentions"]
+                    
+                logits = outputs["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -299,6 +321,7 @@ class CoCa(nn.Module):
             stopping_criteria=None,
             logit_processor=None,
             logit_warper=None,
+            caching=True,
     ):
         device = image_inputs.device
         batch_size = image_inputs.shape[0]
@@ -338,6 +361,11 @@ class CoCa(nn.Module):
         beam_scores[:, ::num_sub_beams] = 0
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
+        if caching:
+            cache = {"enc": [], "dec": {"self": [], "cross": []}}
+        else:
+            cache = {"enc": None, "dec": {"self": None, "cross": None}}
+
         while True:
 
             # predicted tokens in cur_len step
@@ -353,8 +381,14 @@ class CoCa(nn.Module):
                 model_inputs['text'],
                 embed_cls=False,
                 image_latent=image_latent,
-                image_embs=image_embs
+                image_embs=image_embs,
+                cache=cache
             )
+
+            if caching:
+                cache["enc"] = outputs["text_attentions"]
+                cache["dec"]["self"] = outputs["attentions"]
+                cache["dec"]["cross"] = outputs["cross_attentions"]
 
             for beam_group_idx in range(num_beam_groups):
                 group_start_idx = beam_group_idx * num_sub_beams
