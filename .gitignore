@@ -3,6 +3,7 @@ wandb/
 models/
 features/
 results/
+tmp/
 
 tests/data/
 *.pt
