@@ -491,8 +491,7 @@ We gratefully acknowledge the Gauss Centre for Supercomputing e.V. (www.gauss-ce
 
 ## The Team
 
-Current development of this repository is led by [Ross Wightman](https://rwightman.com/), 
-[Romain Beaumont](https://github.com/rom1504), [Cade Gordon](http://cadegordon.io/), and [Vaishaal Shankar](http://vaishaal.com/).
+Current development of this repository is led by [Ross Wightman](https://rwightman.com/), [Romain Beaumont](https://github.com/rom1504), [Cade Gordon](http://cadegordon.io/), and [Vaishaal Shankar](http://vaishaal.com/).
 
 The original version of this repository is from a group of researchers at UW, Google, Stanford, Amazon, Columbia, and Berkeley.
 
