@@ -14,16 +14,16 @@ We provide more details about our full collection of pretrained models [here](do
 
 | Model    | Training data | # of samples seen | ImageNet zero-shot acc. | 
 | -------- | ------- |  ------- |  ------- |  
-| ConvNext-Base | LAION-2B  | 13B | 71.5 |
-| ConvNext-Large | LAION-2B  | 29B | 76.9 |
-| ConvNext-XXLarge | LAION-2B | 34B | 79.4 |
-| ViT-B/32  | DataComp-1B  | 13B | 72.7 |
-| ViT-B/16  | DataComp-1B  | 13B | 73.5 |
-| ViT-L/14  | LAION-2B  | 13B | 75.3 |
-| ViT-L/14  | DataComp-1B  | 13B | 79.2 |
-| ViT-G/14  | LAION-2B  | 34B | 80.1 |
+| ConvNext-Base | LAION-2B  | 13B | 71.5% |
+| ConvNext-Large | LAION-2B  | 29B | 76.9% |
+| ConvNext-XXLarge | LAION-2B | 34B | 79.4% |
+| ViT-B/32  | DataComp-1B  | 13B | 72.7% |
+| ViT-B/16  | DataComp-1B  | 13B | 73.5% |
+| ViT-L/14  | LAION-2B  | 13B | 75.3% |
+| ViT-L/14  | DataComp-1B  | 13B | 79.2% |
+| ViT-G/14  | LAION-2B  | 34B | 80.1% |
 |  |  |   |   | 
-| ViT-L/14 | OpenAI's WIT | 13B | 75.5 | 
+| ViT-L/14 | OpenAI's WIT | 13B | 75.5% | 
 
 Model cards with additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip. 
 
