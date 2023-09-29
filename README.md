@@ -66,11 +66,23 @@ with torch.no_grad(), torch.cuda.amp.autocast():
 print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
 ```
 
-Our full collection of pretrained models is available at our [docs](docs/PRETRAINED.md).
 See also this [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb).
 
 To compute billions of embeddings efficiently, you can use [clip-retrieval](https://github.com/rom1504/clip-retrieval) which has openclip support.
 
+### Pretrained models
+
+We offer a simple model interface to instantiate both pre-trained and untrained models.
+To see which pretrained models are available, use the following code snippet.
+More details about our pretrained models are available [here](docs/PRETRAINED.md).
+
+```python
+>>> import open_clip
+>>> open_clip.list_pretrained()
+```
+
+NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient than native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
+Future trained models will use nn.GELU.
 
 ## Fine-tuning on classification tasks
 
