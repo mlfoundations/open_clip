@@ -456,6 +456,42 @@ class VisionTransformer(nn.Module):
             return x.mean(dim=1), x
         else:
             return x[:, 0], x[:, 1:]
+    
+    def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
+        """
+        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
+        resolution images.
+        Source:
+        https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/vision_transformer.py#L174
+        """
+
+        num_patches = embeddings.shape[1] - 1
+        pos_embedding = self.positional_embedding.unsqueeze(0)
+        num_positions = pos_embedding.shape[1] - 1
+        if num_patches == num_positions and height == width:
+            return self.positional_embedding
+        class_pos_embed = pos_embedding[:, 0]
+        patch_pos_embed = pos_embedding[:, 1:]
+        dim = embeddings.shape[-1]
+        h0 = height // self.patch_size[0]
+        w0 = width // self.patch_size[1]
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        h0, w0 = h0 + 0.1, w0 + 0.1
+        patch_pos_embed = patch_pos_embed.reshape(1, int(math.sqrt(num_positions)), int(math.sqrt(num_positions)), dim)
+        patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed,
+            scale_factor=(h0 / math.sqrt(num_positions), w0 / math.sqrt(num_positions)),
+            mode="bicubic",
+            align_corners=False,
+        )
+        assert int(h0) == patch_pos_embed.shape[-2] and int(w0) == patch_pos_embed.shape[-1]
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        output = torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+
+        return output
+    
 
     def forward(self, x: torch.Tensor):
 
@@ -476,7 +512,11 @@ class VisionTransformer(nn.Module):
         x = torch.cat(
             [self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)  # shape = [*, grid ** 2 + 1, width]
-        x = x + self.positional_embedding.to(x.dtype)
+        if(x.shape[1] > self.positional_embedding.shape[0]):
+            dim = int(math.sqrt(x.shape[1]) * self.patch_size[0])
+            x = x + self.interpolate_pos_encoding(x, dim, dim).to(x.dtype)
+        else:
+            x = x + self.positional_embedding.to(x.dtype)
 
         # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
         x = self.patch_dropout(x)
