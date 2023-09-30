@@ -113,6 +113,10 @@ _VITB32_quickgelu = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-quickgelu-laion400m_e32-46683a32.pt"),
 )
 
+_VITB32_256 = dict(
+    datacomp_s34b_b86k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-256x256-DataComp-s34B-b86K/'),
+)
+
 _VITB16 = dict(
     openai=_pcfg(
         "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt"),
@@ -237,6 +241,7 @@ _PRETRAINED = {
     "RN50x16": _RN50x16,
     "RN50x64": _RN50x64,
     "ViT-B-32": _VITB32,
+    "ViT-B-32-256": _VITB32_256,
     "ViT-B-32-quickgelu": _VITB32_quickgelu,
     "ViT-B-16": _VITB16,
     "ViT-B-16-plus-240": _VITB16_PLUS_240,
