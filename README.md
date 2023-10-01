@@ -23,7 +23,7 @@ We provide more details about our full collection of pretrained models [here](do
 | ViT-L/14  | DataComp-1B  | 224px | 13B | 79.2% |
 | ViT-G/14  | LAION-2B  | 224px | 34B | 80.1% |
 |  |  |   |   |  |
-| ViT-L/14 | OpenAI's WIT | 224px 13B | 75.5% | 
+| ViT-L/14 | OpenAI's WIT | 224px | 13B | 75.5% | 
 
 Model cards with additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip. 
 
