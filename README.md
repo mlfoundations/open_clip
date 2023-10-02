@@ -5,8 +5,7 @@
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
-Using this codebase, we have trained several models on a variety of data sources and compute budgets, ranging from [small-scale experiments](docs/LOW_ACC.md) to larger runs including models trained on datasets such as
-[LAION-400M](https://arxiv.org/abs/2111.02114), [LAION-2B](https://laion.ai/blog/laion-5b/) and [DataComp-1B](https://arxiv.org/abs/2304.14108).
+Using this codebase, we have trained several models on a variety of data sources and compute budgets, ranging from [small-scale experiments](docs/LOW_ACC.md) to larger runs including models trained on datasets such as [LAION-400M](https://arxiv.org/abs/2111.02114), [LAION-2B](https://arxiv.org/abs/2210.08402) and [DataComp-1B](https://arxiv.org/abs/2304.14108).
 Many of our models and their scaling properties are studied in detail in the paper [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 Some of our best models and their zero-shot ImageNet-1k accuracy are shown below, along with the ViT-L model trained by OpenAI. 
 We provide more details about our full collection of pretrained models [here](docs/PRETRAINED.md), and zero-shot results for 38 datasets [here](docs/openclip_results.csv).
@@ -17,9 +16,10 @@ We provide more details about our full collection of pretrained models [here](do
 | ConvNext-Base | LAION-2B  | 256px | 13B | 71.5% |
 | ConvNext-Large | LAION-2B  | 320px | 29B | 76.9% |
 | ConvNext-XXLarge | LAION-2B | 256px | 34B | 79.5% |
-| ViT-B/32  | DataComp-1B  | 256px | 13B | 72.8% |
+| ViT-B/32  | DataComp-1B  | 256px | 34B | 72.8% |
 | ViT-B/16  | DataComp-1B  | 224px | 13B | 73.5% |
 | ViT-L/14  | LAION-2B  | 224px | 13B | 75.3% |
+| ViT-H/14  | LAION-2B  | 224px | 32B | 78.0% |
 | ViT-L/14  | DataComp-1B  | 224px | 13B | 79.2% |
 | ViT-G/14  | LAION-2B  | 224px | 34B | 80.1% |
 |  |  |   |   |  |
