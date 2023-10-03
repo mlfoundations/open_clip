@@ -90,8 +90,9 @@ def get_tokenizer(model_name):
             tokenizer = block_mask_tokenize
         else:
             tokenizer = tokenize
-    context_length = get_model_config(model_name)['text_cfg']['context_length']
-    tokenizer = partial(tokenizer, context_length=context_length)
+        if 'context_length' in config['text_cfg'].keys():
+            context_length = config['text_cfg']['context_length']
+            tokenizer = partial(tokenizer, context_length=context_length)
     return tokenizer
 
 
