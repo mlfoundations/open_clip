@@ -345,6 +345,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_samples = args.val_num_samples or 0 
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
+
+    if is_train and args.train_data_upsampling_factors is not None:
+        assert resampled, "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
     
     if resampled:
         pipeline = [ResampledShards2(
@@ -354,8 +357,6 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             epoch=shared_epoch,
         )]
     else:
-        assert args.train_data_upsampling_factors is None,\
-            "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # at this point we have an iterator over all the shards
