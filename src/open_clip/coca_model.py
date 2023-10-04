@@ -139,13 +139,21 @@ class CoCa(nn.Module):
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
 
-    def encode_image(self, images, normalize=True):
-        image_latent, _ = self._encode_image(images, normalize=normalize)
-        return image_latent
+    def encode_image(self, images, normalize=True, return_embedding=False):
+        image_latent, token_emb = self._encode_image(images, normalize=normalize)
+        
+        if return_embedding:
+            return text_latent, token_emb
+        else:
+            return text_latent
 
-    def encode_text(self, text, normalize=True, embed_cls=True):
-        text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
-        return text_latent
+    def encode_text(self, text, normalize=True, embed_cls=True, return_embedding=False):
+        text_latent, token_emb = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
+        
+        if return_embedding:
+            return text_latent, token_emb
+        else:
+            return text_latent
 
     def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
         text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
