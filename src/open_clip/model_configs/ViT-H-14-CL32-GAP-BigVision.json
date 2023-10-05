@@ -6,7 +6,9 @@
         "width": 1280,
         "head_width": 80,
         "patch_size": 14,
-        "gelu_approximate": "tanh",
+        "act_kwargs":{
+            "approximate": "tanh"
+        },
         "ln_pre": false,
         "pool_style": "big_vision_gap",
         "global_average_pool": true
@@ -19,7 +21,9 @@
         "width": 1024,
         "heads": 16,
         "layers": 24,
-        "gelu_approximate": "tanh",
+        "act_kwargs":{
+            "approximate": "tanh"
+        },
         "pool_style": "big_vision_last",
         "attention_mask": false
     }

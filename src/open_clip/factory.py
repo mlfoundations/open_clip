@@ -88,9 +88,9 @@ def get_tokenizer(model_name):
                                              max_len=config['text_cfg']['context_length'])
         else:
             tokenizer = tokenize
-    if not ('bert_tokenizer' in config['text_cfg'] and config['text_cfg']['bert_tokenizer']):
-        context_length = get_model_config(model_name)['text_cfg']['context_length']
-        tokenizer = partial(tokenizer, context_length=context_length)
+        if not ('bert_tokenizer' in config['text_cfg'] and config['text_cfg']['bert_tokenizer']):
+            context_length = config['context_length']
+            tokenizer = partial(tokenizer, context_length=context_length)
     return tokenizer
 
 

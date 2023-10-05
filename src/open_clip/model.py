@@ -47,7 +47,7 @@ class CLIPVisionCfg:
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
     pos_embed: str = 'learnable'
-    gelu_approximate: str = 'none'
+    act_kwargs: dict = None
     ln_pre: bool = True
     pool_style: str = 'open_clip'
 
@@ -68,7 +68,7 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
-    gelu_approximate: str = 'none'
+    act_kwargs: dict = None
     pool_style: str = 'open_clip'
     bert_tokenizer: bool = False
     vocab_path: str = None
@@ -132,8 +132,8 @@ def _build_vision_tower(
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
-        if act_layer==nn.GELU:
-            act_layer = partial(act_layer, approximate=vision_cfg.gelu_approximate)
+        if vision_cfg.act_kwargs is not None:
+            act_layer = partial(act_layer, **vision_cfg.act_kwargs)
         visual = VisionTransformer(
             image_size=vision_cfg.image_size,
             patch_size=vision_cfg.patch_size,
@@ -182,8 +182,8 @@ def _build_text_tower(
         act_layer = QuickGELU if quick_gelu else nn.GELU
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
 
-        if act_layer==nn.GELU:
-            act_layer = partial(act_layer, approximate=text_cfg.gelu_approximate)
+        if text_cfg.act_kwargs is not None:
+            act_layer = partial(act_layer, **text_cfg.act_kwargs)
 
         text = TextTransformer(
             context_length=text_cfg.context_length,
