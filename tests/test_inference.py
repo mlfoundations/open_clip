@@ -28,7 +28,7 @@ models_to_test = models_to_test.difference({
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
         'coca_base',
-        'coca_ViT-B-32',
+        # 'coca_ViT-B-32',
         'coca_roberta-ViT-B-32'
 })
 
@@ -60,14 +60,6 @@ def test_inference_with_data(
         force_quick_gelu = False,
 ):
     util_test.seed_all()
-    model, _, preprocess_val = open_clip.create_model_and_transforms(
-            model_name,
-            pretrained = pretrained,
-            precision = precision,
-            jit = jit,
-            force_quick_gelu = force_quick_gelu,
-            pretrained_hf = pretrained_hf
-    )
     model_id = f'{model_name}_{pretrained or pretrained_hf}_{precision}'
     input_dir, output_dir = util_test.get_data_dirs()
     # text
@@ -77,6 +69,14 @@ def test_inference_with_data(
         pytest.skip(reason = f"missing test data, expected at {input_text_path}")
     if not os.path.isfile(gt_text_path):
         pytest.skip(reason = f"missing test data, expected at {gt_text_path}")
+    model, _, preprocess_val = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained = pretrained,
+            precision = precision,
+            jit = jit,
+            force_quick_gelu = force_quick_gelu,
+            pretrained_hf = pretrained_hf
+    )
     input_text = torch.load(input_text_path)
     gt_text = torch.load(gt_text_path)
     y_text = util_test.inference_text(model, model_name, input_text)
