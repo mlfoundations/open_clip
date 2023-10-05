@@ -10,6 +10,28 @@ from torch.utils.checkpoint import checkpoint
 from .utils import to_2tuple
 
 
+       
+# Standardize the output of the model so we can optionally return:
+#  hidden states
+#  tokens
+class TransformerOutput(torch.nn.Module):
+    def __init__(self, pooled, tokens, hidden_states):
+        self.pooled = pooled
+        self.tokens = tokens
+        self.hidden_states = hidden_states
+
+    # Get value
+    def value(self):
+        if self.output_tokens and self.output_hidden_states:
+            return self.pooled, self.tokens, self.hidden_states
+        
+        if self.output_tokens:
+            return self.pooled, self.tokens, None
+        
+        if self.output_hidden_states:
+            return self.pooled, None, self.hidden_states
+
+
 class LayerNormFp32(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
 
@@ -235,6 +257,8 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            output_attentions: bool = False,
+            output_hidden_states: bool = False,
     ):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
@@ -312,14 +336,23 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, output_hidden_states: bool = False):
+        encoder_states = [] if output_hidden_states else None
+
+        if output_hidden_states:
+            encoder_states.append(x)
+
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask)
             else:
                 x = r(x, attn_mask=attn_mask)
-        return x
+            
+            if output_hidden_states:
+                encoder_states.append(x)
+
+        return TransformerOutput(x, encoder_states).value()
 
 
 class VisionTransformer(nn.Module):
@@ -457,8 +490,7 @@ class VisionTransformer(nn.Module):
         else:
             return x[:, 0], x[:, 1:]
 
-    def forward(self, x: torch.Tensor):
-
+    def forward(self, x: torch.Tensor, output_hidden_states: bool = False):
         # to patches - whether to use dual patchnorm - https://arxiv.org/abs/2302.01327v1
         if self.input_patchnorm:
             # einops - rearrange(x, 'b c (h p1) (w p2) -> b (h w) (c p1 p2)')
@@ -483,7 +515,11 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x = self.transformer(x, output_hidden_states=output_hidden_states)
+        if output_hidden_states:
+            x = x[0]
+            hidden_states = x[1]
+
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         if self.attn_pool is not None:
@@ -497,10 +533,9 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        if self.output_tokens:
-            return pooled, tokens
         
-        return pooled
+        return TransformerOutput(pooled, tokens, hidden_states).value()
+
 
 
 class TextTransformer(nn.Module):
@@ -596,11 +631,12 @@ class TextTransformer(nn.Module):
     def _repeat(self, t, N: int):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
-    def forward(self, text):
+    def forward(self, text, output_hidden_states: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
         attn_mask = self.attn_mask
         if self.cls_emb is not None:
             seq_len += 1
@@ -610,7 +646,12 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask)
+        x = self.transformer(x, attn_mask=attn_mask, output_hidden_states=output_hidden_states)
+
+        if output_hidden_states:
+            x = x[0]
+            hidden_states = x[1]
+
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -625,10 +666,11 @@ class TextTransformer(nn.Module):
         if self.text_projection is not None:
             pooled = pooled @ self.text_projection
 
-        if self.output_tokens:
-            return pooled, tokens
-
-        return pooled
+        return TransformerOutput(
+            pooled=pooled,
+            tokens=tokens,
+            encoder_states=hidden_states,
+        ).value()
 
 
 class MultimodalTransformer(Transformer):

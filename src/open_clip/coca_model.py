@@ -11,6 +11,7 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
+    TransformerOutput
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -128,32 +129,40 @@ class CoCa(nn.Module):
         self.text.set_grad_checkpointing(enable)
         self.text_decoder.set_grad_checkpointing(enable)
 
-    def _encode_image(self, images, normalize=True):
-        image_latent, tokens_embs = self.visual(images)
-        image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        return image_latent, tokens_embs
+    def _encode_image(self, images, normalize=True, output_hidden_states=False):
+        result = self.visual(images, output_hidden_states=output_hidden_states)
 
-    def _encode_text(self, text, normalize=True, embed_cls=True):
+        image_latent = result[0]
+        if normalize:
+            image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
+        
+        
+        return TransformerOutput(
+            pooled=image_latent,
+            tokens=result[1],
+            hidden_states=result[2]
+        ).value()
+
+    def _encode_text(self, text, normalize=True, embed_cls=True, output_hidden_states=False):
         text = text[:, :-1] if embed_cls else text # make space for CLS token
-        text_latent, token_emb = self.text(text)
-        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        return text_latent, token_emb
+        # text_latent, token_emb = self.text(text)
+        result = self.text(text, output_hidden_states=output_hidden_states)
+        text_latent = result[0]
+        if normalize:
+            text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
 
-    def encode_image(self, images, normalize=True, return_embedding=False):
-        image_latent, token_emb = self._encode_image(images, normalize=normalize)
-        
-        if return_embedding:
-            return text_latent, token_emb
-        else:
-            return text_latent
+        return TransformerOutput(
+            pooled=text_latent,
+            tokens=result[1],
+            hidden_states=result[2]
+        ).value()
 
-    def encode_text(self, text, normalize=True, embed_cls=True, return_embedding=False):
-        text_latent, token_emb = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
+    def encode_image(self, images, normalize=True, output_hidden_states=False):
+        return self._encode_image(images, normalize=normalize, output_hidden_states=output_hidden_states)
+
+    def encode_text(self, text, normalize=True, embed_cls=True, output_hidden_states=False):
+        return self._encode_text(text, normalize=normalize, embed_cls=embed_cls, output_hidden_states=output_hidden_states)
         
-        if return_embedding:
-            return text_latent, token_emb
-        else:
-            return text_latent
 
     def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
         text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
