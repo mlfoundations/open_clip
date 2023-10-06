@@ -1,3 +1,20 @@
+## 2.21.0
+
+* Add SigLIP support
+* Add more DataComp models (B/16, B/32 and B/32@256)
+* Update default num workers
+* Update CoCa generation for `transformers>=4.31`
+* PyTorch 2.0 `state_dict()` compatibility fix for compiled models
+* Fix padding in `ResizeMaxSize`
+* Convert JIT model on state dict load for `pretrained='filename…'`
+* Other minor changes and fixes (typos, README, dependencies, CI)
+
+## 2.20.0
+
+* Add EVA models
+* Support serial worker training
+* Fix Python 3.7 compatibility 
+
 ## 2.19.0
 
 * Add DataComp models
