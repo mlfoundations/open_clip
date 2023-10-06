@@ -1,6 +1,6 @@
 ## 2.21.0
 
-* Add SigLIP support
+* Add SigLIP loss + training support
 * Add more DataComp models (B/16, B/32 and B/32@256)
 * Update default num workers
 * Update CoCa generation for `transformers>=4.31`
