@@ -19,7 +19,7 @@ from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
-from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize, random_mask_tokenize, block_mask_tokenize
+from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize, random_mask_tokenize, block_mask_tokenize, get_pp_bert_tokenize
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -88,11 +88,18 @@ def get_tokenizer(model_name):
             tokenizer = random_mask_tokenize
         elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'block':
             tokenizer = block_mask_tokenize
+        elif 'bert_tokenizer' in config['text_cfg'] and config['text_cfg']['bert_tokenizer']:
+            tokenizer = get_pp_bert_tokenize(
+                vocab_path=config['text_cfg']['vocab_path'],
+                max_len=config['text_cfg']['context_length'],
+            )
         else:
             tokenizer = tokenize
+
         if 'context_length' in config['text_cfg'].keys():
             context_length = config['text_cfg']['context_length']
             tokenizer = partial(tokenizer, context_length=context_length)
+
     return tokenizer
 
 
@@ -141,6 +148,7 @@ def create_model(
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
+        pos_embed: str = None,
         **model_kwargs,
 ):
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
@@ -189,6 +197,10 @@ def create_model(
         if force_image_size is not None:
             # override model config's image size
             model_cfg["vision_cfg"]["image_size"] = force_image_size
+
+        if pos_embed is not None:
+            # override model config's positional embedding
+            model_cfg["vision_cfg"]["pos_embed"] = pos_embed
 
         is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
         if pretrained_image:
@@ -332,6 +344,9 @@ def create_model_and_transforms(
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        pos_embed: str = None,
+        interpolation: str = 'bicubic',  # only effective for inference
+        square_resize_only: bool = False, # only effective for inference
         **model_kwargs,
 ):
     model = create_model(
@@ -348,6 +363,7 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
+        pos_embed=pos_embed,
         **model_kwargs,
     )
 
@@ -365,6 +381,8 @@ def create_model_and_transforms(
         is_train=False,
         mean=image_mean,
         std=image_std,
+        interpolation=interpolation,
+        square_resize_only=square_resize_only,
     )
 
     return model, preprocess_train, preprocess_val

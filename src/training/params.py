@@ -442,6 +442,22 @@ def parse_args(args):
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
     )
+    parser.add_argument(
+        '--pos-embed',
+        default='learnable', type=str,
+        help="type of positional embedding in vision transformer. support learnable and sin_cos_2d"
+    )
+    parser.add_argument(
+        '--interpolation',
+        default='bicubic', type=str, choices=['bicubic', 'bilinear'],
+        help="resize interpolation during inference"
+    )
+    parser.add_argument(
+        '--square-resize-only',
+        default=False, action='store_true',
+        help="square resize during inference"
+    )
+
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

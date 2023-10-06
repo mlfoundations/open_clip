@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from functools import partial
 
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
@@ -45,6 +46,10 @@ class CLIPVisionCfg:
     timm_proj_bias: bool = False  # enable bias final projection
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
+    pos_embed: str = 'learnable'
+    act_kwargs: dict = None
+    ln_pre: bool = True
+    pool_style: str = 'open_clip'
 
 
 @dataclass
@@ -63,6 +68,11 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    act_kwargs: dict = None
+    pool_style: str = 'open_clip'
+    bert_tokenizer: bool = False
+    vocab_path: str = None
+    attention_mask: bool = True
     text_mask: str = 'first' # default first truncate in bpe_tokenizer
 
 
@@ -123,6 +133,8 @@ def _build_vision_tower(
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        if vision_cfg.act_kwargs is not None:
+            act_layer = partial(act_layer, **vision_cfg.act_kwargs)
         visual = VisionTransformer(
             image_size=vision_cfg.image_size,
             patch_size=vision_cfg.patch_size,
@@ -141,6 +153,9 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            pos_embed=vision_cfg.pos_embed,
+            ln_pre=vision_cfg.ln_pre,
+            pool_style=vision_cfg.pool_style,
         )
 
     return visual
@@ -168,6 +183,9 @@ def _build_text_tower(
         act_layer = QuickGELU if quick_gelu else nn.GELU
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
 
+        if text_cfg.act_kwargs is not None:
+            act_layer = partial(act_layer, **text_cfg.act_kwargs)
+
         text = TextTransformer(
             context_length=text_cfg.context_length,
             vocab_size=text_cfg.vocab_size,
@@ -181,6 +199,8 @@ def _build_text_tower(
             pad_id=text_cfg.pad_id,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            pool_style=text_cfg.pool_style,
+            attention_mask=text_cfg.attention_mask,
         )
     return text
 
@@ -211,6 +231,7 @@ class CLIP(nn.Module):
         self.positional_embedding = text.positional_embedding
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
+        self.pool_style = text.pool_style
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
@@ -243,7 +264,16 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        if self.pool_style == 'open_clip':
+            x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        elif self.pool_style == 'big_vision_tok':
+            pooled = x[:, 0]
+            x = pooled @ self.text_projection
+        elif self.pool_style == 'big_vision_last':
+            pooled = x[:, -1]
+            x = pooled @ self.text_projection
+        else:
+            raise ValueError
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(
