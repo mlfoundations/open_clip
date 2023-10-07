@@ -288,6 +288,12 @@ _PRETRAINED = {
     "EVA02-E-14-plus": dict(
         # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_plus_s9B.pt
         laion2b_s9b_b144k=_pcfg(hf_hub='timm/eva02_enormous_patch14_plus_clip_224.laion2b_s9b_b144k/'),
+    ),
+    "nllb-clip-base": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-base-oc/'),
+    ),
+    "nllb-clip-large": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-large-oc/'),
     )
 }
 
