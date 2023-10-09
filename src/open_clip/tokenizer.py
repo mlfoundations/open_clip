@@ -11,10 +11,19 @@ from typing import Union, List
 import ftfy
 import regex as re
 import torch
+import numpy as np
 
 # https://stackoverflow.com/q/62691279
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+try:
+    import nltk
+    # run them for the first time
+    nltk.download('punkt')
+    nltk.download('averaged_perceptron_tagger')
+except:
+    nltk = None
 
 
 @lru_cache()
@@ -212,3 +221,133 @@ class HFTokenizer:
             truncation=True,
         ).input_ids
         return input_ids
+
+
+def random_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    """
+    Returns the tokenized representation of given input string(s)
+
+    Parameters
+    ----------
+    texts : Union[str, List[str]]
+        An input string or a list of input strings to tokenize
+    context_length : int
+        The context length to use; all CLIP models use 77 as the context length
+
+    Returns
+    -------
+    A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+
+    sot_token = _tokenizer.encoder["<start_of_text>"]
+    eot_token = _tokenizer.encoder["<end_of_text>"]
+    all_tokens = [_tokenizer.encode(text) for text in texts]
+    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+    for i, tokens in enumerate(all_tokens):
+        if len(tokens) > context_length - 2: # 2 for sot and eot token
+            indices = np.random.permutation(len(tokens)).tolist()
+            indices = indices[:context_length - 2]
+            tokens = tokens[indices]
+        tokens = [sot_token,] + tokens + [eot_token,]
+        result[i, :len(tokens)] = torch.tensor(tokens)
+
+    return result
+
+
+def block_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    """
+    Returns the tokenized representation of given input string(s)
+
+    Parameters
+    ----------
+    texts : Union[str, List[str]]
+        An input string or a list of input strings to tokenize
+    context_length : int
+        The context length to use; all CLIP models use 77 as the context length
+
+    Returns
+    -------
+    A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+
+    sot_token = _tokenizer.encoder["<start_of_text>"]
+    eot_token = _tokenizer.encoder["<end_of_text>"]
+    all_tokens = [_tokenizer.encode(text) for text in texts]
+    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+    for i, tokens in enumerate(all_tokens):
+        if len(tokens) > context_length - 2: # 2 for sot and eot token
+            start_index = np.random.randint(len(tokens) - context_length + 3)
+            tokens = tokens[start_index : start_index + context_length - 2]
+        tokens = [sot_token,] + tokens + [eot_token,]
+        result[i, :len(tokens)] = torch.tensor(tokens)
+
+    return result
+
+
+def syntax_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    """
+    Returns the tokenized representation of given input string(s).
+    Apply syntax masking before tokenize.
+
+    Parameters
+    ----------
+    texts : Union[str, List[str]]
+        An input string or a list of input strings to tokenize
+    context_length : int
+        The context length to use; all CLIP models use 77 as the context length
+
+    Returns
+    -------
+    A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+    """
+    assert nltk is not None
+    if isinstance(texts, str):
+        texts = [texts]
+
+    def get_order(x):
+        if x.startswith('NN'):
+            return 1
+        elif x.startswith('JJ'):
+            return 2
+        elif x.startswith('VB'):
+            return 3
+        else:
+            return 4
+    # syntax masking
+    new_texts = []
+    for text in texts:
+        list_tokens = nltk.tokenize.word_tokenize(text)
+        pos_tags = nltk.pos_tag(list_tokens)
+        #  sample the words by get_order method
+        order_list = [get_order(tag) for _, tag in pos_tags]
+        sorted_ids = np.argsort(np.array(order_list))
+        sampled_ids = sorted(sorted_ids[:context_length - 2]) # need 2 slots for sot and eot tokens
+        # sample the tokens and convert to tf.tensor
+        sampled_tokens = np.take(np.array(list_tokens), sampled_ids, axis=0)
+
+        new_text = ''
+        for token in sampled_tokens:
+            new_text = new_text + str(token) + ' '
+        new_text = new_text.strip()
+        new_texts.append(new_text)
+    texts = new_texts
+
+    sot_token = _tokenizer.encoder["<start_of_text>"]
+    eot_token = _tokenizer.encoder["<end_of_text>"]
+    all_tokens = [[sot_token] + _tokenizer.encode(text) + [eot_token] for text in texts]
+    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+    for i, tokens in enumerate(all_tokens):
+        # still need first truncate because some words produces two tokens
+        if len(tokens) > context_length:
+            tokens = tokens[:context_length]  # Truncate
+            tokens[-1] = eot_token
+        result[i, :len(tokens)] = torch.tensor(tokens)
+
+    return result
