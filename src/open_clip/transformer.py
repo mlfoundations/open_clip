@@ -547,7 +547,7 @@ class VisionTransformer(nn.Module):
         return pooled
 
 
-def text_global_pool(x, text=None, pool_type='argmax'):
+def text_global_pool(x, text: Optional[torch.Tensor] = None, pool_type: str = 'argmax'):
     if pool_type == 'first':
         pooled, tokens = x[:, 0], x
     elif pool_type == 'last':
@@ -618,7 +618,6 @@ class TextTransformer(nn.Module):
         else:
             self.register_buffer('attn_mask', self.build_causal_mask(), persistent=False)
 
-        self.proj_bias = proj_bias
         if proj_bias:
             self.text_projection = nn.Linear(width, output_dim)
         else:
@@ -698,7 +697,7 @@ class TextTransformer(nn.Module):
             pooled, tokens = text_global_pool(x, text, pool_type=self.pool_type)
 
         if self.text_projection is not None:
-            if self.proj_bias:
+            if isinstance(self.text_projection, nn.Linear):
                 pooled = self.text_projection(pooled)
             else:
                 pooled = pooled @ self.text_projection

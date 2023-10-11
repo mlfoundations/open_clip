@@ -245,7 +245,6 @@ class CLIP(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.text_pool_type = text.pool_type
-        self.text_proj_bias = text.proj_bias
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
@@ -279,7 +278,7 @@ class CLIP(nn.Module):
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         x, _ = text_global_pool(x, text, self.text_pool_type)
         if self.text_projection is not None:
-            if self.text_proj_bias:
+            if isinstance(self.text_projection, nn.Linear):
                 x = self.text_projection(x)
             else:
                 x = x @ self.text_projection
