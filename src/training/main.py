@@ -232,11 +232,10 @@ def main(args):
         pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        image_interpolation=args.interpolation,
+        image_resize_mode=args.resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
         output_dict=True,
-        pos_embed=args.pos_embed,
-        interpolation=args.interpolation,  # only effective for inference
-        square_resize_only=args.square_resize_only,  # only effective for inference
         **model_kwargs,
     )
     if args.distill:

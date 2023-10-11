@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform, AugmentationCfg
-from .tokenizer import HFTokenizer, tokenize, syntax_mask_tokenize, random_mask_tokenize, block_mask_tokenize, get_pp_bert_tokenize
+from .tokenizer import HFTokenizer, SimpleTokenizer
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -75,30 +76,53 @@ def get_model_config(model_name):
         return None
 
 
-def get_tokenizer(model_name):
+def _get_hf_config(model_id, cache_dir=None):
+    config_path = download_pretrained_from_hf(model_id, filename='open_clip_config.json', cache_dir=cache_dir)
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    return config
+
+
+def get_tokenizer(
+        model_name: str = '',
+        text_mask: str = '',
+        **kwargs,
+):
+    if 'siglip' in model_name.lower():
+        # FIXME temporary hack
+        from open_clip.tokenizer import SigLipTokenizer
+        config = get_model_config(model_name)
+        tokenizer = SigLipTokenizer('c4-en', **kwargs)
+        if 'context_length' in config['text_cfg'].keys():
+            tokenizer = partial(tokenizer, context_length=config['text_cfg']['context_length'])
+
+        return tokenizer
+
     if model_name.startswith(HF_HUB_PREFIX):
-        tokenizer = HFTokenizer(model_name[len(HF_HUB_PREFIX):])
+        model_name = model_name[len(HF_HUB_PREFIX):]
+        try:
+            config = _get_hf_config(model_name)
+        except Exception:
+            tokenizer = HFTokenizer(model_name)
+            return tokenizer
     else:
         config = get_model_config(model_name)
-        if 'hf_tokenizer_name' in config['text_cfg']:
-            tokenizer = HFTokenizer(config['text_cfg']['hf_tokenizer_name'])
-        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'syntax':
-            tokenizer = syntax_mask_tokenize
-        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'random':
-            tokenizer = random_mask_tokenize
-        elif 'text_mask' in config['text_cfg'] and config['text_cfg']['text_mask'] == 'block':
-            tokenizer = block_mask_tokenize
-        elif 'bert_tokenizer' in config['text_cfg'] and config['text_cfg']['bert_tokenizer']:
-            tokenizer = get_pp_bert_tokenize(
-                vocab_path=config['text_cfg']['vocab_path'],
-                max_len=config['text_cfg']['context_length'],
-            )
-        else:
-            tokenizer = tokenize
 
-        if 'context_length' in config['text_cfg'].keys():
-            context_length = config['text_cfg']['context_length']
-            tokenizer = partial(tokenizer, context_length=context_length)
+    if 'tokenizer_kwargs' in config['text_cfg']:
+        tokenizer_kwargs = dict(config['text_cfg']['tokenizer_kwargs'], **kwargs)
+    else:
+        tokenizer_kwargs = kwargs
+
+    if 'hf_tokenizer_name' in config['text_cfg']:
+        tokenizer = HFTokenizer(
+            config['text_cfg']['hf_tokenizer_name'],
+            **tokenizer_kwargs,
+        )
+    else:
+        tokenizer = SimpleTokenizer.create(text_mask=text_mask, **tokenizer_kwargs)
+
+    if 'context_length' in config['text_cfg'].keys():
+        tokenizer = partial(tokenizer, context_length=config['text_cfg']['context_length'])
 
     return tokenizer
 
@@ -119,6 +143,11 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
 
 
 def load_checkpoint(model, checkpoint_path, strict=True):
+    if Path(checkpoint_path).suffix in ('.npz', '.npy'):
+        from .big_vision import load_big_vision_weights
+        load_big_vision_weights(model, checkpoint_path)
+        return {}
+
     state_dict = load_state_dict(checkpoint_path)
     # detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
@@ -155,10 +184,8 @@ def create_model(
     if has_hf_hub_prefix:
         model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-        config_path = download_pretrained_from_hf(model_id, filename='open_clip_config.json', cache_dir=cache_dir)
-
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+        pretrained_hf = False  # override, no need to load original HF text weights
+        config = _get_hf_config(cache_dir, model_id)
         pretrained_cfg = config['preprocess_cfg']
         model_cfg = config['model_cfg']
     else:
@@ -213,11 +240,12 @@ def create_model(
         # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp' or 'pure' modes
         cast_dtype = get_cast_dtype(precision)
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
+        if is_hf_model and not pretrained and pretrained_hf:
+            # load pretrained weights for HF text model IFF no CLIP weights being loaded
+            model_cfg['text_cfg']['hf_model_pretrained'] = True
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         if custom_text:
-            if is_hf_model:
-                model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf
             if "coca" in model_name:
                 model = CoCa(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
             else:
@@ -234,6 +262,7 @@ def create_model(
                 # Why? The convert_weights_to_lp fn only works with native models.
                 model.to(device=device, dtype=dtype)
                 from .transformer import LayerNormFp32
+
                 def _convert_ln(m):
                     if isinstance(m, LayerNormFp32):
                         m.weight.data = m.weight.data.to(torch.float32)
@@ -268,7 +297,7 @@ def create_model(
                 raise RuntimeError(error_str)
             pretrained_loaded = True
         elif has_hf_hub_prefix:
-            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
+            logging.info(f'Loading pretrained {model_name} weights ({checkpoint_path}).')
             load_checkpoint(model, checkpoint_path)
             pretrained_loaded = True
 
@@ -280,6 +309,7 @@ def create_model(
         # set image / mean metadata from pretrained_cfg if available, or use default
         model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
         model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
+        model.pretrained_cfg = copy.deepcopy(pretrained_cfg)
 
     if output_dict and hasattr(model, "output_dict"):
         model.output_dict = True
@@ -341,12 +371,11 @@ def create_model_and_transforms(
         pretrained_hf: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
+        image_interpolation: Optional[str] = None,
+        image_resize_mode: Optional[str] = None,  # only effective for inference
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
-        pos_embed: str = None,
-        interpolation: str = 'bicubic',  # only effective for inference
-        square_resize_only: bool = False, # only effective for inference
         **model_kwargs,
 ):
     model = create_model(
@@ -363,17 +392,20 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
-        pos_embed=pos_embed,
         **model_kwargs,
     )
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
     image_std = image_std or getattr(model.visual, 'image_std', None)
+    image_interpolation = image_interpolation or getattr(model, 'pretrained_cfg', {}).get('interpolation', None)
+    image_resize_mode = image_resize_mode or getattr(model, 'pretrained_cfg', {}).get('resize_mode', None)
+
     preprocess_train = image_transform(
         model.visual.image_size,
         is_train=True,
         mean=image_mean,
         std=image_std,
+        interpolation=image_interpolation,
         aug_cfg=aug_cfg,
     )
     preprocess_val = image_transform(
@@ -381,8 +413,8 @@ def create_model_and_transforms(
         is_train=False,
         mean=image_mean,
         std=image_std,
-        interpolation=interpolation,
-        square_resize_only=square_resize_only,
+        interpolation=image_interpolation,
+        resize_mode=image_resize_mode,
     )
 
     return model, preprocess_train, preprocess_val
@@ -400,6 +432,8 @@ def create_model_from_pretrained(
         return_transform: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
+        image_interpolation: Optional[str] = None,
+        image_resize_mode: Optional[str] = None,  # only effective for inference
         cache_dir: Optional[str] = None,
         **model_kwargs,
 ):
@@ -422,11 +456,16 @@ def create_model_from_pretrained(
 
     image_mean = image_mean or getattr(model.visual, 'image_mean', None)
     image_std = image_std or getattr(model.visual, 'image_std', None)
+    image_interpolation = image_interpolation or getattr(model, 'pretrained_cfg', {}).get('interpolation', None)
+    image_resize_mode = image_resize_mode or getattr(model, 'pretrained_cfg', {}).get('resize_mode', None)
+
     preprocess = image_transform(
         model.visual.image_size,
         is_train=False,
         mean=image_mean,
         std=image_std,
+        interpolation=image_interpolation,
+        resize_mode=image_resize_mode,
     )
 
     return model, preprocess

@@ -10,21 +10,19 @@
             "approximate": "tanh"
         },
         "ln_pre": false,
-        "pool_style": "big_vision_gap",
-        "global_average_pool": true
+        "pool_type": "avg"
     },
     "text_cfg": {
         "context_length": 32,
         "vocab_size": 32000,
-        "bert_tokenizer": true,
-        "vocab_path": "gs://vit_models/lit/bert/uncased_L-12_H-768_A-12/vocab.txt",
+        "hf_tokenizer_name": "bert-base-uncased",
         "width": 1024,
         "heads": 16,
         "layers": 24,
         "act_kwargs":{
             "approximate": "tanh"
         },
-        "pool_style": "big_vision_last",
-        "attention_mask": false
+        "pool_type": "last",
+        "no_causal_mask": true
     }
 }

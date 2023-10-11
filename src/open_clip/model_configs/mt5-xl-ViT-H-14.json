@@ -10,7 +10,6 @@
     "text_cfg": {
         "hf_model_name": "google/mt5-xl",
         "hf_tokenizer_name": "google/mt5-xl",
-        "proj": "mlp",
-        "pooler_type": "mean_pooler"
+        "hf_pooler_type": "mean_pooler"
     }
 }
