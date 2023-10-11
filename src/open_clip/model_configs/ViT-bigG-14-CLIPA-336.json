@@ -18,6 +18,6 @@
         "heads": 20,
         "layers": 32,
         "pool_type": "last",
-        "causal_mask": false
+        "no_causal_mask": true
     }
 }

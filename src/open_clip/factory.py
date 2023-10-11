@@ -101,7 +101,7 @@ def get_tokenizer(
     if model_name.startswith(HF_HUB_PREFIX):
         model_name = model_name[len(HF_HUB_PREFIX):]
         try:
-            config = _get_hf_config(model_name)
+            config = _get_hf_config(model_name)['model_cfg']
         except Exception:
             tokenizer = HFTokenizer(model_name)
             return tokenizer
@@ -185,7 +185,7 @@ def create_model(
         model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
         pretrained_hf = False  # override, no need to load original HF text weights
-        config = _get_hf_config(cache_dir, model_id)
+        config = _get_hf_config(model_id, cache_dir)
         pretrained_cfg = config['preprocess_cfg']
         model_cfg = config['model_cfg']
     else:
