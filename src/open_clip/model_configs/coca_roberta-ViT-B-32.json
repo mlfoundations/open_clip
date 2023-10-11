@@ -10,7 +10,7 @@
     "text_cfg": {
         "hf_model_name": "roberta-base",
         "hf_tokenizer_name": "roberta-base",
-        "proj": "linear",
+        "hf_proj_type": "linear",
         "width": 768,
         "output_tokens": true
     },

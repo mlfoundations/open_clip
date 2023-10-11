@@ -415,10 +415,16 @@ When training a RN50 on YFCC the same hyperparameters as above are used, with th
 
 Note that to use another model, like `ViT-B/32` or `RN50x4` or `RN50x16` or `ViT-B/16`, specify with `--model RN50x4`.
 
-### Launch tensorboard:
+### Logging
+
+For tensorboard logging, run:
 ```bash
 tensorboard --logdir=logs/tensorboard/ --port=7777
 ```
+
+For wandb logging, we recommend looking at the `step` variable instead of `Step`, since the later was not properly set in earlier versions of this codebase.
+For older runs with models trained before https://github.com/mlfoundations/open_clip/pull/613, the `Step` variable should be ignored.
+For newer runs, after that PR, the two variables are the same.
 
 ## Evaluation / Zero-Shot
 

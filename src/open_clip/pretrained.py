@@ -370,6 +370,13 @@ _PRETRAINED = {
     "ViT-bigG-14-CLIPA-336": dict(
         datacomp1b=_apcfg(),
     ),
+
+    "nllb-clip-base": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-base-oc/'),
+    ),
+    "nllb-clip-large": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-large-oc/'),
+    )
 }
 
 
