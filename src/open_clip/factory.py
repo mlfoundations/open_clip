@@ -246,7 +246,7 @@ def create_model(
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         if custom_text:
-            if "coca" in model_name:
+            if "multimodal_cfg" in model_cfg:
                 model = CoCa(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
             else:
                 model = CustomTextCLIP(**model_cfg, **model_kwargs, cast_dtype=cast_dtype)
