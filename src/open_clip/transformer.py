@@ -181,11 +181,8 @@ class AttentionalPooler(nn.Module):
         x = self.ln_k(x).permute(1, 0, 2)  # NLD -> LND
         N = x.shape[1]
         q = self.ln_q(self.query)
-        out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
+        out = self.attn(q.unsqueeze(1).expand(-1, N, -1), x, x, need_weights=False)[0]
         return out.permute(1, 0, 2)  # LND -> NLD
-
-    def _repeat(self, query, N: int):
-        return query.unsqueeze(1).expand(1, N, 1)
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -359,7 +356,8 @@ class VisionTransformer(nn.Module):
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
         self.grid_size = (image_height // patch_height, image_width // patch_width)
-        self.final_ln_after_pool = final_ln_after_pool
+        # NOTE current use of attentional pool in CoCa always applies LN after pool, could base it on config
+        self.final_ln_after_pool = final_ln_after_pool or attentional_pool
         self.output_dim = output_dim
 
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
