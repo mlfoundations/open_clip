@@ -240,9 +240,9 @@ def create_model(
         # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp' or 'pure' modes
         cast_dtype = get_cast_dtype(precision)
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
-        if is_hf_model and not pretrained and pretrained_hf:
+        if is_hf_model:
             # load pretrained weights for HF text model IFF no CLIP weights being loaded
-            model_cfg['text_cfg']['hf_model_pretrained'] = True
+            model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf and not pretrained
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         if custom_text:
