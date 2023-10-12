@@ -143,7 +143,7 @@ class SimpleTokenizer(object):
         if canonicalize:
             self.clean_fn = _canonicalize_basic_clean
         else:
-            self.clean_fn = _whitespace_basic_clean
+            self.clean_fn = _lower_whitespace_basic_clean
         self.vocab_size = len(self.encoder)
         self.all_special_ids = [self.encoder[t] for t in special_tokens]
 
