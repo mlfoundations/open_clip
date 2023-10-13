@@ -111,6 +111,10 @@ _VITB32_quickgelu = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-quickgelu-laion400m_e31-d867053b.pt"),
     laion400m_e32=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-quickgelu-laion400m_e32-46683a32.pt"),
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_fullcc2.5b.pt"),
 )
 
 _VITB32_256 = dict(
@@ -137,6 +141,13 @@ _VITB16 = dict(
     commonpool_l_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L-s1B-b8K/'),
 )
 
+_VITB16_quickgelu = dict(
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b16_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b16_fullcc2.5b.pt"),
+)
+
 _VITB16_PLUS_240 = dict(
     laion400m_e31=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_16_plus_240-laion400m_e31-8fb26589.pt"),
@@ -161,6 +172,13 @@ _VITL14 = dict(
     commonpool_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K/'),
 )
 
+_VITL14_quickgelu = dict(
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_fullcc2.5b.pt"),
+)
+
 _VITL14_336 = dict(
     openai=_pcfg(
         "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt"),
@@ -168,6 +186,11 @@ _VITL14_336 = dict(
 
 _VITH14 = dict(
     laion2b_s32b_b79k=_pcfg(hf_hub='laion/CLIP-ViT-H-14-laion2B-s32B-b79K/'),
+)
+
+_VITH14_quickgelu = dict(
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/h14_fullcc2.5b.pt"),
 )
 
 _VITg14 = dict(
@@ -244,10 +267,13 @@ _PRETRAINED = {
     "ViT-B-32-256": _VITB32_256,
     "ViT-B-32-quickgelu": _VITB32_quickgelu,
     "ViT-B-16": _VITB16,
+    "ViT-B-16-quickgelu": _VITB16_quickgelu,
     "ViT-B-16-plus-240": _VITB16_PLUS_240,
     "ViT-L-14": _VITL14,
+    "ViT-L-14-quickgelu": _VITL14_quickgelu,
     "ViT-L-14-336": _VITL14_336,
     "ViT-H-14": _VITH14,
+    "ViT-H-14-quickgelu": _VITH14_quickgelu,
     "ViT-g-14": _VITg14,
     "ViT-bigG-14": _VITbigG14,
     "roberta-ViT-B-32": _robertaViTB32,

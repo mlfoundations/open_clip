@@ -146,3 +146,22 @@ Additional models and more information can be found at [/docs/datacomp_models.md
 * `commonpool_xl_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL without any filtering, for 12.8B steps and batch size 90k. Achieves 72.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K.
 
 
+### MetaCLIP
+
+MetaCLIP models are described in the paper [Demystifying CLIP Data](https://arxiv.org/abs/2309.16671).
+These models were developed by Hu Xu, Saining Xie, Xiaoqing Ellen Tan, Po-Yao Huang, Russell Howes, Vasu Sharma, Shang-Wen Li, Gargi Ghosh, Luke Zettlemoyer and Christoph Feichtenhofer from Meta, New York University and the University of Washington.
+
+Models and are licensed under CC-BY-NC.
+More details are available at https://github.com/facebookresearch/MetaCLIP. 
+
+
+If you use MetaCLIP models, please cite the following:
+
+```bibtex
+@inproceedings{xu2023metaclip,
+   title={Demystifying CLIP Data},
+   author={Hu Xu, Saining Xie, Xiaoqing Ellen Tan, Po-Yao Huang, Russell Howes, Vasu, Sharma, Shang-Wen Li, Gargi Ghosh, Luke Zettlemoyer and Christoph Feichtenhofer},
+   journal={arXiv preprint arXiv:2309.16671},
+   year={2023}
+}
+```
