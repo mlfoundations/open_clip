@@ -210,6 +210,7 @@ class CLIP(nn.Module):
         self.token_embedding = text.token_embedding
         self.positional_embedding = text.positional_embedding
         self.ln_final = text.ln_final
+        self.return_all_embeddings = text_cfg.pop("return_all_embeddings", False)
         self.text_projection = text.text_projection
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
@@ -242,8 +243,15 @@ class CLIP(nn.Module):
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        # By default, this only returns the embedding for the final timestep. If you want
+        # to use these embeddings for something like Stable Diffusion training, you may
+        # want to return embeddings for ALL timesteps.
+        if not self.return_all_embeddings:
+            # take features from the eot embedding (eot_token is the highest number in each sequence)
+            x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        else:
+            x = x @ self.text_projection
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(
