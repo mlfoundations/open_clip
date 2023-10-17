@@ -608,4 +608,4 @@ def get_model_tokenize_cfg(model):
     vocab_size = getattr(module, 'vocab_size', None)
     if vocab_size is not None:
         cfg['vocab_size'] = vocab_size
-    return ccfg
+    return cfg

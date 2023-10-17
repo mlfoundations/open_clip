@@ -29,7 +29,7 @@ except ImportError:
     _has_safetensors = False
 
 from .factory import create_model_from_pretrained, get_model_config, get_tokenizer
-from .tokenizer import HFTokenizer, SigLipTokenizer
+from .tokenizer import HFTokenizer
 
 # Default name for a weights file hosted on the Huggingface Hub.
 HF_WEIGHTS_NAME = "open_clip_pytorch_model.bin"  # default pytorch pkl
