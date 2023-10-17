@@ -100,7 +100,7 @@ def get_tokenizer(
         config = get_model_config(model_name)
         assert config is not None, f"No valid model config found for {model_name}."
 
-    text_config = config.get('text_cfg', None)
+    text_config = config.get('text_cfg', {})
     if 'tokenizer_kwargs' in text_config:
         tokenizer_kwargs = dict(text_config['tokenizer_kwargs'], **kwargs)
     else:
@@ -170,6 +170,7 @@ def create_model(
         require_pretrained: bool = False,
         **model_kwargs,
 ):
+    force_preprocess_cfg = force_preprocess_cfg or {}
     preprocess_cfg = asdict(PreprocessCfg())
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
