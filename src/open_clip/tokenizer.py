@@ -7,7 +7,7 @@ import html
 import os
 import string
 from functools import lru_cache
-from typing import Union, List
+from typing import Optional, List, Union
 
 import ftfy
 import numpy as np
@@ -16,14 +16,6 @@ import torch
 
 # https://stackoverflow.com/q/62691279
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-try:
-    import nltk
-    # run them for the first time
-    nltk.download('punkt')
-    nltk.download('averaged_perceptron_tagger')
-except:
-    nltk = None
 
 
 @lru_cache()
@@ -78,16 +70,30 @@ def whitespace_clean(text):
     return text
 
 
-def _canonicalize_basic_clean(x):
+def _clean_canonicalize(x):
+    # basic, remove whitespace, remove punctuation, lower case
     return canonicalize_text(basic_clean(x))
 
 
-def _lower_whitespace_basic_clean(x):
+def _clean_lower(x):
+    # basic, remove whitespace, lower case
     return whitespace_clean(basic_clean(x)).lower()
 
 
-def _whitespace_basic_clean(x):
+def _clean_whitespace(x):
+    # basic, remove whitespace
     return whitespace_clean(basic_clean(x))
+
+
+def get_clean_fn(type: str):
+    if type == 'canonicalize':
+        return _clean_canonicalize
+    elif type == 'lower':
+        return _clean_lower
+    elif type == 'whitespace':
+        return _clean_whitespace
+    else:
+        assert False, f"Invalid clean function ({type})."
 
 
 def canonicalize_text(text, *, keep_punctuation_exact_string=None):
@@ -118,7 +124,7 @@ class SimpleTokenizer(object):
             self,
             bpe_path: str = default_bpe(),
             special_tokens=None,
-            canonicalize=False,
+            clean: str = 'lower',
     ):
         self.byte_encoder = bytes_to_unicode()
         self.byte_decoder = {v: k for k, v in self.byte_encoder.items()}
@@ -140,10 +146,7 @@ class SimpleTokenizer(object):
         self.cache = {t:t for t in special_tokens}
         special = "|".join(special_tokens)
         self.pat = re.compile(special + r"""|'s|'t|'re|'ve|'m|'ll|'d|[\p{L}]+|[\p{N}]|[^\s\p{L}\p{N}]+""", re.IGNORECASE)
-        if canonicalize:
-            self.clean_fn = _canonicalize_basic_clean
-        else:
-            self.clean_fn = _lower_whitespace_basic_clean
+        self.clean_fn = get_clean_fn(clean)
         self.vocab_size = len(self.encoder)
         self.all_special_ids = [self.encoder[t] for t in special_tokens]
 
@@ -261,18 +264,12 @@ class HFTokenizer:
     def __init__(
             self,
             tokenizer_name: str,
-            canonicalize=False,
-            lower_case=False,
+            clean: str = 'whitespace',
             strip_sep_token=False,
     ):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        if canonicalize:
-            self.clean_fn = _canonicalize_basic_clean
-        elif lower_case:
-            self.clean_fn = _lower_whitespace_basic_clean
-        else:
-            self.clean_fn = _whitespace_basic_clean
+        self.clean_fn = get_clean_fn(clean)
         self.strip_sep_token = strip_sep_token
 
     def save_pretrained(self, dest):
@@ -391,7 +388,13 @@ class SyntaxMaskTokenizer(SimpleTokenizer):
         -------
         A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
         """
-        assert nltk is not None
+        import nltk
+        if not hasattr(self, '_nltk_init'):
+            # run them for the first time
+            nltk.download('punkt')
+            nltk.download('averaged_perceptron_tagger')
+            self._nltk_init = True
+
         if isinstance(texts, str):
             texts = [texts]
 

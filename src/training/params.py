@@ -234,6 +234,16 @@ def parse_args(args):
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=None, metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument(
+        '--image-interpolation',
+        default=None, type=str, choices=['bicubic', 'bilinear', 'random'],
+        help="Override default image resize interpolation"
+    )
+    parser.add_argument(
+        '--image-resize-mode',
+        default=None, type=str, choices=['shortest', 'longest', 'squash'],
+        help="Override default image resize (& crop) mode during inference"
+    )
     parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
@@ -441,16 +451,6 @@ def parse_args(args):
         default=False,
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
-    )
-    parser.add_argument(
-        '--interpolation',
-        default='bicubic', type=str, choices=['bicubic', 'bilinear', 'random'],
-        help="image resize interpolation"
-    )
-    parser.add_argument(
-        '--resize-mode',
-        default='shortest', type=str, choices=['shortest', 'longest', 'squash'],
-        help="image resize mode during inference"
     )
 
     args = parser.parse_args(args)

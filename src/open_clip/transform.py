@@ -10,6 +10,52 @@ from torchvision.transforms import Normalize, Compose, RandomResizedCrop, Interp
     CenterCrop, ColorJitter, Grayscale
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
+from .utils import to_2tuple
+
+
+@dataclass
+class PreprocessCfg:
+    size: Union[int, Tuple[int, int]] = 224
+    mode: str = 'RGB'
+    mean: Tuple[float, ...] = OPENAI_DATASET_MEAN
+    std: Tuple[float, ...] = OPENAI_DATASET_STD
+    interpolation: str = 'bicubic'
+    resize_mode: str = 'shortest'
+    fill_color: int = 0
+
+    def __post_init__(self):
+        assert self.mode in ('RGB')
+
+    @property
+    def num_channels(self):
+        return 3
+
+    @property
+    def input_size(self):
+        return (self.num_channels(),) + to_2tuple(self.size)
+
+_PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
+
+
+def merge_preprocess_dict(
+        base: Union[PreprocessCfg, Dict],
+        overlay: Dict,
+):
+    """ Merge overlay key-value pairs on top of base preprocess cfg or dict.
+    Input dicts are filtered based on PreprocessCfg fields.
+    """
+    if isinstance(base, PreprocessCfg):
+        base_clean = asdict(base)
+    else:
+        base_clean = {k: v for k, v in base.items() if k in _PREPROCESS_KEYS}
+    if overlay:
+        overlay_clean = {k: v for k, v in overlay.items() if k in _PREPROCESS_KEYS and v is not None}
+        base_clean.update(overlay_clean)
+    return base_clean
+
+
+def merge_preprocess_kwargs(base: PreprocessCfg, **kwargs):
+    return merge_preprocess_dict(base, kwargs)
 
 
 @dataclass
@@ -60,7 +106,7 @@ class ResizeKeepRatio:
         else:
             self.size = (size, size)
         self.interpolation = interpolation
-        self.longest = float(longest)
+        self.longest = float(longest)  # [0, 1] where 0 == shortest edge, 1 == longest
         self.random_scale_prob = random_scale_prob
         self.random_scale_range = random_scale_range
         self.random_aspect_prob = random_aspect_prob
@@ -342,3 +388,19 @@ def image_transform(
             normalize,
         ])
         return Compose(transforms)
+
+
+def image_transform_v2(
+        cfg: PreprocessCfg,
+        is_train: bool,
+        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+):
+    return image_transform(
+        image_size=cfg.size,
+        is_train=is_train,
+        mean=cfg.mean,
+        std=cfg.std,
+        interpolation=cfg.interpolation,
+        resize_mode=cfg.resize_mode,
+        fill_color=cfg.fill_color,
+    )

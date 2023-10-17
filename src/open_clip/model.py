@@ -2,10 +2,11 @@
 
 Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
 """
-from dataclasses import dataclass
+import copy
 import logging
 import math
-from typing import Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -57,7 +58,6 @@ class CLIPVisionCfg:
 class CLIPTextCfg:
     context_length: int = 77
     vocab_size: int = 49408
-    vocab_path: Optional[str] = None
     hf_tokenizer_name: Optional[str] = None
     tokenizer_kwargs: Optional[dict] = None
 
@@ -568,3 +568,44 @@ def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', anti
     new_pos_embed = old_pos_embed
 
     state_dict['positional_embedding'] = new_pos_embed
+
+
+def get_model_preprocess_cfg(model):
+    module = getattr(model, 'visual', model)
+    preprocess_cfg = getattr(module, 'preprocess_cfg', {})
+    if not preprocess_cfg:
+        # use separate legacy attributes if preprocess_cfg dict not found
+        size = getattr(module, 'image_size')
+        if size is not None:
+            preprocess_cfg['size'] = size
+        mean = getattr(module, 'image_mean', None)
+        if mean is not None:
+            preprocess_cfg['mean'] = getattr(module, 'mean')
+        std = getattr(module, 'image_std', None)
+        if std is not None:
+            preprocess_cfg['std'] = getattr(module, 'std')
+    return preprocess_cfg
+
+
+def set_model_preprocess_cfg(model, preprocess_cfg: Dict[str, Any]):
+    module = getattr(model, 'visual', model)
+    module.image_mean = preprocess_cfg['mean']  # legacy attribute, keeping for bwd compat
+    module.image_std = preprocess_cfg['std']  # legacy attribute, keeping for bwd compat
+    module.preprocess_cfg = copy.deepcopy(preprocess_cfg)  # new attr, package all pp cfg as dict
+
+
+def get_model_context_len(model):
+    module = getattr(model, 'text', model)
+    return getattr(module, 'context_length', None)
+
+
+def get_model_tokenize_cfg(model):
+    module = getattr(model, 'text', model)
+    cfg = {}
+    context_len = getattr(module, 'context_len', None)
+    if context_len is not None:
+        cfg['context_len'] = context_len
+    vocab_size = getattr(module, 'vocab_size', None)
+    if vocab_size is not None:
+        cfg['vocab_size'] = vocab_size
+    return ccfg

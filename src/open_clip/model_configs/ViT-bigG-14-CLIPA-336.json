@@ -1,7 +1,7 @@
 {
     "embed_dim": 1280,
     "vision_cfg": {
-        "image_size": 224,
+        "image_size": 336,
         "layers": 48,
         "width": 1664,
         "head_width": 104,

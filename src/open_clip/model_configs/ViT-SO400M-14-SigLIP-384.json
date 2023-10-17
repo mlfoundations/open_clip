@@ -12,6 +12,9 @@
     "text_cfg": {
         "context_length": 64,
         "vocab_size": 32000,
+        "tokenizer_kwargs": {
+            "clean": "canonicalize"
+        },
         "width": 1152,
         "heads": 16,
         "layers": 27,

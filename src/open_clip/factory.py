@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 from functools import partial
@@ -13,13 +14,13 @@ import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
-    resize_pos_embed, get_cast_dtype, resize_text_pos_embed
+    resize_pos_embed, get_cast_dtype, resize_text_pos_embed, get_model_preprocess_cfg, set_model_preprocess_cfg
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
-from .transform import image_transform, AugmentationCfg
+from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
 from .tokenizer import HFTokenizer, SimpleTokenizer
 
 
@@ -88,16 +89,6 @@ def get_tokenizer(
         text_mask: str = '',
         **kwargs,
 ):
-    if 'siglip' in model_name.lower():
-        # FIXME temporary hack
-        from open_clip.tokenizer import SigLipTokenizer
-        config = get_model_config(model_name)
-        tokenizer = SigLipTokenizer('c4-en', **kwargs)
-        if 'context_length' in config['text_cfg'].keys():
-            tokenizer = partial(tokenizer, context_length=config['text_cfg']['context_length'])
-
-        return tokenizer
-
     if model_name.startswith(HF_HUB_PREFIX):
         model_name = model_name[len(HF_HUB_PREFIX):]
         try:
@@ -107,22 +98,21 @@ def get_tokenizer(
             return tokenizer
     else:
         config = get_model_config(model_name)
+        assert config is not None, f"No valid model config found for {model_name}."
 
-    if 'tokenizer_kwargs' in config['text_cfg']:
-        tokenizer_kwargs = dict(config['text_cfg']['tokenizer_kwargs'], **kwargs)
+    text_config = config.get('text_cfg', None)
+    if 'tokenizer_kwargs' in text_config:
+        tokenizer_kwargs = dict(text_config['tokenizer_kwargs'], **kwargs)
     else:
         tokenizer_kwargs = kwargs
 
-    if 'hf_tokenizer_name' in config['text_cfg']:
+    if 'hf_tokenizer_name' in text_config:
         tokenizer = HFTokenizer(
-            config['text_cfg']['hf_tokenizer_name'],
+            text_config['hf_tokenizer_name'],
             **tokenizer_kwargs,
         )
     else:
         tokenizer = SimpleTokenizer.create(text_mask=text_mask, **tokenizer_kwargs)
-
-    if 'context_length' in config['text_cfg'].keys():
-        tokenizer = partial(tokenizer, context_length=config['text_cfg']['context_length'])
 
     return tokenizer
 
@@ -172,26 +162,26 @@ def create_model(
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
+        force_preprocess_cfg: Optional[Dict[str, Any]] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
-        pos_embed: str = None,
         **model_kwargs,
 ):
+    preprocess_cfg = asdict(PreprocessCfg())
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
         model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-        pretrained_hf = False  # override, no need to load original HF text weights
         config = _get_hf_config(model_id, cache_dir)
-        pretrained_cfg = config['preprocess_cfg']
+        preprocess_cfg = merge_preprocess_dict(preprocess_cfg, config['preprocess_cfg'])
         model_cfg = config['model_cfg']
+        pretrained_hf = False  # override, no need to load original HF text weights
     else:
         model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
         checkpoint_path = None
-        pretrained_cfg = {}
         model_cfg = None
 
     if isinstance(device, str):
@@ -224,10 +214,6 @@ def create_model(
         if force_image_size is not None:
             # override model config's image size
             model_cfg["vision_cfg"]["image_size"] = force_image_size
-
-        if pos_embed is not None:
-            # override model config's positional embedding
-            model_cfg["vision_cfg"]["pos_embed"] = pos_embed
 
         is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
         if pretrained_image:
@@ -283,6 +269,7 @@ def create_model(
             pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
             if pretrained_cfg:
                 checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
+                preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
             elif os.path.exists(pretrained):
                 checkpoint_path = pretrained
 
@@ -306,16 +293,17 @@ def create_model(
             raise RuntimeError(
                 f'Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded.')
 
-        # set image / mean metadata from pretrained_cfg if available, or use default
-        model.visual.image_mean = pretrained_cfg.get('mean', None) or OPENAI_DATASET_MEAN
-        model.visual.image_std = pretrained_cfg.get('std', None) or OPENAI_DATASET_STD
-        model.pretrained_cfg = copy.deepcopy(pretrained_cfg)
-
     if output_dict and hasattr(model, "output_dict"):
         model.output_dict = True
 
     if jit:
         model = torch.jit.script(model)
+
+    # set image preprocessing configuration in model attributes for convenience
+    if getattr(model.visual, 'image_size', None) is not None:
+        # use image_size set on model creation (via config or force_image_size arg)
+        force_preprocess_cfg['size'] = model.visual.image_size
+    set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg))
 
     return model
 
@@ -367,17 +355,20 @@ def create_model_and_transforms(
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
-        pretrained_image: bool = False,
-        pretrained_hf: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
         image_resize_mode: Optional[str] = None,  # only effective for inference
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+        pretrained_image: bool = False,
+        pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         **model_kwargs,
 ):
+    force_preprocess_cfg = merge_preprocess_kwargs(
+        {}, mean=image_mean, std=image_std, interpolation=image_interpolation, resize_mode=image_resize_mode)
+
     model = create_model(
         model_name,
         pretrained,
@@ -388,6 +379,7 @@ def create_model_and_transforms(
         force_custom_text=force_custom_text,
         force_patch_dropout=force_patch_dropout,
         force_image_size=force_image_size,
+        force_preprocess_cfg=force_preprocess_cfg,
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
@@ -395,26 +387,16 @@ def create_model_and_transforms(
         **model_kwargs,
     )
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    image_interpolation = image_interpolation or getattr(model, 'pretrained_cfg', {}).get('interpolation', None)
-    image_resize_mode = image_resize_mode or getattr(model, 'pretrained_cfg', {}).get('resize_mode', None)
+    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
 
-    preprocess_train = image_transform(
-        model.visual.image_size,
+    preprocess_train = image_transform_v2(
+        pp_cfg,
         is_train=True,
-        mean=image_mean,
-        std=image_std,
-        interpolation=image_interpolation,
         aug_cfg=aug_cfg,
     )
-    preprocess_val = image_transform(
-        model.visual.image_size,
+    preprocess_val = image_transform_v2(
+        pp_cfg,
         is_train=False,
-        mean=image_mean,
-        std=image_std,
-        interpolation=image_interpolation,
-        resize_mode=image_resize_mode,
     )
 
     return model, preprocess_train, preprocess_val
@@ -429,14 +411,17 @@ def create_model_from_pretrained(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
-        return_transform: bool = True,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
         image_resize_mode: Optional[str] = None,  # only effective for inference
+        return_transform: bool = True,
         cache_dir: Optional[str] = None,
         **model_kwargs,
 ):
+    force_preprocess_cfg = merge_preprocess_kwargs(
+        {}, mean=image_mean, std=image_std, interpolation=image_interpolation, resize_mode=image_resize_mode)
+
     model = create_model(
         model_name,
         pretrained,
@@ -446,6 +431,7 @@ def create_model_from_pretrained(
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
+        force_preprocess_cfg=force_preprocess_cfg,
         cache_dir=cache_dir,
         require_pretrained=True,
         **model_kwargs,
@@ -454,18 +440,9 @@ def create_model_from_pretrained(
     if not return_transform:
         return model
 
-    image_mean = image_mean or getattr(model.visual, 'image_mean', None)
-    image_std = image_std or getattr(model.visual, 'image_std', None)
-    image_interpolation = image_interpolation or getattr(model, 'pretrained_cfg', {}).get('interpolation', None)
-    image_resize_mode = image_resize_mode or getattr(model, 'pretrained_cfg', {}).get('resize_mode', None)
-
-    preprocess = image_transform(
-        model.visual.image_size,
+    preprocess = image_transform_v2(
+        PreprocessCfg(**model.visual.preprocess_cfg),
         is_train=False,
-        mean=image_mean,
-        std=image_std,
-        interpolation=image_interpolation,
-        resize_mode=image_resize_mode,
     )
 
     return model, preprocess

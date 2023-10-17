@@ -40,7 +40,7 @@ def _slpcfg(url='', hf_hub='', **kwargs):
         'hf_hub': hf_hub,
         'mean': INCEPTION_MEAN,
         'std': INCEPTION_STD,
-        'interpolation': 'bilinear',
+        'interpolation': 'bicubic',
         'resize_mode': 'squash',
         **kwargs,
     }
@@ -328,28 +328,31 @@ _PRETRAINED = {
     ),
 
     "ViT-B-16-SigLIP": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP/'),
     ),
     "ViT-B-16-SigLIP-256": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-256/'),
+    ),
+    "ViT-B-16-SigLIP-i18n-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-i18n-256/'),
     ),
     "ViT-B-16-SigLIP-384": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-384/'),
     ),
     "ViT-B-16-SigLIP-512": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-512/'),
     ),
     "ViT-L-16-SigLIP-256": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-256/'),
     ),
     "ViT-L-16-SigLIP-384": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-384/'),
     ),
     "ViT-SO400M-SigLIP": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-SigLIP/'),
     ),
     "ViT-SO400M-SigLIP-384": dict(
-        webli=_slpcfg(),
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-SigLIP-384/'),
     ),
 
     "ViT-L-14-CLIPA": dict(

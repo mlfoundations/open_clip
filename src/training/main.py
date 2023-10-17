@@ -6,6 +6,7 @@ import subprocess
 import sys
 import random
 from datetime import datetime
+from functools import partial
 
 import numpy as np
 import torch
@@ -27,7 +28,7 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss, get_model_context_len
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -229,12 +230,12 @@ def main(args):
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
         force_image_size=args.force_image_size,
-        pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
-        image_interpolation=args.interpolation,
-        image_resize_mode=args.resize_mode,  # only effective for inference
+        image_interpolation=args.image_interpolation,
+        image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        pretrained_image=args.pretrained_image,
         output_dict=True,
         **model_kwargs,
     )
@@ -352,7 +353,16 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    tokenizer = get_tokenizer(args.model)
+    context_len = get_model_context_len(model)
+    if context_len is not None:
+        tokenizer = partial(tokenizer, context_length=context_len)
+    data = get_data(
+        args,
+        (preprocess_train, preprocess_val),
+        epoch=start_epoch,
+        tokenizer=tokenizer,
+    )
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
@@ -417,7 +427,7 @@ def main(args):
             from open_clip.utils import convert_int8_model_to_inference_mode
             convert_int8_model_to_inference_mode(model)
         # Evaluate.
-        evaluate(model, data, start_epoch, args, writer)
+        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
 
     loss = create_loss(args)
@@ -430,7 +440,7 @@ def main(args):
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, writer)
+            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
 
         # Saving checkpoints.
         if args.save_logs:
