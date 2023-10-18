@@ -250,7 +250,7 @@ def random_mask_tokenize(texts: Union[str, List[str]], context_length: int = 77)
         if len(tokens) > context_length - 2: # 2 for sot and eot token
             indices = np.random.permutation(len(tokens)).tolist()
             indices = indices[:context_length - 2]
-            tokens = tokens[indices]
+            tokens = [tokens[i] for i in indices]
         tokens = [sot_token,] + tokens + [eot_token,]
         result[i, :len(tokens)] = torch.tensor(tokens)
 
