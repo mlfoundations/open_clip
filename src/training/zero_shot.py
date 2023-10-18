@@ -1,11 +1,9 @@
 import logging
-from functools import partial
 
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
-from open_clip import get_input_dtype, get_tokenizer, get_model_context_len, build_zero_shot_classifier, \
+from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from .precision import get_autocast
 
@@ -56,9 +54,6 @@ def zero_shot_eval(model, data, epoch, args, tokenizer=None):
     logging.info('Starting zero-shot imagenet.')
     if tokenizer is None:
         tokenizer = get_tokenizer(args.model)
-        context_len = get_model_context_len(model)
-        if context_len is not None:
-            tokenizer = partial(tokenizer, context_length=context_len)
 
     logging.info('Building zero-shot classifier')
     autocast = get_autocast(args.precision)

@@ -1,27 +1,24 @@
-import copy
 import json
 import logging
 import os
-import pathlib
 import re
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
-from functools import partial
 
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
-    resize_pos_embed, get_cast_dtype, resize_text_pos_embed, get_model_preprocess_cfg, set_model_preprocess_cfg
+    resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
-from .tokenizer import HFTokenizer, SimpleTokenizer
+from .tokenizer import HFTokenizer, SimpleTokenizer, DEFAULT_CONTEXT_LENGTH
 
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -86,7 +83,7 @@ def _get_hf_config(model_id, cache_dir=None):
 
 def get_tokenizer(
         model_name: str = '',
-        text_mask: str = '',
+        context_length: Optional[int] = None,
         **kwargs,
 ):
     if model_name.startswith(HF_HUB_PREFIX):
@@ -94,7 +91,11 @@ def get_tokenizer(
         try:
             config = _get_hf_config(model_name)['model_cfg']
         except Exception:
-            tokenizer = HFTokenizer(model_name)
+            tokenizer = HFTokenizer(
+                model_name,
+                context_length=context_length or DEFAULT_CONTEXT_LENGTH,
+                **kwargs,
+            )
             return tokenizer
     else:
         config = get_model_config(model_name)
@@ -106,13 +107,20 @@ def get_tokenizer(
     else:
         tokenizer_kwargs = kwargs
 
+    if context_length is None:
+        context_length = text_config.get('context_length', DEFAULT_CONTEXT_LENGTH)
+
     if 'hf_tokenizer_name' in text_config:
         tokenizer = HFTokenizer(
             text_config['hf_tokenizer_name'],
+            context_length=context_length,
             **tokenizer_kwargs,
         )
     else:
-        tokenizer = SimpleTokenizer.create(text_mask=text_mask, **tokenizer_kwargs)
+        tokenizer = SimpleTokenizer(
+            context_length=context_length,
+            **tokenizer_kwargs,
+        )
 
     return tokenizer
 

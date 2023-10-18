@@ -28,7 +28,7 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss, get_model_context_len
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -354,9 +354,6 @@ def main(args):
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model)
-    context_len = get_model_context_len(model)
-    if context_len is not None:
-        tokenizer = partial(tokenizer, context_length=context_len)
     data = get_data(
         args,
         (preprocess_train, preprocess_val),
