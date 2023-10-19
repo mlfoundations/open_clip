@@ -374,11 +374,11 @@ _PRETRAINED = {
     "ViT-L-16-SigLIP-384": dict(
         webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-384/'),
     ),
-    "ViT-SO400M-SigLIP": dict(
-        webli=_slpcfg(hf_hub='timm/ViT-SO400M-SigLIP/'),
+    "ViT-SO400M-14-SigLIP": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP/'),
     ),
-    "ViT-SO400M-SigLIP-384": dict(
-        webli=_slpcfg(hf_hub='timm/ViT-SO400M-SigLIP-384/'),
+    "ViT-SO400M-14-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
     ),
 
     # FIXME update CLIPA pretrained to final home, rwightman/ is temporary for testing
