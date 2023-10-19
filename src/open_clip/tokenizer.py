@@ -298,6 +298,7 @@ def random_mask_tokenize(
 
     return result
 
+
 def simple_mask_tokenize(
         texts: Union[str, List[str]],
         context_length: int,

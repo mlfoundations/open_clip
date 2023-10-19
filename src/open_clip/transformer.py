@@ -356,8 +356,7 @@ class VisionTransformer(nn.Module):
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
         self.grid_size = (image_height // patch_height, image_width // patch_width)
-        # NOTE current use of attentional pool in CoCa always applies LN after pool, could base it on config
-        self.final_ln_after_pool = final_ln_after_pool or attentional_pool
+        self.final_ln_after_pool = final_ln_after_pool  # currently ignored w/ attn pool enabled
         self.output_dim = output_dim
 
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
@@ -396,6 +395,7 @@ class VisionTransformer(nn.Module):
         if attentional_pool:
             if isinstance(attentional_pool, str):
                 self.attn_pool_type = attentional_pool
+                self.pool_type = 'none'
                 if attentional_pool in ('parallel', 'cascade'):
                     self.attn_pool = AttentionalPooler(
                         output_dim,
@@ -413,6 +413,7 @@ class VisionTransformer(nn.Module):
                     assert False
             else:
                 self.attn_pool_type = ''
+                self.pool_type = pool_type
                 self.attn_pool = AttentionalPooler(
                     output_dim,
                     width,
@@ -421,7 +422,6 @@ class VisionTransformer(nn.Module):
                 )
                 self.attn_pool_contrastive = None
             pool_dim = output_dim
-            self.pool_type = 'none'
         else:
             self.attn_pool = None
             pool_dim = width
@@ -490,18 +490,6 @@ class VisionTransformer(nn.Module):
         self.transformer.grad_checkpointing = enable
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.attn_pool is not None:
-            pooled_tokens = self.attn_pool(x)
-            if self.attn_pool_contrastive is not None:
-                if self.attn_pool_type == 'parallel':
-                    pooled = self.attn_pool_contrastive(x)
-                else:
-                    assert self.attn_pool_type == 'cascade'
-                    pooled = self.attn_pool_contrastive(pooled_tokens)
-                return pooled, pooled_tokens
-            else:
-                return pooled_tokens[:, 0], pooled_tokens[:, 1:]
-
         if self.pool_type == 'avg':
             pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
         elif self.pool_type == 'tok':
@@ -528,13 +516,27 @@ class VisionTransformer(nn.Module):
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        if not self.final_ln_after_pool:
-            x = self.ln_post(x)
-
-        pooled, tokens = self._global_pool(x)
-
-        if self.final_ln_after_pool:
+        if self.attn_pool is not None:
+            if self.attn_pool_contrastive is not None:
+                # This is untested, WIP pooling that should match paper
+                x = self.ln_post(x)  # TBD LN first or separate one after each pool?
+                tokens = self.attn_pool(x)
+                if self.attn_pool_type == 'parallel':
+                    pooled = self.attn_pool_contrastive(x)
+                else:
+                    assert self.attn_pool_type == 'cascade'
+                    pooled = self.attn_pool_contrastive(tokens)
+            else:
+                # this is the original OpenCLIP CoCa setup, does not match paper
+                x = self.attn_pool(x)
+                x = self.ln_post(x)
+                pooled, tokens = self._global_pool(x)
+        elif self.final_ln_after_pool:
+            pooled, tokens = self._global_pool(x)
             pooled = self.ln_post(pooled)
+        else:
+            x = self.ln_post(x)
+            pooled, tokens = self._global_pool(x)
 
         if self.proj is not None:
             pooled = pooled @ self.proj
