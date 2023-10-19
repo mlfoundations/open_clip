@@ -549,9 +549,9 @@ class VisionTransformer(nn.Module):
 
 def text_global_pool(x, text: Optional[torch.Tensor] = None, pool_type: str = 'argmax'):
     if pool_type == 'first':
-        pooled, tokens = x[:, 0], x
+        pooled, tokens = x[:, 0], x[:, 1:]
     elif pool_type == 'last':
-        pooled, tokens = x[:, -1], x
+        pooled, tokens = x[:, -1], x[:, :-1]
     elif pool_type == 'argmax':
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         assert text is not None
