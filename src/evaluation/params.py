@@ -210,6 +210,6 @@ def parse_args(args):
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
     )
-    args = parser.parse_args(args)
+    args, _ = parser.parse_known_args(args)
 
     return args
