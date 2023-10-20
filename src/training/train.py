@@ -248,14 +248,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     # end for
 
 
-def evaluate(model, data, epoch, args, tb_writer=None):
+def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
     if not is_master(args):
         return metrics
     device = torch.device(args.device)
     model.eval()
 
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
+    zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision)

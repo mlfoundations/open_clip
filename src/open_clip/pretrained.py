@@ -7,6 +7,8 @@ from typing import Dict, Union
 
 from tqdm import tqdm
 
+from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD, INCEPTION_MEAN, INCEPTION_STD, \
+    IMAGENET_MEAN, IMAGENET_STD
 from .version import __version__
 
 try:
@@ -18,13 +20,43 @@ except ImportError:
     _has_hf_hub = False
 
 
-def _pcfg(url='', hf_hub='', mean=None, std=None):
-    return dict(
-        url=url,
-        hf_hub=hf_hub,
-        mean=mean,
-        std=std,
-    )
+def _pcfg(url='', hf_hub='', **kwargs):
+    # OpenAI / OpenCLIP defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': OPENAI_DATASET_MEAN,
+        'std': OPENAI_DATASET_STD,
+        'interpolation': 'bicubic',
+        'resize_mode': 'shortest',
+        **kwargs,
+    }
+
+
+def _slpcfg(url='', hf_hub='', **kwargs):
+    # SiGLIP defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': INCEPTION_MEAN,
+        'std': INCEPTION_STD,
+        'interpolation': 'bicubic',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
+
+
+def _apcfg(url='', hf_hub='', **kwargs):
+    # CLIPA defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': IMAGENET_MEAN,
+        'std': IMAGENET_STD,
+        'interpolation': 'bilinear',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
 
 
 _RN50 = dict(
@@ -164,7 +196,7 @@ _VITL14 = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_l_14-laion400m_e32-3d133497.pt"),
     laion2b_s32b_b82k=_pcfg(
         hf_hub='laion/CLIP-ViT-L-14-laion2B-s32B-b82K/',
-        mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        mean=INCEPTION_MEAN, std=INCEPTION_STD),
     # DataComp-XL models
     datacomp_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K/'),
     commonpool_xl_clip_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-CommonPool.XL.clip-s13B-b90K/'),
@@ -263,6 +295,7 @@ _PRETRAINED = {
     "RN50x4": _RN50x4,
     "RN50x16": _RN50x16,
     "RN50x64": _RN50x64,
+
     "ViT-B-32": _VITB32,
     "ViT-B-32-256": _VITB32_256,
     "ViT-B-32-quickgelu": _VITB32_quickgelu,
@@ -276,17 +309,21 @@ _PRETRAINED = {
     "ViT-H-14-quickgelu": _VITH14_quickgelu,
     "ViT-g-14": _VITg14,
     "ViT-bigG-14": _VITbigG14,
+
     "roberta-ViT-B-32": _robertaViTB32,
     "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
     "xlm-roberta-large-ViT-H-14": _xlmRobertaLargeFrozenViTH14,
+
     "convnext_base": _convnext_base,
     "convnext_base_w": _convnext_base_w,
     "convnext_base_w_320": _convnext_base_w_320,
     "convnext_large_d": _convnext_large_d,
     "convnext_large_d_320": _convnext_large_d_320,
     "convnext_xxlarge": _convnext_xxlarge,
+
     "coca_ViT-B-32": _coca_VITB32,
     "coca_ViT-L-14": _coca_VITL14,
+
     "EVA01-g-14": dict(
         # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_psz14_s11B.pt
         laion400m_s11b_b41k=_pcfg(hf_hub='timm/eva_giant_patch14_clip_224.laion400m_s11b_b41k/'),
@@ -315,6 +352,56 @@ _PRETRAINED = {
         # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_plus_s9B.pt
         laion2b_s9b_b144k=_pcfg(hf_hub='timm/eva02_enormous_patch14_plus_clip_224.laion2b_s9b_b144k/'),
     ),
+
+    "ViT-B-16-SigLIP": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP/'),
+    ),
+    "ViT-B-16-SigLIP-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-256/'),
+    ),
+    "ViT-B-16-SigLIP-i18n-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-i18n-256/'),
+    ),
+    "ViT-B-16-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-384/'),
+    ),
+    "ViT-B-16-SigLIP-512": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-512/'),
+    ),
+    "ViT-L-16-SigLIP-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-256/'),
+    ),
+    "ViT-L-16-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-384/'),
+    ),
+    "ViT-SO400M-14-SigLIP": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP/'),
+    ),
+    "ViT-SO400M-14-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
+    ),
+
+    # FIXME update CLIPA pretrained to final home, rwightman/ is temporary for testing
+    "ViT-L-14-CLIPA": dict(
+        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-datacomp1B/'),
+    ),
+    "ViT-L-14-CLIPA-336": dict(
+        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-336-datacomp1B/'),
+    ),
+    "ViT-H-14-CLIPA": dict(
+        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-datacomp1B/'),
+    ),
+    "ViT-H-14-CLIPA-336": dict(
+        laion2b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-laion2B/'),
+        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-datacomp1B/'),
+    ),
+    # "ViT-bigG-14-CLIPA": dict(
+    #     datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-datacomp1B/'),
+    # ),
+    "ViT-bigG-14-CLIPA-336": dict(
+        datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-336-datacomp1B/'),
+    ),
+
     "nllb-clip-base": dict(
         v1=_pcfg(hf_hub='visheratin/nllb-clip-base-oc/'),
     ),

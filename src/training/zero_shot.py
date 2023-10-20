@@ -1,7 +1,6 @@
 import logging
 
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
@@ -42,7 +41,7 @@ def run(model, classifier, dataloader, args):
     return top1, top5
 
 
-def zero_shot_eval(model, data, epoch, args):
+def zero_shot_eval(model, data, epoch, args, tokenizer=None):
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
     if args.zeroshot_frequency == 0:
@@ -53,11 +52,12 @@ def zero_shot_eval(model, data, epoch, args):
         model = model.module
 
     logging.info('Starting zero-shot imagenet.')
+    if tokenizer is None:
+        tokenizer = get_tokenizer(args.model)
 
     logging.info('Building zero-shot classifier')
     autocast = get_autocast(args.precision)
     with autocast():
-        tokenizer = get_tokenizer(args.model)
         classifier = build_zero_shot_classifier(
             model,
             tokenizer=tokenizer,
