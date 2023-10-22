@@ -59,6 +59,11 @@ def list_models():
     return list(_MODEL_CONFIGS.keys())
 
 
+def list_generative_models():
+    """ enumerate available generative model architectures based on config files """
+    # TODO: add generative_model key to model configs
+    return [k for k, v in _MODEL_CONFIGS.items() if "multimodal_cfg" in v]
+
 def add_model_config(path):
     """ add model config path or file and update registry """
     if not isinstance(path, Path):

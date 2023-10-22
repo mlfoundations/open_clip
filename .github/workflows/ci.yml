@@ -3,7 +3,7 @@ name: Continuous integration
 on:
   push:
     branches:
-    - main 
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -12,7 +12,7 @@ on:
     - 'docs/**'
   pull_request:
     branches:
-    - main 
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -29,8 +29,9 @@ on:
         type: string
 
 env:
-  REVISION_REFERENCE: v2.8.2
+  REVISION_REFERENCE: v2.14.0
   #9d31b2ec4df6d8228f370ff20c8267ec6ba39383 earliest compatible v2.7.0 + pretrained_hf param
+  GEN_REVISION_REFERENCE: 7b8dd2cbaf9cca13ca5b1defa6a321a145eb166c
 
 jobs:
   Tests:
@@ -79,10 +80,19 @@ jobs:
           --splitting-algorithm least_duration \
           --splits ${{ matrix.job_num }} \
           --group ${{ matrix.job }} \
-          -m regression_test \
+          -m "regression_test" \
           tests \
           | head -n -2 | grep -Po 'test_inference_with_data\[\K[^]]*(?=-False]|-True])' \
           > models_gh_runner.txt
+        python -m pytest \
+          --quiet --co \
+          --splitting-algorithm least_duration \
+          --splits ${{ matrix.job_num }} \
+          --group ${{ matrix.job }} \
+          -m "generative_regression_test" \
+          tests \
+          | head -n -2 | grep -Po 'test_generative_with_data\[\K[^]]*' \
+          > generative_models_gh_runner.txt
         if [ -n "${{ inputs.manual_revision_reference }}" ]; then
           REVISION_REFERENCE=${{ inputs.manual_revision_reference }}
         fi
@@ -90,6 +100,10 @@ jobs:
           --save_model_list models_gh_runner.txt \
           --model_list models_gh_runner.txt \
           --git_revision $REVISION_REFERENCE
+        python tests/util_test.py \
+          --save_model_list generative_models_gh_runner.txt \
+          --generative_model_list generative_models_gh_runner.txt \
+          --git_revision $GEN_REVISION_REFERENCE
     - name: Unit tests
       run: |
         source .env/bin/activate
@@ -113,7 +127,7 @@ jobs:
           --store-durations \
           --durations-path durations_2 \
           --clean-durations \
-          -m "regression_test" \
+          -m "regression_test and generative_regression_test" \
           tests
         jq -s -S 'add' durations_* > .test_durations
     - name: Collect pytest durations
