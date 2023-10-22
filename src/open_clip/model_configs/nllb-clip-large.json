@@ -10,7 +10,7 @@
     "text_cfg": {
         "hf_model_name": "facebook/nllb-200-distilled-1.3B",
         "hf_tokenizer_name": "facebook/nllb-200-distilled-1.3B",
-        "proj": "linear",
-        "pooler_type": "cls_pooler"
+        "hf_proj_type": "linear",
+        "hf_pooler_type": "cls_pooler"
     }
 }
