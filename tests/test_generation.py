@@ -13,7 +13,7 @@ if hasattr(torch._C, "_jit_set_profiling_executor"):
     torch._C._jit_set_profiling_executor(True)
     torch._C._jit_set_profiling_mode(False)
 
-models_to_test = open_clip.list_generative_models().difference(
+models_to_test = set(open_clip.list_generative_models()).difference(
     {"coca_roberta-ViT-B-32", "coca_base"}
 )
 
