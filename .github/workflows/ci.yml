@@ -31,6 +31,7 @@ on:
 env:
   REVISION_REFERENCE: v2.8.2
   #9d31b2ec4df6d8228f370ff20c8267ec6ba39383 earliest compatible v2.7.0 + pretrained_hf param
+  GEN_REVISION_REFERENCE: v2.22.0
 
 jobs:
   Tests:
@@ -102,7 +103,7 @@ jobs:
         python tests/util_test.py \
           --save_generative_model_list generative_models_gh_runner.txt \
           --generative_model_list generative_models_gh_runner.txt \
-          --git_revision $REVISION_REFERENCE
+          --git_revision $GEN_REVISION_REFERENCE
     - name: Unit tests
       run: |
         source .env/bin/activate
