@@ -164,13 +164,13 @@ def create_test_data_for_model(
     if generative:
         assert hasattr(model, "generate"), f"model {model_name} does not support generation"
         if overwrite or not text_exists:
-            cat_input_file_image = os.path.join(
-                os.path.dirname(os.path.realpath(__file__)), "ref_images", f"cat.jpeg"
-            )
-            assert os.path.isfile(
-                cat_input_file_image
-            ), f"missing input data, expected at {cat_input_file_image}"
-            input_data_image = [[Image.open(cat_input_file_image).convert("RGB")]]
+            # cat_input_file_image = os.path.join(
+            #     os.path.dirname(os.path.realpath(__file__)), "ref_images", f"cat.jpeg"
+            # )
+            # assert os.path.isfile(
+            #     cat_input_file_image
+            # ), f"missing input data, expected at {cat_input_file_image}"
+            # input_data_image = [[Image.open(cat_input_file_image).convert("RGB")]]
             # also load a noise image
             size = model.visual.image_size
             if not isinstance(size, tuple):
@@ -184,7 +184,8 @@ def create_test_data_for_model(
                 input_file_image
             ), f"missing input data, expected at {input_file_image}"
             _input_data_image = torch.load(input_file_image)
-            input_data_image.extend(_input_data_image)
+            # input_data_image.extend(_input_data_image)
+            input_data_image = _input_data_image
             torch.save(input_data_image, output_file_image)
             print(input_data_image)
             captions = model_generate(model, preprocess_val, input_data_image)
