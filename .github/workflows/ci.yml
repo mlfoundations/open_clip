@@ -126,7 +126,7 @@ jobs:
           --store-durations \
           --durations-path durations_2 \
           --clean-durations \
-          -m "regression_test" \
+          -m "regression_test and generative_regression_tests" \
           tests
         jq -s -S 'add' durations_* > .test_durations
     - name: Collect pytest durations
