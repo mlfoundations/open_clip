@@ -19,7 +19,7 @@
         "output_tokens": true
     },
     "text_cfg": {
-        "context_length": 76,
+        "context_length": 77,
         "vocab_size": 64000,
         "layers": 12,
         "heads": 12,

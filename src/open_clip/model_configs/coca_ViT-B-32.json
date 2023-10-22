@@ -10,7 +10,7 @@
         "output_tokens": true
     },
     "text_cfg": {
-        "context_length": 76,
+        "context_length": 77,
         "vocab_size": 49408,
         "width": 512,
         "heads": 8,
