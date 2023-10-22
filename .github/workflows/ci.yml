@@ -101,7 +101,7 @@ jobs:
           --git_revision $REVISION_REFERENCE
         python tests/util_test.py \
           --save_generative_model_list generative_models_gh_runner.txt \
-          --model_list generative_models_gh_runner.txt \
+          --generative_model_list generative_models_gh_runner.txt \
           --git_revision $REVISION_REFERENCE
     - name: Unit tests
       run: |
