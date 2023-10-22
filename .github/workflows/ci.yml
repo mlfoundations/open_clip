@@ -3,7 +3,7 @@ name: Continuous integration
 on:
   push:
     branches:
-    - main 
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -12,7 +12,7 @@ on:
     - 'docs/**'
   pull_request:
     branches:
-    - main 
+    - main
     paths-ignore:
     - '**.md'
     - 'CITATION.cff'
@@ -29,7 +29,7 @@ on:
         type: string
 
 env:
-  REVISION_REFERENCE: v2.8.2
+  REVISION_REFERENCE: v2.22.0
   #9d31b2ec4df6d8228f370ff20c8267ec6ba39383 earliest compatible v2.7.0 + pretrained_hf param
 
 jobs:
