@@ -28,7 +28,6 @@ models_to_test = models_to_test.difference({
         'ViT-e-14',
         'mt5-xl-ViT-H-14',
         'coca_base',
-        'coca_ViT-B-32',
         'coca_roberta-ViT-B-32'
 })
 
@@ -95,7 +94,7 @@ def test_inference_with_data(
     gt_image = torch.load(gt_image_path)
     y_image = util_test.inference_image(model, preprocess_val, input_image)
     assert (y_image == gt_image).all(), f"image output differs @ {input_image_path}"
-    
+
     if not jit:
         model.eval()
         model_out = util_test.forward_model(model, model_name, preprocess_val, input_image, input_text)
@@ -117,7 +116,7 @@ def test_inference_with_data(
             force_quick_gelu = force_quick_gelu,
             pretrained_hf = pretrained_hf
         )
-        
+
         test_model = util_test.TestWrapper(model, model_name, output_dict=False)
         test_model = torch.jit.script(test_model)
         model_out = util_test.forward_model(test_model, model_name, preprocess_val, input_image, input_text)
@@ -127,7 +126,7 @@ def test_inference_with_data(
         test_model = torch.jit.script(test_model)
         model_out = util_test.forward_model(test_model, model_name, preprocess_val, input_image, input_text)
         assert model_out["test_output"].shape[-1] == 2
-        
-    
+
+
 
 

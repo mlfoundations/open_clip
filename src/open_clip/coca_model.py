@@ -92,6 +92,8 @@ class CoCa(nn.Module):
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
 
+        text_cfg.context_length -= 1  # make space for CLS token
+
         self.text = _build_text_tower(
             embed_dim=embed_dim,
             text_cfg=text_cfg,
