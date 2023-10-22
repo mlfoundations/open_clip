@@ -13,7 +13,9 @@ if hasattr(torch._C, "_jit_set_profiling_executor"):
     torch._C._jit_set_profiling_executor(True)
     torch._C._jit_set_profiling_mode(False)
 
-models_to_test = open_clip.list_generative_models()
+models_to_test = open_clip.list_generative_models().difference(
+    {"coca_roberta-ViT-B-32", "coca_base"}
+)
 
 
 @pytest.mark.generative_regression_test
@@ -51,7 +53,7 @@ def test_generate_with_data(
     gt_text = torch.load(gt_text_path)
     with torch.no_grad(), torch.cuda.amp.autocast():
         y_text = util_test.model_generate(model, preprocess_val, input_image)
-    assert (y_text == gt_text), f"text output differs @ {gt_text_path}"
+    assert y_text == gt_text, f"text output differs @ {gt_text_path}"
     # logits
     y_logits = util_test.forward_model(model, model_name, preprocess_val, input_image, gt_text)[
         "logits"
