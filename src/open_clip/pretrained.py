@@ -383,23 +383,23 @@ _PRETRAINED = {
 
     # FIXME update CLIPA pretrained to final home, rwightman/ is temporary for testing
     "ViT-L-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-datacomp1B/'),
     ),
     "ViT-L-14-CLIPA-336": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-336-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-336-datacomp1B/'),
     ),
     "ViT-H-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-datacomp1B/'),
     ),
     "ViT-H-14-CLIPA-336": dict(
-        laion2b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-laion2B/'),
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-datacomp1B/'),
+        laion2b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-laion2B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-datacomp1B/'),
     ),
     "ViT-bigG-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-datacomp1B/'),
     ),
     "ViT-bigG-14-CLIPA-336": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-336-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-336-datacomp1B/'),
     ),
 
     "nllb-clip-base": dict(
