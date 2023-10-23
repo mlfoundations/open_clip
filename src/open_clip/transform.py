@@ -24,7 +24,7 @@ class PreprocessCfg:
     fill_color: int = 0
 
     def __post_init__(self):
-        assert self.mode in ('RGB')
+        assert self.mode in ('RGB',)
 
     @property
     def num_channels(self):
@@ -32,7 +32,7 @@ class PreprocessCfg:
 
     @property
     def input_size(self):
-        return (self.num_channels(),) + to_2tuple(self.size)
+        return (self.num_channels,) + to_2tuple(self.size)
 
 _PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
 
