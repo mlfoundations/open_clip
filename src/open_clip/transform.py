@@ -403,4 +403,5 @@ def image_transform_v2(
         interpolation=cfg.interpolation,
         resize_mode=cfg.resize_mode,
         fill_color=cfg.fill_color,
+        aug_cfg=aug_cfg,
     )
