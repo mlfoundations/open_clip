@@ -3,8 +3,11 @@ import argparse
 import torch
 import open_clip
 import pandas as pd
-from fvcore.nn import FlopCountAnalysis, flop_count_str, ActivationCountAnalysis
 from torch.utils.flop_counter import FlopCounterMode
+try:
+    import fvcore
+except:
+    fvcore = None
 
 parser = argparse.ArgumentParser(description='OpenCLIP Profiler')
 
@@ -30,10 +33,10 @@ def profile_fvcore(
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     example_image_input = torch.ones((batch_size,) + image_input_size, device=device, dtype=dtype)
     example_text_input = torch.ones((batch_size,) + text_input_size, device=device, dtype=torch.int64)
-    fca = FlopCountAnalysis(model, (example_image_input, example_text_input))
-    aca = ActivationCountAnalysis(model, (example_image_input, example_text_input))
+    fca = fvcore.nn.FlopCountAnalysis(model, (example_image_input, example_text_input))
+    aca = fvcore.nn.ActivationCountAnalysis(model, (example_image_input, example_text_input))
     if detailed:
-        fcs = flop_count_str(fca)
+        fcs = fvcore.nn.flop_count_str(fca)
         print(fcs)
     return fca.total() / batch_size, aca.total() / batch_size
 
@@ -49,10 +52,10 @@ def profile_fvcore_text(
         model = model.to('cpu')
     device = next(model.parameters()).device
     example_input = torch.ones((batch_size,) + text_input_size, device=device, dtype=torch.int64)
-    fca = FlopCountAnalysis(model, example_input)
-    aca = ActivationCountAnalysis(model, example_input)
+    fca = fvcore.nn.FlopCountAnalysis(model, example_input)
+    aca = fvcore.nn.ActivationCountAnalysis(model, example_input)
     if detailed:
-        fcs = flop_count_str(fca)
+        fcs = fvcore.nn.flop_count_str(fca)
         print(fcs)
     return fca.total() / batch_size, aca.total() / batch_size
 
@@ -68,10 +71,10 @@ def profile_fvcore_image(
         model = model.to('cpu')
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     example_input = torch.ones((batch_size,) + image_input_size, device=device, dtype=dtype)
-    fca = FlopCountAnalysis(model, example_input)
-    aca = ActivationCountAnalysis(model, example_input)
+    fca = fvcore.nn.FlopCountAnalysis(model, example_input)
+    aca = fvcore.nn.ActivationCountAnalysis(model, example_input)
     if detailed:
-        fcs = flop_count_str(fca)
+        fcs = fvcore.nn.flop_count_str(fca)
         print(fcs)
     return fca.total() / batch_size, aca.total() / batch_size
 
@@ -124,6 +127,8 @@ def count_params(model):
 
 def profile_model(model_name, batch_size=1, profiler='torch'):
     assert profiler in ['torch', 'fvcore'], 'Only torch and fvcore profilers are supported'
+    if profiler == 'fvcore':
+        assert fvcore is not None, 'Please install fvcore.'
     model = open_clip.create_model(model_name, force_custom_text=True, pretrained_hf=False)
     model.eval()
     if torch.cuda.is_available():
