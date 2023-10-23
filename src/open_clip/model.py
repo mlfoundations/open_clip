@@ -580,10 +580,10 @@ def get_model_preprocess_cfg(model):
             preprocess_cfg['size'] = size
         mean = getattr(module, 'image_mean', None)
         if mean is not None:
-            preprocess_cfg['mean'] = getattr(module, 'mean')
+            preprocess_cfg['mean'] = mean
         std = getattr(module, 'image_std', None)
         if std is not None:
-            preprocess_cfg['std'] = getattr(module, 'std')
+            preprocess_cfg['std'] = std
     return preprocess_cfg
 
 
