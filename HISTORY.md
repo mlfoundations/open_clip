@@ -1,5 +1,7 @@
 ## 2.23.0
 
+* Add CLIPA-v2 models
+* Add SigLIP models
 * Add MetaCLIP models
 * Add NLLB-CLIP models
 * CLIPA train code
