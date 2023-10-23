@@ -381,7 +381,6 @@ _PRETRAINED = {
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
     ),
 
-    # FIXME update CLIPA pretrained to final home, rwightman/ is temporary for testing
     "ViT-L-14-CLIPA": dict(
         datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-datacomp1B/'),
     ),
