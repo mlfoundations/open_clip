@@ -1,3 +1,16 @@
+## 2.23.0
+
+* Add CLIPA-v2 models
+* Add SigLIP models
+* Add MetaCLIP models
+* Add NLLB-CLIP models
+* CLIPA train code
+* Minor changes/fixes
+    * Remove protobuf version limit
+    * Stop checking model name when loading CoCa models
+    * Log native wandb step
+    * Use bool instead of long masks
+
 ## 2.21.0
 
 * Add SigLIP loss + training support
