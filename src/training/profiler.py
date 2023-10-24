@@ -86,7 +86,7 @@ def profile_torch_image(model, image_input_size, batch_size=1, force_cpu=False):
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     example_input = torch.ones((batch_size,) + image_input_size, device=device, dtype=dtype)
 
-    flop_counter = FlopCounterMode(model)
+    flop_counter = FlopCounterMode()
     with flop_counter:
         model(example_input)
     total_flops = sum(flop_counter.get_flop_counts()['Global'].values())
@@ -100,7 +100,7 @@ def profile_torch_text(model, text_input_size, batch_size=1, force_cpu=False):
     device = next(model.parameters()).device
     example_input = torch.ones((batch_size,) + text_input_size, device=device, dtype=torch.int64)
 
-    flop_counter = FlopCounterMode(model)
+    flop_counter = FlopCounterMode()
     with flop_counter:
         model(example_input)
     total_flops = sum(flop_counter.get_flop_counts()['Global'].values())
@@ -115,7 +115,7 @@ def profile_torch(model, text_input_size, image_input_size, batch_size=1, force_
     image_input = torch.ones((batch_size,) + image_input_size, device=device, dtype=dtype)
     text_input = torch.ones((batch_size,) + text_input_size, device=device, dtype=torch.int64)
 
-    flop_counter = FlopCounterMode(model)
+    flop_counter = FlopCounterMode()
     with flop_counter:
         model(image_input, text_input)
     total_flops = sum(flop_counter.get_flop_counts()['Global'].values())
@@ -138,7 +138,10 @@ def profile_model(model_name, batch_size=1, profiler='torch'):
         image_input_size = (3,) + tuple(model.visual.image_size[-2:])
     else:
         image_input_size = (3, model.visual.image_size, model.visual.image_size)
-    text_input_size = (model.context_length,) if hasattr(model, 'context_length') else (77,)
+
+    text_input_size = (77,)
+    if hasattr(model, 'context_length') and model.context_length:
+        text_input_size = (model.context_length,)
 
     results = {}
     results['model'] = model_name
