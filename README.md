@@ -81,6 +81,8 @@ More details about our pretrained models are available [here](docs/PRETRAINED.md
 >>> open_clip.list_pretrained()
 ```
 
+You can find more about the models we support (e.g. number of parameters, FLOPs) in [this table](docs/model_profile.csv).
+
 NOTE: Many existing checkpoints use the QuickGELU activation from the original OpenAI models. This activation is actually less efficient than native torch.nn.GELU in recent versions of PyTorch. The model defaults are now nn.GELU, so one should use model definitions with `-quickgelu` postfix for the OpenCLIP pretrained weights. All OpenAI pretrained weights will always default to QuickGELU. One can also use the non `-quickgelu` model definitions with pretrained weights using QuickGELU but there will be an accuracy drop, for fine-tune that will likely vanish for longer runs.
 Future trained models will use nn.GELU.
 
