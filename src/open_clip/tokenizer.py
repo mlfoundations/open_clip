@@ -21,6 +21,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 _nltk_init = False
 
 DEFAULT_CONTEXT_LENGTH = 77  # default context length for OpenAI CLIP
+RE_DEDUPLICATE_WHITESPACE = re.compile(r"\s+")
 
 
 @lru_cache()
@@ -70,7 +71,7 @@ def basic_clean(text):
 
 
 def whitespace_clean(text):
-    text = re.sub(r'\s+', ' ', text)
+    text = RE_DEDUPLICATE_WHITESPACE.sub(" ", text)
     text = text.strip()
     return text
 
@@ -101,7 +102,12 @@ def get_clean_fn(type: str):
         assert False, f"Invalid clean function ({type})."
 
 
-def canonicalize_text(text, *, keep_punctuation_exact_string=None):
+def canonicalize_text(
+    text,
+    *,
+    keep_punctuation_exact_string=None,
+    trans_punctuation: dict = str.maketrans("", "", string.punctuation),
+):
     """Returns canonicalized `text` (lowercase and punctuation removed).
 
     From: https://github.com/google-research/big_vision/blob/53f18caf27a9419231bbf08d3388b07671616d3d/big_vision/evaluators/proj/image_text/prompt_engineering.py#L94
@@ -115,12 +121,13 @@ def canonicalize_text(text, *, keep_punctuation_exact_string=None):
     text = text.replace("_", " ")
     if keep_punctuation_exact_string:
         text = keep_punctuation_exact_string.join(
-            part.translate(str.maketrans("", "", string.punctuation))
-            for part in text.split(keep_punctuation_exact_string))
+            part.translate(trans_punctuation)
+            for part in text.split(keep_punctuation_exact_string)
+        )
     else:
-        text = text.translate(str.maketrans("", "", string.punctuation))
+        text = text.translate(trans_punctuation)
     text = text.lower()
-    text = re.sub(r"\s+", " ", text)
+    text = RE_DEDUPLICATE_WHITESPACE.sub(" ", text)
     return text.strip()
 
 
