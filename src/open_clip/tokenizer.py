@@ -20,7 +20,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 _nltk_init = False
 
 DEFAULT_CONTEXT_LENGTH = 77  # default context length for OpenAI CLIP
-RE_DEDUPLICATE_WHITESPACE = re.compile(r"\s+")
 
 
 @lru_cache()
@@ -70,7 +69,7 @@ def basic_clean(text):
 
 
 def whitespace_clean(text):
-    text = RE_DEDUPLICATE_WHITESPACE.sub(" ", text)
+    text = " ".join(text.split())
     text = text.strip()
     return text
 
@@ -126,7 +125,7 @@ def canonicalize_text(
     else:
         text = text.translate(trans_punctuation)
     text = text.lower()
-    text = RE_DEDUPLICATE_WHITESPACE.sub(" ", text)
+    text = " ".join(text.split())
     return text.strip()
 
 
@@ -190,7 +189,7 @@ class SimpleTokenizer(object):
                     j = word.index(first, i)
                     new_word.extend(word[i:j])
                     i = j
-                except:
+                except Exception:
                     new_word.extend(word[i:])
                     break
 
