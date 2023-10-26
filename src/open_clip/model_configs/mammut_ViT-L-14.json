@@ -5,8 +5,7 @@
         "layers": 24,
         "width": 1024,
         "patch_size": 14,
-        "output_tokens": true,
-        "global_average_pool": true
+        "output_tokens": true
     },
     "text_cfg": {
         "context_length": 77,
