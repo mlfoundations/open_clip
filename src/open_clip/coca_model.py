@@ -160,6 +160,7 @@ class CoCa(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
+            is_training=True
     ):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
@@ -170,7 +171,9 @@ class CoCa(nn.Module):
         text_latent, token_embs = self._encode_text(text)
 
         # TODO: add assertion to avoid bugs?
-        labels = text[:, -token_embs.shape[1]:]
+        labels = text[:, 1:]
+        if is_training:
+            token_embs = token_embs[:, :-1]
 
         logits = self.text_decoder(image_embs, token_embs)
         out_dict = {
@@ -276,7 +279,7 @@ class CoCa(nn.Module):
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
+                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, is_training=False)["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -372,7 +375,8 @@ class CoCa(nn.Module):
                 model_inputs['images'],
                 model_inputs['text'],
                 image_latent=image_latent,
-                image_embs=image_embs
+                image_embs=image_embs,
+                is_training=False
             )
 
             for beam_group_idx in range(num_beam_groups):
