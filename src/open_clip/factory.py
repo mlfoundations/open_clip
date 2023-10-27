@@ -150,6 +150,9 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     # detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
+    # Presumably if loading a non-siglip model for siglip training. See https://github.com/mlfoundations/open_clip/issues/712
+    if not 'logit_bias' in state_dict and hasattr(model, "logit_bias"):
+        state_dict["logit_bias"] = torch.tensor(0.)
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
     if position_id_key in state_dict and not hasattr(model, position_id_key):
