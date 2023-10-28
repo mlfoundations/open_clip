@@ -147,13 +147,24 @@ Additional models and more information can be found at [/docs/datacomp_models.md
 
 * `commonpool_xl_s13b_b90k`: A ViT-L/14 trained on CommonPool-XL without any filtering, for 12.8B steps and batch size 90k. Achieves 72.3% zero-shot accuracy on ImageNet. Available at https://huggingface.co/laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K.
 
+If you use models trained on DataComp-1B or CommonPool variations, please consider citing the following:
+
+```bibtex
+@article{datacomp,
+  title={DataComp: In search of the next generation of multimodal datasets},
+  author={Samir Yitzhak Gadre, Gabriel Ilharco, Alex Fang, Jonathan Hayase, Georgios Smyrnis, Thao Nguyen, Ryan Marten, Mitchell Wortsman, Dhruba Ghosh, Jieyu Zhang, Eyal Orgad, Rahim Entezari, Giannis Daras, Sarah Pratt, Vivek Ramanujan, Yonatan Bitton, Kalyani Marathe, Stephen Mussmann, Richard Vencu, Mehdi Cherti, Ranjay Krishna, Pang Wei Koh, Olga Saukh, Alexander Ratner, Shuran Song, Hannaneh Hajishirzi, Ali Farhadi, Romain Beaumont, Sewoong Oh, Alex Dimakis, Jenia Jitsev, Yair Carmon, Vaishaal Shankar, Ludwig Schmidt},
+  journal={arXiv preprint arXiv:2304.14108},
+  year={2023}
+}
+```
+
 
 ### MetaCLIP
 
 MetaCLIP models are described in the paper [Demystifying CLIP Data](https://arxiv.org/abs/2309.16671).
 These models were developed by Hu Xu, Saining Xie, Xiaoqing Ellen Tan, Po-Yao Huang, Russell Howes, Vasu Sharma, Shang-Wen Li, Gargi Ghosh, Luke Zettlemoyer and Christoph Feichtenhofer from Meta, New York University and the University of Washington.
 
-Models and are licensed under CC-BY-NC.
+Models are licensed under CC-BY-NC.
 More details are available at https://github.com/facebookresearch/MetaCLIP. 
 
 
@@ -165,5 +176,97 @@ If you use MetaCLIP models, please cite the following:
    author={Hu Xu, Saining Xie, Xiaoqing Ellen Tan, Po-Yao Huang, Russell Howes, Vasu, Sharma, Shang-Wen Li, Gargi Ghosh, Luke Zettlemoyer and Christoph Feichtenhofer},
    journal={arXiv preprint arXiv:2309.16671},
    year={2023}
+}
+```
+
+
+### EVA-CLIP
+
+EVA-CLIP models are described in the paper [EVA-CLIP: Improved Training Techniques for CLIP at Scale](https://arxiv.org/abs/2303.15389).
+These models were developed by Quan Sun, Yuxin Fang, Ledell Wu, Xinlong Wang and Yue Cao from BAAI and HUST.
+
+Models are licensed under the MIT License.
+More details are available at https://github.com/baaivision/EVA/tree/master/EVA-CLIP.
+
+
+If you use EVA models, please cite the following:
+
+```bibtex
+@article{EVA-CLIP,
+  title={EVA-CLIP: Improved Training Techniques for CLIP at Scale},
+  author={Sun, Quan and Fang, Yuxin and Wu, Ledell and Wang, Xinlong and Cao, Yue},
+  journal={arXiv preprint arXiv:2303.15389},
+  year={2023}
+}
+```
+
+
+### NLLB
+
+NLLB models are described in the paper [NLLB-CLIP -- train performant multilingual image retrieval model on a budget
+](https://arxiv.org/abs/2309.01859) by Alexander Visheratin.
+
+Models are licensed under CC-BY-NC.
+
+If you use NLLB models, please cite the following:
+
+```bibtex
+@article{visheratin2023nllb,
+  title={NLLB-CLIP--train performant multilingual image retrieval model on a budget},
+  author={Visheratin, Alexander},
+  journal={arXiv preprint arXiv:2309.01859},
+  year={2023}
+}
+```
+
+
+### CLIPA
+
+CLIPA models are described in the following papers by Xianhang Li, Zeyu Wang, Cihang Xie from UC Santa Cruz:
+
+- [An Inverse Scaling Law for CLIP Training](https://arxiv.org/abs/2305.07017)
+- [CLIPA-v2: Scaling CLIP Training with 81.1% Zero-shot ImageNet Accuracy within a $10,000 Budget; An Extra $4,000 Unlocks 81.8% Accuracy](https://arxiv.org/abs/2306.15658)
+
+Models are licensed under Apache 2.0.
+More details are available at https://github.com/UCSC-VLAA/CLIPA and [here](clipa.md).
+
+
+If you use CLIPA models, please cite the following:
+
+```bibtex
+@inproceedings{li2023clipa,
+      title={An Inverse Scaling Law for CLIP Training}, 
+      author={Xianhang Li and Zeyu Wang and Cihang Xie},
+      booktitle={NeurIPS},
+      year={2023},
+}
+```
+
+```bibtex
+@article{li2023clipav2,
+      title={CLIPA-v2: Scaling CLIP Training with 81.1% Zero-shot ImageNet Accuracy within a $10,000 Budget; An Extra $4,000 Unlocks 81.8% Accuracy}, 
+      author={Xianhang Li and Zeyu Wang and Cihang Xie},
+      journal={arXiv preprint arXiv:2306.15658},
+      year={2023},
+}
+```
+
+### SigLIP
+
+SigLIP models are described in the paper [Sigmoid Loss for Language Image Pre-Training](https://arxiv.org/abs/2303.15343).
+These models were developed by Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, Lucas Beyer from Google Deepmind.
+
+Models are licensed under the Apache 2 license.
+More details are available at hhttps://github.com/google-research/big_vision.
+
+
+If you use EVA models, please cite the following:
+
+```bibtex
+@article{zhai2023sigmoid,
+  title={Sigmoid loss for language image pre-training},
+  author={Zhai, Xiaohua and Mustafa, Basil and Kolesnikov, Alexander and Beyer, Lucas},
+  journal={arXiv preprint arXiv:2303.15343},
+  year={2023}
 }
 ```
