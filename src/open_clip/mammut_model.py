@@ -77,6 +77,7 @@ class MaMMUT(nn.Module, Generator):
             cast_dtype=cast_dtype,
         )
 
+        self.context_length = multimodal_cfg.context_length
         self.map_viz2txt_kv = nn.Parameter(torch.randn(vision_cfg.width, multimodal_cfg.width))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
@@ -134,6 +135,7 @@ class MaMMUT(nn.Module, Generator):
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
+        print(text.shape)
         text = text[:, :-1] if is_training else text # drop last tok because it has no label
         out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
 
@@ -161,5 +163,5 @@ class MaMMUT(nn.Module, Generator):
             is_training=is_training,
         )
 
-        print(out["logits"].shape)
+
         return out
