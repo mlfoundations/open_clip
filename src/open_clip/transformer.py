@@ -511,7 +511,9 @@ class VisionTransformer(nn.Module):
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.pool_type == 'avg':
-            pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
+            pooled, tokens = x.mean(dim=1), x
+        elif self.pool_type == "avg_all":
+            pooled, tokens = x.mean(dim=1), x[:, 1:]
         elif self.pool_type == 'tok':
             pooled, tokens = x[:, 0], x[:, 1:]
         else:
