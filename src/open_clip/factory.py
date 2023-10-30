@@ -294,7 +294,7 @@ def create_model(
             else:
                 error_str = (
                     f'Pretrained weights ({pretrained}) not found for model {model_name}.'
-                    f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
+                    f' Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
             pretrained_loaded = True
