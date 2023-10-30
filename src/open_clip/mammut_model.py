@@ -122,7 +122,7 @@ class MaMMUT(nn.Module, Generator):
         image_latent, _ = self._encode_image(image, normalize=normalize)
         return image_latent
 
-    def _forward(self, text, out, image_embs=None, contrastive=True, embed_cls=True):
+    def _forward(self, text, out, image_embs=None, contrastive=True, is_training=True):
 
         if contrastive:
             text_features = self.encode_text(text)
@@ -134,12 +134,12 @@ class MaMMUT(nn.Module, Generator):
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
-        text = text[:, :-1] if embed_cls else text # drop last tok because it has no label
+        text = text[:, :-1] if is_training else text # drop last tok because it has no label
         out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
 
         return out
 
-    def forward(self, image, text=None, image_latent=None, image_embs=None, embed_cls=True):
+    def forward(self, image, text=None, image_latent=None, image_embs=None, is_training=True):
         out = {"logit_scale": self.logit_scale.exp()}
 
         if image_latent is None or image_embs is None:
@@ -150,13 +150,16 @@ class MaMMUT(nn.Module, Generator):
         if text is None:
             return out
 
-        out = self._forward(text=text, out=out)
+        if is_training:
+            out = self._forward(text=text, out=out)
+
         out = self._forward(
             text=text,
             out=out,
             image_embs=image_embs,
             contrastive=False,
-            embed_cls=embed_cls
+            is_training=is_training,
         )
 
+        print(out["logits"].shape)
         return out

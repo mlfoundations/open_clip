@@ -125,7 +125,7 @@ class Generator:
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, is_training=False)["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -220,9 +220,9 @@ class Generator:
             outputs = self(
                 model_inputs['images'],
                 model_inputs['text'],
-                embed_cls=False,
                 image_latent=image_latent,
-                image_embs=image_embs
+                image_embs=image_embs,
+                is_training=False
             )
 
             for beam_group_idx in range(num_beam_groups):

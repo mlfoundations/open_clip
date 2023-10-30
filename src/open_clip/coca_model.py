@@ -131,8 +131,8 @@ class CoCa(nn.Module, Generator):
         text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent
 
-    def forward(self, image=None, text=None, embed_cls=True, image_latent=None, image_embs=None):
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+    def forward(self, image=None, text=None, image_latent=None, image_embs=None, is_training=True):
+        text_latent, token_embs = self._encode_text(text)
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
