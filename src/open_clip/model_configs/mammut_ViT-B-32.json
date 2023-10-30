@@ -5,7 +5,8 @@
         "layers": 12,
         "width": 768,
         "patch_size": 32,
-        "output_tokens": true
+        "output_tokens": true,
+        "final_ln_after_pool": true
     },
     "text_cfg": {
         "context_length": 77,
