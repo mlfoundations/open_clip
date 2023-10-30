@@ -1,0 +1,27 @@
+{
+    "embed_dim": 1280,
+    "vision_cfg": {
+        "image_size": 336,
+        "layers": 48,
+        "width": 1664,
+        "head_width": 104,
+        "mlp_ratio": 4.9231,
+        "patch_size": 14,
+        "no_ln_pre": true,
+        "pool_type": "avg",
+        "final_ln_after_pool": true
+    },
+    "text_cfg": {
+        "context_length": 32,
+        "vocab_size": 32000,
+        "hf_tokenizer_name": "bert-base-uncased",
+        "tokenizer_kwargs": {
+            "strip_sep_token": true
+        },
+        "width": 1280,
+        "heads": 20,
+        "layers": 32,
+        "pool_type": "last",
+        "no_causal_mask": true
+    }
+}

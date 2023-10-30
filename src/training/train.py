@@ -38,12 +38,14 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def postprocess_clip_output(model_out):
     return {
         "image_features": model_out[0],
         "text_features": model_out[1],
         "logit_scale": model_out[2]
     }
+
 
 def unwrap_model(model):
     if hasattr(model, 'module'):
@@ -63,7 +65,6 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
     input_dtype = get_input_dtype(args.precision)
-
 
     model.train()
     if args.distill:
@@ -102,7 +103,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}' : v for k, v in dist_model_out.items()})
+                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
@@ -114,7 +115,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             with torch.no_grad():
                 with autocast():
                     model_out = model(images, texts)
-                    model_out.pop("logit_scale")
+
+                    for f in ("logit_scale", "logit_bias"):
+                        model_out.pop(f, None)
+
                     for key, val in model_out.items():
                         if key in accum_features:
                             accum_features[key].append(val)
@@ -138,15 +142,23 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 texts = accum_texts[j]
                 with autocast():
                     model_out = model(images, texts)
-                    logit_scale = model_out.pop("logit_scale")
+
+                    inputs_no_accum = {}
+                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                    if "logit_bias" in model_out:
+                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+
                     inputs = {}
                     for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] +  [model_out[key]] + accumulated[j + 1:])
-                    losses = loss(**inputs, logit_scale=logit_scale, output_dict=True)
+                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+
+                    losses = loss(**inputs, **inputs_no_accum, output_dict=True)
                     del inputs
+                    del inputs_no_accum
                     total_loss = sum(losses.values())
                     losses["loss"] = total_loss
+
                 backward(total_loss, scaler)
 
         if scaler is not None:
@@ -219,28 +231,31 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             }            
             log_data.update({name:val.val for name,val in losses_m.items()})
 
-            for name, val in log_data.items():
-                name = "train/" + name
-                if tb_writer is not None:
-                    tb_writer.add_scalar(name, val, step)
-                if args.wandb:
-                    assert wandb is not None, 'Please install wandb.'
-                    wandb.log({name: val, 'step': step})
+            log_data = {"train/" + name: val for name, val in log_data.items()}
 
+            if tb_writer is not None:
+                for name, val in log_data.items():
+                    tb_writer.add_scalar(name, val, step)
+            
+            if args.wandb:
+                assert wandb is not None, 'Please install wandb.'
+                log_data['step'] = step  # for backwards compatibility
+                wandb.log(log_data, step=step)
+            
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
     # end for
 
 
-def evaluate(model, data, epoch, args, tb_writer=None):
+def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
     if not is_master(args):
         return metrics
     device = torch.device(args.device)
     model.eval()
 
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
+    zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision)
@@ -317,10 +332,12 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
     )
 
+    log_data = {"val/" + name: val for name, val in metrics.items()}
+
     if args.save_logs:
-        for name, val in metrics.items():
-            if tb_writer is not None:
-                tb_writer.add_scalar(f"val/{name}", val, epoch)
+        if tb_writer is not None:
+            for name, val in log_data.items():
+                tb_writer.add_scalar(name, val, epoch)
 
         with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
             f.write(json.dumps(metrics))
@@ -328,8 +345,14 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 
     if args.wandb:
         assert wandb is not None, 'Please install wandb.'
-        for name, val in metrics.items():
-            wandb.log({f"val/{name}": val, 'epoch': epoch})
+        if 'train' in data:
+            dataloader = data['train'].dataloader
+            num_batches_per_epoch = dataloader.num_batches // args.accum_freq
+            step = num_batches_per_epoch * epoch
+        else:
+            step = None
+        log_data['epoch'] = epoch
+        wandb.log(log_data, step=step)
 
     return metrics
 

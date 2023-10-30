@@ -55,11 +55,16 @@ class TimmModel(nn.Module):
             timm_kwargs['patch_drop_rate'] = patch_drop
 
         custom_pool = pool in ('abs_attn', 'rot_attn')
-        if not proj and not custom_pool:
+        if proj:
+            assert proj in ("linear", "mlp", "none")
+        extra_proj = proj in ("linear", "mlp")
+        if not extra_proj and not custom_pool:
             # use network classifier head as projection if no proj specified and no custom pooling used
+            # if projection is explicitly set to "none" will be pass through from network trunk
+            proj_dim = 0 if proj == 'none' else embed_dim
             self.trunk = timm.create_model(
                 model_name,
-                num_classes=embed_dim,
+                num_classes=proj_dim,
                 global_pool=pool,
                 pretrained=pretrained,
                 **timm_kwargs,
@@ -99,8 +104,6 @@ class TimmModel(nn.Module):
             head_layers['proj'] = nn.Linear(prev_chs, embed_dim, bias=proj_bias)
         elif proj == 'mlp':
             head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=(drop, 0), bias=(True, proj_bias))
-        else:
-            assert not proj, f'Unknown projection type {proj}.'
 
         self.head = nn.Sequential(head_layers)
 
