@@ -173,13 +173,16 @@ class CoCa(nn.Module):
         labels = text[:, -token_embs.shape[1]:]
 
         logits = self.text_decoder(image_embs, token_embs)
-        return {
+        out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
             "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
+        if self.logit_bias is not None:
+            out_dict["logit_bias"] = self.logit_bias
+        return out_dict
 
     def generate(
         self,
