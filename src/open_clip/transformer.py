@@ -355,7 +355,9 @@ class Transformer(nn.Module):
             if output_hidden_states:
                 encoder_states.append(x)
 
-        return TransformerOutput(x, encoder_states).value()
+        if output_hidden_states:
+            return x, encoder_states
+        return x
 
 
 class VisionTransformer(nn.Module):
@@ -552,6 +554,8 @@ class VisionTransformer(nn.Module):
         if output_hidden_states:
             x = x[0]
             hidden_states = x[1]
+        else:
+            hidden_states = None
 
         x = x.permute(1, 0, 2)  # LND -> NLD
 
