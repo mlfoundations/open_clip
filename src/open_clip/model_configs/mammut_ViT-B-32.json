@@ -6,7 +6,7 @@
         "width": 768,
         "patch_size": 32,
         "output_tokens": true,
-        "pool_type": "avg",
+        "pool_type": "avg_all",
         "final_ln_after_pool": true
     },
     "text_cfg": {

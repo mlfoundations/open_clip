@@ -371,7 +371,7 @@ class VisionTransformer(nn.Module):
             output_tokens: bool = False,
     ):
         super().__init__()
-        assert pool_type in ('tok', 'avg', 'none')
+        assert pool_type in ('tok', 'avg', 'avg_all', 'none')
         self.output_tokens = output_tokens
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
@@ -513,7 +513,7 @@ class VisionTransformer(nn.Module):
         if self.pool_type == 'avg':
             pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
         elif self.pool_type == "avg_all":
-            pooled, tokens = x.mean(dim=1), x[:, 1:]
+            pooled, tokens = x.mean(dim=1), x
         elif self.pool_type == 'tok':
             pooled, tokens = x[:, 0], x[:, 1:]
         else:

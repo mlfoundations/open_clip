@@ -135,7 +135,7 @@ class MaMMUT(nn.Module, Generator):
 
         # TODO: add assertion to avoid bugs?
         out["labels"] = text[:, 1:]  # shift labels
-        print(text.shape)
+
         text = text[:, :-1] if is_training else text # drop last tok because it has no label
         out["logits"] = self.encode_text(text, image_embs=image_embs, output_logits=True)
 
