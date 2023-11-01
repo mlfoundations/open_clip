@@ -331,7 +331,7 @@ class Transformer(nn.Module):
             else:
                 x = r(x, attn_mask=attn_mask)
         return x
-    
+
     def init_parameters(self):
         proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
         attn_std = self.width ** -0.5
@@ -511,7 +511,7 @@ class VisionTransformer(nn.Module):
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.pool_type == 'avg':
-            pooled, tokens = x.mean(dim=1), x
+            pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
         elif self.pool_type == "avg_all":
             pooled, tokens = x.mean(dim=1), x[:, 1:]
         elif self.pool_type == 'tok':
@@ -739,7 +739,7 @@ class MultimodalTransformer(nn.Module):
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,            
+            norm_layer: Callable = LayerNorm,
             cross_attn_ratio = 1,
             output_dim: int = 512,
             does_full_decoding: bool = False, # if this is false below values are useless
@@ -847,7 +847,7 @@ class MultimodalTransformer(nn.Module):
         if image_embs is not None:
             image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
 
-        # TODO: handle different cases better, currently 
+        # TODO: handle different cases better, currently
         # differentiates coca from mammut based on image_embs
         if image_embs is not None:
             attn_mask = self.attn_mask
