@@ -379,6 +379,8 @@ class VisionTransformer(nn.Module):
         assert pool_type in ('tok', 'avg', 'none')
         self.output_tokens = output_tokens
         self.output_hidden_states = output_hidden_states
+        self.hidden_size = width
+
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
         self.grid_size = (image_height // patch_height, image_width // patch_width)
