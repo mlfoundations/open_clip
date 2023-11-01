@@ -525,7 +525,7 @@ class VisionTransformer(nn.Module):
 
         return pooled, tokens
 
-    def forward(self, x: torch.Tensor, output_hidden_states=False):
+    def forward(self, x: torch.Tensor):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -539,8 +539,8 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        transformer_out = self.transformer(x, output_hidden_states=output_hidden_states)
-        if output_hidden_states:
+        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states)
+        if self.output_hidden_states:
             x, hidden_states = transformer_out
             assert isinstance(hidden_states, list)
             hidden_states = [h.permute(1, 0, 2) for h in hidden_states]
