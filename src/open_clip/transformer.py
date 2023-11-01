@@ -382,10 +382,12 @@ class VisionTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            output_hidden_states: bool = False
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
         self.output_tokens = output_tokens
+        self.output_hidden_states = output_hidden_states
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
         self.grid_size = (image_height // patch_height, image_width // patch_width)
