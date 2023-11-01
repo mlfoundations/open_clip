@@ -270,3 +270,21 @@ If you use SigLIP models, please cite the following:
   year={2023}
 }
 ```
+
+### DFN
+
+Data Filtering Network models are described in https://arxiv.org/abs/2309.17425.
+These models were developed by Alex Fang, Albin Madappally Jose, Amit Jain, Ludwig Schmidt, Alexander Toshev and Vaishaal Shankar from Apple and the University of Washington.
+
+Models are licensed under the following: https://huggingface.co/apple/DFN5B-CLIP-ViT-H-14-384/blob/main/LICENSE.
+
+If you use DFN models, please cite the following:
+
+```bibtext
+@article{fang2023data,
+  title={Data Filtering Networks},
+  author={Fang, Alex and Jose, Albin Madappally and Jain, Amit and Schmidt, Ludwig and Toshev, Alexander and Shankar, Vaishaal},
+  journal={arXiv preprint arXiv:2309.17425},
+  year={2023}
+}
+```

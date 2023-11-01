@@ -226,10 +226,11 @@ def main():
             models_with_errors.append(m)
 
     df = pd.DataFrame(results, columns=results[0].keys())
+
     if 'gmacs' in df.columns:
-        df = df.sort_values('gmacs')
+        df = df.sort_values(by=['gmacs', 'mparams', 'model'])
     else:
-        df = df.sort_values('gflops')
+        df = df.sort_values(by=['gflops', 'mparams', 'model'])
 
     print('='*100)
     print('Done.')
@@ -237,7 +238,8 @@ def main():
     if args.results_file:
         df.to_csv(args.results_file, index=False)
 
-    print('Models with errors:', models_with_errors)
+    if models_with_errors:
+        print('Models with errors:', models_with_errors)
 
 
 if __name__ == '__main__':
