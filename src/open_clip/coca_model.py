@@ -11,7 +11,6 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
-    TransformerOutput
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -85,6 +84,8 @@ class CoCa(nn.Module):
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
             quick_gelu: bool = False,
+            init_logit_scale: float = np.log(1 / 0.07),
+            init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
     ):
@@ -120,66 +121,68 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+        if init_logit_bias is not None:
+            self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
+        else:
+            self.logit_bias = None
         self.pad_id = pad_id
 
+        self.context_length = multimodal_cfg.context_length
+
     @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
         self.text_decoder.set_grad_checkpointing(enable)
 
-    def _encode_image(self, images, normalize=True, output_hidden_states=False):
-        result = self.visual(images, output_hidden_states=output_hidden_states)
+    def _encode_image(self, images, normalize: bool = True):
+        image_latent, tokens_embs = self.visual(images)
+        image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
+        return image_latent, tokens_embs
 
-        image_latent = result[0]
-        if normalize:
-            image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        
-        
-        return TransformerOutput(
-            pooled=image_latent,
-            tokens=result[1],
-            hidden_states=result[2]
-        ).value()
+    def _encode_text(self, text, normalize: bool = True):
+        text_latent, token_emb = self.text(text)
+        text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
+        return text_latent, token_emb
 
-    def _encode_text(self, text, normalize=True, embed_cls=True, output_hidden_states=False):
-        text = text[:, :-1] if embed_cls else text # make space for CLS token
-        # text_latent, token_emb = self.text(text)
-        result = self.text(text, output_hidden_states=output_hidden_states)
-        text_latent = result[0]
-        if normalize:
-            text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
+    def encode_image(self, images, normalize: bool = True):
+        image_latent, _ = self._encode_image(images, normalize=normalize)
+        return image_latent
 
-        return TransformerOutput(
-            pooled=text_latent,
-            tokens=result[1],
-            hidden_states=result[2]
-        ).value()
+    def encode_text(self, text, normalize: bool = True):
+        text_latent, _ = self._encode_text(text, normalize=normalize)
+        return text_latent
 
-    def encode_image(self, images, normalize=True, output_hidden_states=False):
-        return self._encode_image(images, normalize=normalize, output_hidden_states=output_hidden_states)
-
-    def encode_text(self, text, normalize=True, embed_cls=True, output_hidden_states=False):
-        return self._encode_text(text, normalize=normalize, embed_cls=embed_cls, output_hidden_states=output_hidden_states)
-        
-
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+    def forward(
+            self,
+            image,
+            text: Optional[torch.Tensor] = None,
+            image_latent: Optional[torch.Tensor] = None,
+            image_embs: Optional[torch.Tensor] = None,
+    ):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
+
+        if text is None:
+            return {"image_features": image_latent, "image_embs": image_embs}
+
+        text_latent, token_embs = self._encode_text(text)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
 
         logits = self.text_decoder(image_embs, token_embs)
-        return {
+        out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
             "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
+        if self.logit_bias is not None:
+            out_dict["logit_bias"] = self.logit_bias
+        return out_dict
 
     def generate(
         self,
@@ -228,7 +231,7 @@ class CoCa(nn.Module):
 
             if generation_type == "beam_search":
                 output = self._generate_beamsearch(
-                    image_inputs = image,
+                    image_inputs=image,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
                     sot_token_id=sot_token_id,
@@ -273,7 +276,7 @@ class CoCa(nn.Module):
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -368,7 +371,6 @@ class CoCa(nn.Module):
             outputs = self(
                 model_inputs['images'],
                 model_inputs['text'],
-                embed_cls=False,
                 image_latent=image_latent,
                 image_embs=image_embs
             )

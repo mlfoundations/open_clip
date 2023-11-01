@@ -103,7 +103,7 @@ class HFTextEncoder(nn.Module):
             output_dim: int,
             config: PretrainedConfig = None,
             pooler_type: str = None,
-            proj: str = None,
+            proj_type: str = None,
             pretrained: bool = True,
             output_tokens: bool = False,
     ):
@@ -139,11 +139,11 @@ class HFTextEncoder(nn.Module):
         self.pooler = _POOLERS[pooler_type]()
 
         d_model = getattr(self.config, arch_dict[self.config.model_type]["config_names"]["width"])
-        if (d_model == output_dim) and (proj is None):  # do we always need a proj?
+        if (d_model == output_dim) and (proj_type is None):  # do we always need a proj?
             self.proj = nn.Identity()
-        elif proj == 'linear':
+        elif proj_type == 'linear':
             self.proj = nn.Linear(d_model, output_dim, bias=False)
-        elif proj == 'mlp':
+        elif proj_type == 'mlp':
             hidden_size = (d_model + output_dim) // 2
             self.proj = nn.Sequential(
                 nn.Linear(d_model, hidden_size, bias=False),

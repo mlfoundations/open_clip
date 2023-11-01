@@ -36,6 +36,7 @@ HF_WEIGHTS_NAME = "open_clip_pytorch_model.bin"  # default pytorch pkl
 HF_SAFE_WEIGHTS_NAME = "open_clip_model.safetensors"  # safetensors version
 HF_CONFIG_NAME = 'open_clip_config.json'
 
+
 def save_config_for_hf(
         model,
         config_path: str,
@@ -45,6 +46,11 @@ def save_config_for_hf(
         'mean': model.visual.image_mean,
         'std': model.visual.image_std,
     }
+    other_pp = getattr(model.visual, 'preprocess_cfg', {})
+    if 'interpolation' in other_pp:
+        preprocess_cfg['interpolation'] = other_pp['interpolation']
+    if 'resize_mode' in other_pp:
+        preprocess_cfg['resize_mode'] = other_pp['resize_mode']
     hf_config = {
         'model_cfg': model_config,
         'preprocess_cfg': preprocess_cfg,
@@ -59,7 +65,7 @@ def save_for_hf(
     tokenizer: HFTokenizer,
     model_config: dict,
     save_directory: str,
-    safe_serialization: Union[bool, str] = False,
+    safe_serialization: Union[bool, str] = 'both',
     skip_weights : bool = False,
 ):
     config_filename = HF_CONFIG_NAME
@@ -95,6 +101,7 @@ def push_to_hf_hub(
     safe_serialization: Union[bool, str] = False,
 ):
     if not isinstance(tokenizer, HFTokenizer):
+        # FIXME this makes it awkward to push models with new tokenizers, come up with better soln.
         # default CLIP tokenizers use https://huggingface.co/openai/clip-vit-large-patch14
         tokenizer = HFTokenizer('openai/clip-vit-large-patch14')
 
@@ -157,12 +164,15 @@ def push_pretrained_to_hf_hub(
     precision: str = 'fp32',
     image_mean: Optional[Tuple[float, ...]] = None,
     image_std: Optional[Tuple[float, ...]] = None,
+    image_interpolation: Optional[str] = None,
+    image_resize_mode: Optional[str] = None,  # only effective for inference
     commit_message: str = 'Add model',
     token: Optional[str] = None,
     revision: Optional[str] = None,
     private: bool = False,
     create_pr: bool = False,
     model_card: Optional[dict] = None,
+    hf_tokenizer_self: bool = False,
 ):
     model, preprocess_eval = create_model_from_pretrained(
         model_name,
@@ -170,12 +180,16 @@ def push_pretrained_to_hf_hub(
         precision=precision,
         image_mean=image_mean,
         image_std=image_std,
+        image_interpolation=image_interpolation,
+        image_resize_mode=image_resize_mode,
     )
-
     model_config = get_model_config(model_name)
     assert model_config
 
     tokenizer = get_tokenizer(model_name)
+    if hf_tokenizer_self:
+        # make hf tokenizer config in the uploaded model point to self instead of original location
+        model_config['text']['hf_tokenizer_name'] = repo_id
 
     push_to_hf_hub(
         model=model,
@@ -193,10 +207,15 @@ def push_pretrained_to_hf_hub(
 
 
 def generate_readme(model_card: dict, model_name: str):
+    tags = model_card.pop('tags', ('clip',))
+    pipeline_tag = model_card.pop('pipeline_tag', 'zero-shot-image-classification')
     readme_text = "---\n"
-    readme_text += "tags:\n- clip\n"
+    if tags:
+        readme_text += "tags:\n"
+        for t in tags:
+            readme_text += f"- {t}\n"
     readme_text += "library_name: open_clip\n"
-    readme_text += "pipeline_tag: zero-shot-image-classification\n"
+    readme_text += f"pipeline_tag: {pipeline_tag}\n"
     readme_text += f"license: {model_card.get('license', 'mit')}\n"
     if 'details' in model_card and 'Dataset' in model_card['details']:
         readme_text += 'datasets:\n'
@@ -262,6 +281,22 @@ if __name__ == "__main__":
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=None, metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument(
+        '--image-interpolation',
+        default=None, type=str, choices=['bicubic', 'bilinear', 'random'],
+        help="image resize interpolation"
+    )
+    parser.add_argument(
+        '--image-resize-mode',
+        default=None, type=str, choices=['shortest', 'longest', 'squash'],
+        help="image resize mode during inference"
+    )
+    parser.add_argument(
+        "--hf-tokenizer-self",
+        default=False,
+        action="store_true",
+        help="make hf_tokenizer_name point in uploaded config point to itself"
+    )
     args = parser.parse_args()
 
     print(f'Saving model {args.model} with pretrained weights {args.pretrained} to Hugging Face Hub at {args.repo_id}')
@@ -275,6 +310,8 @@ if __name__ == "__main__":
         precision=args.precision,
         image_mean=args.image_mean,  # override image mean/std if trained w/ non defaults
         image_std=args.image_std,
+        image_interpolation=args.image_interpolation,
+        image_resize_mode=args.image_resize_mode,
     )
 
     print(f'{args.model} saved.')
