@@ -543,6 +543,7 @@ class VisionTransformer(nn.Module):
         if output_hidden_states:
             x, hidden_states = transformer_out
             assert isinstance(hidden_states, list)
+            hidden_states = [h.permute(1, 0, 2) for h in hidden_states]
         else:
             x = transformer_out
             hidden_states = None
@@ -574,10 +575,12 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        # if self.output_tokens:
-        #     return pooled, tokens
-        
-        return pooled, tokens, hidden_states
+        if self.output_tokens:
+            return pooled, tokens
+        elif self.output_hidden_states:
+            return pooled, tokens, hidden_states
+        else:
+            return pooled
 
 
 
@@ -718,12 +721,14 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask, output_hidden_states=output_hidden_states)
+        transformer_out = self.transformer(x, attn_mask=attn_mask, output_hidden_states=output_hidden_states)
 
         if output_hidden_states:
-            x = x[0]
-            hidden_states = x[1]
+            x, hidden_states = transformer_out
+            assert isinstance(hidden_states, list)
+            hidden_states = [h.permute(1, 0, 2) for h in hidden_states]
         else:
+            x = transformer_out
             hidden_states = None
 
         x = x.permute(1, 0, 2)  # LND -> NLD
