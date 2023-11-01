@@ -332,7 +332,6 @@ class Transformer(nn.Module):
         encoder_states = [] if output_hidden_states else None
 
         if output_hidden_states:
-            print("encoder states len", len(encoder_states))
             encoder_states.append(x)
 
         for r in self.resblocks:
@@ -343,11 +342,9 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
 
             if output_hidden_states:
-                print("encoder states len", len(encoder_states))
                 encoder_states.append(x)
 
         if output_hidden_states:
-            print("encoder states len", len(encoder_states))
             return x, encoder_states
         return x
 
@@ -542,11 +539,12 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, output_hidden_states=output_hidden_states)
+        transformer_out = self.transformer(x, output_hidden_states=output_hidden_states)
         if output_hidden_states:
-            x = x[0]
-            hidden_states = x[1]
+            x, hidden_states = transformer_out
+            assert isinstance(hidden_states, list)
         else:
+            x = transformer_out
             hidden_states = None
 
         x = x.permute(1, 0, 2)  # LND -> NLD
@@ -579,7 +577,7 @@ class VisionTransformer(nn.Module):
         # if self.output_tokens:
         #     return pooled, tokens
         
-        return TransformerOutput(pooled, tokens, hidden_states).value()
+        return pooled, tokens, hidden_states
 
 
 
