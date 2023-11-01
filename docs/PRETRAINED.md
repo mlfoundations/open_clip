@@ -260,7 +260,7 @@ Models are licensed under the Apache 2 license.
 More details are available at hhttps://github.com/google-research/big_vision.
 
 
-If you use EVA models, please cite the following:
+If you use SigLIP models, please cite the following:
 
 ```bibtex
 @article{zhai2023sigmoid,
