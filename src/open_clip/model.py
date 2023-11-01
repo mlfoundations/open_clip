@@ -283,9 +283,6 @@ class CLIP(nn.Module):
 
         return TransformerOutput(features, hidden_states)
 
-
-        return TransformerOutput(features, hidden_states)
-
     def encode_text(self, text, normalize: bool = False, output_hidden_states: bool = False):
         # TODO: Why is this all here? We should just use the TextTransformer
         #   method it already does this. Why do we unwrap the transformer and

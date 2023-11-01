@@ -532,7 +532,7 @@ class VisionTransformer(nn.Module):
 
         return pooled, tokens
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, output_hidden_states=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -727,6 +727,8 @@ class TextTransformer(nn.Module):
         if output_hidden_states:
             x = x[0]
             hidden_states = x[1]
+        else:
+            hidden_states = None
 
         x = x.permute(1, 0, 2)  # LND -> NLD
 
@@ -751,7 +753,7 @@ class TextTransformer(nn.Module):
         return TransformerOutput(
             pooled=pooled,
             tokens=tokens,
-            encoder_states=hidden_states,
+            hidden_states=hidden_states,
         ).value()
 
 
