@@ -12,10 +12,6 @@ from .utils import to_2tuple
 from .pos_embed import get_2d_sincos_pos_embed
 
 
-
-# Standardize the output of the model so we can optionally return:
-#  hidden states
-#  tokens
 class TransformerOutput(torch.nn.Module):
     def __init__(self, pooled, tokens, hidden_states):
         self.pooled = pooled
@@ -24,14 +20,7 @@ class TransformerOutput(torch.nn.Module):
 
     # Get value
     def value(self):
-        if self.output_tokens and self.output_hidden_states:
-            return self.pooled, self.tokens, self.hidden_states
-
-        if self.output_tokens:
-            return self.pooled, self.tokens, None
-
-        if self.output_hidden_states:
-            return self.pooled, None, self.hidden_states
+        return self.pooled, self.tokens, self.hidden_states
 
 
 class LayerNormFp32(nn.LayerNorm):
