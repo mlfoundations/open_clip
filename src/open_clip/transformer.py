@@ -234,8 +234,6 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
-            output_attentions: bool = False,
-            output_hidden_states: bool = False,
     ):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
@@ -522,7 +520,7 @@ class VisionTransformer(nn.Module):
 
         return pooled, tokens
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, output_hidden_states: bool = False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -536,8 +534,8 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states)
-        if self.output_hidden_states:
+        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states or output_hidden_states)
+        if self.output_hidden_states or output_hidden_states:
             # transformer_out is a tuple of (tokens, hidden_states)
             x, hidden_states = transformer_out
             assert isinstance(hidden_states, list)
@@ -710,7 +708,7 @@ class TextTransformer(nn.Module):
         additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
         return additive_mask
 
-    def forward(self, text):
+    def forward(self, text, output_hidden_states: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -726,8 +724,8 @@ class TextTransformer(nn.Module):
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
 
-        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states)
-        if self.output_hidden_states:
+        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states or output_hidden_states)
+        if self.output_hidden_states or output_hidden_states:
             # transformer_out is a tuple of (tokens, hidden_states)
             x, hidden_states = transformer_out
             assert isinstance(hidden_states, list)

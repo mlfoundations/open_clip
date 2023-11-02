@@ -45,13 +45,13 @@ def test_inference_simple(
         image_result = model.encode_image(image, output_hidden_states=True)
         text_result = model.encode_text(text, output_hidden_states=True)
 
-        image_features = image_result.features
-        text_features = text_result.features
+        image_features, image_hidden_states = image_result
+        text_features, text_hidden_states = text_result
 
         text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
 
-        print(text_result.hidden_states.shape)
-        print(image_result.hidden_states.shape)
+        print(text_hidden_states.shape)
+        print(image_hidden_states.shape)
 
         # TODO: Write hidden state shapes assertions
 
