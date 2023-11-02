@@ -19,7 +19,7 @@ from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
 from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer,\
-    text_global_pool, TransformerOutput
+    text_global_pool
 from .utils import to_2tuple
 
 
@@ -281,12 +281,11 @@ class CLIP(nn.Module):
         if normalize:
             features = F.normalize(features, dim=-1)
 
-        return TransformerOutput(features, hidden_states)
+        if output_hidden_states:
+            return features, hidden_states
+        return features
 
     def encode_text(self, text, normalize: bool = False, output_hidden_states: bool = False):
-        # TODO: Why is this all here? We should just use the TextTransformer
-        #   method it already does this. Why do we unwrap the transformer and
-        #   then rewrap it?
         cast_dtype = self.transformer.get_cast_dtype()
 
         encoder_states = [] if output_hidden_states else None
@@ -296,6 +295,7 @@ class CLIP(nn.Module):
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
 
+        # we use text embedding as first hidden state in a list
         if output_hidden_states:
             encoder_states.append(x)
 
@@ -317,7 +317,9 @@ class CLIP(nn.Module):
         if normalize:
             x = F.normalize(x, dim=-1)
 
-        return TransformerOutput(x, dim=-1, hidden_states=encoder_states)
+        if output_hidden_states:
+            return x, encoder_states
+        return x
 
     def forward(
             self,
