@@ -50,8 +50,10 @@ def test_inference_simple(
 
         text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
 
-        print(text_hidden_states.shape)
-        print(image_hidden_states.shape)
+        # shape of hidden states: [bs, n_hidden_states, 1, seq_len, hidden_size]
+        # take first elem
+        print(f"Length of text hidden states: {len(text_hidden_states[0])}")
+        print(f"Length of image hidden states: {len(image_hidden_states)}")
 
         # TODO: Write hidden state shapes assertions
 
