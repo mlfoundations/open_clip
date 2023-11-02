@@ -571,7 +571,7 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        if self.output_hidden_states:
+        if self.output_hidden_states or output_hidden_states:
             if self.output_tokens:
                 return pooled, tokens, hidden_states
             else:
@@ -751,7 +751,7 @@ class TextTransformer(nn.Module):
             else:
                 pooled = pooled @ self.text_projection
 
-        if self.output_hidden_states:
+        if self.output_hidden_states or output_hidden_states:
             if self.output_tokens:
                 return pooled, tokens, hidden_states
             else:
