@@ -338,7 +338,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
 
     log_data = {"val/" + name: val for name, val in metrics.items()}
 
-    if args.save_logs:
+    if args.save_logs and is_master(args):
         if tb_writer is not None:
             for name, val in log_data.items():
                 tb_writer.add_scalar(name, val, epoch)
@@ -347,7 +347,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
             f.write(json.dumps(metrics))
             f.write("\n")
 
-    if args.wandb:
+    if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
         if 'train' in data:
             dataloader = data['train'].dataloader

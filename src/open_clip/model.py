@@ -285,7 +285,7 @@ class CLIP(nn.Module):
 
         return F.normalize(x, dim=-1) if normalize else x
 
-    def forward(self, image, text, clamp_logit_scale_to:float=0):
+    def forward(self, image=None, text=None, clamp_logit_scale_to:float=0):
         image_features = self.encode_image(image, normalize=True) if image is not None else None
         text_features = self.encode_text(text, normalize=True) if text is not None else None
         if clamp_logit_scale_to:
