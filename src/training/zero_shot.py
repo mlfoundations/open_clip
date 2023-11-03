@@ -6,7 +6,6 @@ from tqdm import tqdm
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from .precision import get_autocast
-from .imagenet_zeroshot_data import imagenet_classnames, openai_imagenet_template
 
 
 def zero_shot_classifier(model, classnames, templates, args):
