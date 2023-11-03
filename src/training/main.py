@@ -548,7 +548,7 @@ def main(args):
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": model.state_dict(),
+                "state_dict": original_model.state_dict(),
                 "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict(),
             }
 
