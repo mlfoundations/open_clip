@@ -28,7 +28,12 @@ if (int(major), int(minor)) >= (2, 1):
         CheckpointImpl,
         apply_activation_checkpointing,
     )
-
+try:
+    from fvcore.common.checkpoint import Checkpointer
+except ImportError:
+    has_checkpointer = False
+else:
+    has_checkpointer = True
 try:
     import wandb
 except ImportError:
@@ -55,9 +60,9 @@ from training.train import train_one_epoch, evaluate
 from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
 
-
-LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
-
+LATEST_CHECKPOINT = "epoch_latest"
+LATEST_CHECKPOINT_NAME = f"{LATEST_CHECKPOINT}.pt"
+DISTRIBUTED_CHECKPOINT_NAME_FORMAT = "{name}.rank_{rank}.pt"
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
@@ -70,7 +75,7 @@ def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
-def get_latest_checkpoint(path: str, remote : bool):
+def get_latest_checkpoint(path: str, remote : bool, search_pattern: str = "*.pt"):
     # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
     if remote:
         result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -79,7 +84,7 @@ def get_latest_checkpoint(path: str, remote : bool):
             return None
         checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
     else:
-        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        checkpoints = glob.glob(path + f'**/{search_pattern}', recursive=True)
     if checkpoints:
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
@@ -155,24 +160,31 @@ def main(args):
             if args.remote_sync_protocol != 's3':
                 print('Error. Sync protocol not supported when using resume latest.')
                 return -1
-        if is_master(args):
+        if is_master(args) or args.fsdp_use_distributed_checkpointer:
             # Checking for existing checkpoint via master rank only. It is possible for
             # different rank processes to see different files if a shared file-system is under
             # stress, however it's very difficult to fully work around such situations.
             if args.save_most_recent:
                 # if --save-most-recent flag is set, look for latest at a fixed filename
-                resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
+                resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT)
+                if args.fsdp_use_distributed_checkpointer:
+                    resume_from = DISTRIBUTED_CHECKPOINT_NAME_FORMAT.format(name=resume_from, rank=args.rank)
                 if not os.path.exists(resume_from):
                     # If no latest checkpoint has been saved yet, don't try to resume
                     resume_from = None
             else:
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
-                resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
+                if args.fsdp_use_distributed_checkpointer:
+                    pattern = DISTRIBUTED_CHECKPOINT_NAME_FORMAT.format(name="*", rank=args.rank)
+                    resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None, search_pattern=pattern)
+                    # TODO we need to make sure there is consistency between all checkpoints
+                else:
+                    resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None, search_pattern="*.pt")
             if resume_from:
                 logging.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
                 logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
-        if args.distributed:
+        if args.distributed and not args.fsdp_use_distributed_checkpointer:
             # sync found checkpoint path to all ranks
             resume_from = broadcast_object(args, resume_from)
         args.resume = resume_from
@@ -297,7 +309,7 @@ def main(args):
         if args.grad_checkpointing:
             model.set_grad_checkpointing()
 
-    if is_master(args):
+    if is_master(args): 
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
@@ -424,37 +436,48 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.fsdp:
-        FSDP.set_state_dict_type(
-            model,
-            StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
-                FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
-        )
-    if args.resume is not None:
-        checkpoint = pt_load(args.resume, map_location='cpu')
-        if 'epoch' in checkpoint:
-            # resuming a train checkpoint w/ epoch and optimizer state
-            start_epoch = checkpoint["epoch"]
-            sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
-            model.load_state_dict(sd)
-            if optimizer is not None:
-                if args.fsdp:
-                    optimizer_state_dict = checkpoint["optimizer"]
-                    optimizer_state_dict['state']['logit_scale']['exp_avg'] = optimizer_state_dict['state']['logit_scale']['exp_avg'].view(1)
-                    optimizer_state_dict['state']['logit_scale']['exp_avg_sq'] = optimizer_state_dict['state']['logit_scale']['exp_avg_sq'].view(1)
-                    sharded_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, optimizer_state_dict)
-                    optimizer.load_state_dict(sharded_state_dict)
-                else:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-            if scaler is not None and 'scaler' in checkpoint:
-                scaler.load_state_dict(checkpoint['scaler'])
-            logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        if args.fsdp_use_distributed_checkpointer:
+            checkpointer = FSDPCheckpointer(model, args.rank, args.checkpoint_path, optimizer=optimizer, save_to_disk=True)
         else:
-            # loading a bare (model only) checkpoint for fine-tune or evaluation
-            model.load_state_dict(checkpoint)
-            logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            FSDP.set_state_dict_type(
+                model,
+                StateDictType.FULL_STATE_DICT,
+                FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
+                FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
+            )
+   
+    if args.resume is not None:
+        if args.fsdp_use_distributed_checkpointer:
+            checkpoint = checkpointer.load(args.resume, checkpointables=[])
+            if 'epoch' in checkpoint:
+                start_epoch = checkpoint["epoch"]
+            if 'scaler' in checkpoint:
+                scaler.load_state_dict(checkpoint['scaler'])
+        else:
+            checkpoint = pt_load(args.resume, map_location='cpu')
+            if 'epoch' in checkpoint:
+                # resuming a train checkpoint w/ epoch and optimizer state
+                start_epoch = checkpoint["epoch"]
+                sd = checkpoint["state_dict"]
+                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                    sd = {k[len('module.'):]: v for k, v in sd.items()}
+                model.load_state_dict(sd)
+                if optimizer is not None:
+                    if args.fsdp:
+                        optimizer_state_dict = checkpoint["optimizer"]
+                        optimizer_state_dict['state']['logit_scale']['exp_avg'] = optimizer_state_dict['state']['logit_scale']['exp_avg'].view(1)
+                        optimizer_state_dict['state']['logit_scale']['exp_avg_sq'] = optimizer_state_dict['state']['logit_scale']['exp_avg_sq'].view(1)
+                        sharded_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, optimizer_state_dict)
+                        optimizer.load_state_dict(sharded_state_dict)
+                    else:
+                        optimizer.load_state_dict(checkpoint["optimizer"])
+                if scaler is not None and 'scaler' in checkpoint:
+                    scaler.load_state_dict(checkpoint['scaler'])
+            else:
+                # loading a bare (model only) checkpoint for fine-tune or evaluation
+                model.load_state_dict(checkpoint)
+                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+        logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
 
   
     # initialize datasets
@@ -544,35 +567,40 @@ def main(args):
 
         # Saving checkpoints.
         if args.save_logs:
-
-            checkpoint_dict = {
-                "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": original_model.state_dict(),
-                "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict(),
-            }
-
-            if scaler is not None:
-                checkpoint_dict["scaler"] = scaler.state_dict()
-            if is_master(args):
-                if completed_epoch == args.epochs or (
-                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-                ):
-                    torch.save(
-                        checkpoint_dict,
-                        os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
-                    )
-                if args.delete_previous_checkpoint:
-                    previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
-                    if os.path.exists(previous_checkpoint):
-                        os.remove(previous_checkpoint)
-
+            if args.fsdp_use_distributed_checkpointer:
+                if completed_epoch == args.epochs or (args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0):
+                    checkpointer.save(path=f"epoch_{completed_epoch}", name=args.name, epoch=completed_epoch, scaler=scaler.state_dict())
                 if args.save_most_recent:
-                    # try not to corrupt the latest checkpoint if save fails
-                    tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
-                    latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
-                    torch.save(checkpoint_dict, tmp_save_path)
-                    os.replace(tmp_save_path, latest_save_path)
+                    checkpointer.save(path=LATEST_CHECKPOINT, name=args.name, epoch=completed_epoch, scaler=scaler.state_dict())
+            else:
+                checkpoint_dict = {
+                    "epoch": completed_epoch,
+                    "name": args.name,
+                    "state_dict": original_model.state_dict(),
+                    "optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict(),
+                }
+
+                if scaler is not None:
+                    checkpoint_dict["scaler"] = scaler.state_dict()
+                if is_master(args):
+                    if completed_epoch == args.epochs or (
+                        args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                    ):
+                        torch.save(
+                            checkpoint_dict,
+                            os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+                        )
+                    if args.delete_previous_checkpoint:
+                        previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                        if os.path.exists(previous_checkpoint):
+                            os.remove(previous_checkpoint)
+
+                    if args.save_most_recent:
+                        # try not to corrupt the latest checkpoint if save fails
+                        tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+                        latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                        torch.save(checkpoint_dict, tmp_save_path)
+                        os.replace(tmp_save_path, latest_save_path)
 
     if args.wandb and is_master(args):
         wandb.finish()
@@ -607,6 +635,45 @@ def copy_codebase(args):
     copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
     print("Done copying code.")
     return 1
+
+
+if has_checkpointer:
+    class FSDPCheckpointer(Checkpointer):
+
+        def __init__(self, model, rank, save_dir, **kwargs):
+            super().__init__(model, save_dir, **kwargs)
+            self.rank = rank
+
+        def save(self, path: str, **kwargs) -> None:
+            """
+            Dump model and checkpointables to a file.
+
+            Args:
+                name (str): name of the file.
+                kwargs (dict): extra arbitrary data to save.
+            """
+            if not self.save_dir or not self.save_to_disk:
+                return
+
+            data = {}
+            with FSDP.state_dict_type(self.model, StateDictType.LOCAL_STATE_DICT):
+                data["model"] = self.model.state_dict()
+
+            # data["model"] = self.model.state_dict()
+            for key, obj in self.checkpointables.items():
+                data[key] = obj.state_dict()
+            data.update(kwargs)
+
+            basename = DISTRIBUTED_CHECKPOINT_NAME_FORMAT.format(name=path, rank=self.rank)
+            save_file = os.path.join(self.save_dir, basename)
+            assert os.path.basename(save_file) == basename, basename
+            self.logger.info("Saving checkpoint to {}".format(save_file))
+            with self.path_manager.open(save_file, "wb") as f:
+                torch.save(data, f)
+        
+        def load(self, *args, **kwargs):
+            with FSDP.state_dict_type(self.model, StateDictType.LOCAL_STATE_DICT):
+                return super().load(*args, **kwargs)
 
 
 if __name__ == "__main__":

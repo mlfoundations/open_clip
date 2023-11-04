@@ -373,6 +373,12 @@ def parse_args(args):
         help="Initialize the model on CPUs rather than GPUs, useful for large models",
     )
     parser.add_argument(
+        "--fsdp-use-distributed-checkpointer",
+        default=False,
+        action="store_true",
+        help="Use distributed checkpointer for FSDP, useful for large models",
+    )
+    parser.add_argument(
         "--fsdp-cpu-offload",
         default=False,
         action="store_true",
