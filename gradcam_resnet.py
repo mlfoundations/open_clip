@@ -1,17 +1,17 @@
 # https://colab.research.google.com/github/kevinzakka/clip_playground/blob/main/CLIP_GradCAM_Visualization.ipynb
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import open_clip
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from PIL import Image
-from scipy.ndimage import filters
 
 model_name = "RN50"
 pretrain_tag = "openai"
 image_name = "test.jpg"
+caption_text = "a cat"
 
 model, _, preprocess = open_clip.create_model_and_transforms(
     model_name, pretrained=pretrain_tag
@@ -19,38 +19,7 @@ model, _, preprocess = open_clip.create_model_and_transforms(
 tokenizer = open_clip.get_tokenizer(model_name)
 
 image = preprocess(Image.open(image_name)).unsqueeze(0)
-caption = tokenizer(["a dog"])
-
-
-def normalize(x: np.ndarray) -> np.ndarray:
-    # Normalize to [0, 1].
-    x = x - x.min()
-    if x.max() > 0:
-        x = x / x.max()
-    return x
-
-
-# Modified from: https://github.com/salesforce/ALBEF/blob/main/visualization.ipynb
-def getAttMap(img, attn_map, blur=True):
-    if blur:
-        attn_map = filters.gaussian_filter(attn_map, 0.02 * max(img.shape[:2]))
-    attn_map = normalize(attn_map)
-    cmap = plt.get_cmap("jet")
-    attn_map_c = np.delete(cmap(attn_map), 3, 2)
-    attn_map = (
-        1 * (1 - attn_map**0.7).reshape(attn_map.shape + (1,)) * img
-        + (attn_map**0.7).reshape(attn_map.shape + (1,)) * attn_map_c
-    )
-    return attn_map
-
-
-def viz_attn(img, attn_map, blur=True):
-    _, axes = plt.subplots(1, 2, figsize=(10, 5))
-    axes[0].imshow(img)
-    axes[1].imshow(getAttMap(img, attn_map, blur))
-    for ax in axes:
-        ax.axis("off")
-    plt.show()
+caption = tokenizer([caption_text])
 
 
 def load_image(img_path, resize=None):
@@ -58,6 +27,22 @@ def load_image(img_path, resize=None):
     if resize is not None:
         image = image.resize((resize, resize))
     return np.asarray(image).astype(np.float32) / 255.0
+
+
+def show_attention_map(heatmap):
+    _, axes = plt.subplots(1, 3, figsize=(15, 8))
+    axes[0].matshow(heatmap.squeeze())
+    img = cv2.imread(image_name)
+    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    result_img = (heatmap * 0.4 + img).astype(np.float32)
+    axes[1].imshow(img[..., ::-1])
+    axes[2].imshow((result_img / 255)[..., ::-1])
+    for ax in axes:
+        ax.axis("off")
+    plt.show()
+    # cv2.imwrite("./map.jpg", superimposed_img)
 
 
 class Hook:
@@ -88,7 +73,7 @@ class Hook:
 
 
 # Reference: https://arxiv.org/abs/1610.02391
-def gradCAM(
+def get_heatmap(
     model: nn.Module, input: torch.Tensor, target: torch.Tensor, layer: nn.Module
 ) -> torch.Tensor:
     # Zero out any gradients at the input.
@@ -116,44 +101,29 @@ def gradCAM(
         alpha = grad.mean(dim=(2, 3), keepdim=True)
         # Weighted combination of activation maps over channel
         # dimension.
-        gradcam = torch.sum(act * alpha, dim=1, keepdim=True)
+        heatmap = torch.sum(act * alpha, dim=1, keepdim=True)
         # We only want neurons with positive influence so we
         # clamp any negative ones.
-        gradcam = torch.clamp(gradcam, min=0)
-
-    # Resize gradcam to input resolution.
-    gradcam = F.interpolate(
-        gradcam, input.shape[2:], mode="bicubic", align_corners=False
-    )
+        heatmap = torch.clamp(heatmap, min=0)
+        # Normalize the heatmap
+        heatmap /= torch.max(heatmap)
 
     # Restore gradient settings.
     for name, param in model.named_parameters():
         param.requires_grad_(requires_grad[name])
 
-    return gradcam
+    return heatmap
 
 
 with torch.cuda.amp.autocast(), torch.autograd.set_detect_anomaly(
     True
 ), torch.set_grad_enabled(True):
-    # image_features = model.encode_image(image)
-    # text_features = model.encode_text(text)
-    # image_features /= image_ftexteatures.norm(dim=-1, keepdim=True)
-    # text_features /= text_features.norm(dim=-1, keepdim=True)
-
-    # text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-
     image_np = load_image(image_name, model.visual.image_size)
-
-    attn_map = gradCAM(
+    heatmap = get_heatmap(
         model.visual,
         image,
         model.encode_text(caption).float(),
         getattr(model.visual, "layer4"),
     )
-    attn_map = attn_map.squeeze().detach().cpu().numpy()
-
-    viz_attn(image_np, attn_map, True)
-
-#  print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
-#  open_clip.list_pretrained()
+    heatmap = heatmap.squeeze().detach().cpu().numpy()
+    show_attention_map(heatmap)
