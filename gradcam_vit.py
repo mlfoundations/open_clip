@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from PIL import Image
 from scipy.ndimage import filters
 
-model_name = "ViT-L-14"
+model_name = "ViT-B-16"
 pretrain_tag = "openai"
 image_name = "test.jpg"
 
@@ -17,6 +17,8 @@ model, _, preprocess = open_clip.create_model_and_transforms(
     model_name, pretrained=pretrain_tag
 )
 tokenizer = open_clip.get_tokenizer(model_name)
+
+test = model.visual.transformer.resblocks[-1]
 
 image = preprocess(Image.open(image_name)).unsqueeze(0)
 caption = tokenizer(["a dog"])
@@ -61,9 +63,10 @@ def load_image(img_path, resize=None):
 
 
 # https://github.com/jacobgil/pytorch-grad-cam/blob/master/tutorials/vision_transformers.md
-def reshape_transform(tensor, height=16, width=16):
+def reshape_transform(tensor, height=14, width=14):
     test = tensor.size()
-    result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+    # result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+    result = tensor[1:, :, :].reshape(tensor.size(1), height, width, tensor.size(2))
 
     # Bring the channels to the first dimension,
     # like in CNNs.
@@ -96,8 +99,8 @@ class Hook:
 
     @property
     def gradient(self) -> torch.Tensor:
-        # return reshape_transform(self.data.grad)
-        return self.data.grad[0][0]
+        return reshape_transform(self.data.grad)
+        # return self.data.grad[0][0]
 
 
 # Reference: https://arxiv.org/abs/1610.02391
@@ -162,7 +165,7 @@ with torch.cuda.amp.autocast(), torch.autograd.set_detect_anomaly(
         model.visual,
         image,
         model.encode_text(caption).float(),
-        model.visual.ln_post,  # model.visual.transformer.resblocks[-2].ln_2,
+        model.visual.transformer.resblocks[-2].ln_2,  # model.visual.ln_post,
     )
     attn_map = attn_map.squeeze().detach().cpu().numpy()
 
