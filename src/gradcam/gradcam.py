@@ -5,6 +5,14 @@ from PIL import Image
 from .heatmap import get_heatmap
 from .utils import show_attention_map
 
+def get_layer(model,model_name):
+    layer = None
+    if model_name == "convnext_base":
+        layer = model.visual.trunk.stages[-1]
+    elif model_name == "RN50":
+        layer = getattr(model.visual, "layer4")
+    
+    return layer
 def grad_cam(model_name, pretrain_tag, image_name, caption_text):
     model, _, preprocess = open_clip.create_model_and_transforms(
     model_name, pretrained=pretrain_tag
@@ -18,7 +26,7 @@ def grad_cam(model_name, pretrain_tag, image_name, caption_text):
             model.visual,
             image,
             model.encode_text(caption).float(),
-            getattr(model.visual, "layer4"),
+            get_layer(model,model_name),
         )
     heatmap = heatmap.squeeze().detach().cpu().numpy()
     show_attention_map(heatmap, image_name)
