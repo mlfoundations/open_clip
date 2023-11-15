@@ -1,12 +1,22 @@
+import open_clip
 import torch
 from PIL import Image
-import open_clip
 
-model, _, preprocess = open_clip.create_model_and_transforms('convnext_base', pretrained='laion400m_s13b_b51k')
-tokenizer = open_clip.get_tokenizer('convnext_base')
+model_name = "RN50x16"
+pretrain_tag = "openai"
+
+model, _, preprocess = open_clip.create_model_and_transforms(
+    model_name, pretrained=pretrain_tag
+)
+tokenizer = open_clip.get_tokenizer(model_name)
 
 image = preprocess(Image.open("test.jpg")).unsqueeze(0)
-text = tokenizer(["a dog", "a cat",])
+text = tokenizer(
+    [
+        "a dog",
+        "a cat",
+    ]
+)
 
 with torch.no_grad(), torch.cuda.amp.autocast():
     image_features = model.encode_image(image)
