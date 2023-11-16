@@ -1,9 +1,19 @@
 import cv2
 import matplotlib.pyplot as plt
+
 import numpy as np
 
+from PIL import Image
+from torch import nn
 
-def show_attention_map(heatmap, image_name: str, write_to_disk: bool = False):
+def load_image(img_path, resize=None):
+    image = Image.open(img_path).convert("RGB")
+    if resize is not None:
+        image = image.resize((resize, resize))
+    return np.asarray(image).astype(np.float32) / 255.0
+
+
+def show_attention_map(heatmap, image_name:str, layer_name:str="",write_to_disk:bool=False):
     _, axes = plt.subplots(1, 3, figsize=(15, 8))
     axes[0].matshow(heatmap.squeeze())
     img = cv2.imread(image_name)
@@ -17,5 +27,13 @@ def show_attention_map(heatmap, image_name: str, write_to_disk: bool = False):
         ax.axis("off")
     plt.show()
     if write_to_disk:
-        print("todo")
-        # cv2.imwrite("./map.jpg", superimposed_img)
+        plt.savefig('/imgs/'+layer_name+".jpg")
+
+        
+def get_cnn_modules(module,cnn_module_list=[]):
+    for child in module.children():
+        if type(child) is nn.Conv2d:
+            cnn_module_list.append(child)
+        elif child.children() is not None:
+            cnn_module_list = get_cnn_modules(child,cnn_module_list)
+    return cnn_module_list

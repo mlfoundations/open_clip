@@ -27,3 +27,8 @@ class Hook:
     @property
     def gradient(self) -> torch.Tensor:
         return self.data.grad
+
+#optional print hook
+def print_hook(module, input, output):
+    print(output.shape)
+    return None
