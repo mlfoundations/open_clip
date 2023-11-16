@@ -1,5 +1,6 @@
-import torch 
-from torch import nn 
+import torch
+from torch import nn
+
 
 class Hook:
     """Attaches to a module and records its activations and gradients."""
@@ -26,4 +27,3 @@ class Hook:
     @property
     def gradient(self) -> torch.Tensor:
         return self.data.grad
-

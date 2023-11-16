@@ -1,16 +1,9 @@
-import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from PIL import Image
-
-def load_image(img_path, resize=None):
-    image = Image.open(img_path).convert("RGB")
-    if resize is not None:
-        image = image.resize((resize, resize))
-    return np.asarray(image).astype(np.float32) / 255.0
+import numpy as np
 
 
-def show_attention_map(heatmap, image_name:str, write_to_disk:bool=False):
+def show_attention_map(heatmap, image_name: str, write_to_disk: bool = False):
     _, axes = plt.subplots(1, 3, figsize=(15, 8))
     axes[0].matshow(heatmap.squeeze())
     img = cv2.imread(image_name)
@@ -25,4 +18,4 @@ def show_attention_map(heatmap, image_name:str, write_to_disk:bool=False):
     plt.show()
     if write_to_disk:
         print("todo")
-        #cv2.imwrite("./map.jpg", superimposed_img)
+        # cv2.imwrite("./map.jpg", superimposed_img)
