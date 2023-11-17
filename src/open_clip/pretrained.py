@@ -171,6 +171,8 @@ _VITB16 = dict(
     commonpool_l_text_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L.text-s1B-b8K/'),
     commonpool_l_basic_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L.basic-s1B-b8K/'),
     commonpool_l_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L-s1B-b8K/'),
+    # DFN
+    dfn2b=_pcfg(hf_hub='apple/DFN2B-CLIP-ViT-B-16/')
 )
 
 _VITB16_quickgelu = dict(
@@ -209,6 +211,7 @@ _VITL14_quickgelu = dict(
         "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_400m.pt"),
     metaclip_fullcc=_pcfg(
         "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_fullcc2.5b.pt"),
+    dfn2b=_pcfg(hf_hub='apple/DFN2B-CLIP-ViT-L-14/'),
 )
 
 _VITL14_336 = dict(
@@ -223,6 +226,19 @@ _VITH14 = dict(
 _VITH14_quickgelu = dict(
     metaclip_fullcc=_pcfg(
         "https://dl.fbaipublicfiles.com/MMPT/metaclip/h14_fullcc2.5b.pt"),
+    dfn5b=_pcfg(
+        hf_hub='apple/DFN5B-CLIP-ViT-H-14/',
+        interpolation="bicubic",
+        resize_mode="squash"
+    ),
+)
+
+_VITH14_378_quickgelu = dict(
+    dfn5b=_pcfg(
+        hf_hub='apple/DFN5B-CLIP-ViT-H-14-378/',
+        interpolation="bicubic",
+        resize_mode="squash"
+    ),
 )
 
 _VITg14 = dict(
@@ -307,6 +323,7 @@ _PRETRAINED = {
     "ViT-L-14-336": _VITL14_336,
     "ViT-H-14": _VITH14,
     "ViT-H-14-quickgelu": _VITH14_quickgelu,
+    "ViT-H-14-378-quickgelu": _VITH14_378_quickgelu,
     "ViT-g-14": _VITg14,
     "ViT-bigG-14": _VITbigG14,
 
@@ -381,25 +398,24 @@ _PRETRAINED = {
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
     ),
 
-    # FIXME update CLIPA pretrained to final home, rwightman/ is temporary for testing
     "ViT-L-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-datacomp1B/'),
     ),
     "ViT-L-14-CLIPA-336": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-L-14-CLIPA-336-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-336-datacomp1B/'),
     ),
     "ViT-H-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-datacomp1B/'),
     ),
     "ViT-H-14-CLIPA-336": dict(
-        laion2b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-laion2B/'),
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-H-14-CLIPA-336-datacomp1B/'),
+        laion2b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-laion2B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-datacomp1B/'),
     ),
     "ViT-bigG-14-CLIPA": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-datacomp1B/'),
     ),
     "ViT-bigG-14-CLIPA-336": dict(
-        datacomp1b=_apcfg(hf_hub='rwightman/ViT-bigG-14-CLIPA-336-datacomp1B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-336-datacomp1B/'),
     ),
 
     "nllb-clip-base": dict(

@@ -84,6 +84,8 @@ class CoCa(nn.Module):
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
             quick_gelu: bool = False,
+            init_logit_scale: float = np.log(1 / 0.07),
+            init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
     ):
@@ -119,8 +121,14 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+        if init_logit_bias is not None:
+            self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
+        else:
+            self.logit_bias = None
         self.pad_id = pad_id
+
+        self.context_length = multimodal_cfg.context_length
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
@@ -133,8 +141,7 @@ class CoCa(nn.Module):
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize: bool = True, embed_cls: bool = True):
-        text = text[:, :-1] if embed_cls else text # make space for CLS token
+    def _encode_text(self, text, normalize: bool = True):
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
@@ -143,15 +150,14 @@ class CoCa(nn.Module):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
-    def encode_text(self, text, normalize: bool = True, embed_cls: bool = True):
-        text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
+    def encode_text(self, text, normalize: bool = True):
+        text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent
 
     def forward(
             self,
             image,
             text: Optional[torch.Tensor] = None,
-            embed_cls: bool = True,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
     ):
@@ -161,19 +167,22 @@ class CoCa(nn.Module):
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
 
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+        text_latent, token_embs = self._encode_text(text)
 
         # TODO: add assertion to avoid bugs?
         labels = text[:, -token_embs.shape[1]:]
 
         logits = self.text_decoder(image_embs, token_embs)
-        return {
+        out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
             "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
+        if self.logit_bias is not None:
+            out_dict["logit_bias"] = self.logit_bias
+        return out_dict
 
     def generate(
         self,
@@ -222,7 +231,7 @@ class CoCa(nn.Module):
 
             if generation_type == "beam_search":
                 output = self._generate_beamsearch(
-                    image_inputs = image,
+                    image_inputs=image,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
                     sot_token_id=sot_token_id,
@@ -267,7 +276,7 @@ class CoCa(nn.Module):
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -362,7 +371,6 @@ class CoCa(nn.Module):
             outputs = self(
                 model_inputs['images'],
                 model_inputs['text'],
-                embed_cls=False,
                 image_latent=image_latent,
                 image_embs=image_embs
             )

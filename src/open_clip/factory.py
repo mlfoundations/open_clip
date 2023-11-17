@@ -150,6 +150,9 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     # detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
+    # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
+    if 'logit_bias' not in state_dict and model.logit_bias is not None:
+        state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
     if position_id_key in state_dict and not hasattr(model, position_id_key):
@@ -289,7 +292,7 @@ def create_model(
             else:
                 error_str = (
                     f'Pretrained weights ({pretrained}) not found for model {model_name}.'
-                    f'Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
+                    f' Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
             pretrained_loaded = True
