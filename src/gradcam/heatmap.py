@@ -16,13 +16,13 @@ def reshape_transform(tensor, height=14, width=14):
 
 
 def get_gradient(model, hook):
-    if isinstance(model, VisionTransformer):
+    if isinstance(model.visual, VisionTransformer):
         return reshape_transform(hook.gradient.float())
     return hook.gradient.float()
 
 
 def get_activation(model, hook):
-    if isinstance(model, VisionTransformer):
+    if isinstance(model.visual, VisionTransformer):
         return reshape_transform(hook.activation.float())
     return hook.activation.float()
 
@@ -48,8 +48,20 @@ def get_heatmap(
         True
     ), torch.set_grad_enabled(True), Hook(layer) as hook:
         # Do a forward and backward pass.
-        output = model(input)
-        output.backward(target)
+        output = model.visual(input)
+        output.backward(model.encode_text(target))
+
+        # image_features = model.encode_image(input)
+        # text_features = model.encode_text(target)
+
+        # normalized_image_features = image_features / torch.linalg.norm(
+        #     image_features, dim=-1, keepdim=True
+        # )
+        # normalized_text_features = text_features / torch.linalg.norm(
+        #     text_features, dim=-1, keepdim=True
+        # )
+        # text_probs = 100.0 * normalized_image_features @ normalized_text_features.T
+        # text_probs[:, 0].backward()
 
         grad = get_gradient(model, hook)
         act = get_activation(model, hook)
