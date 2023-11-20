@@ -3,7 +3,7 @@ from src.gradcam.gradcam import grad_cam
 model_name = "ViT-B-16"
 pretrain_tag = "openai"
 image_name = "test.jpg"
-caption_text = "a dog"
+caption_text = "a cat"
 
 grad_cam(
     model_name=model_name,

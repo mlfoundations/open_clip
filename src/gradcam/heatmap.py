@@ -47,21 +47,20 @@ def get_heatmap(
     with torch.cuda.amp.autocast(), torch.autograd.set_detect_anomaly(
         True
     ), torch.set_grad_enabled(True), Hook(layer) as hook:
-        # Do a forward and backward pass.
-        output = model.visual(input)
-        output.backward(model.encode_text(target))
+        image_features = model.encode_image(input)
+        text_features = model.encode_text(target)
 
-        # image_features = model.encode_image(input)
-        # text_features = model.encode_text(target)
+        # output = model.visual(input)
+        # output.backward(text_features)
 
-        # normalized_image_features = image_features / torch.linalg.norm(
-        #     image_features, dim=-1, keepdim=True
-        # )
-        # normalized_text_features = text_features / torch.linalg.norm(
-        #     text_features, dim=-1, keepdim=True
-        # )
-        # text_probs = 100.0 * normalized_image_features @ normalized_text_features.T
-        # text_probs[:, 0].backward()
+        normalized_image_features = image_features / torch.linalg.norm(
+            image_features, dim=-1, keepdim=True
+        )
+        normalized_text_features = text_features / torch.linalg.norm(
+            text_features, dim=-1, keepdim=True
+        )
+        text_probs = 100.0 * normalized_image_features @ normalized_text_features.T
+        text_probs[:, 0].backward()
 
         grad = get_gradient(model, hook)
         act = get_activation(model, hook)
