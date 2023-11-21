@@ -16,7 +16,7 @@ def get_layer(model):
     if isinstance(model.visual, TimmModel):
         return model.visual.trunk.stages[-1]
     if isinstance(model.visual, VisionTransformer):
-        return model.visual.transformer.resblocks[-1].ln_1
+        return model.visual.transformer.resblocks[-2].ls_2
     return None
 
 
@@ -30,9 +30,9 @@ def grad_cam(model_name, pretrain_tag, image_name, caption_text):
     caption = tokenizer([caption_text])
 
     heatmap = get_heatmap(
-        model.visual,
+        model,
         image,
-        model.encode_text(caption).float(),
+        caption,
         get_layer(model),
     )
     heatmap = heatmap.squeeze().detach().cpu().numpy()
