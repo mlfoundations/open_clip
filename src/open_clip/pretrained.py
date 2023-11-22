@@ -7,8 +7,14 @@ from typing import Dict, Union
 
 from tqdm import tqdm
 
-from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD, INCEPTION_MEAN, INCEPTION_STD, \
-    IMAGENET_MEAN, IMAGENET_STD
+from .constants import (
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    INCEPTION_MEAN,
+    INCEPTION_STD,
+    OPENAI_DATASET_MEAN,
+    OPENAI_DATASET_STD,
+)
 from .version import __version__
 
 try:
@@ -423,6 +429,13 @@ _PRETRAINED = {
     ),
     "nllb-clip-large": dict(
         v1=_pcfg(hf_hub='visheratin/nllb-clip-large-oc/'),
+    ),
+
+    "nllb-clip-base-siglip": dict(
+        v1=_slpcfg(hf_hub='visheratin/nllb-clip-base-siglip/'),
+    ),
+    "nllb-clip-large-siglip": dict(
+        v1=_slpcfg(hf_hub='visheratin/nllb-clip-large-siglip/'),
     )
 }
 

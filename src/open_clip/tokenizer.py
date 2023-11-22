@@ -8,7 +8,7 @@ import os
 import random
 import string
 from functools import lru_cache, partial
-from typing import Callable, Optional, List, Union
+from typing import Callable, List, Optional, Union
 
 import ftfy
 import numpy as np
@@ -422,7 +422,7 @@ class HFTokenizer:
         assert context_length, 'Please set a valid context length in class init or call.'
 
         texts = [self.clean_fn(text) for text in texts]
-        input_ids = self.tokenizer(
+        input_ids = self.tokenizer.batch_encode_plus(
             texts,
             return_tensors='pt',
             max_length=context_length,
@@ -459,8 +459,9 @@ class SigLipTokenizer:
 
         if tokenizer_name in self.VOCAB_FILES:
             # FIXME temporary hack?
-            import fsspec
             import tempfile
+
+            import fsspec
             vocab_file = self.VOCAB_FILES[tokenizer_name]
             with tempfile.NamedTemporaryFile('wb') as dst:
                 with fsspec.open(vocab_file, 'rb') as src:
