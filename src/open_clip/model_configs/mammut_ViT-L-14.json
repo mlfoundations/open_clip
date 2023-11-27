@@ -1,0 +1,23 @@
+{
+    "embed_dim": 768,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 24,
+        "width": 1024,
+        "patch_size": 14,
+        "output_tokens": true,
+        "pool_type": "avg_all",
+        "final_ln_after_pool": true
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 768,
+        "heads": 12,
+        "layers": 12,
+        "output_tokens": true,
+        "cross_attn_ratio": 2,
+        "does_full_decoding": true
+    },
+    "custom_text": true
+}
