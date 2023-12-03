@@ -3,9 +3,10 @@
 We evaluate the full collection of available models on a suite of 38 datasets in a zero-shot setting (i.e., without fine-tuning), following [Gadre et al., 2023](https://arxiv.org/abs/2304.14108).
 Click below to see the full results.
 
-- [Full results](openclip_results.csv)
-- [Retrieval results](openclip_retrieval_results.csv)
+- [Full results (English)](openclip_results.csv)
 - [Classification-only results](openclip_classification_results.csv)
+- [Retrieval results](openclip_retrieval_results.csv)
+- [Multilingual retrieval results](openclip_multilingual_retrieval_results.csv)
 
 ## Pretrained model details
 
