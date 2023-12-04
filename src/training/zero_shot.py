@@ -25,9 +25,8 @@ def run(model, classifier, dataloader, args):
             target = target.to(args.device)
 
             with autocast():
-                # predict
                 output = model(image=images)
-                image_features = output['image_features'] if isinstance(output, dict) else output[0]
+                image_features = output['image_features'] if isinstance(output, dict) else output[0]           
                 logits = 100. * image_features @ classifier
 
             # measure accuracy
@@ -48,7 +47,7 @@ def zero_shot_eval(model, data, epoch, args, tokenizer=None):
         return {}
     if (epoch % args.zeroshot_frequency) != 0 and epoch != args.epochs:
         return {}
-    if args.distributed and not args.horovod:
+    if args.distributed and not args.horovod and not args.fsdp:
         model = model.module
 
     logging.info('Starting zero-shot imagenet.')

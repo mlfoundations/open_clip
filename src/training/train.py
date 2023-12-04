@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.parallel.distributed import DistributedDataParallel
 
+
 try:
     import wandb
 except ImportError:
@@ -185,8 +186,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        if args.fsdp:
+            model(image=None, text=None, clamp_logit_scale_to=math.log(100))
+        else:
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -250,7 +254,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
 def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
-    if not is_master(args):
+    if not is_master(args) and not args.fsdp:
         return metrics
     device = torch.device(args.device)
     model.eval()
@@ -334,7 +338,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
 
     log_data = {"val/" + name: val for name, val in metrics.items()}
 
-    if args.save_logs:
+    if args.save_logs and is_master(args):
         if tb_writer is not None:
             for name, val in log_data.items():
                 tb_writer.add_scalar(name, val, epoch)
@@ -343,7 +347,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
             f.write(json.dumps(metrics))
             f.write("\n")
 
-    if args.wandb:
+    if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
         if 'train' in data:
             dataloader = data['train'].dataloader

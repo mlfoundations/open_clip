@@ -23,6 +23,8 @@ class ParseKwargs(argparse.Action):
         setattr(namespace, self.dest, kw)
 
 
+
+
 def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -357,6 +359,72 @@ def parse_args(args):
         default=False,
         action='store_true',
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
+    )
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action="store_true",
+        help="Use FSDP for distributed training."
+    )
+    parser.add_argument(
+        "--fsdp-init-on-cpu",
+        default=False,
+        action="store_true",
+        help="Initialize the model on CPUs rather than GPUs, useful for large models",
+    )
+    parser.add_argument(
+        "--fsdp-use-distributed-checkpointer",
+        default=False,
+        action="store_true",
+        help="Use distributed checkpointer for FSDP, useful for large models",
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
+        default=False,
+        action="store_true",
+        help="Use CPU offloading",
+    )
+    parser.add_argument(
+        "--fsdp-limit-allgathers",
+        default=False,
+        action="store_true",
+        help="Prevent too many allgathers",
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-wrap",
+        default=(
+            # Match all sort of blocks
+            '.*Block.*',
+            'Bottleneck',
+            # CLIP
+            'VisionTransformer', 
+            'Transformer', 
+            # CLIP ModifiedResNet
+            'ModifiedResNet',
+            # HF Text
+            'HFTextEncoder',
+            # TIMM visual
+            'TimmModel',
+        ),
+        type=str,
+        nargs='+',
+        help="Regular expression to match module names to wrap in FSDP, this affects communication and peak memory.",
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-grad-checkpoint",
+        default=(
+            '.*Block.*',
+            'Bottleneck',
+        ),
+        type=str,
+        nargs='+',
+        help="Module names to wrap for gradient checkpointing when FSDP is used",
+    )
+    parser.add_argument(
+        "--fsdp-gradient-reduction-precision",
+        choices=["bf16", "fp16", "fp32"],
+        default="fp16",
+        help="FSDP floating point precision for gradient reduction"
     )
     parser.add_argument(
         "--no-set-device-rank",
