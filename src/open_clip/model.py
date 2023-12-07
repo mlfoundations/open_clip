@@ -286,9 +286,9 @@ class CLIP(nn.Module):
         return F.normalize(x, dim=-1) if normalize else x
 
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=False)
-        text_features = self.encode_text(text, normalize=False)
-        image_logits = self.logit_scale * image_features @ text_features.T
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
             image_logits += self.logit_bias
         text_logits = image_logits.T
@@ -364,9 +364,9 @@ class CustomTextCLIP(nn.Module):
         return F.normalize(features, dim=-1) if normalize else features
 
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=False)
-        text_features = self.encode_text(text, normalize=False)
-        image_logits = self.logit_scale * image_features @ text_features.T
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
             image_logits += self.logit_bias
         text_logits = image_logits.T
