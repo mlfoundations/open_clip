@@ -9,6 +9,7 @@ import random
 import string
 from functools import lru_cache, partial
 from typing import Callable, List, Optional, Union
+import warnings
 
 import ftfy
 import numpy as np
@@ -402,9 +403,17 @@ class HFTokenizer:
             context_length: Optional[int] = DEFAULT_CONTEXT_LENGTH,
             clean: str = 'whitespace',
             strip_sep_token: bool = False,
+            language: Optional[str] = None,
     ):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        if language is not None:
+            set_lang_fn = getattr(self.tokenizer, 'set_src_lang_special_tokens', None)
+            if callable(set_lang_fn):
+                set_lang_fn(language)
+                self.set_lang_fn = set_lang_fn
+            else:
+                warnings.warn(f'Cannot set language for tokenizer {tokenizer_name}.')
         self.context_length = context_length
         self.clean_fn = get_clean_fn(clean)
         self.strip_sep_token = strip_sep_token
@@ -438,6 +447,10 @@ class HFTokenizer:
             )
 
         return input_ids
+    
+    def set_language(self, src_lang):
+        if hasattr(self, 'set_lang_fn'):
+            self.set_lang_fn(src_lang)
 
 
 class SigLipTokenizer:
@@ -495,67 +508,3 @@ class SigLipTokenizer:
             truncation=True,
         )
         return output.input_ids
-
-
-class NLLBTokenizer:
-    """HuggingFace tokenizer wrapper for NLLB models"""
-
-    def __init__(
-        self,
-        tokenizer_name: str,
-        context_length: Optional[int] = DEFAULT_CONTEXT_LENGTH,
-        clean: str = "whitespace",
-    ):
-        from transformers import AutoTokenizer
-
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.context_length = context_length
-        self.clean_fn = get_clean_fn(clean)
-
-    def save_pretrained(self, dest):
-        self.tokenizer.save_pretrained(dest)
-
-    def __call__(
-        self,
-        texts: Union[str, List[str]],
-        langs: Union[str, List[str], None],
-        context_length: Optional[int] = None,
-    ) -> torch.Tensor:
-        import warnings
-
-        if isinstance(texts, str):
-            texts = [texts]
-
-        context_length = context_length or self.context_length
-        assert (
-            context_length
-        ), "Please set a valid context length in class init or call."
-
-        # same cleaning as for default tokenizer, except lowercasing
-        # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
-        texts = [self.clean_fn(text) for text in texts]
-        if langs is None:
-            warnings.warn("No languages provided, assuming all texts are in English.")
-            input_ids = self.tokenizer.batch_encode_plus(
-                texts,
-                return_tensors="pt",
-                max_length=context_length,
-                padding="max_length",
-                truncation=True,
-            ).input_ids
-        else:
-            assert len(texts) == len(langs), "Please provide a language for each text."
-            text_input_ids = []
-            for i, text in enumerate(texts):
-                self.tokenizer.set_src_lang_special_tokens(langs[i])
-                text_input_ids.append(
-                    self.tokenizer.batch_encode_plus(
-                        [text],
-                        return_tensors="pt",
-                        max_length=context_length,
-                        padding="max_length",
-                        truncation=True,
-                    ).input_ids
-                )
-            input_ids = torch.stack(text_input_ids).squeeze()
-        return input_ids
