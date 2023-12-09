@@ -285,6 +285,15 @@ class CLIP(nn.Module):
 
         return F.normalize(x, dim=-1) if normalize else x
 
+    def get_logits(self, image, text):
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        image_logits = self.logit_scale.exp() * image_features @ text_features.T
+        if self.logit_bias is not None:
+            image_logits += self.logit_bias
+        text_logits = image_logits.T
+        return image_logits, text_logits
+
     def forward(
             self,
             image: Optional[torch.Tensor] = None,
@@ -353,6 +362,15 @@ class CustomTextCLIP(nn.Module):
     def encode_text(self, text, normalize: bool = False):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
+
+    def get_logits(self, image, text):
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        image_logits = self.logit_scale.exp() * image_features @ text_features.T
+        if self.logit_bias is not None:
+            image_logits += self.logit_bias
+        text_logits = image_logits.T
+        return image_logits, text_logits
 
     def forward(
             self,
