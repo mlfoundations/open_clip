@@ -386,7 +386,7 @@ def parse_args(args):
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze BatchNorm running stats in text tower for any locked layers.",
+        help="Freeze LayerNorm running stats in text tower for any locked layers.",
     )
     parser.add_argument(
         "--log-every-n-steps",
