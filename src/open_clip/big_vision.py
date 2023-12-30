@@ -12,7 +12,10 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
     Currently the SigLIP source models are supported and a CustomTextCLIP destination model
     w/ timm image encoder.
     """
-    from timm.layers import resample_patch_embed, resample_abs_pos_embed
+    try:
+        from timm.layers import resample_patch_embed, resample_abs_pos_embed
+    except ImportError as ie:
+        raise ImportError('Please install `timm`') from ie
 
     def _n2p(w, t=True):
         if w.ndim == 4 and w.shape[0] == w.shape[1] == w.shape[2] == 1:
