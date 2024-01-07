@@ -1,3 +1,16 @@
+## 2.24.0
+
+* Fix missing space in error message
+* use model flag for normalizing embeddings
+* init logit_bias for non siglip pretrained models
+* Fix logit_bias load_checkpoint addition 
+* Make CoCa model match CLIP models for logit scale/bias init
+* Fix missing return of "logit_bias" in CoCa.forward
+* Add NLLB-CLIP with SigLIP models
+* Add get_logits method and NLLB tokenizer
+* Remove the empty file src/open_clip/generation_utils.py
+* Update params.py: "BatchNorm" -> "LayerNorm" in the description string for "--lock-text-freeze-layer-norm"
+
 ## 2.23.0
 
 * Add CLIPA-v2 models
