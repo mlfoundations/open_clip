@@ -221,6 +221,7 @@ class ThreeTowerLoss(nn.Module):
                 gather_features(
                     image_features,
                     text_features,
+                    teacher_features,
                     self.local_loss,
                     self.gather_with_grad,
                     self.rank,
