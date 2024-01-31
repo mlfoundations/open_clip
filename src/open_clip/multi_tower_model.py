@@ -393,9 +393,7 @@ class ThreeTowerCustomTextCLIP(nn.Module):
         self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
-        self.teacher = _build_vision_tower(
-            embed_dim, vision_cfg, quick_gelu, cast_dtype
-        )
+        self.teacher = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.context_length = self.text.context_length
         self.vocab_size = self.text.vocab_size
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)

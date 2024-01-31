@@ -25,6 +25,7 @@ from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ThreeTowerLoss
 from .openai import load_openai_model
 from .pretrained import (
+    _pcfg,
     is_pretrained_cfg,
     get_pretrained_cfg,
     download_pretrained,
@@ -164,7 +165,7 @@ def load_state_dict(checkpoint_path: str, map_location="cpu"):
     return state_dict
 
 
-def load_checkpoint(model, checkpoint_path, strict=True):
+def load_checkpoint(model, checkpoint_path, is_teacher=True, strict=True):
     if Path(checkpoint_path).suffix in (".npz", ".npy"):
         from .big_vision import load_big_vision_weights
 
@@ -172,6 +173,10 @@ def load_checkpoint(model, checkpoint_path, strict=True):
         return {}
 
     state_dict = load_state_dict(checkpoint_path)
+    if is_teacher:
+        pattern = re.compile(r"^visual\.")
+        state_dict = {pattern.sub("teacher.", k): v for (k, v) in state_dict.items()}
+
     # detect old format and make compatible with new format
     if "positional_embedding" in state_dict and not hasattr(
         model, "positional_embedding"
@@ -317,6 +322,18 @@ def create_model(
             model.to(device=device, dtype=dtype)
         else:
             model.to(device=device)
+
+        if "teacher_cfg" in model_cfg:
+            pretrained_cfg = _pcfg(hf_hub=model_cfg["teacher_cfg"]["hf_model_name"])
+            checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
+            preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
+            if checkpoint_path:
+                logging.info(f"Loading pretrained {model_name} weights ({pretrained}).")
+                load_checkpoint(model, checkpoint_path, is_teacher=True, strict=False)
+            else:
+                error_str = "Something is broken but I'm not sure what"
+                logging.warning(error_str)
+                raise RuntimeError(error_str)
 
         pretrained_loaded = False
         if pretrained:

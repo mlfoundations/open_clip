@@ -13,9 +13,10 @@
         "hf_pooler_type": "mean_pooler"
     },
     "teacher_cfg": {
+        "hf_model_name": "laion/CLIP-ViT-B-32-laion2B-s34B-b79K/open_clip_pytorch_model.bin",
         "image_size": 224,
         "layers": 12,
         "width": 768,
-        "patch_size": 32,
+        "patch_size": 32
     }
 }
