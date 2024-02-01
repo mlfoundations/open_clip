@@ -1,0 +1,7 @@
+scikit-learn>=1.0,<2
+webdataset>=0.2.5
+pycocoevalcap
+imagenet-w
+gdown
+kaggle
+task-adaptation
