@@ -31,11 +31,12 @@ except ImportError:
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
+from training.evaluate import evaluate
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
-from training.train import train_one_epoch, evaluate
-from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
+from training.train import train_one_epoch
+from training.fileutils import pt_load, start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -424,7 +425,9 @@ def main(args):
             from open_clip.utils import convert_int8_model_to_inference_mode
             convert_int8_model_to_inference_mode(model)
         # Evaluate.
-        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        evaluate(
+            model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
+        )
         return
 
     loss = create_loss(args)
@@ -436,8 +439,19 @@ def main(args):
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        if (
+            any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2'))
+            or args.clip_benchmark_frequency != 0
+        ):
+            evaluate(
+                model,
+                preprocess_val,
+                tokenizer,
+                data,
+                completed_epoch,
+                args,
+                tb_writer=writer,
+            )
 
         # Saving checkpoints.
         if args.save_logs:
