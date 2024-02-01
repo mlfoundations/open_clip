@@ -181,6 +181,9 @@ def parse_args(args):
         "--val-frequency", type=int, default=1, help="How often to run evaluation with val data."
     )
     parser.add_argument(
+        "--clip-benchmark-frequency", type=int, default=5, help="How often to run evaluation using the CLIP benchmark."
+    )
+    parser.add_argument(
         "--resume",
         default=None,
         type=str,
@@ -451,6 +454,27 @@ def parse_args(args):
         default=False,
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
+    )
+    parser.add_argument(
+        "--clip-benchmark-datasets",
+        type=str,
+        default='wds/mscoco_captions,wds/flickr8k,wds/flickr30k',
+        help="Specify datasets for CLIP benchmark."
+    )
+    parser.add_argument(
+        "--clip-benchmark-dataset-root",
+        type=str,
+        default=(
+            'https://huggingface.co/datasets/clip-benchmark/wds_{dataset_cleaned}'
+            '/tree/main'
+        ),
+        help="Specify dataset root for CLIP benchmark."
+    )
+    parser.add_argument(
+        "--clip-benchmark-recall-ks",
+        type=str,
+        default='1,5',
+        help="Define a comma separated list of k values."
     )
 
     args = parser.parse_args(args)
