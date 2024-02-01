@@ -1,0 +1,295 @@
+{
+    "cifar10": [
+        "a photo of a {c}.",
+        "a blurry photo of a {c}.",
+        "a black and white photo of a {c}.",
+        "a low contrast photo of a {c}.",
+        "a high contrast photo of a {c}.",
+        "a bad photo of a {c}.",
+        "a good photo of a {c}.",
+        "a photo of a small {c}.",
+        "a photo of a big {c}.",
+        "a photo of the {c}.",
+        "a blurry photo of the {c}.",
+        "a black and white photo of the {c}.",
+        "a low contrast photo of the {c}.",
+        "a high contrast photo of the {c}.",
+        "a bad photo of the {c}.",
+        "a good photo of the {c}.",
+        "a photo of the small {c}.",
+        "a photo of the big {c}."
+    ],
+    "cifar100": [
+        "a photo of a {c}.",
+        "a blurry photo of a {c}.",
+        "a black and white photo of a {c}.",
+        "a low contrast photo of a {c}.",
+        "a high contrast photo of a {c}.",
+        "a bad photo of a {c}.",
+        "a good photo of a {c}.",
+        "a photo of a small {c}.",
+        "a photo of a big {c}.",
+        "a photo of the {c}.",
+        "a blurry photo of the {c}.",
+        "a black and white photo of the {c}.",
+        "a low contrast photo of the {c}.",
+        "a high contrast photo of the {c}.",
+        "a bad photo of the {c}.",
+        "a good photo of the {c}.",
+        "a photo of the small {c}.",
+        "a photo of the big {c}."
+    ],
+    "imagenet1k": [
+        "a bad photo of a {c}.",
+        "a photo of many {c}.",
+        "a sculpture of a {c}.",
+        "a photo of the hard to see {c}.",
+        "a low resolution photo of the {c}.",
+        "a rendering of a {c}.",
+        "graffiti of a {c}.",
+        "a bad photo of the {c}.",
+        "a cropped photo of the {c}.",
+        "a tattoo of a {c}.",
+        "the embroidered {c}.",
+        "a photo of a hard to see {c}.",
+        "a bright photo of a {c}.",
+        "a photo of a clean {c}.",
+        "a photo of a dirty {c}.",
+        "a dark photo of the {c}.",
+        "a drawing of a {c}.",
+        "a photo of my {c}.",
+        "the plastic {c}.",
+        "a photo of the cool {c}.",
+        "a close-up photo of a {c}.",
+        "a black and white photo of the {c}.",
+        "a painting of the {c}.",
+        "a painting of a {c}.",
+        "a pixelated photo of the {c}.",
+        "a sculpture of the {c}.",
+        "a bright photo of the {c}.",
+        "a cropped photo of a {c}.",
+        "a plastic {c}.",
+        "a photo of the dirty {c}.",
+        "a jpeg corrupted photo of a {c}.",
+        "a blurry photo of the {c}.",
+        "a photo of the {c}.",
+        "a good photo of the {c}.",
+        "a rendering of the {c}.",
+        "a {c} in a video game.",
+        "a photo of one {c}.",
+        "a doodle of a {c}.",
+        "a close-up photo of the {c}.",
+        "a photo of a {c}.",
+        "the origami {c}.",
+        "the {c} in a video game.",
+        "a sketch of a {c}.",
+        "a doodle of the {c}.",
+        "a origami {c}.",
+        "a low resolution photo of a {c}.",
+        "the toy {c}.",
+        "a rendition of the {c}.",
+        "a photo of the clean {c}.",
+        "a photo of a large {c}.",
+        "a rendition of a {c}.",
+        "a photo of a nice {c}.",
+        "a photo of a weird {c}.",
+        "a blurry photo of a {c}.",
+        "a cartoon {c}.",
+        "art of a {c}.",
+        "a sketch of the {c}.",
+        "a embroidered {c}.",
+        "a pixelated photo of a {c}.",
+        "itap of the {c}.",
+        "a jpeg corrupted photo of the {c}.",
+        "a good photo of a {c}.",
+        "a plushie {c}.",
+        "a photo of the nice {c}.",
+        "a photo of the small {c}.",
+        "a photo of the weird {c}.",
+        "the cartoon {c}.",
+        "art of the {c}.",
+        "a drawing of the {c}.",
+        "a photo of the large {c}.",
+        "a black and white photo of a {c}.",
+        "the plushie {c}.",
+        "a dark photo of a {c}.",
+        "itap of a {c}.",
+        "graffiti of the {c}.",
+        "a toy {c}.",
+        "itap of my {c}.",
+        "a photo of a cool {c}.",
+        "a photo of a small {c}.",
+        "a tattoo of the {c}."
+    ],
+    "food101": [
+        "a photo of {c}, a type of food."
+    ],
+    "sun397": [
+        "a photo of a {c}.",
+        "a photo of the {c}."
+    ],
+    "cars": [
+        "a photo of a {c}.",
+        "a photo of the {c}.",
+        "a photo of my {c}.",
+        "i love my {c}!",
+        "a photo of my dirty {c}.",
+        "a photo of my clean {c}.",
+        "a photo of my new {c}.",
+        "a photo of my old {c}."
+    ],
+    "fgvc_aircraft": [
+        "a photo of a {c}, a type of aircraft.",
+        "a photo of the {c}, a type of aircraft."
+    ],
+    "dtd": [
+        "a photo of a {c} texture.",
+        "a photo of a {c} pattern.",
+        "a photo of a {c} thing.",
+        "a photo of a {c} object.",
+        "a photo of the {c} texture.",
+        "a photo of the {c} pattern.",
+        "a photo of the {c} thing.",
+        "a photo of the {c} object."
+    ],
+    "pets": [
+        "a photo of a {c}, a type of pet."
+    ],
+    "caltech101": [
+        "a photo of a {c}.",
+        "a painting of a {c}.",
+        "a plastic {c}.",
+        "a sculpture of a {c}.",
+        "a sketch of a {c}.",
+        "a tattoo of a {c}.",
+        "a toy {c}.",
+        "a rendition of a {c}.",
+        "a embroidered {c}.",
+        "a cartoon {c}.",
+        "a {c} in a video game.",
+        "a plushie {c}.",
+        "a origami {c}.",
+        "art of a {c}.",
+        "graffiti of a {c}.",
+        "a drawing of a {c}.",
+        "a doodle of a {c}.",
+        "a photo of the {c}.",
+        "a painting of the {c}.",
+        "the plastic {c}.",
+        "a sculpture of the {c}.",
+        "a sketch of the {c}.",
+        "a tattoo of the {c}.",
+        "the toy {c}.",
+        "a rendition of the {c}.",
+        "the embroidered {c}.",
+        "the cartoon {c}.",
+        "the {c} in a video game.",
+        "the plushie {c}.",
+        "the origami {c}.",
+        "art of the {c}.",
+        "graffiti of the {c}.",
+        "a drawing of the {c}.",
+        "a doodle of the {c}."
+    ],
+    "flowers": [
+        "a photo of a {c}, a type of flower."
+    ],
+    "mnist": [
+        "a photo of the number: \"{c}\"."
+    ],
+    "stl10": [
+        "a photo of a {c}.",
+        "a photo of the {c}."
+    ],
+    "eurosat": [
+        "a centered satellite photo of {c}.",
+        "a centered satellite photo of a {c}.",
+        "a centered satellite photo of the {c}."
+    ],
+    "gtsrb": [
+        "a zoomed in photo of a \"{c}\" traffic sign.",
+        "a centered photo of a \"{c}\" traffic sign.",
+        "a close up photo of a \"{c}\" traffic sign."
+    ],
+    "country211": [
+        "a photo i took in {c}.",
+        "a photo i took while visiting {c}.",
+        "a photo from my home country of {c}.",
+        "a photo from my visit to {c}.",
+        "a photo showing the country of {c}."
+    ],
+    "renderedsst2": [
+        "a {c} review of a movie."
+    ],
+    "voc2007": [
+        "a photo of a {c}."
+    ],
+    "voc2007_multilabel": [
+        "a photo of a {c}."
+    ],
+    "fer2013": [
+        "a photo of a {c} looking face.",
+        "a photo of a face showing the emotion: {c}.",
+        "a photo of a face looking {c}.",
+        "a face that looks {c}.",
+        "they look {c}.",
+        "look at how {c} they are."
+    ],
+    "clevr_count_all": [
+        "a picture of {c} objects"
+    ],
+    "clevr_closest_object_distance": [
+        "{c} shapes."
+    ],
+    "pcam": [
+        "a histopathology slide showing {c}",
+        "histopathology image of {c}"
+    ],
+    "svhn": [
+        "a photo of the number {c} written on a sign",
+        "an outdoor house number {c}",
+        "the number {c} in the center of the image",
+        "an outdoor number {c} writte on a sign",
+        "an outdoor number {c}",
+        "a centered image of the number {c}"
+    ],
+    "resisc45": [
+        "a sattelite image of {c}",
+        "an aerial view of {c}",
+        "a sattelite photo of {c}",
+        "{c} from above"
+    ],
+    "kitti_closest_vehicle_distance": [
+        "{c}"
+    ],
+    "smallnorb_label_azimuth": [
+        "an object rotated at {c}",
+        "something rotated at {c}",
+        "{c} rotation",
+        "something at a {c} angle"
+    ],
+    "smallnorb_label_elevation": [
+        "an object rotated at {c}",
+        "something rotated at {c}",
+        "{c} rotation",
+        "something at a {c} angle"
+    ],
+    "dsprites_label_x_position": [
+        "an object located at position {c}% on the horizontal axis"
+    ],
+    "dsprites_label_orientation": [
+        "an object rotated at {c}",
+        "something rotated at {c}",
+        "{c} rotation",
+        "something at a {c} angle"
+    ],
+    "dmlab": [
+        "{c}"
+    ],
+    "diabetic_retinopathy": [
+        "a retinal image with {c}"
+    ],
+    "dummy": [
+        "a photo of a {c}"
+    ]
+}
