@@ -144,18 +144,16 @@ def run_benchmark(
 
     languages = _as_list(language)
 
-    print('Starting OpenCLIP benchmark ...')
     print(f'Models: {[model.name for model in _models]}')
     print(f'Datasets: {_datasets}')
     print(f'Languages: {languages}')
 
-    runs = product(_models, _datasets, languages)
+    runs = [run for run in product(_models, _datasets, languages)]
 
-    print(f'Number of runs: {len(list(runs))}')
+    print(f'Number of runs: {len(runs)}')
 
     if distributed:
         local_rank, rank, world_size = world_info_from_env()
-        runs = list(runs)
         random.seed(seed)
         random.shuffle(runs)
         runs = [r for i, r in enumerate(runs) if i % world_size == rank]
