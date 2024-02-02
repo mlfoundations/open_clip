@@ -251,13 +251,18 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
 
     from clip_benchmark.run import run_benchmark, CLIPBenchmarkModel
 
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        module = model.module
+    else:
+        module = model
+
     results = run_benchmark(
         datasets=[t for t in args.clip_benchmark_datasets.split(',')],
         models=[
             CLIPBenchmarkModel(
                 name=args.model,
                 pretrained=args.name + f'-epoch#{epoch}',
-                module=model,
+                module=module,
                 tokenizer=tokenizer,
                 transform=transform,
             )
