@@ -5,3 +5,4 @@ imagenet-w
 gdown
 kaggle
 task-adaptation
+mteb

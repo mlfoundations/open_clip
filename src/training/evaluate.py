@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Union
 
 import numpy as np
 import torch
@@ -241,6 +241,8 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
     if (epoch % args.clip_benchmark_frequency) != 0 and epoch != args.epochs:
         return {}
 
+    logging.info('Starting the CLIP benchmark ...')
+
     from clip_benchmark.run import run_benchmark, CLIPBenchmarkModel
 
     results = run_benchmark(
@@ -265,6 +267,103 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
         dataset = result['dataset']
         for k, v in result['metrics'].items():
             metrics[f'{dataset}-{k}'] = v
+    
+    logging.info('Finished CLIP benchmark!')
+
+    return metrics
+
+
+def _run_mteb_benchmark(model, epoch, args):
+
+    if args.mteb_frequency == 0:
+        return {}
+    if (epoch % args.mteb_frequency) != 0 and epoch != args.epochs:
+        return {}
+    
+    logging.info('Starting the MTEB benchmark ...')
+
+    from mteb import MTEB
+    from transformers import AutoTokenizer
+
+    class _MTEBModel(torch.nn.Module):
+
+        def __init__(
+            self,
+            clip_model: torch.nn.Module,
+            tokenizer_name: str,
+            batch_size: int = 4,
+            max_seq_length: int = 8192,
+            device: Union[str, torch.device] = 'cpu',
+        ):
+            super(_MTEBModel, self).__init__()
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                pretrained_model_name_or_path=tokenizer_name,
+                trust_remote_code=True,
+                force_download=True
+            )
+            self._model = clip_model.text.transformer
+            self._batch_size = batch_size
+            self._max_seq_length = max_seq_length
+            self._device = device
+
+        @staticmethod
+        def mean_pooling(model_output, attention_mask):
+            token_embeddings = model_output[0]
+            input_mask_expanded = (
+                attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            )
+            return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
+                input_mask_expanded.sum(1), min=1e-9
+            )
+
+        @torch.no_grad()
+        def encode(self, sentences: list[str]):
+            embeddings = []
+            with torch.inference_mode():
+                for i in range(0, len(sentences), self._batch_size):
+                    encoded_input = self._tokenizer(
+                        sentences[i: i + self._batch_size],
+                        padding=True,
+                        truncation=True,
+                        return_tensors='pt',
+                        max_length=self._max_seq_length
+                    ).to(self._device)
+
+                    model_output = self._model(**encoded_input)
+                    sentence_embeddings = self.mean_pooling(
+                        model_output, encoded_input['attention_mask']
+                    )
+                    sentence_embeddings = f.normalize(sentence_embeddings, p=2, dim=1)
+                    embeddings.append(sentence_embeddings.cpu().numpy())
+
+            return np.concatenate(embeddings, axis=0)
+    
+    _mteb_model = _MTEBModel(
+        clip_model=model,
+        tokenizer_name=args.mteb_tokenizer_name,
+        max_seq_length=args.mteb_max_seq_len,
+        device=args.device,
+    )
+
+    tasks = [task for task in args.mteb_tasks.split(',')]
+    languages = ['en' for _ in tasks]
+    evalsplits = ['dev' if task == 'MSMARCO' else 'test' for task in tasks]
+
+    evaluation = MTEB(tasks=tasks, task_langs=languages)
+    metrics = evaluation.run(
+        _mteb_model,
+        batch_size=4,
+        output_folder=None,
+        eval_splits=evalsplits,
+        ignore_identical_ids=False,
+    )
+    metrics = {
+        f'{task}-{k}': v
+        for task, submetrics in metrics.items()
+        for k, v in submetrics.items()
+    }
+    
+    logging.info('Finished MTEB benchmark!')
 
     return metrics
 
@@ -296,6 +395,9 @@ def evaluate(
         model, tokenizer, transform, epoch, args
     )
     metrics.update(clip_benchmark_metrics)
+
+    mteb_metrics = _run_mteb_benchmark(model, epoch, args)
+    metrics.update(mteb_metrics)
 
     if not metrics:
         return {}

@@ -184,6 +184,9 @@ def parse_args(args):
         "--clip-benchmark-frequency", type=int, default=5, help="How often to run evaluation using the CLIP benchmark."
     )
     parser.add_argument(
+        "--mteb-frequency", type=int, default=5, help="How often to run evaluation on MTEB."
+    )
+    parser.add_argument(
         "--resume",
         default=None,
         type=str,
@@ -475,6 +478,24 @@ def parse_args(args):
         type=str,
         default='1,5',
         help="Define a comma separated list of k values."
+    )
+    parser.add_argument(
+        "--mteb-tasks",
+        type=str,
+        default='STS12',
+        help="Define a comma separated list of MTEB tasks to evaluate on."
+    )
+    parser.add_argument(
+        "--mteb-tokenizer-name",
+        type=str,
+        default='jinaai/jina-embeddings-v2-base-en',
+        help="The tokenizer to use when running the MTEB benchmark."
+    )
+    parser.add_argument(
+        "--mteb-max-seq-length",
+        type=int,
+        default=8192,
+        help="The max sequence length used during MTEB evaluation."
     )
 
     args = parser.parse_args(args)
