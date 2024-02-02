@@ -436,7 +436,7 @@ def evaluate(
     )
     metrics.update(clip_benchmark_metrics)
 
-    mteb_metrics = _run_mteb_benchmark(model, epoch, args)
+    mteb_metrics = _run_mteb_benchmark(model, tokenizer, epoch, args)
     metrics.update(mteb_metrics)
 
     if not metrics:
