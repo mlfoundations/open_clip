@@ -317,14 +317,20 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
             self._batch_size = batch_size
             self._max_seq_length = max_seq_length
             self._device = device
-            self._model = clip_model
 
-            if isinstance(clip_model, CLIP):
+            if isinstance(clip_model, torch.nn.parallel.DistributedDataParallel):
+                _model = clip_model.module
+            else:
+                _model = clip_model
+
+            self._model = _model
+
+            if isinstance(_model, CLIP):
                 assert _tokenizer is not None
                 self._tokenizer = _tokenizer
                 self._embed = self._clip_embed
 
-            elif isinstance(clip_model, CustomTextCLIP):
+            elif isinstance(_model, CustomTextCLIP):
                 assert hf_tokenizer_name
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     pretrained_model_name_or_path=hf_tokenizer_name,
@@ -335,7 +341,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
 
             else:
                 raise TypeError(
-                    f'Invalid type `{type(clip_model).__name__}` for argument '
+                    f'Invalid type `{type(_model).__name__}` for argument '
                     f'`clip_model`'
                 )
 
