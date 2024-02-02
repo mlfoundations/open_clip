@@ -308,7 +308,7 @@ def run_evaluation_task(
         )
 
     dump = {
-        'dataset': dataset,
+        'dataset': _dataset_name,
         'model': model.name,
         'pretrained': model.pretrained,
         'task': task,
