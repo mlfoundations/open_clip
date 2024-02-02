@@ -146,7 +146,7 @@ def run_evaluation_task(
     model.load(model_cache_dir=model_cache_dir, device=device)
     model.module.eval()
 
-    dataset = build_dataset(
+    _dataset = build_dataset(
         dataset_name=dataset,
         root=dataset_root,
         transform=model.transform,
@@ -162,27 +162,27 @@ def run_evaluation_task(
     collate_fn = get_dataset_collate_fn(dataset)
 
     try:
-        print(f'Dataset size: {len(dataset)}')
+        print(f'Dataset size: {len(_dataset)}')
     except TypeError:
         print('IterableDataset has no len()')
     print(f'Dataset split: {split}')
-    if hasattr(dataset, 'classes') and dataset.classes:
+    if hasattr(_dataset, 'classes') and _dataset.classes:
         try:
-            print(f'Dataset classes: {dataset.classes}')
-            print(f'Dataset number of classes: {len(dataset.classes)}')
+            print(f'Dataset classes: {_dataset.classes}')
+            print(f'Dataset number of classes: {len(_dataset.classes)}')
         except AttributeError:
             print('Dataset has no classes.')
 
     if dataset.startswith('wds/'):
         dataloader = torch.utils.data.DataLoader(
-            dataset.batched(batch_size),
+            _dataset.batched(batch_size),
             batch_size=None,
             shuffle=False,
             num_workers=num_workers,
         )
     else:
         dataloader = torch.utils.data.DataLoader(
-            dataset,
+            _dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
@@ -191,11 +191,11 @@ def run_evaluation_task(
 
     if task == 'zeroshot_classification':
         zeroshot_templates = (
-            dataset.templates if hasattr(dataset, 'templates') else None
+            _dataset.templates if hasattr(_dataset, 'templates') else None
         )
         print(f'Zero-shot templates: {zeroshot_templates}')
 
-        classnames = dataset.classes if hasattr(dataset, 'classes') else None
+        classnames = _dataset.classes if hasattr(_dataset, 'classes') else None
         assert (
             zeroshot_templates is not None and classnames is not None
         ), 'Dataset does not support classification'
@@ -315,10 +315,10 @@ def run_evaluation_task(
         'metrics': metrics,
         'language': language,
     }
-    if hasattr(dataset, 'classes') and dataset.classes and dump_classnames:
-        dump['classnames'] = dataset.classes
-    if hasattr(dataset, 'templates') and dataset.templates and dump_templates:
-        dump['templates'] = dataset.templates
+    if hasattr(_dataset, 'classes') and _dataset.classes and dump_classnames:
+        dump['classnames'] = _dataset.classes
+    if hasattr(_dataset, 'templates') and _dataset.templates and dump_templates:
+        dump['templates'] = _dataset.templates
 
     if output:
         print(f'Dumping results to: {output}')
