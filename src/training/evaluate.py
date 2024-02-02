@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import MutableMapping
 from typing import Any, Union
 
 import numpy as np
@@ -373,6 +374,16 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
                     embeddings.append(self._embed(batch))
 
             return np.concatenate(embeddings, axis=0)
+
+    def flatten(dictionary, parent_key='', separator='_'):
+        items = []
+        for key, value in dictionary.items():
+            new_key = parent_key + separator + key if parent_key else key
+            if isinstance(value, MutableMapping):
+                items.extend(flatten(value, new_key, separator=separator).items())
+            else:
+                items.append((new_key, value))
+        return dict(items)
     
     _mteb_model = _MTEBModel(
         clip_model=model,
@@ -387,7 +398,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
     evalsplits = ['dev' if task == 'MSMARCO' else 'test' for task in tasks]
 
     evaluation = MTEB(tasks=tasks, task_langs=languages)
-    metrics = evaluation.run(
+    results = evaluation.run(
         _mteb_model,
         batch_size=4,
         output_folder=None,
@@ -395,9 +406,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
         ignore_identical_ids=False,
     )
     metrics = {
-        f'{task}-{k}': v
-        for task, submetrics in metrics.items()
-        for k, v in submetrics.items()
+        k: v for k, v in flatten(results, separator='-').items() if isinstance(v, float)
     }
     
     logging.info('Finished MTEB benchmark!')
@@ -426,18 +435,18 @@ def evaluate(
     zero_shot_metrics = _run_zeroshot_evaluation(
         model, data, epoch, args, tokenizer=tokenizer
     )
-    metrics.update(zero_shot_metrics)
+    metrics.update({f'zeroshot-{k}': v for k, v in zero_shot_metrics.items()})
 
     val_metrics = _run_validation(model, data, epoch, args)
-    metrics.update(val_metrics)
+    metrics.update({f'valset-{k}': v for k, v in val_metrics.items()})
 
     clip_benchmark_metrics = _run_clip_benchmark(
         model, tokenizer, transform, epoch, args
     )
-    metrics.update(clip_benchmark_metrics)
+    metrics.update({f'clipbenchmark-{k}': v for k, v in clip_benchmark_metrics.items()})
 
     mteb_metrics = _run_mteb_benchmark(model, tokenizer, epoch, args)
-    metrics.update(mteb_metrics)
+    metrics.update({f'mteb-{k}': v for k, v in mteb_metrics.items()})
 
     if not metrics:
         return {}
