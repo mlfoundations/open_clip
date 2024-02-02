@@ -151,7 +151,7 @@ def run_benchmark(
 
     runs = product(_models, _datasets, languages)
 
-    print(f'Number of runs: {len(runs)}')
+    print(f'Number of runs: {len(list(runs))}')
 
     if distributed:
         local_rank, rank, world_size = world_info_from_env()
