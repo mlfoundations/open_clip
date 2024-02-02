@@ -298,7 +298,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
     from mteb import MTEB
     from transformers import AutoTokenizer
 
-    from open_clip.model import CLIP, CustomTextCLIP
+    from open_clip.model import CLIP
 
     class _MTEBModel(torch.nn.Module):
 
@@ -330,7 +330,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
                 self._tokenizer = _tokenizer
                 self._embed = self._clip_embed
 
-            elif isinstance(_model, CustomTextCLIP):
+            else:
                 assert hf_tokenizer_name
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     pretrained_model_name_or_path=hf_tokenizer_name,
@@ -338,12 +338,6 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
                     force_download=True
                 )
                 self._embed = self._hf_embed
-
-            else:
-                raise TypeError(
-                    f'Invalid type `{type(_model).__name__}` for argument '
-                    f'`clip_model`'
-                )
 
         @staticmethod
         def _mean_pooling(model_output, attention_mask):
