@@ -59,6 +59,7 @@ def _run_validation(model, data, epoch, args):
     if (epoch % args.val_frequency) != 0 and epoch != args.epochs:
         return {}
 
+    logging.info('--------------------------------------------------------------------')
     logging.info('Starting evaluation on the validation set ...')
 
     autocast = get_autocast(args.precision)
@@ -145,7 +146,8 @@ def _run_validation(model, data, epoch, args):
             gen_loss = cumulative_gen_loss / num_samples
             metrics.update({"generative_loss": gen_loss.item()})
 
-        logging.info('Finished!')
+    logging.info('Finished!')
+    logging.info('--------------------------------------------------------------------')
 
     return metrics
 
@@ -198,6 +200,7 @@ def _run_zeroshot_evaluation(model, data, epoch, args, tokenizer=None):
     if args.distributed and not args.horovod:
         model = model.module
 
+    logging.info('--------------------------------------------------------------------')
     logging.info('Starting zero-shot evaluation on Imagenet ...')
     if tokenizer is None:
         tokenizer = get_tokenizer(args.model)
@@ -231,6 +234,7 @@ def _run_zeroshot_evaluation(model, data, epoch, args, tokenizer=None):
         results['imagenetv2-zeroshot-top5'] = top5
 
     logging.info('Finished zero-shot evaluation!')
+    logging.info('--------------------------------------------------------------------')
 
     return results
 
@@ -241,12 +245,13 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
     if (epoch % args.clip_benchmark_frequency) != 0 and epoch != args.epochs:
         return {}
 
+    logging.info('--------------------------------------------------------------------')
     logging.info('Starting the CLIP benchmark ...')
 
     from clip_benchmark.run import run_benchmark, CLIPBenchmarkModel
 
     results = run_benchmark(
-        datasets=args.clip_benchmark_datasets,
+        datasets=[t for t in args.clip_benchmark_datasets.split(',')],
         models=[
             CLIPBenchmarkModel(
                 name=args.model,
@@ -269,45 +274,67 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
             metrics[f'{dataset}-{k}'] = v
     
     logging.info('Finished CLIP benchmark!')
+    logging.info('--------------------------------------------------------------------')
 
     return metrics
 
 
-def _run_mteb_benchmark(model, epoch, args):
+def _run_mteb_benchmark(model, tokenizer, epoch, args):
 
     if args.mteb_frequency == 0:
         return {}
     if (epoch % args.mteb_frequency) != 0 and epoch != args.epochs:
         return {}
-    
+
+    logging.info('--------------------------------------------------------------------')
     logging.info('Starting the MTEB benchmark ...')
 
     from mteb import MTEB
     from transformers import AutoTokenizer
+
+    from open_clip.model import CLIP, CustomTextCLIP
 
     class _MTEBModel(torch.nn.Module):
 
         def __init__(
             self,
             clip_model: torch.nn.Module,
-            tokenizer_name: str,
+            _tokenizer: Any = None,
+            hf_tokenizer_name: str = '',
             batch_size: int = 4,
             max_seq_length: int = 8192,
             device: Union[str, torch.device] = 'cpu',
         ):
             super(_MTEBModel, self).__init__()
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                pretrained_model_name_or_path=tokenizer_name,
-                trust_remote_code=True,
-                force_download=True
-            )
-            self._model = clip_model.text.transformer
+
+            self._tokenizer = None
             self._batch_size = batch_size
             self._max_seq_length = max_seq_length
             self._device = device
+            self._model = clip_model
+
+            if isinstance(clip_model, CLIP):
+                assert _tokenizer is not None
+                self._tokenizer = _tokenizer
+                self._embed = self._clip_embed
+
+            elif isinstance(clip_model, CustomTextCLIP):
+                assert hf_tokenizer_name
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    pretrained_model_name_or_path=hf_tokenizer_name,
+                    trust_remote_code=True,
+                    force_download=True
+                )
+                self._embed = self._hf_embed
+
+            else:
+                raise TypeError(
+                    f'Invalid type `{type(clip_model).__name__}` for argument '
+                    f'`clip_model`'
+                )
 
         @staticmethod
-        def mean_pooling(model_output, attention_mask):
+        def _mean_pooling(model_output, attention_mask):
             token_embeddings = model_output[0]
             input_mask_expanded = (
                 attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
@@ -316,32 +343,42 @@ def _run_mteb_benchmark(model, epoch, args):
                 input_mask_expanded.sum(1), min=1e-9
             )
 
+        def _hf_embed(self, sentences: list[str]):
+            encoded_input = self._tokenizer(
+                sentences,
+                padding=True,
+                truncation=True,
+                return_tensors='pt',
+                max_length=self._max_seq_length
+            ).to(self._device)
+
+            model_output = self._model.text.transformer(**encoded_input)
+            sentence_embeddings = self._mean_pooling(
+                model_output, encoded_input['attention_mask']
+            )
+            sentence_embeddings = f.normalize(sentence_embeddings, p=2, dim=1)
+            return sentence_embeddings.cpu().numpy()
+
+        def _clip_embed(self, sentences: list[str]):
+            x = self._tokenizer(sentences).to(self._device)
+            sentence_embeddings = self._model.encode_text(x)
+            return sentence_embeddings.cpu().numpy()
+
         @torch.no_grad()
-        def encode(self, sentences: list[str]):
+        def encode(self, sentences: list[str], batch_size: int = 1, **_):
             embeddings = []
             with torch.inference_mode():
-                for i in range(0, len(sentences), self._batch_size):
-                    encoded_input = self._tokenizer(
-                        sentences[i: i + self._batch_size],
-                        padding=True,
-                        truncation=True,
-                        return_tensors='pt',
-                        max_length=self._max_seq_length
-                    ).to(self._device)
-
-                    model_output = self._model(**encoded_input)
-                    sentence_embeddings = self.mean_pooling(
-                        model_output, encoded_input['attention_mask']
-                    )
-                    sentence_embeddings = f.normalize(sentence_embeddings, p=2, dim=1)
-                    embeddings.append(sentence_embeddings.cpu().numpy())
+                for i in range(0, len(sentences), batch_size):
+                    batch = sentences[i: i + batch_size]
+                    embeddings.append(self._embed(batch))
 
             return np.concatenate(embeddings, axis=0)
     
     _mteb_model = _MTEBModel(
         clip_model=model,
-        tokenizer_name=args.mteb_tokenizer_name,
-        max_seq_length=args.mteb_max_seq_len,
+        _tokenizer=tokenizer,
+        hf_tokenizer_name=args.mteb_tokenizer_name,
+        max_seq_length=args.mteb_max_seq_length,
         device=args.device,
     )
 
@@ -364,6 +401,7 @@ def _run_mteb_benchmark(model, epoch, args):
     }
     
     logging.info('Finished MTEB benchmark!')
+    logging.info('--------------------------------------------------------------------')
 
     return metrics
 
@@ -382,6 +420,8 @@ def evaluate(
         return metrics
 
     model.eval()
+
+    logging.info('--------------------------- EVALUATION -----------------------------')
 
     zero_shot_metrics = _run_zeroshot_evaluation(
         model, data, epoch, args, tokenizer=tokenizer
@@ -428,5 +468,7 @@ def evaluate(
             step = None
         logdata['epoch'] = epoch
         wandb.log(logdata, step=step)
+
+    logging.info('------------------------------ DONE --------------------------------')
 
     return metrics
