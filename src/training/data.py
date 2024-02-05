@@ -502,6 +502,7 @@ class SyntheticDataset(Dataset):
 
 def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     image_size = preprocess_fn.transforms[0].size
+    image_size = image_size if isinstance(image_size, tuple) else (image_size, image_size)
     dataset = SyntheticDataset(
         transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
     num_samples = len(dataset)
