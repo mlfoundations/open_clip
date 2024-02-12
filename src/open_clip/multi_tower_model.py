@@ -34,6 +34,7 @@ from .utils import to_2tuple
 @dataclass
 class CLIPVisionCfg:
     layers: Union[Tuple[int, int, int, int], int] = 12
+    hf_model_name: Optional[str] = None
     width: int = 768
     head_width: int = 64
     mlp_ratio: float = 4.0
@@ -101,6 +102,7 @@ class CLIPTextCfg:
     hf_model_pretrained: bool = True
     hf_proj_type: str = "mlp"
     hf_pooler_type: str = "mean_pooler"  # attentional pooling for HF models
+    hf_trust_remote_code: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -213,6 +215,7 @@ def _build_text_tower(
             pooler_type=text_cfg.hf_pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
+            trust_remote_code=text_cfg.hf_trust_remote_code
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -382,7 +385,7 @@ class ThreeTowerCustomTextCLIP(nn.Module):
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
         text_cfg: CLIPTextCfg,
-        teacher_cfg: CLIPVisionCfg,
+        teacher_cfg: Union[CLIPVisionCfg, CLIPTextCfg],
         quick_gelu: bool = False,
         init_logit_scale: float = np.log(1 / 0.07),
         init_logit_bias: Optional[float] = None,
@@ -393,7 +396,14 @@ class ThreeTowerCustomTextCLIP(nn.Module):
         self.output_dict = output_dict
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
-        self.teacher = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
+        if 'hf_tokenizer_name' in teacher_cfg:
+            self.teacher = _build_text_tower(embed_dim, teacher_cfg, quick_gelu, cast_dtype)
+            self.teacher.lock(unlocked_layers=0, freeze_layer_norm=True)
+            self.teacher_type = 'text'
+        else:
+            self.teacher = _build_vision_tower(embed_dim, teacher_cfg, quick_gelu, cast_dtype)
+            self.teacher.lock(unlocked_groups=0, freeze_bn_stats=False)
+            self.teacher_type = 'vision'
         self.context_length = self.text.context_length
         self.vocab_size = self.text.vocab_size
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
@@ -401,8 +411,6 @@ class ThreeTowerCustomTextCLIP(nn.Module):
             self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
         else:
             self.logit_bias = None
-
-        self.teacher.lock(unlocked_groups=0, freeze_bn_stats=False)
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
@@ -450,9 +458,14 @@ class ThreeTowerCustomTextCLIP(nn.Module):
         text_features = (
             self.encode_text(text, normalize=True) if text is not None else None
         )
-        teacher_features = (
-            self.encode_teacher(image, normalize=True) if image is not None else None
-        )
+        if self.teacher_type == 'vision':
+            teacher_features = (
+                self.encode_teacher(image, normalize=True) if image is not None else None
+            )
+        else:
+            teacher_features = (
+                self.encode_text(text, normalize=True) if text is not None else None
+            )
 
         if self.output_dict:
             out_dict = {

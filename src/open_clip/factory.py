@@ -183,9 +183,15 @@ def load_checkpoint(model, checkpoint_path, is_teacher=True, strict=True):
     ):
         state_dict = convert_to_custom_text_state_dict(state_dict)
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
-    if "logit_bias" not in state_dict and model.logit_bias is not None:
-        state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
+    # if "logit_bias" not in state_dict and model.logit_bias is not None:
+    #     state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
     # Certain text transformers no longer expect position_ids after transformers==4.31
+
+    # remove logit biases and scale for 3-towers
+    if "logit_bias" in state_dict:
+        del(state_dict["logit_bias"])
+    del(state_dict["logit_scale"])
+
     position_id_key = "text.transformer.embeddings.position_ids"
     if position_id_key in state_dict and not hasattr(model, position_id_key):
         del state_dict[position_id_key]
@@ -323,7 +329,8 @@ def create_model(
         else:
             model.to(device=device)
 
-        if "teacher_cfg" in model_cfg:
+        # hacky, but fine for now
+        if "teacher_cfg" in model_cfg and "hf_tokenizer_name" not in model_cfg["teacher_cfg"]:
             pretrained_cfg = _pcfg(hf_hub=model_cfg["teacher_cfg"]["hf_model_name"])
             checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
             preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)

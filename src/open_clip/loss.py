@@ -88,7 +88,8 @@ def gather_features(
             ]
             dist.all_gather(gathered_image_features, image_features)
             dist.all_gather(gathered_text_features, text_features)
-            dist.all_gather(gathered_teacher_features, teacher_features)
+            if teacher_features is not None:
+                dist.all_gather(gathered_teacher_features, teacher_features)
             if not local_loss:
                 # ensure grads for local rank when all_* features don't have a gradient
                 gathered_image_features[rank] = image_features
@@ -96,7 +97,10 @@ def gather_features(
                 gathered_teacher_features[rank] = teacher_features
             all_image_features = torch.cat(gathered_image_features, dim=0)
             all_text_features = torch.cat(gathered_text_features, dim=0)
-            all_teacher_features = torch.cat(gathered_teacher_features, dim=0)
+            if teacher_features is not None:
+                all_teacher_features = torch.cat(gathered_teacher_features, dim=0)
+            else:
+                all_teacher_features = None
 
     return all_image_features, all_text_features, all_teacher_features
 
@@ -139,14 +143,14 @@ class ClipLoss(nn.Module):
 
     def get_logits(self, image_features, text_features, logit_scale):
         if self.world_size > 1:
-            all_image_features, all_text_features = gather_features(
-                image_features,
-                text_features,
-                self.local_loss,
-                self.gather_with_grad,
-                self.rank,
-                self.world_size,
-                self.use_horovod,
+            all_image_features, all_text_features, _ = gather_features(
+                image_features = image_features,
+                text_features = text_features,
+                local_loss = self.local_loss,
+                gather_with_grad = self.gather_with_grad,
+                rank = self.rank,
+                world_size = self.world_size,
+                use_horovod = self.use_horovod,
             )
 
             if self.local_loss:
