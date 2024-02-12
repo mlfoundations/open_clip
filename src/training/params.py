@@ -211,12 +211,6 @@ def parse_args(args):
         help="Use a pretrained CLIP model weights with the specified tag or file path.",
     )
     parser.add_argument(
-        "--teacher",
-        default='',
-        type=str,
-        help="Use a pretrained CLIP model weights with the specified tag or file path.",
-    )
-    parser.add_argument(
         "--pretrained-image",
         default=False,
         action='store_true',

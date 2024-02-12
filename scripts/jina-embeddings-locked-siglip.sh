@@ -12,7 +12,7 @@ torchrun --nproc_per_node 8 -m training.main \
     --lr 5e-4 \
     --precision amp \
     --workers 2 \
-    --model "jina-embedding-ViT-B-32" \
+    --model "jina-embeddings-ViT-B-32" \
     --lock-text \
     --lock-text-freeze-layer-norm \
     --name "jina-lock-sigLIP" \
