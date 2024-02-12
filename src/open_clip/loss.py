@@ -73,7 +73,7 @@ def gather_features(
             )
             all_teacher_features = (
                 torch.cat(torch.distributed.nn.all_gather(teacher_features), dim=0)
-                if teacher_features
+                if teacher_features is not None
                 else None
             )
         else:
