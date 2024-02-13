@@ -300,7 +300,7 @@ class ThreeTowerLoss(nn.Module):
         total_loss = (
             sum([
                 F.cross_entropy(similarity, labels)
-                for _, values in logits for __, similarity in values.items()
+                for _, values in logits.items() for _, similarity in values.items()
             ]) / 6
         )
         return {"contrastive_loss": total_loss} if output_dict else total_loss
