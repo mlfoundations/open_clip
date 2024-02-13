@@ -45,6 +45,8 @@ class CLIPVisionCfg:
     act_kwargs: Optional[dict] = None
     norm_kwargs: Optional[dict] = None
 
+    hf_model_name: Optional[str] = None
+
     timm_model_name: Optional[str] = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
