@@ -8,6 +8,7 @@ try:
 
     has_distributed = True
 except ImportError:
+    dist = None
     has_distributed = False
 
 try:
@@ -26,9 +27,10 @@ def gather_features(
     world_size=1,
     use_horovod=False,
 ):
-    assert (
-        has_distributed
-    ), "torch.distributed did not import correctly, please use a PyTorch version with support."
+    assert has_distributed, (
+        "torch.distributed did not import correctly, please use a PyTorch version "
+        "with support."
+    )
     if use_horovod:
         assert hvd is not None, "Please install horovod"
         if gather_with_grad:
@@ -56,6 +58,7 @@ def gather_features(
                 gathered_text_features[rank] = text_features
                 all_image_features = torch.cat(gathered_image_features, dim=0)
                 all_text_features = torch.cat(gathered_text_features, dim=0)
+
                 if teacher_features:
                     gathered_teacher_features = list(
                         all_teacher_features.chunk(world_size, dim=0)
@@ -83,24 +86,27 @@ def gather_features(
             gathered_text_features = [
                 torch.zeros_like(text_features) for _ in range(world_size)
             ]
-            gathered_teacher_features = [
-                torch.zeros_like(text_features) for _ in range(world_size)
-            ]
+
             dist.all_gather(gathered_image_features, image_features)
             dist.all_gather(gathered_text_features, text_features)
-            if teacher_features is not None:
-                dist.all_gather(gathered_teacher_features, teacher_features)
+
             if not local_loss:
                 # ensure grads for local rank when all_* features don't have a gradient
                 gathered_image_features[rank] = image_features
                 gathered_text_features[rank] = text_features
-                gathered_teacher_features[rank] = teacher_features
+
             all_image_features = torch.cat(gathered_image_features, dim=0)
             all_text_features = torch.cat(gathered_text_features, dim=0)
+
+            all_teacher_features = None
             if teacher_features is not None:
+                gathered_teacher_features = [
+                    torch.zeros_like(teacher_features) for _ in range(world_size)
+                ]
+                dist.all_gather(gathered_teacher_features, teacher_features)
+                if not local_loss:
+                    gathered_teacher_features[rank] = teacher_features
                 all_teacher_features = torch.cat(gathered_teacher_features, dim=0)
-            else:
-                all_teacher_features = None
 
     return all_image_features, all_text_features, all_teacher_features
 
@@ -144,15 +150,14 @@ class ClipLoss(nn.Module):
     def get_logits(self, image_features, text_features, logit_scale):
         if self.world_size > 1:
             all_image_features, all_text_features, _ = gather_features(
-                image_features = image_features,
-                text_features = text_features,
-                local_loss = self.local_loss,
-                gather_with_grad = self.gather_with_grad,
-                rank = self.rank,
-                world_size = self.world_size,
-                use_horovod = self.use_horovod,
+                image_features=image_features,
+                text_features=text_features,
+                local_loss=self.local_loss,
+                gather_with_grad=self.gather_with_grad,
+                rank=self.rank,
+                world_size=self.world_size,
+                use_horovod=self.use_horovod,
             )
-
             if self.local_loss:
                 logits_per_image = logit_scale * image_features @ all_text_features.T
                 logits_per_text = logit_scale * text_features @ all_image_features.T
@@ -219,7 +224,7 @@ class ThreeTowerLoss(nn.Module):
         return labels
 
     def get_logits(self, image_features, text_features, teacher_features, logit_scale):
-        logits = {"img": {}, "txt": {}, "teacher": {}}
+        logits = {"image": {}, "text": {}, "teacher": {}}
         if self.world_size > 1:
             all_image_features, all_text_features, all_teacher_features = (
                 gather_features(
@@ -233,32 +238,49 @@ class ThreeTowerLoss(nn.Module):
                     self.use_horovod,
                 )
             )
-
             if self.local_loss:
-                # fmt: off
-                logits["img"]["txt"] = logit_scale * image_features @ all_text_features.T
-                logits["txt"]["img"] = logit_scale * text_features @ all_image_features.T
-                logits["img"]["teacher"] = logit_scale * image_features @ all_teacher_features.T
-                logits["teacher"]["img"] = logit_scale * teacher_features @ all_image_features.T
-                logits["txt"]["teacher"] = logit_scale * text_features @ all_teacher_features.T
-                logits["teacher"]["txt"] = logit_scale * teacher_features @ all_text_features.T
-                # fmt: on
+                logits["image"]["text"] = (
+                    logit_scale * image_features @ all_text_features.T
+                )
+                logits["text"]["image"] = (
+                    logit_scale * text_features @ all_image_features.T
+                )
+                logits["image"]["teacher"] = (
+                    logit_scale * image_features @ all_teacher_features.T
+                )
+                logits["teacher"]["image"] = (
+                    logit_scale * teacher_features @ all_image_features.T
+                )
+                logits["text"]["teacher"] = (
+                    logit_scale * text_features @ all_teacher_features.T
+                )
+                logits["teacher"]["text"] = (
+                    logit_scale * teacher_features @ all_text_features.T
+                )
             else:
-                # fmt: off
-                logits["img"]["txt"] = logit_scale * all_image_features @ all_text_features.T
-                logits["txt"]["img"] = logits["img"]["txt"].T
-                logits["img"]["teacher"] = logit_scale * all_image_features @ all_teacher_features.T
-                logits["teacher"]["img"] = logits["img"]["teacher"].T
-                logits["txt"]["teacher"] = logit_scale * all_text_features @ all_teacher_features.T
-                logits["teacher"]["txt"] = logits["txt"]["teacher"].T
-                # fmt: on
+                logits["image"]["text"] = (
+                    logit_scale * all_image_features @ all_text_features.T
+                )
+                logits["text"]["image"] = logits["image"]["text"].T
+                logits["image"]["teacher"] = (
+                    logit_scale * all_image_features @ all_teacher_features.T
+                )
+                logits["teacher"]["image"] = logits["image"]["teacher"].T
+                logits["text"]["teacher"] = (
+                    logit_scale * all_text_features @ all_teacher_features.T
+                )
+                logits["teacher"]["text"] = logits["text"]["teacher"].T
         else:
-            logits["img"]["txt"] = logit_scale * image_features @ text_features.T
-            logits["txt"]["img"] = logit_scale * text_features @ image_features.T
-            logits["img"]["teacher"] = logit_scale * image_features @ teacher_features.T
-            logits["teacher"]["img"] = logit_scale * teacher_features @ image_features.T
-            logits["txt"]["teacher"] = logit_scale * text_features @ teacher_features.T
-            logits["teacher"]["txt"] = logit_scale * teacher_features @ text_features.T
+            logits["image"]["text"] = logit_scale * image_features @ text_features.T
+            logits["text"]["image"] = logit_scale * text_features @ image_features.T
+            logits["image"]["teacher"] = (
+                logit_scale * image_features @ teacher_features.T
+            )
+            logits["teacher"]["image"] = (
+                logit_scale * teacher_features @ image_features.T
+            )
+            logits["text"]["teacher"] = logit_scale * text_features @ teacher_features.T
+            logits["teacher"]["text"] = logit_scale * teacher_features @ text_features.T
 
         return logits
 
@@ -274,20 +296,13 @@ class ThreeTowerLoss(nn.Module):
         logits = self.get_logits(
             image_features, text_features, teacher_features, logit_scale
         )
-
-        labels = self.get_ground_truth(device, logits["img"]["txt"].shape[0])
-
+        labels = self.get_ground_truth(device, logits["image"]["text"].shape[0])
         total_loss = (
-            sum(
-                [
-                    F.cross_entropy(logits[i][j], labels)
-                    for i in logits
-                    for j in logits[i]
-                ]
-            )
-            / 6
+            sum([
+                F.cross_entropy(similarity, labels)
+                for _, values in logits for __, similarity in values.items()
+            ]) / 6
         )
-
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
 
@@ -492,7 +507,8 @@ def neighbour_exchange_bidir_with_grad(
 
 
 class SigLipLoss(nn.Module):
-    """Sigmoid Loss for Language Image Pre-Training (SigLIP) - https://arxiv.org/abs/2303.15343
+    """Sigmoid Loss for Language Image Pre-Training (SigLIP) -
+    https://arxiv.org/abs/2303.15343
 
     @article{zhai2023sigmoid,
       title={Sigmoid loss for language image pre-training},

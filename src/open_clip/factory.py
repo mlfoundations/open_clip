@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
-from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import (
     CLIP,
     CustomTextCLIP,
@@ -20,13 +19,12 @@ from .model import (
     resize_text_pos_embed,
     set_model_preprocess_cfg,
 )
-from .multi_tower_model import ThreeTowerCLIP, ThreeTowerCustomTextCLIP
+from .multi_tower_model import ThreeTowerCustomTextCLIP
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ThreeTowerLoss
 from .openai import load_openai_model
 from .pretrained import (
     _pcfg,
-    is_pretrained_cfg,
     get_pretrained_cfg,
     download_pretrained,
     list_pretrained_tags_by_model,
@@ -182,7 +180,8 @@ def load_checkpoint(model, checkpoint_path, is_teacher=True, strict=True):
         model, "positional_embedding"
     ):
         state_dict = convert_to_custom_text_state_dict(state_dict)
-    # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
+    # If loading a non-SigLIP model for SigLIP training. See
+    # https://github.com/mlfoundations/open_clip/issues/712
     # if "logit_bias" not in state_dict and model.logit_bias is not None:
     #     state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
     # Certain text transformers no longer expect position_ids after transformers==4.31
@@ -253,7 +252,8 @@ def create_model(
             logging.info(f"Loaded {model_name} model config.")
         else:
             logging.error(
-                f"Model config for {model_name} not found; available models {list_models()}."
+                f"Model config for {model_name} not found; "
+                f"available models {list_models()}."
             )
             raise RuntimeError(f"Model config for {model_name} not found.")
 
@@ -279,7 +279,8 @@ def create_model(
                     False
                 ), "pretrained image towers currently only supported for timm models"
 
-        # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp' or 'pure' modes
+        # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp'
+        # or 'pure' modes
         cast_dtype = get_cast_dtype(precision)
         is_hf_model = "hf_model_name" in model_cfg.get("text_cfg", {})
         if is_hf_model:
@@ -308,9 +309,10 @@ def create_model(
             dtype = torch.float16 if "fp16" in precision else torch.bfloat16
             # manual mixed precision that matches original OpenAI behaviour
             if is_timm_model:
-                # FIXME this is a bit janky, create timm based model in low-precision and
-                # then cast only LayerNormFp32 instances back to float32 so they don't break.
-                # Why? The convert_weights_to_lp fn only works with native models.
+                # FIXME this is a bit janky, create timm based model in low-precision
+                #  and then cast only LayerNormFp32 instances back to float32 so they
+                #  don't break. Why? The convert_weights_to_lp fn only works with
+                #  native models.
                 model.to(device=device, dtype=dtype)
                 from .transformer import LayerNormFp32
 
@@ -330,7 +332,10 @@ def create_model(
             model.to(device=device)
 
         # hacky, but fine for now
-        if "teacher_cfg" in model_cfg and "hf_tokenizer_name" not in model_cfg["teacher_cfg"]:
+        if (
+            "teacher_cfg" in model_cfg
+            and "hf_tokenizer_name" not in model_cfg["teacher_cfg"]
+        ):
             pretrained_cfg = _pcfg(hf_hub=model_cfg["teacher_cfg"]["hf_model_name"])
             checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
             preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
@@ -339,7 +344,7 @@ def create_model(
                 load_checkpoint(model, checkpoint_path, is_teacher=True, strict=False)
             else:
                 error_str = "Something is broken but I'm not sure what"
-                logging.warning(error_str)
+                logging.exception(error_str)
                 raise RuntimeError(error_str)
 
         pretrained_loaded = False
@@ -359,8 +364,9 @@ def create_model(
                 load_checkpoint(model, checkpoint_path)
             else:
                 error_str = (
-                    f"Pretrained weights ({pretrained}) not found for model {model_name}."
-                    f" Available pretrained tags ({list_pretrained_tags_by_model(model_name)}."
+                    f"Pretrained weights ({pretrained}) not found for model "
+                    f"{model_name}.Available pretrained tags "
+                    f"({list_pretrained_tags_by_model(model_name)}."
                 )
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
@@ -375,7 +381,8 @@ def create_model(
         if require_pretrained and not pretrained_loaded:
             # callers of create_model_from_pretrained always expect pretrained weights
             raise RuntimeError(
-                f"Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded."
+                f"Pretrained weights were required for (model: {model_name}, "
+                f"pretrained: {pretrained}) but not loaded."
             )
 
     if output_dict and hasattr(model, "output_dict"):
@@ -416,7 +423,7 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
-    elif "3t" in args.model.lower():
+    elif "3towers" in args.model.lower():
         return ThreeTowerLoss(
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,

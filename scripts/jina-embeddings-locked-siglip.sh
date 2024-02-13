@@ -1,4 +1,4 @@
-export CUDA_VISIBLR_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 torchrun --nproc_per_node 8 -m training.main \
     --train-data="/home/admin/andreas/laion/train-part-2/{00000..14233}.tar::/home/admin/andreas/laion/train-part-3/{00000..05290}.tar::pipe:aws s3 cp s3://laion-400m-data/train/{00002..26002}.tar -" \
