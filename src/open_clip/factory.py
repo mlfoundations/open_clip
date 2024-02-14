@@ -19,7 +19,7 @@ from .model import (
     resize_text_pos_embed,
     set_model_preprocess_cfg,
 )
-from .multi_tower_model import ThreeTowerCustomTextCLIP
+from .multi_tower_model import ThreeTowersCustomTextCLIP
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ThreeTowerLoss
 from .openai import load_openai_model
@@ -299,7 +299,7 @@ def create_model(
             if "multimodal_cfg" in model_cfg:
                 model = CoCa(**model_cfg, cast_dtype=cast_dtype)
             elif "teacher_cfg" in model_cfg:
-                model = ThreeTowerCustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = ThreeTowersCustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:

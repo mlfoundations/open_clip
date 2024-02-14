@@ -3,6 +3,7 @@ from typing import Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as f
+from torch import nn
 
 from .hf_model import HFTextEncoder
 from .transformer import VisionTransformer, TextTransformer
@@ -24,6 +25,7 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
         init_logit_bias: Optional[float] = None,
         cast_dtype: Optional[torch.dtype] = None,
         output_dict: bool = False,
+        tie_projections: bool = False
     ):
         super(ThreeTowersCustomTextCLIP, self).__init__(
             embed_dim=embed_dim,
@@ -48,7 +50,14 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
             self.teacher.lock(unlocked_groups=0, freeze_bn_stats=False)
             self.teacher_type = 'vision'
 
-        self._tie_projections()
+        if tie_projections:
+            self._tie_projections()
+
+    @staticmethod
+    def _tie_linears(linear_a: nn.Linear, linear_b: nn.Linear):
+        linear_a.weight = linear_a.weight
+        if hasattr(linear_a, 'bias') and hasattr(linear_a, 'bias'):
+            linear_a.bias = linear_b.bias
 
     def _tie_projections(self):
         if self.teacher_type == 'text':
@@ -58,15 +67,21 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
                 f'model is of type `{type(self.text)}`'
             )
             if isinstance(self.teacher, TextTransformer):
-                self.teacher.text_projection.weight = self.text.text_projection.weight
-                if (
-                    hasattr(self.teacher.text_projection, 'bias')
-                    and hasattr(self.text.text_projection, 'bias')
-                ):
-                    self.teacher.text_projection.bias = self.text.text_projection.bias
+                self._tie_linears(
+                    self.teacher.text_projection, self.text.text_projection
+                )
             elif isinstance(self.teacher, HFTextEncoder):
-                # TODO: This will fail for MLP or Identity projection
-                self.teacher.proj.weight = self.text.proj.weight
+                if isinstance(self.teacher.proj, nn.Linear):
+                    self._tie_linears(self.teacher.proj, self.text.proj)
+                elif isinstance(self.teacher.proj, nn.Sequential):
+                    for module_a, module_b in zip(
+                        self.teacher.proj.children(), self.text.proj.children()
+                    ):
+                        if (
+                            isinstance(module_a, nn.Linear)
+                            and isinstance(module_b, nn.Linear)
+                        ):
+                            self._tie_linears(module_a, module_b)
             else:
                 raise TypeError(
                     f'Teacher model type `{type(self.teacher)}` is not '
@@ -79,7 +94,7 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
                 f'model is of type `{type(self.visual)}`'
             )
             if isinstance(self.teacher, VisionTransformer):
-                self.teacher.proj.weight = self.visual.proj.weight
+                self.teacher.proj = self.visual.proj
             else:
                 raise TypeError(
                     f'Teacher model type `{type(self.teacher)}` is not '

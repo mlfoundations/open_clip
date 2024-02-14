@@ -1,6 +1,7 @@
 {
     "embed_dim": 512,
     "quick_gelu": true,
+    "tie_projections": true,
     "vision_cfg": {
         "image_size": 224,
         "layers": 12,
