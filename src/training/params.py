@@ -498,6 +498,8 @@ def parse_args(args):
         help="The max sequence length used during MTEB evaluation."
     )
 
+    parser.add_argument("--add-adapters", action='store_true', help="Add adapter layers to the text model")
+
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

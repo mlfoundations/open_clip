@@ -236,6 +236,7 @@ def main(args):
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        add_adapters=args.add_adapters,
         pretrained_image=args.pretrained_image,
         output_dict=True,
         **model_kwargs,

@@ -6,8 +6,10 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+from adapters import AdapterConfig
 
 import torch
+import adapters
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
@@ -178,6 +180,7 @@ def create_model(
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
+        add_adapters: bool = False,
         **model_kwargs,
 ):
     force_preprocess_cfg = force_preprocess_cfg or {}
@@ -317,6 +320,12 @@ def create_model(
         force_preprocess_cfg['size'] = model.visual.image_size
     set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg))
 
+    if add_adapters:
+        adapters.init(model.text.transformer)
+        adapter_config = AdapterConfig.load("seq_bn")
+        model.text.transformer.add_adapter("test_adapter", adapter_config)
+        model.text.transformer.set_active_adapters("test_adapter")
+
     return model
 
 
@@ -374,6 +383,7 @@ def create_model_and_transforms(
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         pretrained_image: bool = False,
         pretrained_hf: bool = True,
+        add_adapters: bool = False,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         **model_kwargs,
@@ -394,6 +404,7 @@ def create_model_and_transforms(
         force_preprocess_cfg=force_preprocess_cfg,
         pretrained_image=pretrained_image,
         pretrained_hf=pretrained_hf,
+        add_adapters=add_adapters,
         cache_dir=cache_dir,
         output_dict=output_dict,
         **model_kwargs,

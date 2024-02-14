@@ -13,6 +13,7 @@ try:
     from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
     from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, \
         BaseModelOutputWithPoolingAndCrossAttentions
+    from adapters import AutoAdapterModel
 except ImportError as e:
     transformers = None
 
@@ -128,7 +129,7 @@ class HFTextEncoder(nn.Module):
                 self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
-            self.transformer = AutoModel.from_config(config)
+            self.transformer = AutoAdapterModel.from_config(config)
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
 
@@ -168,9 +169,11 @@ class HFTextEncoder(nn.Module):
             return projected, tokens
         return projected
 
-    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, lock_adapter: bool = False):
         if not unlocked_layers:  # full freezing
             for n, p in self.transformer.named_parameters():
+                if "adapter" in n and not lock_adapter:
+                    continue
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
             return
 
@@ -183,6 +186,9 @@ class HFTextEncoder(nn.Module):
         # freeze layers
         for module in modules:
             for n, p in module.named_parameters():
+                if "adapter" in n and not lock_adapter:
+                    continue
+
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
 
     @torch.jit.ignore
