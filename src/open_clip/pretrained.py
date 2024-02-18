@@ -543,14 +543,28 @@ def has_hf_hub(necessary=False):
 
 
 def download_pretrained_from_hf(
-        model_id: str,
-        filename: str = 'open_clip_pytorch_model.bin',
-        revision=None,
-        cache_dir: Union[str, None] = None,
+    model_id: str,
+    filename: Union[str, None] = None,
+    revision=None,
+    cache_dir: Union[str, None] = None,
 ):
     has_hf_hub(True)
-    cached_file = hf_hub_download(model_id, filename, revision=revision, cache_dir=cache_dir)
-    return cached_file
+
+    # List of filenames to try downloading --> try safetensors if .bin file is missing
+    filenames_to_try = ['open_clip_pytorch_model.bin', 'open_clip_pytorch_model.safetensors'] if filename is None else [filename]
+    
+    last_exception = None  # Variable to store the last exception
+    for fname in filenames_to_try:
+        try:
+            # Attempt to download the file
+            cached_file = hf_hub_download(model_id, fname, revision=revision, cache_dir=cache_dir)
+            return cached_file  # Return the path to the downloaded file if successful
+        except Exception as e:
+            last_exception = e  # Store the last exception encountered
+            continue  # Try the next file
+    
+    # If the loop completes without returning, raise the last encountered exception
+    raise FileNotFoundError(f"Failed to download any files for {model_id}. Last error: {last_exception}") from last_exception
 
 
 def download_pretrained(

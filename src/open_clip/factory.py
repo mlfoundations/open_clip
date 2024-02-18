@@ -144,6 +144,10 @@ def load_checkpoint(model, checkpoint_path, strict=True):
         from .big_vision import load_big_vision_weights
         load_big_vision_weights(model, checkpoint_path)
         return {}
+    elif Path(checkpoint_path).suffix in ('.safetensors',):
+        from safetensors.torch import load_model
+        load_model(model, checkpoint_path)
+        return {}
 
     state_dict = load_state_dict(checkpoint_path)
     # detect old format and make compatible with new format
