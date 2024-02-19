@@ -106,6 +106,7 @@ class HFTextEncoder(nn.Module):
             proj_type: str = None,
             pretrained: bool = True,
             output_tokens: bool = False,
+            trust_remote_code: bool = False,
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -117,7 +118,7 @@ class HFTextEncoder(nn.Module):
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
-            self.config = AutoConfig.from_pretrained(model_name_or_path)
+            self.config = AutoConfig.from_pretrained(model_name_or_path,trust_remote_code=trust_remote_code)
             create_func, model_args = (AutoModel.from_pretrained, model_name_or_path) if pretrained else (
                 AutoModel.from_config, self.config)
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
@@ -125,7 +126,7 @@ class HFTextEncoder(nn.Module):
                 self.transformer = create_func(model_args)
                 self.transformer = self.transformer.encoder
             else:
-                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                self.transformer = create_func(model_args, trust_remote_code=trust_remote_code, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
