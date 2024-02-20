@@ -24,7 +24,7 @@ from open_clip import (
 from .distributed import is_master
 from .precision import get_autocast
 
-MTEB_LOGGING_METRICS = ['ncdg_at_10', 'cos_sim']
+MTEB_LOGGING_METRICS = ['ndcg_at_10', 'cos_sim']
 
 def _get_clip_metrics(image_features, text_features, logit_scale):
     metrics = {}

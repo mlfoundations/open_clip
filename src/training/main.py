@@ -477,6 +477,7 @@ def main(args):
         if (
             any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2'))
             or args.clip_benchmark_frequency != 0
+            or args.mteb_frequency != 0
         ):
             evaluate(
                 model,

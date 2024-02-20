@@ -172,7 +172,7 @@ def parse_args(args):
         "--evaluate-on-start",
         action="store_true",
         default=False,
-        help="Do the first evaluation on the benchmarks before start training"
+        help="Run the first benchmark evaluation before training"
     )
     parser.add_argument(
         "--save-most-recent",
