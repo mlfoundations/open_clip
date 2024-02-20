@@ -430,6 +430,10 @@ def main(args):
         )
         return
 
+    evaluate(
+            model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
+        )
+        
     loss = create_loss(args)
 
     for epoch in range(start_epoch, args.epochs):
