@@ -169,6 +169,12 @@ def parse_args(args):
         "--save-frequency", type=int, default=1, help="How often to save checkpoints."
     )
     parser.add_argument(
+        "--evaluate-on-start",
+        action="store_true",
+        default=False,
+        help="Do the first evaluation on the benchmarks before start training"
+    )
+    parser.add_argument(
         "--save-most-recent",
         action="store_true",
         default=False,
