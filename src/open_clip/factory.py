@@ -13,10 +13,8 @@ from .model import (
     CLIP,
     CustomTextCLIP,
     convert_weights_to_lp,
-    convert_to_custom_text_state_dict,
-    resize_pos_embed,
     get_cast_dtype,
-    resize_text_pos_embed,
+    load_checkpoint,
     set_model_preprocess_cfg,
 )
 from .multi_tower_model import ThreeTowersCustomTextCLIP
@@ -24,7 +22,6 @@ from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ThreeTowerLoss
 from .openai import load_openai_model
 from .pretrained import (
-    _pcfg,
     get_pretrained_cfg,
     download_pretrained,
     list_pretrained_tags_by_model,
@@ -110,7 +107,7 @@ def get_tokenizer(
     **kwargs,
 ):
     if model_name.startswith(HF_HUB_PREFIX):
-        model_name = model_name[len(HF_HUB_PREFIX) :]
+        model_name = model_name[len(HF_HUB_PREFIX):]
         try:
             config = _get_hf_config(model_name)["model_cfg"]
         except Exception:
@@ -148,58 +145,6 @@ def get_tokenizer(
     return tokenizer
 
 
-def load_state_dict(checkpoint_path: str, map_location="cpu"):
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    elif isinstance(checkpoint, torch.jit.ScriptModule):
-        state_dict = checkpoint.state_dict()
-        for key in ["input_resolution", "context_length", "vocab_size"]:
-            state_dict.pop(key, None)
-    else:
-        state_dict = checkpoint
-    if next(iter(state_dict.items()))[0].startswith("module"):
-        state_dict = {k[7:]: v for k, v in state_dict.items()}
-    return state_dict
-
-
-def load_checkpoint(model, checkpoint_path, is_teacher=True, strict=True):
-    if Path(checkpoint_path).suffix in (".npz", ".npy"):
-        from .big_vision import load_big_vision_weights
-
-        load_big_vision_weights(model, checkpoint_path)
-        return {}
-
-    state_dict = load_state_dict(checkpoint_path)
-    if is_teacher:
-        pattern = re.compile(r"^visual\.")
-        state_dict = {pattern.sub("teacher.", k): v for (k, v) in state_dict.items()}
-
-    # detect old format and make compatible with new format
-    if "positional_embedding" in state_dict and not hasattr(
-        model, "positional_embedding"
-    ):
-        state_dict = convert_to_custom_text_state_dict(state_dict)
-    # If loading a non-SigLIP model for SigLIP training. See
-    # https://github.com/mlfoundations/open_clip/issues/712
-    # if "logit_bias" not in state_dict and model.logit_bias is not None:
-    #     state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
-    # Certain text transformers no longer expect position_ids after transformers==4.31
-
-    # remove logit biases and scale for 3-towers
-    if "logit_bias" in state_dict:
-        del(state_dict["logit_bias"])
-    del(state_dict["logit_scale"])
-
-    position_id_key = "text.transformer.embeddings.position_ids"
-    if position_id_key in state_dict and not hasattr(model, position_id_key):
-        del state_dict[position_id_key]
-    resize_pos_embed(state_dict, model)
-    resize_text_pos_embed(state_dict, model)
-    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
-    return incompatible_keys
-
-
 def create_model(
     model_name: str,
     pretrained: Optional[str] = None,
@@ -222,7 +167,7 @@ def create_model(
     preprocess_cfg = asdict(PreprocessCfg())
     has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
     if has_hf_hub_prefix:
-        model_id = model_name[len(HF_HUB_PREFIX) :]
+        model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
         config = _get_hf_config(model_id, cache_dir)
         preprocess_cfg = merge_preprocess_dict(preprocess_cfg, config["preprocess_cfg"])
@@ -288,22 +233,26 @@ def create_model(
             model_cfg["text_cfg"]["hf_model_pretrained"] = (
                 pretrained_hf and not pretrained
             )
+
         custom_text = (
             model_cfg.pop("custom_text", False) or force_custom_text or is_hf_model
         )
 
-        model_cfg = dict(
-            model_cfg, **model_kwargs
-        )  # merge cfg dict w/ kwargs (kwargs overrides cfg)
+        # merge cfg dict w/ kwargs (kwargs overrides cfg)
+        model_cfg = dict(model_cfg, **model_kwargs)
         if custom_text:
             if "multimodal_cfg" in model_cfg:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+                model = CoCa(**model_cfg, cast_dtype=cast_dtype, cache_dir=cache_dir)
             elif "teacher_cfg" in model_cfg:
-                model = ThreeTowersCustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = ThreeTowersCustomTextCLIP(
+                    **model_cfg, cast_dtype=cast_dtype, cache_dir=cache_dir
+                )
             else:
-                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+                model = CustomTextCLIP(
+                    **model_cfg, cast_dtype=cast_dtype, cache_dir=cache_dir
+                )
         else:
-            model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+            model = CLIP(**model_cfg, cast_dtype=cast_dtype, cache_dir=cache_dir)
 
         if precision in ("fp16", "bf16"):
             dtype = torch.float16 if "fp16" in precision else torch.bfloat16
@@ -331,22 +280,6 @@ def create_model(
         else:
             model.to(device=device)
 
-        # hacky, but fine for now
-        if (
-            "teacher_cfg" in model_cfg
-            and "hf_tokenizer_name" not in model_cfg["teacher_cfg"]
-        ):
-            pretrained_cfg = _pcfg(hf_hub=model_cfg["teacher_cfg"]["hf_model_name"])
-            checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
-            preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
-            if checkpoint_path:
-                logging.info(f"Loading pretrained {model_name} weights ({pretrained}).")
-                load_checkpoint(model, checkpoint_path, is_teacher=True, strict=False)
-            else:
-                error_str = "Something is broken but I'm not sure what"
-                logging.exception(error_str)
-                raise RuntimeError(error_str)
-
         pretrained_loaded = False
         if pretrained:
             checkpoint_path = ""
@@ -371,6 +304,7 @@ def create_model(
                 logging.warning(error_str)
                 raise RuntimeError(error_str)
             pretrained_loaded = True
+
         elif has_hf_hub_prefix:
             logging.info(
                 f"Loading pretrained {model_name} weights ({checkpoint_path})."
@@ -395,6 +329,7 @@ def create_model(
     if getattr(model.visual, "image_size", None) is not None:
         # use image_size set on model creation (via config or force_image_size arg)
         force_preprocess_cfg["size"] = model.visual.image_size
+
     set_model_preprocess_cfg(
         model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg)
     )

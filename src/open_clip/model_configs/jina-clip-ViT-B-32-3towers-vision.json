@@ -1,7 +1,6 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 768,
     "quick_gelu": true,
-    "tie_projections": true,
     "vision_cfg": {
         "image_size": 224,
         "layers": 12,
@@ -12,12 +11,15 @@
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
-        "hf_trust_remote_code": true
+        "hf_trust_remote_code": true,
+        "proj_type": null
     },
     "teacher_cfg": {
-        "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
-        "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
-        "hf_pooler_type": "mean_pooler",
-        "hf_trust_remote_code": true
+        "pretrained_model_name": "ViT-B-32-quickgelu laion400m_e32",
+        "pretrained_exclude_projections": true,
+        "image_size": 224,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 32
     }
 }

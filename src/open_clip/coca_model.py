@@ -87,6 +87,7 @@ class CoCa(nn.Module):
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
+            cache_dir: Optional[str] = None,
             pad_id: int = 0,
     ):
         super().__init__()
@@ -99,6 +100,7 @@ class CoCa(nn.Module):
             text_cfg=text_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
+            cache_dir=cache_dir,
         )
 
         vocab_size = (
@@ -112,6 +114,7 @@ class CoCa(nn.Module):
             vision_cfg=vision_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
+            cache_dir=cache_dir
         )
 
         self.text_decoder = _build_text_decoder_tower(

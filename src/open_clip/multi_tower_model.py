@@ -25,6 +25,7 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
         init_logit_bias: Optional[float] = None,
         cast_dtype: Optional[torch.dtype] = None,
         output_dict: bool = False,
+        cache_dir: Optional[str] = None,
         tie_projections: bool = False
     ):
         super(ThreeTowersCustomTextCLIP, self).__init__(
@@ -36,16 +37,19 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
             init_logit_bias=init_logit_bias,
             cast_dtype=cast_dtype,
             output_dict=output_dict,
+            cache_dir=cache_dir,
         )
-        if 'hf_tokenizer_name' in teacher_cfg:
+        if isinstance(teacher_cfg, CLIPTextCfg) or (
+            isinstance(teacher_cfg, dict) and 'context_length' in teacher_cfg
+        ):
             self.teacher = _build_text_tower(
-                embed_dim, teacher_cfg, quick_gelu, cast_dtype
+                embed_dim, teacher_cfg, quick_gelu, cast_dtype, cache_dir
             )
             self.teacher.lock(unlocked_layers=0, freeze_layer_norm=True)
             self.teacher_type = 'text'
         else:
             self.teacher = _build_vision_tower(
-                embed_dim, teacher_cfg, quick_gelu, cast_dtype
+                embed_dim, teacher_cfg, quick_gelu, cast_dtype, cache_dir
             )
             self.teacher.lock(unlocked_groups=0, freeze_bn_stats=False)
             self.teacher_type = 'vision'

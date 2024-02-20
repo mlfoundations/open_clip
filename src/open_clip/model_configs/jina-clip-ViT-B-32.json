@@ -1,5 +1,5 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 768,
     "quick_gelu": true,
     "vision_cfg": {
         "image_size": 224,
@@ -11,6 +11,7 @@
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
-        "hf_trust_remote_code": true
+        "hf_trust_remote_code": true,
+        "proj_type": null
     }
 }

@@ -1,7 +1,6 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 768,
     "quick_gelu": true,
-    "tie_projections": false,
     "vision_cfg": {
         "image_size": 224,
         "layers": 12,
@@ -12,13 +11,14 @@
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
-        "hf_trust_remote_code": true
+        "hf_trust_remote_code": true,
+        "proj_type": null
     },
     "teacher_cfg": {
-        "hf_model_name": "laion/CLIP-ViT-B-32-laion2B-s34B-b79K/open_clip_pytorch_model.bin",
-        "image_size": 224,
-        "layers": 12,
-        "width": 768,
-        "patch_size": 32
+        "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
+        "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
+        "hf_pooler_type": "mean_pooler",
+        "hf_trust_remote_code": true,
+        "proj_type": null
     }
 }
