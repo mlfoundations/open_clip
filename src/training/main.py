@@ -435,6 +435,11 @@ def main(args):
             model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
         )
         return
+    
+    if args.evaluate_on_start:
+        evaluate(
+                model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
+            )
 
     loss = create_loss(args)
 
@@ -444,20 +449,6 @@ def main(args):
 
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
-
-        if (
-            any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2'))
-            or args.clip_benchmark_frequency != 0
-        ):
-            evaluate(
-                model,
-                preprocess_val,
-                tokenizer,
-                data,
-                completed_epoch,
-                args,
-                tb_writer=writer,
-            )
 
         # Saving checkpoints.
         if args.save_logs:
@@ -488,6 +479,21 @@ def main(args):
                 latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
                 torch.save(checkpoint_dict, tmp_save_path)
                 os.replace(tmp_save_path, latest_save_path)
+
+        if (
+            any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2'))
+            or args.clip_benchmark_frequency != 0
+            or args.mteb_frequency != 0
+        ):
+            evaluate(
+                model,
+                preprocess_val,
+                tokenizer,
+                data,
+                completed_epoch,
+                args,
+                tb_writer=writer,
+            )
 
     if args.wandb and is_master(args):
         wandb.finish()
