@@ -24,6 +24,7 @@ from open_clip import (
 from .distributed import is_master
 from .precision import get_autocast
 
+MTEB_LOGGING_METRICS = ['ncdg_at_10', 'cos_sim']
 
 def _get_clip_metrics(image_features, text_features, logit_scale):
     metrics = {}
@@ -410,7 +411,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
         )
         metrics.update({
             k: v
-            for k, v in flatten(results, separator='-').items() if isinstance(v, float)
+            for k, v in flatten(results, separator='-').items() if isinstance(v, float) and any(sub in k for sub in MTEB_LOGGING_METRICS)
         })
     
     logging.info('Finished MTEB benchmark!')
