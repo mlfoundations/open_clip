@@ -6,8 +6,8 @@ torchrun --nproc_per_node 8 -m training.main \
     --val-data="/home/jinaai/datasets/laion-400m/train-part-1/{00000..00001}.tar" \
     --val-num-samples 15000 \
     --dataset-type webdataset \
-    --batch-size 1024 \
-    --warmup 3000 \
+    --batch-size 1536 \
+    --warmup 10000 \
     --epochs 10 \
     --lr 5e-4 \
     --precision amp \
@@ -21,4 +21,5 @@ torchrun --nproc_per_node 8 -m training.main \
     --name "jina-clip-ViT-B-32-3towers-vision" \
     --wandb-project-name "jina-clip-laion400m-full" \
     --clip-benchmark-frequency 2 \
-    --mteb-frequency 2
+    --mteb-frequency 2 \
+    --evaluate-on-start

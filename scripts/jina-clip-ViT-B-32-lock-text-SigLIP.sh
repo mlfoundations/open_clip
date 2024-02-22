@@ -7,7 +7,7 @@ torchrun --nproc_per_node 8 -m training.main \
     --val-num-samples 15000 \
     --dataset-type webdataset \
     --batch-size 1024 \
-    --warmup 3000 \
+    --warmup 10000 \
     --epochs 10 \
     --lr 5e-4 \
     --precision amp \
@@ -22,4 +22,5 @@ torchrun --nproc_per_node 8 -m training.main \
     --name "jina-clip-ViT-B-32-lock-text-SigLIP" \
     --wandb-project-name "jina-clip-laion400m-full" \
     --clip-benchmark-frequency 1 \
-    --mteb-frequency 1
+    --mteb-frequency 1 \
+    --evaluate-on-start
