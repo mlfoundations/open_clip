@@ -12,7 +12,7 @@
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
         "hf_trust_remote_code": true,
-        "proj_type": null
+        "hf_proj_type": null
     },
     "teacher_cfg": {
         "pretrained_model_name": "ViT-B-32-quickgelu laion400m_e32",
