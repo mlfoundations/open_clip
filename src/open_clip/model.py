@@ -50,14 +50,15 @@ class CLIPVisionCfg:
     pos_embed_type: str = 'learnable'
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'tok'
+    proj_type: Optional[str] = None
     output_tokens: bool = False
     act_kwargs: Optional[dict] = None
     norm_kwargs: Optional[dict] = None
 
     # Pretrained model checkpoint
     # Load the vision tower from this checkpoint
-    pretrained_model_name: Optional[str] = None
-    pretrained_exclude_projections: bool = True
+    pt_model_name: Optional[str] = None
+    pt_proj_exclude: bool = True
 
     # TIMM specific vision tower config
     timm_model_name: Optional[str] = None  # a valid model name overrides layers, width, patch_size
@@ -86,6 +87,7 @@ class CLIPTextCfg:
     no_causal_mask: bool = False  # disable causal masking
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
+    proj_type: Optional[str] = None
     proj_bias: bool = False
     output_tokens: bool = False
     act_kwargs: dict = None
@@ -93,13 +95,12 @@ class CLIPTextCfg:
 
     # Pretrained model checkpoint
     # Load the text tower from this checkpoint
-    pretrained_model_name: Optional[str] = None
-    pretrained_exclude_projections: bool = True
+    pt_model_name: Optional[str] = None
+    pt_proj_exclude: bool = True
 
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
     hf_model_pretrained: bool = True
-    hf_proj_type: str = 'mlp'
     hf_pooler_type: str = 'mean_pooler'  # attentional pooling for HF models
     hf_trust_remote_code: bool = False
 
@@ -282,13 +283,14 @@ def _build_vision_tower(
             no_ln_pre=vision_cfg.no_ln_pre,
             final_ln_after_pool=vision_cfg.final_ln_after_pool,
             pool_type=vision_cfg.pool_type,
+            proj_type=vision_cfg.proj_type,
             output_tokens=vision_cfg.output_tokens,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
 
-        ckpt = vision_cfg.pretrained_model_name
+        ckpt = vision_cfg.pt_model_name
         if ckpt is not None:
             logging.info(f'Downloading pretrained model {ckpt} ...')
             _model, _tag = ckpt.split(' ')
@@ -297,7 +299,7 @@ def _build_vision_tower(
             )
             if _ckpt_path:
                 exclude = []
-                if vision_cfg.pretrained_exclude_projections:
+                if visual.proj is None or vision_cfg.pt_proj_exclude:
                     exclude.append('proj')
 
                 logging.info(f'Loading pretrained model from {_ckpt_path} ...')
@@ -309,7 +311,10 @@ def _build_vision_tower(
                     exclude=exclude
                 )
             else:
-                _error_str = f'No checkpoint for model \'{ckpt}\' found'
+                _error_str = (
+                    f'No checkpoint for model \'{ckpt}\' found neither locally nor '
+                    f'remotely'
+                )
                 logging.exception(_error_str)
                 raise RuntimeError(_error_str)
 
@@ -330,7 +335,7 @@ def _build_text_tower(
         text = HFTextEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
-            proj_type=text_cfg.hf_proj_type,
+            proj_type=text_cfg.proj_type,
             pooler_type=text_cfg.hf_pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
@@ -357,13 +362,14 @@ def _build_text_tower(
             no_causal_mask=text_cfg.no_causal_mask,
             pad_id=text_cfg.pad_id,
             pool_type=text_cfg.pool_type,
+            proj_type=text_cfg.proj_type,
             proj_bias=text_cfg.proj_bias,
             output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
 
-        ckpt = text_cfg.pretrained_model_name
+        ckpt = text_cfg.pt_model_name
         if ckpt is not None:
             logging.info(f'Downloading pretrained model {ckpt} ...')
             _model, _tag = ckpt.split(' ')
@@ -372,7 +378,7 @@ def _build_text_tower(
             )
             if _ckpt_path:
                 exclude = []
-                if text_cfg.pretrained_exclude_projections:
+                if text.text_projection is None or text_cfg.pt_proj_exclude:
                     exclude.append('text_projection')
 
                 logging.info(f'Loading pretrained model from {_ckpt_path} ...')
@@ -384,7 +390,10 @@ def _build_text_tower(
                     exclude=exclude
                 )
             else:
-                _error_str = f'No checkpoint for model {ckpt} found'
+                _error_str = (
+                    f'No checkpoint for model {ckpt} found neither locally nor '
+                    f'remotely'
+                )
                 logging.exception(_error_str)
                 raise RuntimeError(_error_str)
     return text

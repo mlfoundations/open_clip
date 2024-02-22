@@ -329,26 +329,27 @@ class VisionTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
     def __init__(
-            self,
-            image_size: int,
-            patch_size: int,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float,
-            ls_init_value: float = None,
-            attentional_pool: bool = False,
-            attn_pooler_queries: int = 256,
-            attn_pooler_heads: int = 8,
-            output_dim: int = 512,
-            patch_dropout: float = 0.,
-            no_ln_pre: bool = False,
-            pos_embed_type: str = 'learnable',
-            pool_type: str = 'tok',
-            final_ln_after_pool: bool = False,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False,
+        self,
+        image_size: int,
+        patch_size: int,
+        width: int,
+        layers: int,
+        heads: int,
+        mlp_ratio: float,
+        ls_init_value: float = None,
+        attentional_pool: bool = False,
+        attn_pooler_queries: int = 256,
+        attn_pooler_heads: int = 8,
+        output_dim: int = 512,
+        patch_dropout: float = 0.,
+        no_ln_pre: bool = False,
+        pos_embed_type: str = 'learnable',
+        pool_type: str = 'tok',
+        proj_type: Optional[str] = None,
+        final_ln_after_pool: bool = False,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
+        output_tokens: bool = False,
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
@@ -428,7 +429,19 @@ class VisionTransformer(nn.Module):
             self.pool_type = pool_type
 
         self.ln_post = norm_layer(pool_dim)
-        self.proj = nn.Parameter(scale * torch.randn(pool_dim, output_dim))
+        self.proj = None
+
+        if (pool_dim == output_dim) and (proj_type is None):
+            self.proj = None
+        elif proj_type == 'linear':
+            self.proj = nn.Parameter(scale * torch.randn(pool_dim, output_dim))
+        elif proj_type == 'mlp':
+            hidden_size = (pool_dim + output_dim) // 2
+            self.proj = nn.Sequential(
+                nn.Linear(pool_dim, hidden_size, bias=False),
+                nn.GELU(),
+                nn.Linear(hidden_size, output_dim, bias=False),
+            )
 
         self.init_parameters()
 
@@ -566,23 +579,24 @@ class TextTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
     def __init__(
-            self,
-            context_length: int = 77,
-            vocab_size: int = 49408,
-            width: int = 512,
-            heads: int = 8,
-            layers: int = 12,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            output_dim: int = 512,
-            embed_cls: bool = False,
-            no_causal_mask: bool = False,
-            pad_id: int = 0,
-            pool_type: str = 'argmax',
-            proj_bias: bool = False,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False,
+        self,
+        context_length: int = 77,
+        vocab_size: int = 49408,
+        width: int = 512,
+        heads: int = 8,
+        layers: int = 12,
+        mlp_ratio: float = 4.0,
+        ls_init_value: float = None,
+        output_dim: int = 512,
+        embed_cls: bool = False,
+        no_causal_mask: bool = False,
+        pad_id: int = 0,
+        pool_type: str = 'argmax',
+        proj_type: Optional[str] = None,
+        proj_bias: bool = False,
+        act_layer: Callable = nn.GELU,
+        norm_layer: Callable = LayerNorm,
+        output_tokens: bool = False,
     ):
         super().__init__()
         assert pool_type in ('first', 'last', 'argmax', 'none')
@@ -618,10 +632,21 @@ class TextTransformer(nn.Module):
         else:
             self.register_buffer('attn_mask', self.build_causal_mask(), persistent=False)
 
-        if proj_bias:
-            self.text_projection = nn.Linear(width, output_dim)
-        else:
-            self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        self.text_projection = None
+        if (width == output_dim) and (proj_type is None):  # do we always need a proj?
+            self.text_projection = None
+        elif proj_type == 'linear':
+            if proj_bias:
+                self.text_projection = nn.Linear(width, output_dim)
+            else:
+                self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        elif proj_type == 'mlp':
+            hidden_size = (width + output_dim) // 2
+            self.text_projection = nn.Sequential(
+                nn.Linear(width, hidden_size, bias=proj_bias),
+                nn.GELU(),
+                nn.Linear(hidden_size, output_dim, bias=proj_bias),
+            )
 
         self.init_parameters()
 
@@ -641,12 +666,24 @@ class TextTransformer(nn.Module):
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         if self.text_projection is not None:
+            if isinstance(self.text_projection, nn.Parameter):
+                nn.init.normal_(
+                    self.text_projection, std=self.transformer.width ** -0.5
+                )
             if isinstance(self.text_projection, nn.Linear):
-                nn.init.normal_(self.text_projection.weight, std=self.transformer.width ** -0.5)
+                nn.init.normal_(
+                    self.text_projection.weight, std=self.transformer.width ** -0.5
+                )
                 if self.text_projection.bias is not None:
                     nn.init.zeros_(self.text_projection.bias)
-            else:
-                nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+            elif isinstance(self.text_projection, nn.Sequential):
+                for module in self.text_projection.children():
+                    if isinstance(module, nn.Linear):
+                        nn.init.normal_(
+                            module.weight, std=self.transformer.width ** -0.5
+                        )
+                        if self.text_projection.bias is not None:
+                            nn.init.zeros_(self.text_projection.bias)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):

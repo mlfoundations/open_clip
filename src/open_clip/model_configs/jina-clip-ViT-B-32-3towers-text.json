@@ -5,20 +5,21 @@
         "image_size": 224,
         "layers": 12,
         "width": 768,
-        "patch_size": 32
+        "patch_size": 32,
+        "proj_type": "linear"
     },
     "text_cfg": {
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
         "hf_trust_remote_code": true,
-        "hf_proj_type": null
+        "proj_type": null
     },
     "teacher_cfg": {
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
         "hf_trust_remote_code": true,
-        "hf_proj_type": null
+        "proj_type": null
     }
 }
