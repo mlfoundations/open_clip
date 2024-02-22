@@ -40,7 +40,13 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
             cache_dir=cache_dir,
         )
         if isinstance(teacher_cfg, CLIPTextCfg) or (
-            isinstance(teacher_cfg, dict) and 'context_length' in teacher_cfg
+            isinstance(teacher_cfg, dict)
+            and any(
+                field in teacher_cfg
+                for field in [
+                    'context_length', 'vocab_size', 'hf_tokenizer_name', 'hf_model_name'
+                ]
+            )
         ):
             self.teacher = _build_text_tower(
                 embed_dim, teacher_cfg, quick_gelu, cast_dtype, cache_dir

@@ -108,8 +108,8 @@ def _run_validation(model, data, epoch, args):
                 batch_size = images.shape[0]
                 labels = torch.arange(batch_size, device=device).long()
                 total_loss = (
-                         f.cross_entropy(logits_per_image, labels) +
-                         f.cross_entropy(logits_per_text, labels)
+                     f.cross_entropy(logits_per_image, labels) +
+                     f.cross_entropy(logits_per_text, labels)
                  ) / 2
 
                 gen_loss = _maybe_compute_generative_loss(model_out)

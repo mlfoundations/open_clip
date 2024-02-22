@@ -438,8 +438,8 @@ def main(args):
     
     if args.evaluate_on_start:
         evaluate(
-                model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
-            )
+            model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
+        )
 
     loss = create_loss(args)
 
