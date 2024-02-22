@@ -297,13 +297,11 @@ class ThreeTowerLoss(nn.Module):
             image_features, text_features, teacher_features, logit_scale
         )
         labels = self.get_ground_truth(device, logits["image"]["text"].shape[0])
-        total_loss = (
-            sum([
-                F.cross_entropy(similarity, labels)
-                for _, values in logits.items() for _, similarity in values.items()
-            ]) / 6
-        )
-        return {"contrastive_loss": total_loss} if output_dict else total_loss
+        losses = {
+            f'{i}-{j}_loss': F.cross_entropy(similarity, labels) / 6
+            for i, values in logits.items() for j, similarity in values.items()
+        }
+        return losses if output_dict else sum(losses.values())
 
 
 class CoCaLoss(ClipLoss):
