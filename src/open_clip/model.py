@@ -147,7 +147,6 @@ def load_checkpoint(
     root: Optional[str] = None,
     exclude: Optional[list[str]] = None,
 ):
-
     if Path(checkpoint_path).suffix in (".npz", ".npy"):
         from .big_vision import load_big_vision_weights
 
@@ -157,6 +156,26 @@ def load_checkpoint(
         return {}
 
     state_dict = _load_state_dict(checkpoint_path)
+
+    root = root or ''
+    root_modules = root.split('.')
+    root_modules = [rm for rm in root_modules if rm != '']
+    num_root_modules = len(root_modules)
+    exclude = exclude or []
+
+    if num_root_modules > 0:
+        _state_dict = {}
+        for k, v in state_dict.items():
+            _k_modules = k.split('.')
+            _root_k_modules = _k_modules[:num_root_modules]
+            if _root_k_modules == root_modules:
+                _new_k = '.'.join(_k_modules[num_root_modules:])
+                _state_dict[_new_k] = v
+        if len(_state_dict) == 0:
+            raise ValueError(
+                f'Got an empty state dict after filtering using root \'{root}\''
+            )
+        state_dict = copy.deepcopy(_state_dict)
 
     # detect old format and make compatible with new format
     if "positional_embedding" in state_dict and not hasattr(
@@ -181,26 +200,6 @@ def load_checkpoint(
 
     resize_pos_embed(state_dict, model)
     resize_text_pos_embed(state_dict, model)
-
-    root = root or ''
-    root_modules = root.split('.')
-    root_modules = [rm for rm in root_modules if rm != '']
-    num_root_modules = len(root_modules)
-    exclude = exclude or []
-
-    if num_root_modules > 0:
-        _state_dict = {}
-        for k, v in state_dict.items():
-            _k_modules = k.split('.')
-            _root_k_modules = _k_modules[:num_root_modules]
-            if _root_k_modules == root_modules:
-                _new_k = '.'.join(_k_modules[num_root_modules:])
-                _state_dict[_new_k] = v
-        if len(_state_dict) == 0:
-            raise ValueError(
-                f'Got an empty state dict after filtering using root \'{root}\''
-            )
-        state_dict = copy.deepcopy(_state_dict)
 
     if exclude:
         _state_dict = {}
