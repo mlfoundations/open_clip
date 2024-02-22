@@ -191,8 +191,9 @@ def load_checkpoint(
 
     # remove logit biases and scale for 3-towers
     if "logit_bias" in state_dict:
-        del (state_dict["logit_bias"])
-    del (state_dict["logit_scale"])
+        del state_dict["logit_bias"]
+    if "logit_scale" in state_dict:
+        del state_dict["logit_scale"]
 
     position_id_key = "text.transformer.embeddings.position_ids"
     if position_id_key in state_dict and not hasattr(model, position_id_key):
