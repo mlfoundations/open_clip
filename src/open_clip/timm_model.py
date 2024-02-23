@@ -11,14 +11,17 @@ import torch.nn as nn
 try:
     import timm
     from timm.models.layers import Mlp, to_2tuple
+
     try:
         # old timm imports < 0.8.1
+        from timm.models.layers.attention_pool2d import (
+            AttentionPool2d as AbsAttentionPool2d,
+        )
         from timm.models.layers.attention_pool2d import RotAttentionPool2d
-        from timm.models.layers.attention_pool2d import AttentionPool2d as AbsAttentionPool2d
     except ImportError:
         # new timm imports >= 0.8.1
-        from timm.layers import RotAttentionPool2d
         from timm.layers import AttentionPool2d as AbsAttentionPool2d
+        from timm.layers import RotAttentionPool2d
 except ImportError:
     timm = None
 
@@ -26,25 +29,24 @@ from .utils import freeze_batch_norm_2d
 
 
 class TimmModel(nn.Module):
-    """ timm model adapter
-    """
+    """timm model adapter"""
 
     def __init__(
-            self,
-            model_name,
-            embed_dim,
-            image_size=224,
-            pool='avg',
-            proj='linear',
-            proj_bias=False,
-            drop=0.,
-            drop_path=None,
-            patch_drop=None,
-            pretrained=False,
+        self,
+        model_name,
+        embed_dim,
+        image_size=224,
+        pool='avg',
+        proj='linear',
+        proj_bias=False,
+        drop=0.0,
+        drop_path=None,
+        patch_drop=None,
+        pretrained=False,
     ):
         super().__init__()
         if timm is None:
-            raise RuntimeError("Please `pip install timm` to use timm models.")
+            raise RuntimeError('Please `pip install timm` to use timm models.')
         self.image_size = to_2tuple(image_size)
 
         # setup kwargs that may not be common across all models
@@ -56,8 +58,8 @@ class TimmModel(nn.Module):
 
         custom_pool = pool in ('abs_attn', 'rot_attn')
         if proj:
-            assert proj in ("linear", "mlp", "none")
-        extra_proj = proj in ("linear", "mlp")
+            assert proj in ('linear', 'mlp', 'none')
+        extra_proj = proj in ('linear', 'mlp')
         if not extra_proj and not custom_pool:
             # use network classifier head as projection if no proj specified and no custom pooling used
             # if projection is explicitly set to "none" will be pass through from network trunk
@@ -92,7 +94,9 @@ class TimmModel(nn.Module):
 
         # Add custom pooling to head
         if pool == 'abs_attn':
-            head_layers['pool'] = AbsAttentionPool2d(prev_chs, feat_size=feat_size, out_features=embed_dim)
+            head_layers['pool'] = AbsAttentionPool2d(
+                prev_chs, feat_size=feat_size, out_features=embed_dim
+            )
             prev_chs = embed_dim
         elif pool == 'rot_attn':
             head_layers['pool'] = RotAttentionPool2d(prev_chs, out_features=embed_dim)
@@ -103,12 +107,18 @@ class TimmModel(nn.Module):
             head_layers['drop'] = nn.Dropout(drop)
             head_layers['proj'] = nn.Linear(prev_chs, embed_dim, bias=proj_bias)
         elif proj == 'mlp':
-            head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=(drop, 0), bias=(True, proj_bias))
+            head_layers['mlp'] = Mlp(
+                prev_chs,
+                2 * embed_dim,
+                embed_dim,
+                drop=(drop, 0),
+                bias=(True, proj_bias),
+            )
 
         self.head = nn.Sequential(head_layers)
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        """ lock modules
+        """lock modules
         Args:
             unlocked_groups (int): leave last n layer groups unlocked (default: 0)
         """
@@ -122,10 +132,11 @@ class TimmModel(nn.Module):
             # NOTE: partial freeze requires latest timm (master) branch and is subject to change
             try:
                 # FIXME import here until API stable and in an official release
-                from timm.models.helpers import group_parameters, group_modules
+                from timm.models.helpers import group_modules, group_parameters
             except ImportError:
                 raise RuntimeError(
-                    'Please install latest timm `pip install git+https://github.com/rwightman/pytorch-image-models`')
+                    'Please install latest timm `pip install git+https://github.com/rwightman/pytorch-image-models`'
+                )
             matcher = self.trunk.group_matcher()
             gparams = group_parameters(self.trunk, matcher)
             max_layer_id = max(gparams.keys())
@@ -144,7 +155,9 @@ class TimmModel(nn.Module):
         try:
             self.trunk.set_grad_checkpointing(enable)
         except Exception as e:
-            logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
+            logging.warning(
+                'grad checkpointing not supported for this timm image tower, continuing without...'
+            )
 
     def forward(self, x):
         x = self.trunk(x)

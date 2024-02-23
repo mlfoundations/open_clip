@@ -7,6 +7,7 @@ import copy
 import logging
 import math
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -14,19 +15,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from functools import partial
 
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
-from .pretrained import get_pretrained_cfg, download_pretrained
+from .pretrained import download_pretrained, get_pretrained_cfg
 from .timm_model import TimmModel
 from .transformer import (
-    LayerNormFp32,
-    LayerNorm,
-    QuickGELU,
     Attention,
-    VisionTransformer,
+    LayerNorm,
+    LayerNormFp32,
+    QuickGELU,
     TextTransformer,
+    VisionTransformer,
     text_global_pool,
 )
 from .utils import to_2tuple
@@ -42,7 +42,7 @@ class CLIPVisionCfg:
     image_size: Union[Tuple[int, int], int] = 224
 
     ls_init_value: Optional[float] = None  # layer scale initial value
-    patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
+    patch_dropout: float = 0.0  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
     attentional_pool: bool = False  # whether to use attentional pooler in the last embedding layer (overrides pool_type)
     attn_pooler_queries: int = 256  # n_queries for attentional pooler
     attn_pooler_heads: int = 8  # n heads for attentional_pooling
@@ -61,12 +61,20 @@ class CLIPVisionCfg:
     pt_proj_exclude: bool = True
 
     # TIMM specific vision tower config
-    timm_model_name: Optional[str] = None  # a valid model name overrides layers, width, patch_size
-    timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
-    timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
-    timm_proj: str = 'linear'  # linear projection for timm model output ('linear', 'mlp', '')
+    timm_model_name: Optional[
+        str
+    ] = None  # a valid model name overrides layers, width, patch_size
+    timm_model_pretrained: bool = (
+        False  # use (imagenet) pretrained weights for named model
+    )
+    timm_pool: str = (
+        'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
+    )
+    timm_proj: str = (
+        'linear'  # linear projection for timm model output ('linear', 'mlp', '')
+    )
     timm_proj_bias: bool = False  # enable bias final projection
-    timm_drop: float = 0.  # head dropout
+    timm_drop: float = 0.0  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
 
 
@@ -123,19 +131,19 @@ def get_input_dtype(precision: str):
     return input_dtype
 
 
-def _load_state_dict(checkpoint_path: str, map_location: str = "cpu"):
+def _load_state_dict(checkpoint_path: str, map_location: str = 'cpu'):
     checkpoint = torch.load(checkpoint_path, map_location=map_location)
 
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
+    if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+        state_dict = checkpoint['state_dict']
     elif isinstance(checkpoint, torch.jit.ScriptModule):
         state_dict = checkpoint.state_dict()
-        for key in ["input_resolution", "context_length", "vocab_size"]:
+        for key in ['input_resolution', 'context_length', 'vocab_size']:
             state_dict.pop(key, None)
     else:
         state_dict = checkpoint
 
-    if next(iter(state_dict.items()))[0].startswith("module"):
+    if next(iter(state_dict.items()))[0].startswith('module'):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
 
     return state_dict
@@ -148,7 +156,7 @@ def load_checkpoint(
     root: Optional[str] = None,
     exclude: Optional[list[str]] = None,
 ):
-    if Path(checkpoint_path).suffix in (".npz", ".npy"):
+    if Path(checkpoint_path).suffix in ('.npz', '.npy'):
         from .big_vision import load_big_vision_weights
 
         model: CustomTextCLIP
@@ -174,13 +182,13 @@ def load_checkpoint(
                 _state_dict[_new_k] = v
         if len(_state_dict) == 0:
             raise ValueError(
-                f'Got an empty state dict after filtering using root \'{root}\''
+                f"Got an empty state dict after filtering using root '{root}'"
             )
         state_dict = copy.deepcopy(_state_dict)
 
     # detect old format and make compatible with new format
-    if "positional_embedding" in state_dict and not hasattr(
-        model, "positional_embedding"
+    if 'positional_embedding' in state_dict and not hasattr(
+        model, 'positional_embedding'
     ):
         state_dict = convert_to_custom_text_state_dict(state_dict)
 
@@ -191,12 +199,12 @@ def load_checkpoint(
     # Certain text transformers no longer expect position_ids after transformers==4.31
 
     # remove logit biases and scale for 3-towers
-    if "logit_bias" in state_dict:
-        del state_dict["logit_bias"]
-    if "logit_scale" in state_dict:
-        del state_dict["logit_scale"]
+    if 'logit_bias' in state_dict:
+        del state_dict['logit_bias']
+    if 'logit_scale' in state_dict:
+        del state_dict['logit_scale']
 
-    position_id_key = "text.transformer.embeddings.position_ids"
+    position_id_key = 'text.transformer.embeddings.position_ids'
     if position_id_key in state_dict and not hasattr(model, position_id_key):
         del state_dict[position_id_key]
 
@@ -214,7 +222,7 @@ def load_checkpoint(
 
         if len(_state_dict) == 0:
             raise ValueError(
-                f'Got an empty state dict after filtering using exclude \'{exclude}\''
+                f"Got an empty state dict after filtering using exclude '{exclude}'"
             )
 
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
@@ -246,7 +254,9 @@ def _build_vision_tower(
             proj_bias=vision_cfg.timm_proj_bias,
             drop=vision_cfg.timm_drop,
             drop_path=vision_cfg.timm_drop_path,
-            patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
+            patch_drop=vision_cfg.patch_dropout
+            if vision_cfg.patch_dropout > 0
+            else None,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
         )
@@ -261,7 +271,11 @@ def _build_vision_tower(
         )
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        norm_layer = (
+            LayerNormFp32
+            if cast_dtype in (torch.float16, torch.bfloat16)
+            else LayerNorm
+        )
         if vision_cfg.norm_kwargs:
             norm_layer = partial(norm_layer, **vision_cfg.norm_kwargs)
         if vision_cfg.act_kwargs is not None:
@@ -304,15 +318,11 @@ def _build_vision_tower(
 
                 logging.info(f'Loading pretrained model from {_ckpt_path} ...')
                 load_checkpoint(
-                    visual,
-                    _ckpt_path,
-                    strict=False,
-                    root='visual',
-                    exclude=exclude
+                    visual, _ckpt_path, strict=False, root='visual', exclude=exclude
                 )
             else:
                 _error_str = (
-                    f'No checkpoint for model \'{ckpt}\' found neither locally nor '
+                    f"No checkpoint for model '{ckpt}' found neither locally nor "
                     f'remotely'
                 )
                 logging.exception(_error_str)
@@ -339,11 +349,15 @@ def _build_text_tower(
             pooler_type=text_cfg.hf_pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
-            trust_remote_code=text_cfg.hf_trust_remote_code
+            trust_remote_code=text_cfg.hf_trust_remote_code,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        norm_layer = (
+            LayerNormFp32
+            if cast_dtype in (torch.float16, torch.bfloat16)
+            else LayerNorm
+        )
         if text_cfg.norm_kwargs:
             norm_layer = partial(norm_layer, **text_cfg.norm_kwargs)
         if text_cfg.act_kwargs is not None:
@@ -383,11 +397,7 @@ def _build_text_tower(
 
                 logging.info(f'Loading pretrained model from {_ckpt_path} ...')
                 load_checkpoint(
-                    text,
-                    _ckpt_path,
-                    strict=False,
-                    root='text',
-                    exclude=exclude
+                    text, _ckpt_path, strict=False, root='text', exclude=exclude
                 )
             else:
                 _error_str = (
@@ -420,9 +430,7 @@ class CLIP(nn.Module):
         self.visual = _build_vision_tower(
             embed_dim, vision_cfg, quick_gelu, cast_dtype, cache_dir
         )
-        text = _build_text_tower(
-            embed_dim, text_cfg, quick_gelu, cast_dtype, cache_dir
-        )
+        text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype, cache_dir)
         self.transformer = text.transformer
         self.context_length = text.context_length
         self.vocab_size = text.vocab_size
@@ -441,7 +449,9 @@ class CLIP(nn.Module):
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
-        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+        self.visual.lock(
+            unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats
+        )
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -481,25 +491,34 @@ class CLIP(nn.Module):
         return image_logits, text_logits
 
     def forward(
-            self,
-            image: Optional[torch.Tensor] = None,
-            text: Optional[torch.Tensor] = None,
+        self,
+        image: Optional[torch.Tensor] = None,
+        text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
-        text_features = self.encode_text(text, normalize=True) if text is not None else None
+        image_features = (
+            self.encode_image(image, normalize=True) if image is not None else None
+        )
+        text_features = (
+            self.encode_text(text, normalize=True) if text is not None else None
+        )
 
         if self.output_dict:
             out_dict = {
-                "image_features": image_features,
-                "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
+                'image_features': image_features,
+                'text_features': text_features,
+                'logit_scale': self.logit_scale.exp(),
             }
             if self.logit_bias is not None:
                 out_dict['logit_bias'] = self.logit_bias
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+            return (
+                image_features,
+                text_features,
+                self.logit_scale.exp(),
+                self.logit_bias,
+            )
         return image_features, text_features, self.logit_scale.exp()
 
 
@@ -536,7 +555,9 @@ class CustomTextCLIP(nn.Module):
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
-        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+        self.visual.lock(
+            unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats
+        )
 
     def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         self.text.lock(unlocked_layers, freeze_layer_norm)
@@ -564,25 +585,34 @@ class CustomTextCLIP(nn.Module):
         return image_logits, text_logits
 
     def forward(
-            self,
-            image: Optional[torch.Tensor] = None,
-            text: Optional[torch.Tensor] = None,
+        self,
+        image: Optional[torch.Tensor] = None,
+        text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
-        text_features = self.encode_text(text, normalize=True) if text is not None else None
+        image_features = (
+            self.encode_image(image, normalize=True) if image is not None else None
+        )
+        text_features = (
+            self.encode_text(text, normalize=True) if text is not None else None
+        )
 
         if self.output_dict:
             out_dict = {
-                "image_features": image_features,
-                "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
+                'image_features': image_features,
+                'text_features': text_features,
+                'logit_scale': self.logit_scale.exp(),
             }
             if self.logit_bias is not None:
                 out_dict['logit_bias'] = self.logit_bias
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+            return (
+                image_features,
+                text_features,
+                self.logit_scale.exp(),
+                self.logit_bias,
+            )
         return image_features, text_features, self.logit_scale.exp()
 
 
@@ -596,20 +626,25 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
                 l.bias.data = l.bias.data.to(dtype)
 
         if isinstance(l, (nn.MultiheadAttention, Attention)):
-            for attr in [*[f"{s}_proj_weight" for s in ["in", "q", "k", "v"]], "in_proj_bias", "bias_k", "bias_v"]:
+            for attr in [
+                *[f'{s}_proj_weight' for s in ['in', 'q', 'k', 'v']],
+                'in_proj_bias',
+                'bias_k',
+                'bias_v',
+            ]:
                 tensor = getattr(l, attr)
                 if tensor is not None:
                     tensor.data = tensor.data.to(dtype)
 
         if isinstance(l, (CLIP, TextTransformer)):
             # convert text nn.Parameter projections
-            attr = getattr(l, "text_projection", None)
+            attr = getattr(l, 'text_projection', None)
             if attr is not None:
                 attr.data = attr.data.to(dtype)
 
         if isinstance(l, VisionTransformer):
             # convert vision nn.Parameter projections
-            attr = getattr(l, "proj", None)
+            attr = getattr(l, 'proj', None)
             if attr is not None:
                 attr.data = attr.data.to(dtype)
 
@@ -625,13 +660,16 @@ def convert_to_custom_text_state_dict(state_dict: dict):
         # old format state_dict, move text tower -> .text
         new_state_dict = {}
         for k, v in state_dict.items():
-            if any(k.startswith(p) for p in (
-                'text_projection',
-                'positional_embedding',
-                'token_embedding',
-                'transformer',
-                'ln_final',
-            )):
+            if any(
+                k.startswith(p)
+                for p in (
+                    'text_projection',
+                    'positional_embedding',
+                    'token_embedding',
+                    'transformer',
+                    'ln_final',
+                )
+            ):
                 k = 'text.' + k
             new_state_dict[k] = v
         return new_state_dict
@@ -639,35 +677,61 @@ def convert_to_custom_text_state_dict(state_dict: dict):
 
 
 def build_model_from_openai_state_dict(
-        state_dict: dict,
-        quick_gelu=True,
-        cast_dtype=torch.float16,
+    state_dict: dict,
+    quick_gelu=True,
+    cast_dtype=torch.float16,
 ):
-    vit = "visual.proj" in state_dict
+    vit = 'visual.proj' in state_dict
 
     if vit:
-        vision_width = state_dict["visual.conv1.weight"].shape[0]
+        vision_width = state_dict['visual.conv1.weight'].shape[0]
         vision_layers = len(
-            [k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
-        vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
-        grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
+            [
+                k
+                for k in state_dict.keys()
+                if k.startswith('visual.') and k.endswith('.attn.in_proj_weight')
+            ]
+        )
+        vision_patch_size = state_dict['visual.conv1.weight'].shape[-1]
+        grid_size = round(
+            (state_dict['visual.positional_embedding'].shape[0] - 1) ** 0.5
+        )
         image_size = vision_patch_size * grid_size
     else:
         counts: list = [
-            len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
+            len(
+                set(
+                    k.split('.')[2]
+                    for k in state_dict
+                    if k.startswith(f'visual.layer{b}')
+                )
+            )
+            for b in [1, 2, 3, 4]
+        ]
         vision_layers = tuple(counts)
-        vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
-        output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
+        vision_width = state_dict['visual.layer1.0.conv1.weight'].shape[0]
+        output_width = round(
+            (state_dict['visual.attnpool.positional_embedding'].shape[0] - 1) ** 0.5
+        )
         vision_patch_size = None
-        assert output_width ** 2 + 1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
+        assert (
+            output_width**2 + 1
+            == state_dict['visual.attnpool.positional_embedding'].shape[0]
+        )
         image_size = output_width * 32
 
-    embed_dim = state_dict["text_projection"].shape[1]
-    context_length = state_dict["positional_embedding"].shape[0]
-    vocab_size = state_dict["token_embedding.weight"].shape[0]
-    transformer_width = state_dict["ln_final.weight"].shape[0]
+    embed_dim = state_dict['text_projection'].shape[1]
+    context_length = state_dict['positional_embedding'].shape[0]
+    vocab_size = state_dict['token_embedding.weight'].shape[0]
+    transformer_width = state_dict['ln_final.weight'].shape[0]
     transformer_heads = transformer_width // 64
-    transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith(f"transformer.resblocks")))
+    transformer_layers = len(
+        set(
+            k.split('.')[2]
+            for k in state_dict
+            if k.startswith(f'transformer.resblocks')
+        )
+    )
 
     vision_cfg = CLIPVisionCfg(
         layers=vision_layers,
@@ -690,9 +754,11 @@ def build_model_from_openai_state_dict(
         cast_dtype=cast_dtype,
     )
 
-    for key in ["input_resolution", "context_length", "vocab_size"]:
+    for key in ['input_resolution', 'context_length', 'vocab_size']:
         state_dict.pop(key, None)
-    convert_weights_to_fp16(model)  # OpenAI state dicts are partially converted to float16
+    convert_weights_to_fp16(
+        model
+    )  # OpenAI state dicts are partially converted to float16
     model.load_state_dict(state_dict)
     return model.eval()
 
@@ -701,37 +767,51 @@ def trace_model(model, batch_size=256, device=torch.device('cpu')):
     model.eval()
     image_size = model.visual.image_size
     example_images = torch.ones((batch_size, 3, image_size, image_size), device=device)
-    example_text = torch.zeros((batch_size, model.context_length), dtype=torch.int, device=device)
+    example_text = torch.zeros(
+        (batch_size, model.context_length), dtype=torch.int, device=device
+    )
     model = torch.jit.trace_module(
         model,
         inputs=dict(
             forward=(example_images, example_text),
             encode_text=(example_text,),
-            encode_image=(example_images,)
-        ))
+            encode_image=(example_images,),
+        ),
+    )
     model.visual.image_size = image_size
     return model
 
 
-def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialias: bool = True):
+def resize_pos_embed(
+    state_dict, model, interpolation: str = 'bicubic', antialias: bool = True
+):
     # Rescale the grid of position embeddings when loading from state_dict
     old_pos_embed = state_dict.get('visual.positional_embedding', None)
     if old_pos_embed is None or not hasattr(model.visual, 'grid_size'):
         return
     grid_size = to_2tuple(model.visual.grid_size)
-    extra_tokens = 1  # FIXME detect different token configs (ie no class token, or more)
+    extra_tokens = (
+        1  # FIXME detect different token configs (ie no class token, or more)
+    )
     new_seq_len = grid_size[0] * grid_size[1] + extra_tokens
     if new_seq_len == old_pos_embed.shape[0]:
         return
 
     if extra_tokens:
-        pos_emb_tok, pos_emb_img = old_pos_embed[:extra_tokens], old_pos_embed[extra_tokens:]
+        pos_emb_tok, pos_emb_img = (
+            old_pos_embed[:extra_tokens],
+            old_pos_embed[extra_tokens:],
+        )
     else:
         pos_emb_tok, pos_emb_img = None, old_pos_embed
     old_grid_size = to_2tuple(int(math.sqrt(len(pos_emb_img))))
 
-    logging.info('Resizing position embedding grid-size from %s to %s', old_grid_size, grid_size)
-    pos_emb_img = pos_emb_img.reshape(1, old_grid_size[0], old_grid_size[1], -1).permute(0, 3, 1, 2)
+    logging.info(
+        'Resizing position embedding grid-size from %s to %s', old_grid_size, grid_size
+    )
+    pos_emb_img = pos_emb_img.reshape(
+        1, old_grid_size[0], old_grid_size[1], -1
+    ).permute(0, 3, 1, 2)
     pos_emb_img = F.interpolate(
         pos_emb_img,
         size=grid_size,
@@ -739,7 +819,9 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
         antialias=antialias,
         align_corners=False,
     )
-    pos_emb_img = pos_emb_img.permute(0, 2, 3, 1).reshape(1, grid_size[0] * grid_size[1], -1)[0]
+    pos_emb_img = pos_emb_img.permute(0, 2, 3, 1).reshape(
+        1, grid_size[0] * grid_size[1], -1
+    )[0]
     if pos_emb_tok is not None:
         new_pos_embed = torch.cat([pos_emb_tok, pos_emb_img], dim=0)
     else:
@@ -747,7 +829,9 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
     state_dict['visual.positional_embedding'] = new_pos_embed
 
 
-def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
+def resize_text_pos_embed(
+    state_dict, model, interpolation: str = 'linear', antialias: bool = False
+):
     old_pos_embed = state_dict.get('positional_embedding', None)
     if old_pos_embed is None:
         return
@@ -764,7 +848,9 @@ def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', anti
     if old_num_pos == num_pos:
         return
 
-    logging.info('Resizing text position embedding num_pos from %s to %s', old_num_pos, num_pos)
+    logging.info(
+        'Resizing text position embedding num_pos from %s to %s', old_num_pos, num_pos
+    )
     old_pos_embed = old_pos_embed.reshape(1, old_num_pos, old_width).permute(0, 2, 1)
     old_pos_embed = F.interpolate(
         old_pos_embed,
@@ -798,9 +884,13 @@ def get_model_preprocess_cfg(model):
 
 def set_model_preprocess_cfg(model, preprocess_cfg: Dict[str, Any]):
     module = getattr(model, 'visual', model)
-    module.image_mean = preprocess_cfg['mean']  # legacy attribute, keeping for bwd compat
+    module.image_mean = preprocess_cfg[
+        'mean'
+    ]  # legacy attribute, keeping for bwd compat
     module.image_std = preprocess_cfg['std']  # legacy attribute, keeping for bwd compat
-    module.preprocess_cfg = copy.deepcopy(preprocess_cfg)  # new attr, package all pp cfg as dict
+    module.preprocess_cfg = copy.deepcopy(
+        preprocess_cfg
+    )  # new attr, package all pp cfg as dict
 
 
 def get_model_tokenize_cfg(model):

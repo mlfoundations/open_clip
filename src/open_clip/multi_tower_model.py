@@ -6,14 +6,17 @@ import torch.nn.functional as f
 from torch import nn
 
 from .hf_model import HFTextEncoder
-from .transformer import VisionTransformer, TextTransformer
 from .model import (
-    _build_text_tower, _build_vision_tower, CLIPTextCfg, CLIPVisionCfg, CustomTextCLIP
+    CLIPTextCfg,
+    CLIPVisionCfg,
+    CustomTextCLIP,
+    _build_text_tower,
+    _build_vision_tower,
 )
+from .transformer import TextTransformer, VisionTransformer
 
 
 class ThreeTowersCustomTextCLIP(CustomTextCLIP):
-
     def __init__(
         self,
         embed_dim: int,
@@ -26,7 +29,7 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
         cast_dtype: Optional[torch.dtype] = None,
         output_dict: bool = False,
         cache_dir: Optional[str] = None,
-        tie_projections: bool = False
+        tie_projections: bool = False,
     ):
         super(ThreeTowersCustomTextCLIP, self).__init__(
             embed_dim=embed_dim,
@@ -44,7 +47,10 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
             and any(
                 field in teacher_cfg
                 for field in [
-                    'context_length', 'vocab_size', 'hf_tokenizer_name', 'hf_model_name'
+                    'context_length',
+                    'vocab_size',
+                    'hf_tokenizer_name',
+                    'hf_model_name',
                 ]
             )
         ):
@@ -87,9 +93,8 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
                     for module_a, module_b in zip(
                         self.teacher.proj.children(), self.text.proj.children()
                     ):
-                        if (
-                            isinstance(module_a, nn.Linear)
-                            and isinstance(module_b, nn.Linear)
+                        if isinstance(module_a, nn.Linear) and isinstance(
+                            module_b, nn.Linear
                         ):
                             self._tie_linears(module_a, module_b)
             else:
@@ -116,15 +121,15 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
         return f.normalize(features, dim=-1) if normalize else features
 
     def forward(
-        self, image: Optional[torch.Tensor] = None, text: Optional[torch.Tensor] = None,
+        self,
+        image: Optional[torch.Tensor] = None,
+        text: Optional[torch.Tensor] = None,
     ):
         image_features = (
-            self.encode_image(image, normalize=True)
-            if image is not None else None
+            self.encode_image(image, normalize=True) if image is not None else None
         )
         text_features = (
-            self.encode_text(text, normalize=True)
-            if text is not None else None
+            self.encode_text(text, normalize=True) if text is not None else None
         )
         if self.teacher_type == 'vision':
             _teacher_input = image
@@ -133,17 +138,18 @@ class ThreeTowersCustomTextCLIP(CustomTextCLIP):
 
         teacher_features = (
             self.encode_teacher(_teacher_input, normalize=True)
-            if _teacher_input is not None else None
+            if _teacher_input is not None
+            else None
         )
         if self.output_dict:
             out_dict = {
-                "image_features": image_features,
-                "text_features": text_features,
-                "teacher_features": teacher_features,
-                "logit_scale": self.logit_scale.exp(),
+                'image_features': image_features,
+                'text_features': text_features,
+                'teacher_features': teacher_features,
+                'logit_scale': self.logit_scale.exp(),
             }
             if self.logit_bias is not None:
-                out_dict["logit_bias"] = self.logit_bias
+                out_dict['logit_bias'] = self.logit_bias
             return out_dict
 
         if self.logit_bias is not None:

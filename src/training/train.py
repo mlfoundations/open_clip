@@ -40,14 +40,14 @@ class AverageMeter(object):
 
 def postprocess_clip_output(model_out):
     return {
-        "image_features": model_out[0],
-        "text_features": model_out[1],
-        "logit_scale": model_out[2],
+        'image_features': model_out[0],
+        'text_features': model_out[1],
+        'logit_scale': model_out[2],
     }
 
 
 def unwrap_model(model):
-    if hasattr(model, "module"):
+    if hasattr(model, 'module'):
         return model.module
     else:
         return model
@@ -110,7 +110,7 @@ def train_one_epoch(
         if args.accum_freq == 1:
             with autocast():
                 model_out = model(images, texts)
-                logit_scale = model_out["logit_scale"]
+                logit_scale = model_out['logit_scale']
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
@@ -120,7 +120,7 @@ def train_one_epoch(
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
-                losses["loss"] = total_loss
+                losses['loss'] = total_loss
 
             backward(total_loss, scaler)
         else:
@@ -129,7 +129,7 @@ def train_one_epoch(
                 with autocast():
                     model_out = model(images, texts)
 
-                    for f in ("logit_scale", "logit_bias"):
+                    for f in ('logit_scale', 'logit_bias'):
                         model_out.pop(f, None)
 
                     for key, val in model_out.items():
@@ -158,24 +158,24 @@ def train_one_epoch(
                     model_out = model(images, texts)
 
                     inputs_no_accum = {}
-                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop(
-                        "logit_scale"
+                    inputs_no_accum['logit_scale'] = logit_scale = model_out.pop(
+                        'logit_scale'
                     )
-                    if "logit_bias" in model_out:
-                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+                    if 'logit_bias' in model_out:
+                        inputs_no_accum['logit_bias'] = model_out.pop('logit_bias')
 
                     inputs = {}
                     for key, val in accum_features.items():
                         accumulated = accum_features[key]
                         inputs[key] = torch.cat(
-                            accumulated[:j] + [model_out[key]] + accumulated[j + 1:]
+                            accumulated[:j] + [model_out[key]] + accumulated[j + 1 :]
                         )
 
                     losses = loss(**inputs, **inputs_no_accum, output_dict=True)
                     del inputs
                     del inputs_no_accum
                     total_loss = sum(losses.values())
-                    losses["loss"] = total_loss
+                    losses['loss'] = total_loss
 
                 backward(total_loss, scaler)
 
@@ -231,9 +231,9 @@ def train_one_epoch(
                 losses_m[key].update(val.item(), batch_size)
 
             logit_scale_scalar = logit_scale.item()
-            loss_log = " ".join(
+            loss_log = ' '.join(
                 [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
+                    f'{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})'
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
@@ -256,16 +256,16 @@ def train_one_epoch(
             # Save train loss / etc. Using non avg meter values as loggers have
             # their own smoothing
             logdata = {
-                "data_time": data_time_m.val,
-                "batch_time": batch_time_m.val,
-                "samples_per_second": samples_per_second,
-                "samples_per_second_per_gpu": samples_per_second_per_gpu,
-                "scale": logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
-            }            
+                'data_time': data_time_m.val,
+                'batch_time': batch_time_m.val,
+                'samples_per_second': samples_per_second,
+                'samples_per_second_per_gpu': samples_per_second_per_gpu,
+                'scale': logit_scale_scalar,
+                'lr': optimizer.param_groups[0]['lr'],
+            }
             logdata.update({name: val.val for name, val in losses_m.items()})
 
-            logdata = {"train/" + name: val for name, val in logdata.items()}
+            logdata = {'train/' + name: val for name, val in logdata.items()}
 
             if tb_writer is not None:
                 for name, val in logdata.items():
@@ -275,7 +275,7 @@ def train_one_epoch(
                 assert wandb is not None, 'Please install wandb.'
                 logdata['step'] = step  # for backwards compatibility
                 wandb.log(logdata, step=step)
-            
+
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()

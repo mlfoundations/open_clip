@@ -15,41 +15,43 @@ except ImportError:
     wandb = None
 
 from open_clip import (
-    get_input_dtype,
-    get_tokenizer,
-    build_zero_shot_classifier,
     IMAGENET_CLASSNAMES,
     OPENAI_IMAGENET_TEMPLATES,
+    build_zero_shot_classifier,
+    get_input_dtype,
+    get_tokenizer,
 )
+
 from .distributed import is_master
 from .precision import get_autocast
 
 MTEB_LOGGING_METRICS = ['ndcg_at_10', 'cos_sim']
+
 
 def _get_clip_metrics(image_features, text_features, logit_scale):
     metrics = {}
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
 
-    logits = {"image-to-text": logits_per_image, "text-to-image": logits_per_text}
+    logits = {'image-to-text': logits_per_image, 'text-to-image': logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
 
     for name, logit in logits.items():
         ranking = torch.argsort(logit, descending=True)
         preds = torch.where(ranking == ground_truth)[1]
         preds = preds.detach().cpu().numpy()
-        metrics[f"{name}-mean-rank"] = preds.mean() + 1
-        metrics[f"{name}-median-rank"] = np.floor(np.median(preds)) + 1
+        metrics[f'{name}-mean-rank'] = preds.mean() + 1
+        metrics[f'{name}-median-rank'] = np.floor(np.median(preds)) + 1
         for k in [1, 5, 10]:
-            metrics[f"{name}-R@{k}"] = np.mean(preds < k)
+            metrics[f'{name}-R@{k}'] = np.mean(preds < k)
 
     return metrics
 
 
 def _maybe_compute_generative_loss(model_out):
-    if "logits" in model_out and "labels" in model_out:
-        token_logits = model_out["logits"]
-        token_labels = model_out["labels"]
+    if 'logits' in model_out and 'labels' in model_out:
+        token_logits = model_out['logits']
+        token_labels = model_out['labels']
         return f.cross_entropy(token_logits.permute(0, 2, 1), token_labels)
 
 
@@ -84,7 +86,6 @@ def _run_validation(model, data, epoch, args):
     logging.info('Infering text and image features ...')
 
     with torch.no_grad():
-
         for i, batch in enumerate(dataloader):
             images, texts = batch
             images = images.to(device=device, dtype=input_dtype, non_blocking=True)
@@ -92,9 +93,9 @@ def _run_validation(model, data, epoch, args):
 
             with autocast():
                 model_out = model(images, texts)
-                image_features = model_out["image_features"]
-                text_features = model_out["text_features"]
-                logit_scale = model_out["logit_scale"]
+                image_features = model_out['image_features']
+                text_features = model_out['text_features']
+                logit_scale = model_out['logit_scale']
                 # features are accumulated in CPU tensors, otherwise GPU memory is
                 # exhausted quickly
                 # however, system RAM is easily exceeded and compute time becomes
@@ -108,9 +109,9 @@ def _run_validation(model, data, epoch, args):
                 batch_size = images.shape[0]
                 labels = torch.arange(batch_size, device=device).long()
                 total_loss = (
-                     f.cross_entropy(logits_per_image, labels) +
-                     f.cross_entropy(logits_per_text, labels)
-                 ) / 2
+                    f.cross_entropy(logits_per_image, labels)
+                    + f.cross_entropy(logits_per_text, labels)
+                ) / 2
 
                 gen_loss = _maybe_compute_generative_loss(model_out)
 
@@ -118,14 +119,15 @@ def _run_validation(model, data, epoch, args):
             num_samples += batch_size
             if is_master(args) and (i % 100) == 0:
                 logging.info(
-                    f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                    f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
+                    f'Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t'
+                    f'Clip Loss: {cumulative_loss / num_samples:.6f}\t'
+                )
 
                 if gen_loss is not None:
                     cumulative_gen_loss += gen_loss * batch_size
                     logging.info(
-                        f"Generative Loss: "
-                        f"{cumulative_gen_loss / num_samples:.6f}\t"
+                        f'Generative Loss: '
+                        f'{cumulative_gen_loss / num_samples:.6f}\t'
                     )
 
         logging.info('Calculating CLIP metrics, mean/median rank and recall ...')
@@ -139,14 +141,14 @@ def _run_validation(model, data, epoch, args):
         metrics.update(
             {
                 **val_metrics,
-                "clip_loss": loss.item(),
-                "epoch": epoch,
-                "num_samples": num_samples,
+                'clip_loss': loss.item(),
+                'epoch': epoch,
+                'num_samples': num_samples,
             }
         )
         if gen_loss is not None:
             gen_loss = cumulative_gen_loss / num_samples
-            metrics.update({"generative_loss": gen_loss.item()})
+            metrics.update({'generative_loss': gen_loss.item()})
 
     logging.info('Finished!')
     logging.info('--------------------------------------------------------------------')
@@ -168,7 +170,7 @@ def _run_classifier(model, classifier, dataloader, args):
     input_dtype = get_input_dtype(args.precision)
 
     with torch.no_grad():
-        top1, top5, n = 0., 0., 0.
+        top1, top5, n = 0.0, 0.0, 0.0
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(device=args.device, dtype=input_dtype)
             target = target.to(args.device)
@@ -179,7 +181,7 @@ def _run_classifier(model, classifier, dataloader, args):
                 image_features = (
                     output['image_features'] if isinstance(output, dict) else output[0]
                 )
-                logits = 100. * image_features @ classifier
+                logits = 100.0 * image_features @ classifier
 
             # measure accuracy
             acc1, acc5 = _accuracy(logits, target, topk=(1, 5))
@@ -187,8 +189,8 @@ def _run_classifier(model, classifier, dataloader, args):
             top5 += acc5
             n += images.size(0)
 
-    top1 = (top1 / n)
-    top5 = (top5 / n)
+    top1 = top1 / n
+    top5 = top5 / n
     return top1, top5
 
 
@@ -250,7 +252,7 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
     logging.info('--------------------------------------------------------------------')
     logging.info('Starting the CLIP benchmark ...')
 
-    from clip_benchmark.run import run_benchmark, CLIPBenchmarkModel
+    from clip_benchmark.run import CLIPBenchmarkModel, run_benchmark
 
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         module = model.module
@@ -272,14 +274,14 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
         output=None,
         dataset_root=args.clip_benchmark_dataset_root,
         distributed=False,
-        recall_ks=[int(k) for k in args.clip_benchmark_recall_ks.split(',')]
+        recall_ks=[int(k) for k in args.clip_benchmark_recall_ks.split(',')],
     )
     metrics = {}
     for result in results:
         dataset = result['dataset']
         for k, v in result['metrics'].items():
             metrics[f'{dataset}-{k}'] = v
-    
+
     logging.info('Finished CLIP benchmark!')
     logging.info('--------------------------------------------------------------------')
 
@@ -287,7 +289,6 @@ def _run_clip_benchmark(model, tokenizer, transform, epoch, args):
 
 
 def _run_mteb_benchmark(model, tokenizer, epoch, args):
-
     if args.mteb_frequency == 0:
         return {}
     if (epoch % args.mteb_frequency) != 0 and epoch != args.epochs:
@@ -297,12 +298,10 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
     logging.info('Starting the MTEB benchmark ...')
 
     from mteb import MTEB
+    from open_clip.model import CLIP
     from transformers import AutoTokenizer
 
-    from open_clip.model import CLIP
-
     class _MTEBModel(torch.nn.Module):
-
         def __init__(
             self,
             clip_model: torch.nn.Module,
@@ -336,7 +335,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     pretrained_model_name_or_path=hf_tokenizer_name,
                     trust_remote_code=True,
-                    force_download=True
+                    force_download=True,
                 )
                 self._embed = self._hf_embed
 
@@ -356,7 +355,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
                 padding=True,
                 truncation=True,
                 return_tensors='pt',
-                max_length=self._max_seq_length
+                max_length=self._max_seq_length,
             ).to(self._device)
 
             model_output = self._model.text.transformer(**encoded_input)
@@ -376,7 +375,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
             embeddings = []
             with torch.inference_mode():
                 for i in range(0, len(sentences), batch_size):
-                    batch = sentences[i: i + batch_size]
+                    batch = sentences[i : i + batch_size]
                     embeddings.append(self._embed(batch))
 
             return np.concatenate(embeddings, axis=0)
@@ -390,7 +389,7 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
             else:
                 items.append((new_key, value))
         return dict(items)
-    
+
     _mteb_model = _MTEBModel(
         clip_model=model,
         _tokenizer=tokenizer,
@@ -409,11 +408,15 @@ def _run_mteb_benchmark(model, tokenizer, epoch, args):
             eval_splits=['dev'] if task == 'MSMARCO' else ['test'],
             ignore_identical_ids=False,
         )
-        metrics.update({
-            k: v
-            for k, v in flatten(results, separator='-').items() if isinstance(v, float) and any(sub in k for sub in MTEB_LOGGING_METRICS)
-        })
-    
+        metrics.update(
+            {
+                k: v
+                for k, v in flatten(results, separator='-').items()
+                if isinstance(v, float)
+                and any(sub in k for sub in MTEB_LOGGING_METRICS)
+            }
+        )
+
     logging.info('Finished MTEB benchmark!')
     logging.info('--------------------------------------------------------------------')
 
@@ -457,20 +460,20 @@ def evaluate(
         return {}
 
     logging.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
+        f'Eval Epoch: {epoch} '
+        + '\t'.join([f'{k}: {round(v, 4):.4f}' for k, v in metrics.items()])
     )
 
-    logdata = {"val/" + name: val for name, val in metrics.items()}
+    logdata = {'val/' + name: val for name, val in metrics.items()}
 
     if args.save_logs:
         if tb_writer is not None:
             for name, val in logdata.items():
                 tb_writer.add_scalar(name, val, epoch)
 
-        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as fd:
+        with open(os.path.join(args.checkpoint_path, 'results.jsonl'), 'a+') as fd:
             fd.write(json.dumps(metrics))
-            fd.write("\n")
+            fd.write('\n')
 
     if args.wandb:
         assert wandb is not None, 'Please install wandb.'
