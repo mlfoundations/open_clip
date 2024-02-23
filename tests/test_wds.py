@@ -1,17 +1,18 @@
+import collections
+import io
 import os
+import tarfile
+
 import pytest
 import util_test
-import collections
-import tarfile
-import io
 from PIL import Image
-
 from training.data import get_wds_dataset
-from training.params import parse_args
 from training.main import random_seed
+from training.params import parse_args
 
 TRAIN_NUM_SAMPLES = 10_000
 RTOL = 0.2
+
 
 # NOTE: we use two test tar files, which are created on the fly and saved to data/input.
 # 000.tar has 10 samples, and the captions are 000_0, 000_1, ..., 000_9
@@ -20,11 +21,11 @@ def build_inputs(test_name):
     base_input_dir, _ = util_test.get_data_dirs()
     input_dir = os.path.join(base_input_dir, test_name)
     os.makedirs(input_dir, exist_ok=True)
-    
+
     def save_tar(idx, num_samples):
         filename = os.path.join(input_dir, f'test_data_{idx:03d}.tar')
         tar = tarfile.open(filename, 'w')
-        
+
         for sample_idx in range(num_samples):
             # Image
             image = Image.new('RGB', (32, 32))
@@ -35,7 +36,7 @@ def build_inputs(test_name):
             bio.seek(0)
             info.size = size
             tar.addfile(info, bio)
-            
+
             # Caption
             info = tarfile.TarInfo(f'{sample_idx}.txt')
             bio = io.BytesIO()
@@ -44,8 +45,8 @@ def build_inputs(test_name):
             bio.seek(0)
             info.size = size
             tar.addfile(info, bio)
-        
-        tar.close()          
+
+        tar.close()
 
     save_tar(0, 10)
     save_tar(1, 5)
@@ -79,16 +80,16 @@ def get_dataloader(input_shards):
 
 def test_single_source():
     """Test webdataset with a single tar file."""
-    input_dir = build_inputs('single_source')    
+    input_dir = build_inputs('single_source')
     input_shards = os.path.join(input_dir, 'test_data_000.tar')
     dataloader = get_dataloader(input_shards)
-    
+
     counts = collections.defaultdict(int)
     for sample in dataloader:
         txts = sample[1]
         for txt in txts:
             counts[txt] += 1
-    
+
     for key, count in counts.items():
         assert count == pytest.approx(TRAIN_NUM_SAMPLES / 10, RTOL)
 
@@ -104,7 +105,7 @@ def test_two_sources():
         txts = sample[1]
         for txt in txts:
             counts[txt] += 1
-    
+
     for key, count in counts.items():
         assert count == pytest.approx(TRAIN_NUM_SAMPLES / 15, RTOL), f'{key}, {count}'
 
@@ -123,9 +124,10 @@ def test_two_sources_same_weights():
         txts = sample[1]
         for txt in txts:
             counts[txt] += 1
-    
+
     for key, count in counts.items():
         assert count == pytest.approx(TRAIN_NUM_SAMPLES / 15, RTOL), f'{key}, {count}'
+
 
 def test_two_sources_with_upsampling():
     """Test webdataset with a two tar files with upsampling."""
@@ -141,9 +143,13 @@ def test_two_sources_with_upsampling():
         txts = sample[1]
         for txt in txts:
             counts[txt] += 1
-    
+
     for key, count in counts.items():
         if key.startswith('000'):
-            assert count == pytest.approx(TRAIN_NUM_SAMPLES / 20, RTOL), f'{key}, {count}'
+            assert count == pytest.approx(
+                TRAIN_NUM_SAMPLES / 20, RTOL
+            ), f'{key}, {count}'
         else:
-            assert count == pytest.approx(TRAIN_NUM_SAMPLES / 10, RTOL), f'{key}, {count}'
+            assert count == pytest.approx(
+                TRAIN_NUM_SAMPLES / 10, RTOL
+            ), f'{key}, {count}'

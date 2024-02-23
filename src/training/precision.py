@@ -1,5 +1,6 @@
-import torch
 from contextlib import suppress
+
+import torch
 
 
 def get_autocast(precision):

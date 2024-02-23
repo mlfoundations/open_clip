@@ -25,9 +25,11 @@ def is_master(args, local=False):
 def is_using_horovod():
     # NOTE w/ horovod run, OMPI vars should be set, but w/ SLURM PMI vars will be set
     # Differentiating between horovod and DDP use via SLURM may not be possible, so horovod arg still required...
-    ompi_vars = ["OMPI_COMM_WORLD_RANK", "OMPI_COMM_WORLD_SIZE"]
-    pmi_vars = ["PMI_RANK", "PMI_SIZE"]
-    if all([var in os.environ for var in ompi_vars]) or all([var in os.environ for var in pmi_vars]):
+    ompi_vars = ['OMPI_COMM_WORLD_RANK', 'OMPI_COMM_WORLD_SIZE']
+    pmi_vars = ['PMI_RANK', 'PMI_SIZE']
+    if all([var in os.environ for var in ompi_vars]) or all(
+        [var in os.environ for var in pmi_vars]
+    ):
         return True
     else:
         return False
@@ -43,7 +45,12 @@ def is_using_distributed():
 
 def world_info_from_env():
     local_rank = 0
-    for v in ('LOCAL_RANK', 'MPI_LOCALRANKID', 'SLURM_LOCALID', 'OMPI_COMM_WORLD_LOCAL_RANK'):
+    for v in (
+        'LOCAL_RANK',
+        'MPI_LOCALRANKID',
+        'SLURM_LOCALID',
+        'OMPI_COMM_WORLD_LOCAL_RANK',
+    ):
         if v in os.environ:
             local_rank = int(os.environ[v])
             break
@@ -69,7 +76,7 @@ def init_distributed_device(args):
     args.rank = 0  # global rank
     args.local_rank = 0
     if args.horovod:
-        assert hvd is not None, "Horovod is not installed"
+        assert hvd is not None, 'Horovod is not installed'
         hvd.init()
         args.local_rank = int(hvd.local_rank())
         args.rank = hvd.rank()
@@ -91,7 +98,7 @@ def init_distributed_device(args):
                 init_method=args.dist_url,
                 world_size=args.world_size,
                 rank=args.rank,
-                timeout=timedelta(seconds=3000)
+                timeout=timedelta(seconds=3000),
             )
         else:
             # DDP via torchrun, torch.distributed.launch
@@ -99,7 +106,8 @@ def init_distributed_device(args):
             torch.distributed.init_process_group(
                 backend=args.dist_backend,
                 init_method=args.dist_url,
-                timeout=timedelta(seconds=3000))
+                timeout=timedelta(seconds=3000),
+            )
             args.world_size = torch.distributed.get_world_size()
             args.rank = torch.distributed.get_rank()
         args.distributed = True

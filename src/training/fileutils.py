@@ -2,18 +2,25 @@ import logging
 import multiprocessing
 import subprocess
 import time
+
 import fsspec
 import torch
 
 
 def remote_sync_s3(local_dir, remote_dir):
     # skip epoch_latest which can change during sync.
-    result = subprocess.run(["aws", "s3", "sync", local_dir, remote_dir, '--exclude', '*epoch_latest.pt'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(
+        ['aws', 's3', 'sync', local_dir, remote_dir, '--exclude', '*epoch_latest.pt'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     if result.returncode != 0:
-        logging.error(f"Error: Failed to sync with S3 bucket {result.stderr.decode('utf-8')}")
+        logging.error(
+            f"Error: Failed to sync with S3 bucket {result.stderr.decode('utf-8')}"
+        )
         return False
-        
-    logging.info(f"Successfully synced with S3 bucket")
+
+    logging.info(f'Successfully synced with S3 bucket')
     return True
 
 
@@ -60,13 +67,16 @@ def keep_running_remote_sync(sync_every, local_dir, remote_dir, protocol):
 
 
 def start_sync_process(sync_every, local_dir, remote_dir, protocol):
-    p = multiprocessing.Process(target=keep_running_remote_sync, args=(sync_every, local_dir, remote_dir, protocol))
+    p = multiprocessing.Process(
+        target=keep_running_remote_sync,
+        args=(sync_every, local_dir, remote_dir, protocol),
+    )
     return p
 
 
 # Note: we are not currently using this save function.
 def pt_save(pt_obj, file_path):
-    of = fsspec.open(file_path, "wb")
+    of = fsspec.open(file_path, 'wb')
     with of as f:
         torch.save(pt_obj, file_path)
 
@@ -74,7 +84,7 @@ def pt_save(pt_obj, file_path):
 def pt_load(file_path, map_location=None):
     if file_path.startswith('s3'):
         logging.info('Loading remote checkpoint, which may take a bit.')
-    of = fsspec.open(file_path, "rb")
+    of = fsspec.open(file_path, 'rb')
     with of as f:
         out = torch.load(f, map_location=map_location)
     return out
