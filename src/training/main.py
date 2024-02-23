@@ -1,10 +1,10 @@
 import glob
 import logging
 import os
+import random
 import re
 import subprocess
 import sys
-import random
 from datetime import datetime
 from functools import partial
 
@@ -28,15 +28,21 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip import (
+    create_loss,
+    create_model_and_transforms,
+    get_tokenizer,
+    trace_model,
+)
+
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, broadcast_object
+from training.distributed import broadcast_object, init_distributed_device, is_master
 from training.evaluate import evaluate
+from training.fileutils import pt_load, remote_sync, start_sync_process
 from training.logger import setup_logging
 from training.params import parse_args
-from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
+from training.scheduler import const_lr, const_lr_cooldown, cosine_lr
 from training.train import train_one_epoch
-from training.fileutils import pt_load, start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -432,8 +438,8 @@ def main(args):
     
     if args.evaluate_on_start:
         evaluate(
-                model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
-            )
+            model, preprocess_val, tokenizer, data, start_epoch, args, tb_writer=writer,
+        )
 
     loss = create_loss(args)
 

@@ -1,25 +1,34 @@
 """ CLIP Model
 
-Adapted from https://github.com/openai/CLIP. Originally MIT License, Copyright (c) 2021 OpenAI.
+Adapted from https://github.com/openai/CLIP. Originally MIT License,
+Copyright (c) 2021 OpenAI.
 """
 import copy
 import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 from functools import partial
 
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
+from .pretrained import get_pretrained_cfg, download_pretrained
 from .timm_model import TimmModel
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer,\
-    text_global_pool
+from .transformer import (
+    LayerNormFp32,
+    LayerNorm,
+    QuickGELU,
+    Attention,
+    VisionTransformer,
+    TextTransformer,
+    text_global_pool,
+)
 from .utils import to_2tuple
 
 
@@ -41,10 +50,17 @@ class CLIPVisionCfg:
     pos_embed_type: str = 'learnable'
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'tok'
+    proj_type: Optional[str] = None
     output_tokens: bool = False
     act_kwargs: Optional[dict] = None
     norm_kwargs: Optional[dict] = None
 
+    # Pretrained model checkpoint
+    # Load the vision tower from this checkpoint
+    pt_model_name: Optional[str] = None
+    pt_proj_exclude: bool = True
+
+    # TIMM specific vision tower config
     timm_model_name: Optional[str] = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -71,15 +87,20 @@ class CLIPTextCfg:
     no_causal_mask: bool = False  # disable causal masking
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
+    proj_type: Optional[str] = None
     proj_bias: bool = False
     output_tokens: bool = False
     act_kwargs: dict = None
     norm_kwargs: dict = None
 
+    # Pretrained model checkpoint
+    # Load the text tower from this checkpoint
+    pt_model_name: Optional[str] = None
+    pt_proj_exclude: bool = True
+
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
     hf_model_pretrained: bool = True
-    hf_proj_type: str = 'mlp'
     hf_pooler_type: str = 'mean_pooler'  # attentional pooling for HF models
     hf_trust_remote_code: bool = False
 
@@ -102,17 +123,117 @@ def get_input_dtype(precision: str):
     return input_dtype
 
 
+def _load_state_dict(checkpoint_path: str, map_location: str = "cpu"):
+    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+    elif isinstance(checkpoint, torch.jit.ScriptModule):
+        state_dict = checkpoint.state_dict()
+        for key in ["input_resolution", "context_length", "vocab_size"]:
+            state_dict.pop(key, None)
+    else:
+        state_dict = checkpoint
+
+    if next(iter(state_dict.items()))[0].startswith("module"):
+        state_dict = {k[7:]: v for k, v in state_dict.items()}
+
+    return state_dict
+
+
+def load_checkpoint(
+    model: torch.nn.Module,
+    checkpoint_path: str,
+    strict: bool = True,
+    root: Optional[str] = None,
+    exclude: Optional[list[str]] = None,
+):
+    if Path(checkpoint_path).suffix in (".npz", ".npy"):
+        from .big_vision import load_big_vision_weights
+
+        model: CustomTextCLIP
+
+        load_big_vision_weights(model, checkpoint_path)
+        return {}
+
+    state_dict = _load_state_dict(checkpoint_path)
+
+    root = root or ''
+    root_modules = root.split('.')
+    root_modules = [rm for rm in root_modules if rm != '']
+    num_root_modules = len(root_modules)
+    exclude = exclude or []
+
+    if num_root_modules > 0:
+        _state_dict = {}
+        for k, v in state_dict.items():
+            _k_modules = k.split('.')
+            _root_k_modules = _k_modules[:num_root_modules]
+            if _root_k_modules == root_modules:
+                _new_k = '.'.join(_k_modules[num_root_modules:])
+                _state_dict[_new_k] = v
+        if len(_state_dict) == 0:
+            raise ValueError(
+                f'Got an empty state dict after filtering using root \'{root}\''
+            )
+        state_dict = copy.deepcopy(_state_dict)
+
+    # detect old format and make compatible with new format
+    if "positional_embedding" in state_dict and not hasattr(
+        model, "positional_embedding"
+    ):
+        state_dict = convert_to_custom_text_state_dict(state_dict)
+
+    # If loading a non-SigLIP model for SigLIP training. See
+    # https://github.com/mlfoundations/open_clip/issues/712
+    # if "logit_bias" not in state_dict and model.logit_bias is not None:
+    #     state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
+    # Certain text transformers no longer expect position_ids after transformers==4.31
+
+    # remove logit biases and scale for 3-towers
+    if "logit_bias" in state_dict:
+        del state_dict["logit_bias"]
+    if "logit_scale" in state_dict:
+        del state_dict["logit_scale"]
+
+    position_id_key = "text.transformer.embeddings.position_ids"
+    if position_id_key in state_dict and not hasattr(model, position_id_key):
+        del state_dict[position_id_key]
+
+    resize_pos_embed(state_dict, model)
+    resize_text_pos_embed(state_dict, model)
+
+    if exclude:
+        _state_dict = {}
+        for k, v in state_dict.items():
+            if any([k.startswith(e) for e in exclude]):
+                continue
+            _state_dict[k] = v
+
+        state_dict = copy.deepcopy(_state_dict)
+
+        if len(_state_dict) == 0:
+            raise ValueError(
+                f'Got an empty state dict after filtering using exclude \'{exclude}\''
+            )
+
+    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+
+    return incompatible_keys
+
+
 def _build_vision_tower(
-        embed_dim: int,
-        vision_cfg: CLIPVisionCfg,
-        quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None
+    embed_dim: int,
+    vision_cfg: Union[Dict, CLIPVisionCfg],
+    quick_gelu: bool = False,
+    cast_dtype: Optional[torch.dtype] = None,
+    cache_dir: Optional[str] = None,
 ):
     if isinstance(vision_cfg, dict):
         vision_cfg = CLIPVisionCfg(**vision_cfg)
 
-    # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
-    # memory efficient in recent PyTorch releases (>= 1.10).
+    # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and
+    # more memory efficient in recent PyTorch releases (>= 1.10).
     # NOTE: timm models always use native GELU regardless of quick_gelu flag.
     act_layer = QuickGELU if quick_gelu else nn.GELU
 
@@ -162,20 +283,50 @@ def _build_vision_tower(
             no_ln_pre=vision_cfg.no_ln_pre,
             final_ln_after_pool=vision_cfg.final_ln_after_pool,
             pool_type=vision_cfg.pool_type,
+            proj_type=vision_cfg.proj_type,
             output_tokens=vision_cfg.output_tokens,
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
 
+        ckpt = vision_cfg.pt_model_name
+        if ckpt is not None:
+            logging.info(f'Downloading pretrained model {ckpt} ...')
+            _model, _tag = ckpt.split(' ')
+            _ckpt_path = download_pretrained(
+                get_pretrained_cfg(model=_model, tag=_tag), cache_dir=cache_dir
+            )
+            if _ckpt_path:
+                exclude = []
+                if visual.proj is None or vision_cfg.pt_proj_exclude:
+                    exclude.append('proj')
+
+                logging.info(f'Loading pretrained model from {_ckpt_path} ...')
+                load_checkpoint(
+                    visual,
+                    _ckpt_path,
+                    strict=False,
+                    root='visual',
+                    exclude=exclude
+                )
+            else:
+                _error_str = (
+                    f'No checkpoint for model \'{ckpt}\' found neither locally nor '
+                    f'remotely'
+                )
+                logging.exception(_error_str)
+                raise RuntimeError(_error_str)
+
     return visual
 
 
 def _build_text_tower(
-        embed_dim: int,
-        text_cfg: CLIPTextCfg,
-        quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None,
+    embed_dim: int,
+    text_cfg: Union[Dict, CLIPTextCfg],
+    quick_gelu: bool = False,
+    cast_dtype: Optional[torch.dtype] = None,
+    cache_dir: Optional[str] = None,
 ):
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
@@ -184,7 +335,7 @@ def _build_text_tower(
         text = HFTextEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
-            proj_type=text_cfg.hf_proj_type,
+            proj_type=text_cfg.proj_type,
             pooler_type=text_cfg.hf_pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
@@ -211,11 +362,40 @@ def _build_text_tower(
             no_causal_mask=text_cfg.no_causal_mask,
             pad_id=text_cfg.pad_id,
             pool_type=text_cfg.pool_type,
+            proj_type=text_cfg.proj_type,
             proj_bias=text_cfg.proj_bias,
             output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
+
+        ckpt = text_cfg.pt_model_name
+        if ckpt is not None:
+            logging.info(f'Downloading pretrained model {ckpt} ...')
+            _model, _tag = ckpt.split(' ')
+            _ckpt_path = download_pretrained(
+                get_pretrained_cfg(model=_model, tag=_tag), cache_dir=cache_dir
+            )
+            if _ckpt_path:
+                exclude = []
+                if text.text_projection is None or text_cfg.pt_proj_exclude:
+                    exclude.append('text_projection')
+
+                logging.info(f'Loading pretrained model from {_ckpt_path} ...')
+                load_checkpoint(
+                    text,
+                    _ckpt_path,
+                    strict=False,
+                    root='text',
+                    exclude=exclude
+                )
+            else:
+                _error_str = (
+                    f'No checkpoint for model {ckpt} found neither locally nor '
+                    f'remotely'
+                )
+                logging.exception(_error_str)
+                raise RuntimeError(_error_str)
     return text
 
 
@@ -223,22 +403,26 @@ class CLIP(nn.Module):
     output_dict: torch.jit.Final[bool]
 
     def __init__(
-            self,
-            embed_dim: int,
-            vision_cfg: CLIPVisionCfg,
-            text_cfg: CLIPTextCfg,
-            quick_gelu: bool = False,
-            init_logit_scale: float = np.log(1 / 0.07),
-            init_logit_bias: Optional[float] = None,
-            cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False,
+        self,
+        embed_dim: int,
+        vision_cfg: CLIPVisionCfg,
+        text_cfg: CLIPTextCfg,
+        quick_gelu: bool = False,
+        init_logit_scale: float = np.log(1 / 0.07),
+        init_logit_bias: Optional[float] = None,
+        cast_dtype: Optional[torch.dtype] = None,
+        output_dict: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__()
         self.output_dict = output_dict
 
-        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
-
-        text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.visual = _build_vision_tower(
+            embed_dim, vision_cfg, quick_gelu, cast_dtype, cache_dir
+        )
+        text = _build_text_tower(
+            embed_dim, text_cfg, quick_gelu, cast_dtype, cache_dir
+        )
         self.transformer = text.transformer
         self.context_length = text.context_length
         self.vocab_size = text.vocab_size
@@ -323,20 +507,25 @@ class CustomTextCLIP(nn.Module):
     output_dict: torch.jit.Final[bool]
 
     def __init__(
-            self,
-            embed_dim: int,
-            vision_cfg: CLIPVisionCfg,
-            text_cfg: CLIPTextCfg,
-            quick_gelu: bool = False,
-            init_logit_scale: float = np.log(1 / 0.07),
-            init_logit_bias: Optional[float] = None,
-            cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False,
+        self,
+        embed_dim: int,
+        vision_cfg: CLIPVisionCfg,
+        text_cfg: CLIPTextCfg,
+        quick_gelu: bool = False,
+        init_logit_scale: float = np.log(1 / 0.07),
+        init_logit_bias: Optional[float] = None,
+        cast_dtype: Optional[torch.dtype] = None,
+        output_dict: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__()
         self.output_dict = output_dict
-        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
-        self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
+        self.visual = _build_vision_tower(
+            embed_dim, vision_cfg, quick_gelu, cast_dtype, cache_dir
+        )
+        self.text = _build_text_tower(
+            embed_dim, text_cfg, quick_gelu, cast_dtype, cache_dir
+        )
         self.context_length = self.text.context_length
         self.vocab_size = self.text.vocab_size
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)

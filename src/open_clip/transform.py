@@ -34,12 +34,13 @@ class PreprocessCfg:
     def input_size(self):
         return (self.num_channels,) + to_2tuple(self.size)
 
+
 _PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
 
 
 def merge_preprocess_dict(
-        base: Union[PreprocessCfg, Dict],
-        overlay: Dict,
+    base: Union[PreprocessCfg, Dict],
+    overlay: Dict,
 ):
     """ Merge overlay key-value pairs on top of base preprocess cfg or dict.
     Input dicts are filtered based on PreprocessCfg fields.
@@ -54,7 +55,7 @@ def merge_preprocess_dict(
     return base_clean
 
 
-def merge_preprocess_kwargs(base: PreprocessCfg, **kwargs):
+def merge_preprocess_kwargs(base: Union[PreprocessCfg, Dict], **kwargs):
     return merge_preprocess_dict(base, kwargs)
 
 

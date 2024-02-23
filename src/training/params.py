@@ -467,7 +467,7 @@ def parse_args(args):
     parser.add_argument(
         "--clip-benchmark-datasets",
         type=str,
-        default='wds/mscoco_captions,wds/flickr8k,wds/flickr30k',
+        default='wds/mscoco_captions,wds/flickr8k,wds/flickr30k,wds/imagenetv2',
         help="Specify datasets for CLIP benchmark."
     )
     parser.add_argument(
@@ -488,7 +488,7 @@ def parse_args(args):
     parser.add_argument(
         "--mteb-tasks",
         type=str,
-        default='STS12',
+        default='STS12,STS15,STS17',
         help="Define a comma separated list of MTEB tasks to evaluate on."
     )
     parser.add_argument(

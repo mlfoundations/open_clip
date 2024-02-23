@@ -98,15 +98,15 @@ class HFTextEncoder(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
     def __init__(
-            self,
-            model_name_or_path: str,
-            output_dim: int,
-            config: PretrainedConfig = None,
-            pooler_type: str = None,
-            proj_type: str = None,
-            pretrained: bool = True,
-            output_tokens: bool = False,
-            trust_remote_code: bool = False,
+        self,
+        model_name_or_path: str,
+        output_dim: int,
+        config: PretrainedConfig = None,
+        pooler_type: str = None,
+        proj_type: str = None,
+        pretrained: bool = True,
+        output_tokens: bool = False,
+        trust_remote_code: bool = False,
     ):
         super().__init__()
         self.output_tokens = output_tokens

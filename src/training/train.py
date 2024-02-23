@@ -10,6 +10,7 @@ except ImportError:
     wandb = None
 
 from open_clip import get_input_dtype
+
 from .distributed import is_master
 from .precision import get_autocast
 
@@ -41,12 +42,12 @@ def postprocess_clip_output(model_out):
     return {
         "image_features": model_out[0],
         "text_features": model_out[1],
-        "logit_scale": model_out[2]
+        "logit_scale": model_out[2],
     }
 
 
 def unwrap_model(model):
-    if hasattr(model, 'module'):
+    if hasattr(model, "module"):
         return model.module
     else:
         return model
@@ -232,7 +233,7 @@ def train_one_epoch(
             logit_scale_scalar = logit_scale.item()
             loss_log = " ".join(
                 [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
+                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
@@ -269,7 +270,7 @@ def train_one_epoch(
             if tb_writer is not None:
                 for name, val in logdata.items():
                     tb_writer.add_scalar(name, val, step)
-            
+
             if args.wandb:
                 assert wandb is not None, 'Please install wandb.'
                 logdata['step'] = step  # for backwards compatibility
