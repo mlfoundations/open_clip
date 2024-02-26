@@ -151,3 +151,4 @@ core.*
 
 # Allow
 !src/evaluation/misc/results_dbs/*
+test_data/*
