@@ -13,7 +13,8 @@
         "hf_tokenizer_name": "jinaai/jina-embeddings-v2-base-en",
         "hf_pooler_type": "mean_pooler",
         "hf_trust_remote_code": true,
-        "proj_type": null
+        "proj_type": null,
+        "hf_model_pretrained": false
     },
     "teacher_cfg": {
         "hf_model_name": "jinaai/jina-embeddings-v2-base-en",

@@ -228,7 +228,9 @@ def create_model(
         # or 'pure' modes
         cast_dtype = get_cast_dtype(precision)
         is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
-        if is_hf_model:
+        if is_hf_model and not (
+            isinstance(model_cfg['text_cfg'].get('hf_model_pretrained'), bool)
+        ):
             # load pretrained weights for HF text model IFF no CLIP weights being loaded
             model_cfg['text_cfg']['hf_model_pretrained'] = (
                 pretrained_hf and not pretrained
