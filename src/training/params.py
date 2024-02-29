@@ -145,6 +145,24 @@ def parse_args(args):
         '--warmup', type=int, default=10000, help='Number of steps to warmup for.'
     )
     parser.add_argument(
+        '--text-lr-decay',
+        type=float,
+        default=1.0,
+        help=(
+            'Layerwise Learning Rate Decay (LLRD) factor for the text tower. '
+            'Value of 1.0 means no LLRD'
+        )
+    )
+    parser.add_argument(
+        '--vision-lr-decay',
+        type=float,
+        default=1.0,
+        help=(
+            'Layerwise Learning Rate Decay (LLRD) factor for the vision tower. '
+            'Value of 1.0 means no LLRD'
+        )
+    )
+    parser.add_argument(
         '--use-bn-sync',
         default=False,
         action='store_true',
