@@ -6,11 +6,9 @@ import re
 import subprocess
 import sys
 from datetime import datetime
-from functools import partial
 
 import numpy as np
 import torch
-from torch import optim
 from torch.cuda.amp import GradScaler
 
 try:
@@ -39,8 +37,9 @@ from training.distributed import broadcast_object, init_distributed_device, is_m
 from training.evaluate import evaluate
 from training.fileutils import pt_load, remote_sync, start_sync_process
 from training.logger import setup_logging
+from training.optimizer import create_optimizer
 from training.params import parse_args
-from training.scheduler import const_lr, const_lr_cooldown, cosine_lr
+from training.scheduler import create_scheduler
 from training.train import train_one_epoch
 
 LATEST_CHECKPOINT_NAME = 'epoch_latest.pt'
@@ -53,12 +52,13 @@ def random_seed(seed=42, rank=0):
 
 
 def natural_key(string_):
-    """See http://www.codinghorror.com/blog/archives/001018.html"""
+    """See https://www.codinghorror.com/blog/archives/001018.html"""
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
 def get_latest_checkpoint(path: str, remote: bool):
-    # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
+    # as writen, this glob recurses, so can pick up checkpoints across
+    # multiple sub-folders
     if remote:
         result = subprocess.run(
             ['aws', 's3', 'ls', path + '/'],
@@ -96,7 +96,8 @@ def main(args):
 
     # get the name of the experiments
     if args.name is None:
-        # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
+        # sanitize model name for filesystem / uri use,
+        # easier if we don't use / in name as a rule?
         model_name_safe = args.model.replace('/', '-')
         date_str = datetime.now().strftime('%Y_%m_%d-%H_%M_%S')
         if args.distributed:
@@ -122,7 +123,8 @@ def main(args):
         args.log_path = os.path.join(log_base_path, log_filename)
         if os.path.exists(args.log_path) and not resume_latest:
             print(
-                'Error. Experiment already exists. Use --name {} to specify a new experiment.'
+                'Error. Experiment already exists. Use --name {} to '
+                'specify a new experiment.'
             )
             return -1
 
@@ -147,12 +149,14 @@ def main(args):
     if resume_latest:
         resume_from = None
         checkpoint_path = args.checkpoint_path
-        # If using remote_sync, need to check the remote instead of the local checkpoints folder.
+        # If using remote_sync, need to check the remote instead of
+        # the local checkpoints folder.
         if args.remote_sync is not None:
             checkpoint_path = os.path.join(args.remote_sync, args.name, 'checkpoints')
             if args.save_most_recent:
                 print(
-                    'Error. Cannot use save-most-recent with remote_sync and resume latest.'
+                    'Error. Cannot use save-most-recent with remote_sync and '
+                    'resume latest.'
                 )
                 return -1
             if args.remote_sync_protocol != 's3':
@@ -160,8 +164,9 @@ def main(args):
                 return -1
         if is_master(args):
             # Checking for existing checkpoint via master rank only. It is possible for
-            # different rank processes to see different files if a shared file-system is under
-            # stress, however it's very difficult to fully work around such situations.
+            # different rank processes to see different files if a shared file-system
+            # is under stress, however it's very difficult to fully work around such
+            # situations.
             if args.save_most_recent:
                 # if --save-most-recent flag is set, look for latest at a fixed filename
                 resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
@@ -199,7 +204,8 @@ def main(args):
         else:
             logging.info('Error: remote sync failed. Exiting.')
             return -1
-        # if all looks good, start a process to do this every args.remote_sync_frequency seconds
+        # if all looks good, start a process to do this every
+        # args.remote_sync_frequency seconds
         remote_sync_process = start_sync_process(
             args.remote_sync_frequency,
             os.path.join(args.logs, args.name),
@@ -216,13 +222,15 @@ def main(args):
 
     if args.horovod:
         logging.info(
-            f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.'
+            f'Running in horovod mode with multiple processes / nodes. '
+            f'Device: {args.device}. Process (global: {args.rank}, local '
+            f'{args.local_rank}), total {args.world_size}.'
         )
     elif args.distributed:
         logging.info(
-            f'Running in distributed mode with multiple processes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.'
+            f'Running in distributed mode with multiple processes. '
+            f'Device: {args.device}. Process (global: {args.rank}, local '
+            f'{args.local_rank}), total {args.world_size}.'
         )
     else:
         logging.info(f'Running with a single process. Device {args.device}.')
@@ -268,7 +276,8 @@ def main(args):
         **model_kwargs,
     )
     if args.distill:
-        # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
+        # FIXME: currently assumes the model you're distilling from
+        #  has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
             args.distill_model,
             args.distill_pretrained,
@@ -346,32 +355,15 @@ def main(args):
 
     if args.train_data or args.dataset_type == 'synthetic':
         assert not args.trace, 'Cannot train with traced model'
-
-        exclude = (
-            lambda n, p: p.ndim < 2
-            or 'bn' in n
-            or 'ln' in n
-            or 'bias' in n
-            or 'logit_scale' in n
-        )
-        include = lambda n, p: not exclude(n, p)
-
-        named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [
-            p for n, p in named_parameters if exclude(n, p) and p.requires_grad
-        ]
-        rest_params = [
-            p for n, p in named_parameters if include(n, p) and p.requires_grad
-        ]
-
-        optimizer = optim.AdamW(
-            [
-                {'params': gain_or_bias_params, 'weight_decay': 0.0},
-                {'params': rest_params, 'weight_decay': args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
+        optimizer = create_optimizer(
+            model=model,
+            base_lr=args.lr,
+            weight_decay=args.wd,
+            beta1=args.beta1,
+            beta2=args.beta2,
             eps=args.eps,
+            text_lr_decay=args.text_lr_decay,
+            vision_lr_decay=args.vision_lr_decay,
         )
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(
@@ -391,7 +383,7 @@ def main(args):
             start_epoch = checkpoint['epoch']
             sd = checkpoint['state_dict']
             if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.') :]: v for k, v in sd.items()}
+                sd = {k[len('module.'):]: v for k, v in sd.items()}
             model.load_state_dict(sd)
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint['optimizer'])
@@ -418,36 +410,28 @@ def main(args):
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
+
         total_steps = (
             data['train'].dataloader.num_batches // args.accum_freq
         ) * args.epochs
-        if args.lr_scheduler == 'cosine':
-            scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
-        elif args.lr_scheduler == 'const':
-            scheduler = const_lr(optimizer, args.lr, args.warmup, total_steps)
-        elif args.lr_scheduler == 'const-cooldown':
-            assert (
-                args.epochs_cooldown is not None
-            ), 'Please specify the number of cooldown epochs for this lr schedule.'
+        cooldown_steps = None
+        if args.epochs_cooldown is not None:
             cooldown_steps = (
                 data['train'].dataloader.num_batches // args.accum_freq
             ) * args.epochs_cooldown
-            scheduler = const_lr_cooldown(
-                optimizer,
-                args.lr,
-                args.warmup,
-                total_steps,
-                cooldown_steps,
-                args.lr_cooldown_power,
-                args.lr_cooldown_end,
-            )
-        else:
-            logging.error(
-                f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.'
-            )
-            exit(1)
 
-    # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
+        scheduler = create_scheduler(
+            optimizer=optimizer,
+            baselr=args.lr,
+            warmup_steps=args.warmup,
+            total_steps=total_steps,
+            cooldown_steps=cooldown_steps,
+            cooldown_power=args.lr_cooldown_power,
+            cooldown_end_lr=args.lr_cooldown_end,
+        )
+
+    # determine if this worker should save logs and checkpoints. only do so if it
+    # is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
@@ -605,7 +589,8 @@ def copy_codebase(args):
     new_code_path = os.path.join(args.logs, args.name, 'code')
     if os.path.exists(new_code_path):
         print(
-            f'Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment.'
+            f'Error. Experiment already exists at {new_code_path}. '
+            f'Use --name to specify a new experiment.'
         )
         return -1
     print(f'Copying codebase to {new_code_path}')

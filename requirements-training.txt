@@ -10,3 +10,4 @@ huggingface_hub
 transformers
 timm>=0.9.8
 fsspec
+bitsandbytes
