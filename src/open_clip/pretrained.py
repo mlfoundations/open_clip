@@ -433,9 +433,11 @@ _PRETRAINED = {
 
     "nllb-clip-base-siglip": dict(
         v1=_slpcfg(hf_hub='visheratin/nllb-clip-base-siglip/'),
+        mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-base/'),
     ),
     "nllb-clip-large-siglip": dict(
         v1=_slpcfg(hf_hub='visheratin/nllb-clip-large-siglip/'),
+        mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-large/'),
     )
 }
 
