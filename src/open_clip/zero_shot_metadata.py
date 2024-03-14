@@ -237,7 +237,7 @@ IMAGENET_CLASSNAMES = (
     "space shuttle", "spatula", "motorboat", "spider web", "spindle", "sports car", "spotlight",
     "stage", "steam locomotive", "through arch bridge", "steel drum", "stethoscope", "scarf",
     "stone wall", "stopwatch", "stove", "strainer", "tram", "stretcher", "couch", "stupa",
-    "submarine", "suit", "sundial", "sunglasses", "sunglasses", "sunscreen", "suspension bridge",
+    "submarine", "suit", "sundial", "sunglass", "sunglasses / dark glasses / shades", "sunscreen", "suspension bridge",
     "mop", "sweatshirt", "swim trunks / shorts", "swing", "electrical switch", "syringe",
     "table lamp", "tank", "tape player", "teapot", "teddy bear", "television", "tennis ball",
     "thatched roof", "front curtain", "thimble", "threshing machine", "throne", "tile roof",
