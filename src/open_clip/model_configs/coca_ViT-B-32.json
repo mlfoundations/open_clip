@@ -23,8 +23,7 @@
         "vocab_size": 49408,
         "width": 512,
         "heads": 8,
-        "layers": 12,
-        "attn_pooler_heads": 8
+        "layers": 12
     },
     "custom_text": true
 }
