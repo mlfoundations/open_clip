@@ -316,8 +316,7 @@ Training [CoCa](https://arxiv.org/abs/2205.01917) models is enabled through spec
 	"width": 512,
 	"heads": 8,
 	"layers": 12,
-	"latent_dim": 512,
-	"attn_pooler_heads": 8
+	"latent_dim": 512
 }
 ```
 Credit to [lucidrains](https://github.com/lucidrains) for [initial code](https://github.com/lucidrains/CoCa-pytorch), [gpucce](https://github.com/gpucce) for adapting the code to open_clip, and [iejMac](https://github.com/iejMac) for training the models.
