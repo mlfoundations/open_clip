@@ -7,8 +7,9 @@ Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/ab
 
 Using this codebase, we have trained several models on a variety of data sources and compute budgets, ranging from [small-scale experiments](docs/LOW_ACC.md) to larger runs including models trained on datasets such as [LAION-400M](https://arxiv.org/abs/2111.02114), [LAION-2B](https://arxiv.org/abs/2210.08402) and [DataComp-1B](https://arxiv.org/abs/2304.14108).
 Many of our models and their scaling properties are studied in detail in the paper [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
-Some of our best models and their zero-shot ImageNet-1k accuracy are shown below, along with the ViT-L model trained by OpenAI. 
+Some of the best models we've trained and their zero-shot ImageNet-1k accuracy are shown below, along with the ViT-L model trained by OpenAI and other state-of-the-art open source alternatives (all can be loaded via OpenCLIP).
 We provide more details about our full collection of pretrained models [here](docs/PRETRAINED.md), and zero-shot results for 38 datasets [here](docs/openclip_results.csv).
+
 
 
 | Model    | Training data | Resolution | # of samples seen | ImageNet zero-shot acc. | 
@@ -23,7 +24,9 @@ We provide more details about our full collection of pretrained models [here](do
 | ViT-L/14  | DataComp-1B  | 224px | 13B | 79.2% |
 | ViT-G/14  | LAION-2B  | 224px | 34B | 80.1% |
 |  |  |   |   |  |
-| ViT-L/14 | OpenAI's WIT | 224px | 13B | 75.5% | 
+| ViT-L/14 [(Original CLIP)](https://arxiv.org/abs/2103.00020) | OpenAI's WIT | 224px | 13B | 75.5% | 
+| ViT-SO400M/14 [(SigLIP)](https://arxiv.org/abs/2303.15343) | WebLI | 224px | 45B | 82.0% | 
+| ViT-H/14 [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-5B | 224px | 39B | 83.4% | 
 
 Model cards with additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip. 
 
