@@ -24,8 +24,7 @@
         "layers": 12,
         "heads": 12,
         "width": 768,
-        "embed_cls": true,
-        "output_tokens": true
+        "embed_cls": true
     },
     "custom_text": true
 }
