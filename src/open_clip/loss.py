@@ -155,7 +155,7 @@ class CoCaLoss(ClipLoss):
 
         self.clip_loss_weight = clip_loss_weight
         self.caption_loss_weight = caption_loss_weight
-        self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
+        self.caption_loss = nn.CrossEntropyLoss(reduction='none', ignore_index=pad_id)
 
     def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
         
@@ -169,6 +169,26 @@ class CoCaLoss(ClipLoss):
             logits.permute(0, 2, 1),
             labels,
         )
+
+        # IDEAS:
+        # - do we let gradients prop backward from this? maybe a torch.no_grad is due here
+        # - normalization,
+        # - we want the distribution to be soft so maybe logit scale? !!!
+        # - maybe just softmax is fine since we expect it to be unifrom
+        #   p(good_sammple) >> p(bad_sample)
+        # - TODO: right now posterior = evidence, we need to figure out a smarter
+        #   way of updating our prior which is p(gs) = 1 based on the evidence (CLIP dist)
+        with torch.no_grad():
+            cap_weights = (logit_scale * image_features @ text_features.T).softmax(dim=1).diag().unsqueeze(1)
+            # adjustment = (cap_weights.shape[0] + 1 - cap_weights.sum()) # in the beginning sim ~ U(bs)
+            # cap_weights = cap_weights * adjustment
+
+        def custom_backward_hook(grad):
+            return cap_weights * grad
+        caption_loss.register_hook(custom_backward_hook)
+
+        caption_loss = torch.mean(caption_loss[caption_loss != 0.0])
+
         caption_loss = caption_loss * self.caption_loss_weight
 
         if output_dict:
