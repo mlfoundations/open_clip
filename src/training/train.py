@@ -63,7 +63,7 @@ def backward(total_loss, scaler):
 
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(args.precision, device=args.device)
     input_dtype = get_input_dtype(args.precision)
 
     model.train()
@@ -258,7 +258,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
 
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(args.precision, device=args.device)
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
