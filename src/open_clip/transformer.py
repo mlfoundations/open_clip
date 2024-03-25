@@ -7,6 +7,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
+from training.distributed import try_import_npu
+try_import_npu()
 
 from .utils import to_2tuple
 from .pos_embed import get_2d_sincos_pos_embed

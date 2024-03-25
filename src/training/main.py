@@ -11,7 +11,6 @@ from functools import partial
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
 
 try:
     import wandb
@@ -30,13 +29,16 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, broadcast_object
+from training.distributed import is_master, init_distributed_device, broadcast_object, try_import_npu
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from training.train import train_one_epoch, evaluate
 from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
+TORCH_NPU_AVAILABLE = False
+if try_import_npu():
+    TORCH_NPU_AVAILABLE = True
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
@@ -329,6 +331,11 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
+        if args.precision == "amp":
+            if TORCH_NPU_AVAILABLE and torch.npu.is_available():
+                from torch.npu.amp import GradScaler
+            else:
+                from torch.cuda.amp import GradScaler
         scaler = GradScaler() if args.precision == "amp" else None
 
     # optionally resume from a checkpoint
