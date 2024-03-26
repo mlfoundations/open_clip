@@ -315,13 +315,30 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, output_hidden_states: bool = False):
+        """
+        :param x: shape = [bs, seq_len, width]
+        :param attn_mask: shape = [bs, seq_len, seq_len]
+        :param output_hidden_states: bool
+        """
+        encoder_states = [] if output_hidden_states else None
+
+        # collect encoder states in a list
+        if output_hidden_states:
+            encoder_states.append(x)
+
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask)
             else:
                 x = r(x, attn_mask=attn_mask)
+
+            if output_hidden_states:
+                encoder_states.append(x)
+
+        if output_hidden_states:
+            return x, encoder_states
         return x
 
 
@@ -349,10 +366,14 @@ class VisionTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            output_hidden_states: bool = False
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
         self.output_tokens = output_tokens
+        self.output_hidden_states = output_hidden_states
+        self.hidden_size = width
+
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
         self.grid_size = (image_height // patch_height, image_width // patch_width)
@@ -499,7 +520,7 @@ class VisionTransformer(nn.Module):
 
         return pooled, tokens
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, output_hidden_states: bool = False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -513,7 +534,16 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states or output_hidden_states)
+        if self.output_hidden_states or output_hidden_states:
+            # transformer_out is a tuple of (tokens, hidden_states)
+            x, hidden_states = transformer_out
+            assert isinstance(hidden_states, list)
+            hidden_states = [h.permute(1, 0, 2) for h in hidden_states]
+        else:
+            x = transformer_out
+            hidden_states = None
+
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         if self.attn_pool is not None:
@@ -541,10 +571,16 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
-        if self.output_tokens:
-            return pooled, tokens
-        
-        return pooled
+        if self.output_hidden_states or output_hidden_states:
+            if self.output_tokens:
+                return pooled, tokens, hidden_states
+            else:
+                return pooled, hidden_states
+        else:
+            if self.output_tokens:
+                return pooled, tokens
+            else:
+                return pooled
 
 
 def text_global_pool(x, text: Optional[torch.Tensor] = None, pool_type: str = 'argmax'):
@@ -583,10 +619,13 @@ class TextTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            output_hidden_states: bool = False,
     ):
         super().__init__()
         assert pool_type in ('first', 'last', 'argmax', 'none')
         self.output_tokens = output_tokens
+        self.output_hidden_states = output_hidden_states
+        self.hidden_size = width
         self.num_pos = self.context_length = context_length
         self.vocab_size = vocab_size
         self.width = width
@@ -669,7 +708,7 @@ class TextTransformer(nn.Module):
         additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
         return additive_mask
 
-    def forward(self, text):
+    def forward(self, text, output_hidden_states: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -684,7 +723,17 @@ class TextTransformer(nn.Module):
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=attn_mask)
+
+        transformer_out = self.transformer(x, output_hidden_states=self.output_hidden_states or output_hidden_states)
+        if self.output_hidden_states or output_hidden_states:
+            # transformer_out is a tuple of (tokens, hidden_states)
+            x, hidden_states = transformer_out
+            assert isinstance(hidden_states, list)
+            hidden_states = [h.permute(1, 0, 2) for h in hidden_states]
+        else:
+            x = transformer_out
+            hidden_states = None
+
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -702,10 +751,16 @@ class TextTransformer(nn.Module):
             else:
                 pooled = pooled @ self.text_projection
 
-        if self.output_tokens:
-            return pooled, tokens
-
-        return pooled
+        if self.output_hidden_states or output_hidden_states:
+            if self.output_tokens:
+                return pooled, tokens, hidden_states
+            else:
+                return pooled, hidden_states
+        else:
+            if self.output_tokens:
+                return pooled, tokens
+            else:
+                return pooled
 
 
 class MultimodalTransformer(Transformer):

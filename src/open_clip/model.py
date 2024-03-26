@@ -105,7 +105,8 @@ def _build_vision_tower(
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None
+        cast_dtype: Optional[torch.dtype] = None,
+        output_hidden_states: bool = False,
 ):
     if isinstance(vision_cfg, dict):
         vision_cfg = CLIPVisionCfg(**vision_cfg)
@@ -130,6 +131,10 @@ def _build_vision_tower(
         )
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
+
+        if output_hidden_states:
+            raise ValueError("output_hidden_states not supported with ModifiedResNet")
+
         visual = ModifiedResNet(
             layers=vision_cfg.layers,
             output_dim=embed_dim,
@@ -165,6 +170,7 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            output_hidden_states=output_hidden_states,
         )
 
     return visual
@@ -175,6 +181,7 @@ def _build_text_tower(
         text_cfg: CLIPTextCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        output_hidden_states: bool = False,
 ):
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
@@ -262,18 +269,42 @@ class CLIP(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
 
-    def encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
-        return F.normalize(features, dim=-1) if normalize else features
+    def encode_image(self, image, normalize: bool = False, output_hidden_states: bool = False):
+        result = self.visual(image, output_hidden_states=output_hidden_states)
+        if output_hidden_states:
+            features = result[0]
+            hidden_states = result[1]
+        else:
+            features = result
+            hidden_states = None
 
-    def encode_text(self, text, normalize: bool = False):
+        if normalize:
+            features = F.normalize(features, dim=-1)
+
+        if output_hidden_states:
+            return features, hidden_states
+        return features
+
+    def encode_text(self, text, normalize: bool = False, output_hidden_states: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
+
+        encoder_states = [] if output_hidden_states else None
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.to(cast_dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x, attn_mask=self.attn_mask)
+
+        # we use text embedding as first hidden state in a list
+        if output_hidden_states:
+            encoder_states.append(x)
+
+        x = self.transformer(x, attn_mask=self.attn_mask, output_hidden_states=output_hidden_states)
+
+        if output_hidden_states:
+            x = x[0]
+            encoder_states.extend(x[1])
+
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
         x, _ = text_global_pool(x, text, self.text_pool_type)
@@ -283,7 +314,12 @@ class CLIP(nn.Module):
             else:
                 x = x @ self.text_projection
 
-        return F.normalize(x, dim=-1) if normalize else x
+        if normalize:
+            x = F.normalize(x, dim=-1)
+
+        if output_hidden_states:
+            return x, encoder_states
+        return x
 
     def get_logits(self, image, text):
         image_features = self.encode_image(image, normalize=True)
