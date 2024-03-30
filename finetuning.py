@@ -3,7 +3,7 @@ import open_clip
 
 def main():
     #'ViT-B-32', 'openai' 
-    architecture = 'ViT-B/32' # ResNet50, ViT-B/32
+    architecture = 'ViT-B/32' # RN50, ViT-B/32
     pretrained = 'openai' 
     model, _, preprocess = open_clip.create_model_and_transforms(architecture, pretrained=pretrained)
     print(model)
@@ -14,7 +14,10 @@ def main():
     vocab_size = model.vocab_size
 
     # Finetuning the model on COCO2017 dataset in the equilibrium/datasets/COCO2017 folder
+    coco_path = '../equilibrium/datasets/COCO2017'
 
+    # Train the model
+    
 
 
 if __name__ == "__main__":
