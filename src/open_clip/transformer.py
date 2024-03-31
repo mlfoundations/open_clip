@@ -13,7 +13,10 @@ from .pos_embed import get_2d_sincos_pos_embed
 
 
 class LayerNormFp32(nn.LayerNorm):
-    """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
+    """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back).
+
+    Deprecated: pytorch 1.10+ always performs LayerNorm in fp32. Retained for checkpoint compatibility.
+    """
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype

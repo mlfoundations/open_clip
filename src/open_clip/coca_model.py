@@ -7,7 +7,6 @@ import numpy as np
 from dataclasses import dataclass
 
 from .transformer import (
-    LayerNormFp32,
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
@@ -58,9 +57,7 @@ def _build_text_decoder_tower(
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
-    norm_layer = (
-        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
-    )
+    norm_layer = LayerNorm
 
     decoder = MultimodalTransformer(
         context_length=multimodal_cfg.context_length,

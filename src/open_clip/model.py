@@ -18,7 +18,7 @@ from functools import partial
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer,\
+from .transformer import LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer,\
     text_global_pool
 from .utils import to_2tuple
 
@@ -139,7 +139,7 @@ def _build_vision_tower(
         )
     else:
         vision_heads = vision_cfg.width // vision_cfg.head_width
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        norm_layer = LayerNorm
         if vision_cfg.norm_kwargs:
             norm_layer = partial(norm_layer, **vision_cfg.norm_kwargs)
         if vision_cfg.act_kwargs is not None:
@@ -190,7 +190,7 @@ def _build_text_tower(
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+        norm_layer = LayerNorm
         if text_cfg.norm_kwargs:
             norm_layer = partial(norm_layer, **text_cfg.norm_kwargs)
         if text_cfg.act_kwargs is not None:
