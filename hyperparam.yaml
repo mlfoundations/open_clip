@@ -1,0 +1,17 @@
+# CLIP parameters
+dataset-type: "csv" 
+train-data: "path/to/data/dir/train2014.csv" 
+warmup: 1000 
+batch-size: 128 
+lr: 1e-5
+wd: 0.1
+epochs: 1
+workers: 3
+model: 'ViT-B-32'
+pretrained: "laion2b_s34b_b79k"
+report-to: "wandb" 
+coca-contrastive-loss-weight: 0
+coca-caption-loss-weight: 1
+log-every-n-steps: 100
+
+

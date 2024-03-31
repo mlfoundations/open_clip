@@ -1,24 +1,28 @@
+import torch
+from PIL import Image
 import open_clip
+from training import main, parse_args
+import argparse
+import yaml
 
+def convert_yaml_to_argv(yaml_dict):
+    """
+    Convert a dictionary to a list of arguments to be passed to the main function.
+    This prevents the need to modify the main function to accept a dictionary as input.
+    """
+    argv = []
+    for key, value in yaml_dict.items():
+        argv.append(f'--{key}')
+        argv.append(f'{value}')
+    return argv
 
-def main():
-    #'ViT-B-32', 'openai' 
-    architecture = 'ViT-B/32' # RN50, ViT-B/32
-    pretrained = 'openai' 
-    model, _, preprocess = open_clip.create_model_and_transforms(architecture, pretrained=pretrained)
-    print(model)
+def finetune():
+    # Load the configuration file
+    with open('hyperparam.yaml') as file:
+        config = yaml.load(file, Loader=yaml.FullLoader)
 
-    model.to('cuda')
-    model.eval()
-    context_length = model.context_length
-    vocab_size = model.vocab_size
-
-    # Finetuning the model on COCO2017 dataset in the equilibrium/datasets/COCO2017 folder
-    coco_path = '../equilibrium/datasets/COCO2017'
-
-    # Train the model
+    args = convert_yaml_to_argv(config)
     
+    main(args)
 
 
-if __name__ == "__main__":
-    main()
