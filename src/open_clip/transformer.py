@@ -325,7 +325,6 @@ class Transformer(nn.Module):
                 x = r(x, attn_mask=attn_mask)
         return x
 
-
 class VisionTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
@@ -802,16 +801,16 @@ class MultimodalTransformer(Transformer):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
-
-class VisionTransformerSymplex(VisionTransformer):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.proj = nn.Parameter(torch.eye(self.output_dim))
         
 class Symplex(nn.Module):
     """
-    ## Args:
-    - symplex_type: str, type of symplex to use. Options are: d-symplex, d-cube, ortoplex.
+    Symplex layer following the https://arxiv.org/abs/2103.15632 paper
+    
+    Args:
+        in_features: int, input features
+        out_features: int, output features
+        n_classes: int, number of classes
+        symplex_type: str, type of symplex to use. Options are 'd-symplex', 'd-ortoplex', 'd-cube'
     """
     def __init__(self, 
                  in_features: int, 
@@ -833,7 +832,7 @@ class Symplex(nn.Module):
                 raise ValueError(f"dim must be n_classes - 1 for symplex_type {self.symplex_type}")
             self.symplex.weight.copy_(self.d_symplex())
         elif self.symplex_type == 'd-ortoplex':
-            if self.out_features != torch.ceil(self.n_classes/2).int():
+            if self.out_features != torch.ceil(torch.tensor(self.n_classes/2)).int():
                 self.symplex.weight.copy_(self.ortoplex())
         elif self.symplex_type == 'd-cube':
             self.target_dim = 2 ** self.out_features
@@ -869,8 +868,7 @@ class Symplex(nn.Module):
         vec = vec / torch.norm(vec, p=2, dim=1, keepdim=True)
         return vec
 
-    
-if __name__ == '__main__':
-    simple = Symplex(3, 2, 'd-symplex')
-    print(simple)
-    
+class VisionTransformerSymplex(VisionTransformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.proj = nn.Parameter(torch.eye(self.output_dim))
