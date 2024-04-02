@@ -2,6 +2,7 @@ from collections import OrderedDict
 import math
 from typing import Callable, Optional, Sequence, Tuple
 from functools import partial
+import itertools
 
 import torch
 from torch import nn
