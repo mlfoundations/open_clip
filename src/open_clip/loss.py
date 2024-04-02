@@ -112,9 +112,10 @@ class ClipLoss(nn.Module):
                 logits_per_image = logit_scale * all_image_features @ all_text_features.T
                 logits_per_text = logits_per_image.T
         else:
-            logits_per_image = logit_scale * image_features @ text_features.T
-            logits_per_text = logit_scale * text_features @ image_features.T
-        
+            logits_per_image = logit_scale * image_features @ text_features.T   # [n, embed_image] @ [n; embed_text] -> [n, n] NOTE: embed_image = embed_text
+            logits_per_text = logit_scale * text_features @ image_features.T    # [n, n]  i-th row is the similarity of the i-th image to all text features
+                                                                                # labels [n: n] torch tensor
+
         return logits_per_image, logits_per_text
 
     def forward(self, image_features, text_features, logit_scale, output_dict=False):
@@ -124,9 +125,9 @@ class ClipLoss(nn.Module):
         labels = self.get_ground_truth(device, logits_per_image.shape[0])
 
         total_loss = (
-            F.cross_entropy(logits_per_image, labels) +
+            F.cross_entropy(logits_per_image, labels) +  #capire questa merda porco dio
             F.cross_entropy(logits_per_text, labels)
-        ) / 2
+        ) / 2 
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 

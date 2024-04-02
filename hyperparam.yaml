@@ -7,7 +7,7 @@ batch-size: 128
 lr: 1e-5
 wd: 0.1
 epochs: 1
-workers: 3
+workers: 8
 model: 'ViT-B-32'
 # pretrained: "laion2b_s34b_b79k"
 pretrained: 'openai'

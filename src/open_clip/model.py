@@ -246,7 +246,7 @@ class CLIP(nn.Module):
         self.text_projection = text.text_projection
         self.text_pool_type = text.pool_type
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
-
+        
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         if init_logit_bias is not None:
             self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
@@ -314,7 +314,7 @@ class CLIP(nn.Module):
 
         if self.logit_bias is not None:
             return image_features, text_features, self.logit_scale.exp(), self.logit_bias
-        return image_features, text_features, self.logit_scale.exp()
+        return image_features, text_features, self.logit_scale.exp() # visual transformer output, text transformer output, logit scale
 
 
 class CustomTextCLIP(nn.Module):

@@ -1,6 +1,6 @@
 import torch
 from PIL import Image
-import open_clip
+from open_clip import create_model_and_transforms
 from training import main, parse_args
 import argparse
 import yaml
@@ -24,6 +24,7 @@ def finetune():
     args = convert_yaml_to_argv(config)
     
     main(args)
+<<<<<<< HEAD
     # @TODO rewrite the main function to another project and import open_clip
     # and start the finetuning process with COCO2017 -> SVAL Project
     # @TODO add the path to the COCO2017 dataset
@@ -33,5 +34,11 @@ def finetune():
 if __name__ == '__main__':
     finetune()
 
+=======
+    
+if __name__ == '__main__':
+    model = create_model_and_transforms('ViT-B-32')
+    print(model)
+>>>>>>> 76b864c (add torch Symplex layer)
 
 
