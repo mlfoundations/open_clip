@@ -404,9 +404,10 @@ class HFTokenizer:
             clean: str = 'whitespace',
             strip_sep_token: bool = False,
             language: Optional[str] = None,
+            **kwargs
     ):
         from transformers import AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, **kwargs)
         set_lang_fn = getattr(self.tokenizer, 'set_src_lang_special_tokens', None)
         if callable(set_lang_fn):
             self.set_lang_fn = set_lang_fn
