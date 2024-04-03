@@ -848,6 +848,10 @@ class Symplex(nn.Module):
         return self.symplex(self.fc(x))
         
     def d_symplex(self):
+        """
+        Symplex is the genrealization of a triangle or tetrahedron to arbitraty dimensions.
+        A symplex in n dimensional space is the convex hull of n+1 points that are not coplanar.
+        """
         vec = torch.zeros((self.out_features + 1, self.out_features)) #matrix of shape (dim+1, dim)
         torch.eye(self.out_features, out=vec[:-1,:])           
         alpha = (1.0 - torch.sqrt(1.0 + torch.tensor([self.out_features]))) / self.out_features
@@ -857,11 +861,21 @@ class Symplex(nn.Module):
         return vec
 
     def d_ortoplex(self, x):
+        """
+        The verticies of a ortoplex can be choosed as unit vector pointing algoside each coordinate 
+        axis i.e. all the permutations of (-+1, 0, 0, ..., 0)
+        """
         vec = torch.eye(self.out_features)
         vec = torch.cat([vec, -vec], dim=0) 
         return vec
     
     def d_cube(self):
+        """
+        The d-cube is the set of all binary vectors in d dimensions. 
+        A unit hypercube in d-dimensional space is a convex hull of all the points whose 
+        d coordinates are either 0 or 1. Can be thought as the cartesian product [0, 1]^d
+        d times. The d-cube is the normalized version of the hypercube.
+        """
         #vec = torch.tensor([[1 if (j >> i) % 2 == 0 else \
         #    -1 for i in range(self.out_features)] for j in range(2 ** self.out_features)])
         vec = torch.tensor(list(itertools.product([-1, 1], repeat=self.out_features)), dtype=torch.float32)
