@@ -123,7 +123,7 @@ def profile_torch(model, text_input_size, image_input_size, batch_size=1, force_
 
 
 def count_params(model):
-    return sum([m.numel() for m in model.parameters()])
+    return sum(m.numel() for m in model.parameters())
 
 def profile_model(model_name, batch_size=1, profiler='torch'):
     assert profiler in ['torch', 'fvcore'], 'Only torch and fvcore profilers are supported'
