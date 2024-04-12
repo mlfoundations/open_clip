@@ -298,7 +298,7 @@ class CoCa(nn.Module):
 
                 cur_len += 1
 
-                if stopping_criteria(out, None):
+                if stopping_criteria(out, None).any():
                     break
 
             if num_dims == 1:
@@ -439,7 +439,7 @@ class CoCa(nn.Module):
 
             # increase cur_len
             cur_len = cur_len + 1
-            if beam_scorer.is_done or stopping_criteria(input_ids, None):
+            if beam_scorer.is_done or stopping_criteria(input_ids, None).any():
                 break
 
         final_beam_indices = sum(beam_indices, ()) if beam_indices is not None else None
