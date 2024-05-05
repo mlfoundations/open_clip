@@ -23,7 +23,7 @@ except ImportError:
     timm = None
 
 from .utils import freeze_batch_norm_2d
-
+from .vitamin import *
 
 class TimmModel(nn.Module):
     """ timm model adapter
