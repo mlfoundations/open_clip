@@ -2,17 +2,16 @@
 
 Paper: Designing Scalable Vison Models in the Vision-Language Era
 
-@misc{chen2023designing,
-      title={Designing Scalable Vison Models in the Vision-Language Era},
-      author={Jieneng Chen and Qihang Yu and Xiaohui Shen and Alan Yuille and Liang-Cheih Chen},
-      year={2023},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@inproceedings{chen2024vitamin,
+    title={Design Scalable Vision Models in the Vision-language Era},
+    author={Chen, Jieneng and Yu, Qihang and Shen, Xiaohui and Yuille, ALan and Chen, Liang-Chieh},
+    booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+    year={2024}
 }
 
-Based on Apache 2.0 licensed code at https://github.com/ViTamin/ViTamin
+Based on Apache 2.0 licensed code at https://github.com/Beckschen/ViTamin
 
-Modifications and timm support by Jieneng Chen 2023
+Modifications and timm support by Jieneng Chen 2024
 
 Reference:
 https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/vision_transformer.py
