@@ -23,6 +23,7 @@ setup(
     name='open_clip_torch',
     version=__version__,
     description='OpenCLIP',
+    license='MIT',
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/mlfoundations/open_clip',
