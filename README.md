@@ -356,7 +356,7 @@ import pandas as pd
 import os
 
 root_path = "path/to/data/dir" # set this to smth meaningful
-ds = build_dataset("mscoco_captions", root=root_path, split="train") # this downloads the dataset if it is not there already
+ds = build_dataset("mscoco_captions", root=root_path, split="train", task="captioning") # this downloads the dataset if it is not there already
 coco = ds.coco
 imgs = coco.loadImgs(coco.getImgIds())
 future_df = {"filepath":[], "title":[]}
