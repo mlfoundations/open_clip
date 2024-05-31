@@ -65,6 +65,20 @@ def _apcfg(url='', hf_hub='', **kwargs):
     }
 
 
+def _mccfg(url='', hf_hub='', **kwargs):
+    # MobileCLIP
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': (0., 0., 0.),
+        'std': (1., 1., 1.),
+        'interpolation': 'bilinear',
+        'resize_mode': 'shortest',
+        **kwargs,
+    }
+
+
+
 _RN50 = dict(
     openai=_pcfg(
         "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt"),
@@ -438,7 +452,12 @@ _PRETRAINED = {
     "nllb-clip-large-siglip": dict(
         v1=_slpcfg(hf_hub='visheratin/nllb-clip-large-siglip/'),
         mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-large/'),
-    )
+    ),
+
+    "mobileclip_s1": dict(
+        datacompdr=_mccfg(url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s1.pt')),
+    "mobileclip_s2": dict(
+        datacompdr=_mccfg(url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s2.pt'))
 }
 
 
