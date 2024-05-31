@@ -1,0 +1,21 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "timm_model_name": "fastvit_mci1",
+        "timm_model_pretrained": false,
+        "timm_pool": "avg",
+        "timm_proj": null,
+        "timm_drop": 0.0,
+        "timm_drop_path": 0.0,
+        "image_size": 256
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12,
+        "no_causal_mask": true
+    },
+    "custom_text": true
+}

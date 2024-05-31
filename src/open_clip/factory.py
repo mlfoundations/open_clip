@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
+from .convert import convert_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
@@ -139,25 +140,39 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
     return state_dict
 
 
-def load_checkpoint(model, checkpoint_path, strict=True):
+def load_checkpoint(
+        model: Union[CLIP, CustomTextCLIP],
+        checkpoint_path: str,
+        strict: bool = True,
+):
     if Path(checkpoint_path).suffix in ('.npz', '.npy'):
-        from .big_vision import load_big_vision_weights
+        # Separate path loading numpy big_vision (SigLIP) weights
+        from open_clip.convert import load_big_vision_weights
         load_big_vision_weights(model, checkpoint_path)
         return {}
 
     state_dict = load_state_dict(checkpoint_path)
-    # detect old format and make compatible with new format
+
+    # Detect & convert 3rd party state_dicts -> open_clip
+    state_dict = convert_state_dict(model, state_dict)
+
+    # Detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
+
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
     if 'logit_bias' not in state_dict and model.logit_bias is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
+
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
     if position_id_key in state_dict and not hasattr(model, position_id_key):
         del state_dict[position_id_key]
+
     resize_pos_embed(state_dict, model)
     resize_text_pos_embed(state_dict, model)
+
+    # Finally, load the massaged state_dict into model
     incompatible_keys = model.load_state_dict(state_dict, strict=strict)
     return incompatible_keys
 

@@ -1,7 +1,11 @@
+""" Conversion functions for 3rd part state-dicts and non-torch native checkpoint formats.
+"""
+from typing import Union
+
 import torch
 import numpy as np
 
-from .model import CustomTextCLIP
+from .model import CLIP, CustomTextCLIP
 from .transformer import TextTransformer, Transformer
 
 
@@ -134,3 +138,48 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
     model.logit_scale.copy_(_n2p(w['params/t'])[0])
 
 
+@torch.no_grad()
+def convert_mobile_clip_state_dict(model: CustomTextCLIP, state_dict):
+    from timm.models.fastvit import _checkpoint_filter_fn
+
+    def _convert_timm_img(state_dict, prefix='image_encoder.'):
+        timm_state_dict = _checkpoint_filter_fn(state_dict, model.visual.trunk)
+        timm_state_dict = {'visual.trunk.' + k: v for k, v in timm_state_dict.items()}
+        return timm_state_dict
+
+    def _convert_openclip_txt(state_dict, prefix='text_encoder.'):
+        text_dict = {}
+        for k, v in state_dict.items():
+            if not k.startswith(prefix):
+                continue
+            k = k.replace(prefix, '')
+            k = k.replace('projection_layer', 'text_projection')
+            k = k.replace('embedding_layer', 'token_embedding')
+            if k.startswith('positional_embedding.pos_embed.pos_embed'):
+                k = k.replace('positional_embedding.pos_embed.pos_embed', 'positional_embedding')
+                v = v.squeeze()
+            k = k.replace('final_layer_norm', 'ln_final')
+            k = k.replace('pre_norm_mha.0', 'ln_1')
+            k = k.replace('pre_norm_mha.1', 'attn')
+            k = k.replace('pre_norm_ffn.0', 'ln_2')
+            k = k.replace('pre_norm_ffn.1', 'mlp.c_fc')
+            k = k.replace('pre_norm_ffn.4', 'mlp.c_proj')
+            k = k.replace('qkv_proj.weight', 'in_proj_weight')
+            k = k.replace('qkv_proj.bias', 'in_proj_bias')
+            k = k.replace('transformer.', 'transformer.resblocks.')
+            text_dict['text.' + k] = v
+        return text_dict
+
+    image_dict = _convert_timm_img(state_dict)
+    text_dict = _convert_openclip_txt(state_dict)
+    out_dict = {**image_dict, **text_dict}
+    out_dict['logit_scale'] = state_dict['logit_scale']
+    return out_dict
+
+
+def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
+    if 'image_encoder.model.patch_embed.0.rbr_conv.0.conv.weight' in state_dict:
+        # Apple MobileCLIP s1 & s2 state_dicts (s0 and b not currently supported)
+        state_dict = convert_mobile_clip_state_dict(model, state_dict)
+
+    return state_dict
