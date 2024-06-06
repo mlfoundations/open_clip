@@ -139,11 +139,14 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
 
 
 @torch.no_grad()
-def convert_mobile_clip_state_dict(model: CustomTextCLIP, state_dict):
-    from timm.models.fastvit import _checkpoint_filter_fn
+def convert_mobile_clip_state_dict(model: CustomTextCLIP, state_dict, fastvit = True):
 
-    def _convert_timm_img(state_dict, prefix='image_encoder.'):
-        timm_state_dict = _checkpoint_filter_fn(state_dict, model.visual.trunk)
+    def _convert_timm_img(state_dict):
+        if fastvit:
+            from timm.models.fastvit import checkpoint_filter_fn
+        else:
+            from timm.models.vision_transformer_hybrid import checkpoint_filter_fn
+        timm_state_dict = checkpoint_filter_fn(state_dict, model.visual.trunk)
         timm_state_dict = {'visual.trunk.' + k: v for k, v in timm_state_dict.items()}
         return timm_state_dict
 
@@ -181,5 +184,7 @@ def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
     if 'image_encoder.model.patch_embed.0.rbr_conv.0.conv.weight' in state_dict:
         # Apple MobileCLIP s1 & s2 state_dicts (s0 and b not currently supported)
         state_dict = convert_mobile_clip_state_dict(model, state_dict)
-
+    if 'image_encoder.model.patch_emb.0.block.conv.weight' in state_dict:
+        # convert b model
+        state_dict = convert_mobile_clip_state_dict(model, state_dict, fastvit=False)
     return state_dict

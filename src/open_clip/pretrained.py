@@ -454,10 +454,64 @@ _PRETRAINED = {
         mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-large/'),
     ),
 
-    "mobileclip_s1": dict(
-        datacompdr=_mccfg(url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s1.pt')),
-    "mobileclip_s2": dict(
-        datacompdr=_mccfg(url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s2.pt'))
+    "MobileCLIP-S1": dict(
+        datacompdr=_mccfg(
+            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s1.pt')),
+    "MobileCLIP-S2": dict(
+        datacompdr=_mccfg(
+            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s2.pt')),
+    "MobileCLIP-B": dict(
+        datacompdr=_mccfg(
+            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_b.pt'),
+        datacompdr_lt=_mccfg(
+            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt'),
+    ),
+
+    "ViTamin-S": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S/pytorch_model.bin'),
+    ),
+    "ViTamin-S-LTT": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S-LTT/pytorch_model.bin'),
+    ),
+    "ViTamin-B": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-B/pytorch_model.bin'),
+    ),
+    "ViTamin-B-LTT": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-B-LTT/pytorch_model.bin'),
+    ),
+    "ViTamin-L": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-224px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-384px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-224px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-384px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-384px/pytorch_model.bin'),
+    ),
 }
 
 
