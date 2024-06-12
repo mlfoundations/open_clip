@@ -455,12 +455,12 @@ _PRETRAINED = {
     ),
 
     "MobileCLIP-S1": dict(
-        datacompdr=_mccfg(hf_hub='reach-vb/MobileCLIP-S1-OpenCLIP/')),
+        datacompdr=_mccfg(hf_hub='coreml-projects/MobileCLIP-S1-OpenCLIP/')),
     "MobileCLIP-S2": dict(
-        datacompdr=_mccfg(hf_hub='reach-vb/MobileCLIP-S2-OpenCLIP/')),
+        datacompdr=_mccfg(hf_hub='coreml-projects/MobileCLIP-S2-OpenCLIP/')),
     "MobileCLIP-B": dict(
-        datacompdr=_mccfg(hf_hub='reach-vb/MobileCLIP-B-OpenCLIP/'),
-        datacompdr_lt=_mccfg(hf_hub='reach-vb/MobileCLIP-B-LT-OpenCLIP/'),
+        datacompdr=_mccfg(hf_hub='coreml-projects/MobileCLIP-B-OpenCLIP/'),
+        datacompdr_lt=_mccfg(hf_hub='coreml-projects/MobileCLIP-B-LT-OpenCLIP/'),
     ),
 
     "ViTamin-S": dict(
