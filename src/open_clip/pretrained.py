@@ -455,16 +455,12 @@ _PRETRAINED = {
     ),
 
     "MobileCLIP-S1": dict(
-        datacompdr=_mccfg(
-            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s1.pt')),
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-S1-OpenCLIP/')),
     "MobileCLIP-S2": dict(
-        datacompdr=_mccfg(
-            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s2.pt')),
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-S2-OpenCLIP/')),
     "MobileCLIP-B": dict(
-        datacompdr=_mccfg(
-            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_b.pt'),
-        datacompdr_lt=_mccfg(
-            url='https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt'),
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-B-OpenCLIP/'),
+        datacompdr_lt=_mccfg(hf_hub='apple/MobileCLIP-B-LT-OpenCLIP/'),
     ),
 
     "ViTamin-S": dict(

@@ -98,7 +98,7 @@ def push_to_hf_hub(
     private: bool = False,
     create_pr: bool = False,
     model_card: Optional[dict] = None,
-    safe_serialization: Union[bool, str] = False,
+    safe_serialization: Union[bool, str] = 'both',
 ):
     if not isinstance(tokenizer, HFTokenizer):
         # FIXME this makes it awkward to push models with new tokenizers, come up with better soln.
@@ -173,6 +173,7 @@ def push_pretrained_to_hf_hub(
     create_pr: bool = False,
     model_card: Optional[dict] = None,
     hf_tokenizer_self: bool = False,
+    **kwargs,
 ):
     model, preprocess_eval = create_model_from_pretrained(
         model_name,
@@ -182,8 +183,11 @@ def push_pretrained_to_hf_hub(
         image_std=image_std,
         image_interpolation=image_interpolation,
         image_resize_mode=image_resize_mode,
+        **kwargs,
     )
     model_config = get_model_config(model_name)
+    if pretrained == 'openai':
+        model_config['quick_gelu'] = True
     assert model_config
 
     tokenizer = get_tokenizer(model_name)
