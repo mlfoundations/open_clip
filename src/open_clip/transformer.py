@@ -811,25 +811,29 @@ def lock_text_transformer(
     for param in transformer.parameters():
         param.requires_grad = False
 
-    groups = [
-        [transformer.token_embedding, transformer.positional_embedding],
-        *transformer.transformer.resblocks[:-1],
-        [transformer.transformer.resblocks[-1], transformer.ln_final],
-        transformer.text_projection,
-    ]
+    if unlocked_groups != 0:
+        groups = [
+            [transformer.token_embedding, transformer.positional_embedding],
+            *transformer.transformer.resblocks[:-1],
+            [transformer.transformer.resblocks[-1], transformer.ln_final],
+            transformer.text_projection,
+        ]
 
-    def _unlock(x):
-        if isinstance(x, Sequence):
-            for g in x:
-                _unlock(g)
-        else:
-            if isinstance(x, torch.nn.Parameter):
-                x.requires_grad = True
+        def _unlock(x):
+            if isinstance(x, Sequence):
+                for g in x:
+                    _unlock(g)
             else:
-                for p in x.parameters():
-                    p.requires_grad = True
+                if isinstance(x, torch.nn.Parameter):
+                    x.requires_grad = True
+                else:
+                    for n,p in x.named_parameters():
+                        if n.startswith("ln_"):  # If LayerNorm layer
+                            p.requires_grad = False if freeze_layer_norm else True
+                        else:
+                            p.requires_grad = True
 
-    _unlock(groups[-unlocked_groups:])
+        _unlock(groups[-unlocked_groups:])
 
 
 class MultimodalTransformer(Transformer):
