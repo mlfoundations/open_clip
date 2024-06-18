@@ -1,0 +1,20 @@
+{
+    "embed_dim": 768,
+    "vision_cfg": {
+      "timm_model_name": "vitamin_small_224",
+      "timm_model_pretrained": false,
+      "timm_pool": "",
+      "timm_proj": "linear",
+      "timm_drop": 0.0,
+      "timm_drop_path": 0.1,
+      "image_size": 224
+    },
+    "text_cfg": {
+      "context_length": 77,
+      "vocab_size": 49408,
+      "width": 768,
+      "heads": 12,
+      "layers": 12
+    },
+    "custom_text": true
+}

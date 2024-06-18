@@ -7,6 +7,14 @@ from typing import Dict, Union
 
 from tqdm import tqdm
 
+from .constants import (
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    INCEPTION_MEAN,
+    INCEPTION_STD,
+    OPENAI_DATASET_MEAN,
+    OPENAI_DATASET_STD,
+)
 from .version import __version__
 
 try:
@@ -18,13 +26,57 @@ except ImportError:
     _has_hf_hub = False
 
 
-def _pcfg(url='', hf_hub='', mean=None, std=None):
-    return dict(
-        url=url,
-        hf_hub=hf_hub,
-        mean=mean,
-        std=std,
-    )
+def _pcfg(url='', hf_hub='', **kwargs):
+    # OpenAI / OpenCLIP defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': OPENAI_DATASET_MEAN,
+        'std': OPENAI_DATASET_STD,
+        'interpolation': 'bicubic',
+        'resize_mode': 'shortest',
+        **kwargs,
+    }
+
+
+def _slpcfg(url='', hf_hub='', **kwargs):
+    # SiGLIP defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': INCEPTION_MEAN,
+        'std': INCEPTION_STD,
+        'interpolation': 'bicubic',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
+
+
+def _apcfg(url='', hf_hub='', **kwargs):
+    # CLIPA defaults
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': IMAGENET_MEAN,
+        'std': IMAGENET_STD,
+        'interpolation': 'bilinear',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
+
+
+def _mccfg(url='', hf_hub='', **kwargs):
+    # MobileCLIP
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': (0., 0., 0.),
+        'std': (1., 1., 1.),
+        'interpolation': 'bilinear',
+        'resize_mode': 'shortest',
+        **kwargs,
+    }
+
 
 
 _RN50 = dict(
@@ -84,6 +136,8 @@ _VITB32 = dict(
     laion2b_e16=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-laion2b_e16-af8dbd0c.pth"),
     laion2b_s34b_b79k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-laion2B-s34B-b79K/'),
+    # DataComp-XL models
+    datacomp_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K/'),
     # DataComp-M models
     datacomp_m_s128m_b4k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-DataComp.M-s128M-b4K/'),
     commonpool_m_clip_s128m_b4k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-CommonPool.M.clip-s128M-b4K/'),
@@ -109,6 +163,14 @@ _VITB32_quickgelu = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-quickgelu-laion400m_e31-d867053b.pt"),
     laion400m_e32=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_32-quickgelu-laion400m_e32-46683a32.pt"),
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_fullcc2.5b.pt"),
+)
+
+_VITB32_256 = dict(
+    datacomp_s34b_b86k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-256x256-DataComp-s34B-b86K/'),
 )
 
 _VITB16 = dict(
@@ -118,13 +180,9 @@ _VITB16 = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_16-laion400m_e31-00efa78f.pt"),
     laion400m_e32=_pcfg(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_b_16-laion400m_e32-55e67d44.pt"),
-    # laion400m_32k=_pcfg(
-    #     url="",
-    #     mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-    # laion400m_64k=_pcfg(
-    #     url="",
-    #     mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     laion2b_s34b_b88k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-laion2B-s34B-b88K/'),
+    # DataComp-XL models
+    datacomp_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-DataComp.XL-s13B-b90K/'),
     # DataComp-L models
     datacomp_l_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-DataComp.L-s1B-b8K/'),
     commonpool_l_clip_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L.clip-s1B-b8K/'),
@@ -133,6 +191,15 @@ _VITB16 = dict(
     commonpool_l_text_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L.text-s1B-b8K/'),
     commonpool_l_basic_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L.basic-s1B-b8K/'),
     commonpool_l_s1b_b8k=_pcfg(hf_hub='laion/CLIP-ViT-B-16-CommonPool.L-s1B-b8K/'),
+    # DFN
+    dfn2b=_pcfg(hf_hub='apple/DFN2B-CLIP-ViT-B-16/')
+)
+
+_VITB16_quickgelu = dict(
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b16_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/b16_fullcc2.5b.pt"),
 )
 
 _VITB16_PLUS_240 = dict(
@@ -151,12 +218,20 @@ _VITL14 = dict(
         "https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/vit_l_14-laion400m_e32-3d133497.pt"),
     laion2b_s32b_b82k=_pcfg(
         hf_hub='laion/CLIP-ViT-L-14-laion2B-s32B-b82K/',
-        mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        mean=INCEPTION_MEAN, std=INCEPTION_STD),
     # DataComp-XL models
     datacomp_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K/'),
     commonpool_xl_clip_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-CommonPool.XL.clip-s13B-b90K/'),
     commonpool_xl_laion_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-CommonPool.XL.laion-s13B-b90K/'),
     commonpool_xl_s13b_b90k=_pcfg(hf_hub='laion/CLIP-ViT-L-14-CommonPool.XL-s13B-b90K/'),
+)
+
+_VITL14_quickgelu = dict(
+    metaclip_400m=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_400m.pt"),
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/l14_fullcc2.5b.pt"),
+    dfn2b=_pcfg(hf_hub='apple/DFN2B-CLIP-ViT-L-14/'),
 )
 
 _VITL14_336 = dict(
@@ -166,6 +241,24 @@ _VITL14_336 = dict(
 
 _VITH14 = dict(
     laion2b_s32b_b79k=_pcfg(hf_hub='laion/CLIP-ViT-H-14-laion2B-s32B-b79K/'),
+)
+
+_VITH14_quickgelu = dict(
+    metaclip_fullcc=_pcfg(
+        "https://dl.fbaipublicfiles.com/MMPT/metaclip/h14_fullcc2.5b.pt"),
+    dfn5b=_pcfg(
+        hf_hub='apple/DFN5B-CLIP-ViT-H-14/',
+        interpolation="bicubic",
+        resize_mode="squash"
+    ),
+)
+
+_VITH14_378_quickgelu = dict(
+    dfn5b=_pcfg(
+        hf_hub='apple/DFN5B-CLIP-ViT-H-14-378/',
+        interpolation="bicubic",
+        resize_mode="squash"
+    ),
 )
 
 _VITg14 = dict(
@@ -238,26 +331,183 @@ _PRETRAINED = {
     "RN50x4": _RN50x4,
     "RN50x16": _RN50x16,
     "RN50x64": _RN50x64,
+
     "ViT-B-32": _VITB32,
+    "ViT-B-32-256": _VITB32_256,
     "ViT-B-32-quickgelu": _VITB32_quickgelu,
     "ViT-B-16": _VITB16,
+    "ViT-B-16-quickgelu": _VITB16_quickgelu,
     "ViT-B-16-plus-240": _VITB16_PLUS_240,
     "ViT-L-14": _VITL14,
+    "ViT-L-14-quickgelu": _VITL14_quickgelu,
     "ViT-L-14-336": _VITL14_336,
     "ViT-H-14": _VITH14,
+    "ViT-H-14-quickgelu": _VITH14_quickgelu,
+    "ViT-H-14-378-quickgelu": _VITH14_378_quickgelu,
     "ViT-g-14": _VITg14,
     "ViT-bigG-14": _VITbigG14,
+
     "roberta-ViT-B-32": _robertaViTB32,
     "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
     "xlm-roberta-large-ViT-H-14": _xlmRobertaLargeFrozenViTH14,
+
     "convnext_base": _convnext_base,
     "convnext_base_w": _convnext_base_w,
     "convnext_base_w_320": _convnext_base_w_320,
     "convnext_large_d": _convnext_large_d,
     "convnext_large_d_320": _convnext_large_d_320,
     "convnext_xxlarge": _convnext_xxlarge,
+
     "coca_ViT-B-32": _coca_VITB32,
     "coca_ViT-L-14": _coca_VITL14,
+
+    "EVA01-g-14": dict(
+        # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_psz14_s11B.pt
+        laion400m_s11b_b41k=_pcfg(hf_hub='timm/eva_giant_patch14_clip_224.laion400m_s11b_b41k/'),
+    ),
+    "EVA01-g-14-plus": dict(
+        # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_plus_psz14_s11B.pt
+        merged2b_s11b_b114k=_pcfg(hf_hub='timm/eva_giant_patch14_plus_clip_224.merged2b_s11b_b114k/'),
+    ),
+    "EVA02-B-16": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_B_psz16_s8B.pt
+        merged2b_s8b_b131k=_pcfg(hf_hub='timm/eva02_base_patch16_clip_224.merged2b_s8b_b131k/'),
+    ),
+    "EVA02-L-14": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_L_psz14_s4B.pt
+        merged2b_s4b_b131k=_pcfg(hf_hub='timm/eva02_large_patch14_clip_224.merged2b_s4b_b131k/'),
+    ),
+    "EVA02-L-14-336": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_L_336_psz14_s6B.pt
+        merged2b_s6b_b61k=_pcfg(hf_hub='timm/eva02_large_patch14_clip_336.merged2b_s6b_b61k/'),
+    ),
+    "EVA02-E-14": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_s4B.pt
+        laion2b_s4b_b115k=_pcfg(hf_hub='timm/eva02_enormous_patch14_clip_224.laion2b_s4b_b115k/'),
+    ),
+    "EVA02-E-14-plus": dict(
+        # from QuanSun/EVA-CLIP/EVA02_CLIP_E_psz14_plus_s9B.pt
+        laion2b_s9b_b144k=_pcfg(hf_hub='timm/eva02_enormous_patch14_plus_clip_224.laion2b_s9b_b144k/'),
+    ),
+
+    "ViT-B-16-SigLIP": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP/'),
+    ),
+    "ViT-B-16-SigLIP-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-256/'),
+    ),
+    "ViT-B-16-SigLIP-i18n-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-i18n-256/'),
+    ),
+    "ViT-B-16-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-384/'),
+    ),
+    "ViT-B-16-SigLIP-512": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP-512/'),
+    ),
+    "ViT-L-16-SigLIP-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-256/'),
+    ),
+    "ViT-L-16-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP-384/'),
+    ),
+    "ViT-SO400M-14-SigLIP": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP/'),
+    ),
+    "ViT-SO400M-14-SigLIP-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
+    ),
+
+    "ViT-L-14-CLIPA": dict(
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-datacomp1B/'),
+    ),
+    "ViT-L-14-CLIPA-336": dict(
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-336-datacomp1B/'),
+    ),
+    "ViT-H-14-CLIPA": dict(
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-datacomp1B/'),
+    ),
+    "ViT-H-14-CLIPA-336": dict(
+        laion2b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-laion2B/'),
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-H-14-CLIPA-336-datacomp1B/'),
+    ),
+    "ViT-bigG-14-CLIPA": dict(
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-datacomp1B/'),
+    ),
+    "ViT-bigG-14-CLIPA-336": dict(
+        datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-bigG-14-CLIPA-336-datacomp1B/'),
+    ),
+
+    "nllb-clip-base": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-base-oc/'),
+    ),
+    "nllb-clip-large": dict(
+        v1=_pcfg(hf_hub='visheratin/nllb-clip-large-oc/'),
+    ),
+
+    "nllb-clip-base-siglip": dict(
+        v1=_slpcfg(hf_hub='visheratin/nllb-clip-base-siglip/'),
+        mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-base/'),
+    ),
+    "nllb-clip-large-siglip": dict(
+        v1=_slpcfg(hf_hub='visheratin/nllb-clip-large-siglip/'),
+        mrl=_slpcfg(hf_hub='visheratin/nllb-siglip-mrl-large/'),
+    ),
+
+    "MobileCLIP-S1": dict(
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-S1-OpenCLIP/')),
+    "MobileCLIP-S2": dict(
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-S2-OpenCLIP/')),
+    "MobileCLIP-B": dict(
+        datacompdr=_mccfg(hf_hub='apple/MobileCLIP-B-OpenCLIP/'),
+        datacompdr_lt=_mccfg(hf_hub='apple/MobileCLIP-B-LT-OpenCLIP/'),
+    ),
+
+    "ViTamin-S": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S/pytorch_model.bin'),
+    ),
+    "ViTamin-S-LTT": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S-LTT/pytorch_model.bin'),
+    ),
+    "ViTamin-B": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-B/pytorch_model.bin'),
+    ),
+    "ViTamin-B-LTT": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-B-LTT/pytorch_model.bin'),
+    ),
+    "ViTamin-L": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-224px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-L-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L-384px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-224px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-L2-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-L2-384px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-256": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-256px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-336": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-336px/pytorch_model.bin'),
+    ),
+    "ViTamin-XL-384": dict(
+        datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-384px/pytorch_model.bin'),
+    ),
 }
 
 

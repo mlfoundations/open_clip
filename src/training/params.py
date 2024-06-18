@@ -120,7 +120,7 @@ def parse_args(args):
         help="Optional identifier for the experiment when storing logs. Otherwise use current time.",
     )
     parser.add_argument(
-        "--workers", type=int, default=1, help="Number of dataloader workers per GPU."
+        "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
         "--batch-size", type=int, default=64, help="Batch size per GPU."
@@ -188,7 +188,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -234,6 +234,16 @@ def parse_args(args):
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=None, metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument(
+        '--image-interpolation',
+        default=None, type=str, choices=['bicubic', 'bilinear', 'random'],
+        help="Override default image resize interpolation"
+    )
+    parser.add_argument(
+        '--image-resize-mode',
+        default=None, type=str, choices=['shortest', 'longest', 'squash'],
+        help="Override default image resize (& crop) mode during inference"
+    )
     parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
@@ -280,6 +290,12 @@ def parse_args(args):
         default=False,
         action='store_true',
         help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
+    )
+    parser.add_argument(
+        "--torchcompile",
+        default=False,
+        action='store_true',
+        help="torch.compile() the model, requires pytorch 2.0 or later.",
     )
     parser.add_argument(
         "--trace",
@@ -364,13 +380,13 @@ def parse_args(args):
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n text tower layer groups unlocked.",
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+        help="Freeze LayerNorm running stats in text tower for any locked layers.",
     )
     parser.add_argument(
         "--log-every-n-steps",
@@ -430,6 +446,13 @@ def parse_args(args):
         help='Replace the network linear layers from the bitsandbytes library. '
         'Allows int8 training/inference, etc.'
     )
+    parser.add_argument(
+        "--siglip",
+        default=False,
+        action="store_true",
+        help='Use SigLip (sigmoid) loss.'
+    )
+
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

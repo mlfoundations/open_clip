@@ -1,3 +1,46 @@
+## 2.24.0
+
+* Fix missing space in error message
+* use model flag for normalizing embeddings
+* init logit_bias for non siglip pretrained models
+* Fix logit_bias load_checkpoint addition 
+* Make CoCa model match CLIP models for logit scale/bias init
+* Fix missing return of "logit_bias" in CoCa.forward
+* Add NLLB-CLIP with SigLIP models
+* Add get_logits method and NLLB tokenizer
+* Remove the empty file src/open_clip/generation_utils.py
+* Update params.py: "BatchNorm" -> "LayerNorm" in the description string for "--lock-text-freeze-layer-norm"
+
+## 2.23.0
+
+* Add CLIPA-v2 models
+* Add SigLIP models
+* Add MetaCLIP models
+* Add NLLB-CLIP models
+* CLIPA train code
+* Minor changes/fixes
+    * Remove protobuf version limit
+    * Stop checking model name when loading CoCa models
+    * Log native wandb step
+    * Use bool instead of long masks
+
+## 2.21.0
+
+* Add SigLIP loss + training support
+* Add more DataComp models (B/16, B/32 and B/32@256)
+* Update default num workers
+* Update CoCa generation for `transformers>=4.31`
+* PyTorch 2.0 `state_dict()` compatibility fix for compiled models
+* Fix padding in `ResizeMaxSize`
+* Convert JIT model on state dict load for `pretrained='filename…'`
+* Other minor changes and fixes (typos, README, dependencies, CI)
+
+## 2.20.0
+
+* Add EVA models
+* Support serial worker training
+* Fix Python 3.7 compatibility 
+
 ## 2.19.0
 
 * Add DataComp models

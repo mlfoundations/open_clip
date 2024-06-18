@@ -209,10 +209,9 @@ class TestWrapper(torch.nn.Module):
 
     def forward(self, image, text):
         x = self.model(image, text)
-        if self.output_dict:
-            out = self.head(x["image_features"])
-        else:
-            out = self.head(x[0])
+        x = x['image_features'] if self.output_dict else x[0]
+        assert x is not None  # remove Optional[], type refinement for torchscript
+        out = self.head(x)
         return {"test_output": out}
 
 def main(args):

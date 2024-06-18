@@ -6,6 +6,7 @@ import subprocess
 import sys
 import random
 from datetime import datetime
+from functools import partial
 
 import numpy as np
 import torch
@@ -215,6 +216,10 @@ def main(args):
         # arg is nargs, single (square) image size list -> int
         args.force_image_size = args.force_image_size[0]
     random_seed(args.seed, 0)
+    model_kwargs = {}
+    if args.siglip:
+        model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
+        model_kwargs['init_logit_bias'] = -10
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -225,14 +230,17 @@ def main(args):
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
         force_image_size=args.force_image_size,
-        pretrained_image=args.pretrained_image,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        image_interpolation=args.image_interpolation,
+        image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        pretrained_image=args.pretrained_image,
         output_dict=True,
+        **model_kwargs,
     )
     if args.distill:
-        # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
+        # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
             args.distill_model, 
             args.distill_pretrained,
@@ -345,7 +353,13 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    tokenizer = get_tokenizer(args.model)
+    data = get_data(
+        args,
+        (preprocess_train, preprocess_val),
+        epoch=start_epoch,
+        tokenizer=tokenizer,
+    )
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
@@ -396,13 +410,21 @@ def main(args):
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
+    # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
+    # For compatibility, we save state_dict() of the original model, which shares the
+    # weights without the prefix.
+    original_model = model
+    if args.torchcompile:
+        logging.info('Compiling model...')
+        model = torch.compile(original_model)
+
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
             from open_clip.utils import convert_int8_model_to_inference_mode
             convert_int8_model_to_inference_mode(model)
         # Evaluate.
-        evaluate(model, data, start_epoch, args, writer)
+        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
 
     loss = create_loss(args)
@@ -415,14 +437,14 @@ def main(args):
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, writer)
+            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
 
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": model.state_dict(),
+                "state_dict": original_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
             if scaler is not None:
