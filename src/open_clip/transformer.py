@@ -806,33 +806,30 @@ class TextTransformer(nn.Module):
 
 
 def lock_text_transformer(
-    transformer: TextTransformer, unlocked_layers: int = 0, freeze_layer_norm: bool = True
+    transformer: TextTransformer, unlocked_groups: int = 0, freeze_layer_norm: bool = True
 ):
+    for param in transformer.parameters():
+        param.requires_grad = False
+
     groups = [
         [transformer.token_embedding, transformer.positional_embedding],
         *transformer.transformer.resblocks[:-1],
-        [transformer.transformer.resblocks[ -1], transformer.ln_final],
+        [transformer.transformer.resblocks[-1], transformer.ln_final],
         transformer.text_projection,
     ]
 
-    def _freeze(modules, freeze_layer_norm: bool = True):
-        for module in modules:
-            # `CLIP.text_projection` and `CLIP.positional_embedding`
-            if isinstance(module, nn.Parameter):
-                module.requires_grad = False
-
-            # All other modules
-            elif isinstance(module, nn.Module):
-                for n, p in module.named_parameters():
-                    p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
-
+    def _unlock(x):
+        if isinstance(x, Sequence):
+            for g in x:
+                _unlock(g)
+        else:
+            if isinstance(x, torch.nn.Parameter):
+                x.requires_grad = True
             else:
-                raise TypeError(f"Encountered unexpected module type {type(module)} for module {module}")
+                for p in x.parameters():
+                    p.requires_grad = True
 
-    if (not unlocked_layers) or (unlocked_layers == 0):  # full freezing
-        _freeze(groups, freeze_layer_norm)
-    else:
-        _freeze(groups[:-unlocked_layers], freeze_layer_norm)
+    _unlock(groups[-unlocked_groups:])
 
 
 class MultimodalTransformer(Transformer):
