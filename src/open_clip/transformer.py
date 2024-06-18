@@ -820,16 +820,21 @@ def lock_text_transformer(
         ]
 
         def _unlock(x):
+            ln_status = False if freeze_layer_norm else True
             if isinstance(x, Sequence):
                 for g in x:
                     _unlock(g)
             else:
                 if isinstance(x, torch.nn.Parameter):
                     x.requires_grad = True
+                elif isinstance(x, torch.nn.LayerNorm):
+                    for p in x.parameters():
+                        p.requires_grad = ln_status
                 else:
                     for n,p in x.named_parameters():
-                        if n.startswith("ln_"):  # If LayerNorm layer
-                            p.requires_grad = False if freeze_layer_norm else True
+                        # This should grab LayerNorm inside `ResidualAttentionBlock` blocks
+                        if n.startswith("ln_"):
+                            p.requires_grad = ln_status
                         else:
                             p.requires_grad = True
 
