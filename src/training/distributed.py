@@ -9,6 +9,19 @@ except ImportError:
     hvd = None
 
 
+def try_import_npu():
+    try:
+        import torch_npu
+        # Work around due to bug in torch_npu, revert me after fixed, @see https://gitee.com/ascend/pytorch/issues/I8KECW?from=project-issue
+        torch.npu.set_device(0)
+        return True
+    except ImportError:
+        return False
+
+TORCH_NPU_AVAILABLE = False
+if try_import_npu():
+    TORCH_NPU_AVAILABLE = True
+
 def is_global_master(args):
     return args.rank == 0
 
@@ -107,6 +120,12 @@ def init_distributed_device(args):
         else:
             device = 'cuda:0'
         torch.cuda.set_device(device)
+    if TORCH_NPU_AVAILABLE and torch.npu.is_available():
+        if args.distributed and not args.no_set_device_rank:
+            device = 'npu:%d' % args.local_rank
+        else:
+            device = "npu:0"
+        torch.npu.set_device(device)
     else:
         device = 'cpu'
     args.device = device

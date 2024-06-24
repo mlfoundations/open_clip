@@ -26,6 +26,8 @@ except ImportError as e:
 
 from .hf_configs import arch_dict
 
+from training.distributed import try_import_npu
+try_import_npu()
 
 # utils
 def _camel2snake(s):

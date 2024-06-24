@@ -24,6 +24,8 @@ except ImportError:
 
 from .utils import freeze_batch_norm_2d
 
+from training.distributed import try_import_npu
+try_import_npu()
 
 class TimmModel(nn.Module):
     """ timm model adapter

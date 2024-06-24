@@ -12,6 +12,8 @@ import torch
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import build_model_from_openai_state_dict, convert_weights_to_lp, get_cast_dtype
 from .pretrained import get_pretrained_url, list_pretrained_models_by_tag, download_pretrained_from_url
+from training.distributed import try_import_npu
+try_import_npu()
 
 __all__ = ["list_openai_models", "load_openai_model"]
 

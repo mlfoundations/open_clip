@@ -314,7 +314,7 @@ def parse_args(args):
         help="url used to set up distributed training",
     )
     parser.add_argument(
-        "--dist-backend", default="nccl", type=str, help="distributed backend"
+        "--dist-backend", default="nccl", type=str, help="distributed backend. \"nccl\" for GPU, \"hccl\" for Ascend NPU"
     )
     parser.add_argument(
         "--report-to",

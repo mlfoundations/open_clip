@@ -1,5 +1,7 @@
 import torch
 from contextlib import suppress
+from training.distributed import try_import_npu
+try_import_npu()
 
 
 def get_autocast(precision):

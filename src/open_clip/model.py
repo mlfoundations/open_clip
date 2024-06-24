@@ -13,6 +13,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from training.distributed import try_import_npu
+try_import_npu()
+
 from functools import partial
 
 from .hf_model import HFTextEncoder
