@@ -48,4 +48,4 @@ def test_inference_simple(
 
         text_probs = (100.0 * image_features @ text_features.T).softmax(dim=-1)
 
-    assert text_probs.cpu().numpy()[0].tolist() == [1.0, 0.0, 0.0]
+    assert torch.allclose(text_probs.cpu()[0], torch.tensor([1.0, 0.0, 0.0]))
