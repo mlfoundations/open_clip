@@ -78,6 +78,14 @@ def _build_text_decoder_tower(
     return decoder
 
 
+def _token_to_tensor(token_id, device: str = "cpu") -> torch.Tensor:
+    if not isinstance(token_id, torch.Tensor):
+        if isinstance(token_id, int):
+            token_id = [token_id]
+        token_id = torch.tensor(token_id, device=device)
+    return token_id
+
+
 class CoCa(nn.Module):
     def __init__(
             self,
@@ -218,12 +226,12 @@ class CoCa(nn.Module):
         device = image.device
 
         with torch.no_grad():
-            sot_token_id = 49406 if sot_token_id is None else sot_token_id
-            eos_token_id = 49407 if eos_token_id is None else eos_token_id
+            sot_token_id = _token_to_tensor(49406 if sot_token_id is None else sot_token_id, device=device)
+            eos_token_id = _token_to_tensor(49407 if eos_token_id is None else eos_token_id, device=device)
             pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
             logit_processor = LogitsProcessorList(
                 [
-                    MinLengthLogitsProcessor(min_seq_len, eos_token_id, device=device),
+                    MinLengthLogitsProcessor(min_seq_len, eos_token_id),
                     RepetitionPenaltyLogitsProcessor(repetition_penalty),
                 ]
             )
@@ -248,7 +256,7 @@ class CoCa(nn.Module):
                     pad_len = seq_len - output.shape[1]
                     return torch.cat((
                             output,
-                            torch.ones(output.shape[0], pad_len, device=device, dtype=output.dtype) * self.pad_id
+                            torch.ones(output.shape[0], pad_len, device=device, dtype=output.dtype) * pad_token_id
                         ),
                         dim=1
                     )
