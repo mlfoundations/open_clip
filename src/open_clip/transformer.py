@@ -217,11 +217,12 @@ class ResidualAttentionBlock(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             is_cross_attention: bool = False,
+            batch_first: bool = True,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
-        self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.attn = nn.MultiheadAttention(d_model, n_head, batch_first=batch_first)
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
         if is_cross_attention:
             self.ln_1_kv = norm_layer(d_model)
@@ -283,7 +284,8 @@ class CustomResidualAttentionBlock(nn.Module):
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
-            d_model, n_head,
+            d_model,
+            n_head,
             scaled_cosine=scale_cosine_attn,
             scale_heads=scale_heads,
             batch_first=batch_first,
@@ -324,10 +326,12 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
+            batch_first: bool = False,
     ):
         super().__init__()
         self.width = width
         self.layers = layers
+        self.batch_first = batch_first
         self.grad_checkpointing = False
 
         self.resblocks = nn.ModuleList([
@@ -338,6 +342,7 @@ class Transformer(nn.Module):
                 ls_init_value=ls_init_value,
                 act_layer=act_layer,
                 norm_layer=norm_layer,
+                batch_first=batch_first,
             )
             for _ in range(layers)
         ])
@@ -348,14 +353,16 @@ class Transformer(nn.Module):
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x.transpose(0, 1).contiguous()    # NLD -> LND
+        if not self.batch_first:
+            x = x.transpose(0, 1).contiguous()    # NLD -> LND
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask)
             else:
                 x = r(x, attn_mask=attn_mask)
-        x = x.transpose(0, 1)    # LND -> NLD
+        if not self.batch_first:
+            x = x.transpose(0, 1)    # LND -> NLD
         return x
 
 
