@@ -200,10 +200,10 @@ class AttentionalPooler(nn.Module):
         self.ln_k = norm_layer(context_dim)
 
     def forward(self, x: torch.Tensor):
+        N = x.shape[0]
         x = self.ln_k(x)
-        N = x.shape[1]
         q = self.ln_q(self.query)
-        out = self.attn(q.unsqueeze(1).expand(-1, N, -1), x, x, need_weights=False)[0]
+        out = self.attn(q.unsqueeze(0).expand(N, -1, -1), x, x, need_weights=False)[0]
         return out
 
 
@@ -823,7 +823,6 @@ class MultimodalTransformer(Transformer):
             output_dim: int = 512,
             batch_first: bool = True,
     ):
-
         super().__init__(
             width=width,
             layers=layers,
