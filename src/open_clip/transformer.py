@@ -326,7 +326,7 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
-            batch_first: bool = False,
+            batch_first: bool = True,
     ):
         super().__init__()
         self.width = width
