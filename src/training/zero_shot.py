@@ -18,7 +18,7 @@ def run(model, classifier, dataloader, args):
     autocast = get_autocast(args.precision)
     input_dtype = get_input_dtype(args.precision)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
             images = images.to(device=args.device, dtype=input_dtype)
