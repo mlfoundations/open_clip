@@ -45,13 +45,6 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-test = [
-    'torch>=2.0',
-    'pytest-split',
-    'pytest',
-    'transformers[sentencepiece]',
-    'timm>=1.0.7',
-]
 training = [
     'torch>=2.0',
     'webdataset>=0.2.5',
@@ -59,6 +52,11 @@ training = [
     'transformers[sentencepiece]',
     'timm>=1.0.7',
     'fsspec',
+]
+test = [
+    'pytest-split',
+    'pytest',
+    'open_clip_torch[training]'
 ]
 
 [project.urls]
