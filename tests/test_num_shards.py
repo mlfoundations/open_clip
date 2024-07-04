@@ -1,6 +1,6 @@
 import pytest
 
-from training.data import get_dataset_size
+from open_clip_train.data import get_dataset_size
 
 @pytest.mark.parametrize(
     "shards,expected_size",
