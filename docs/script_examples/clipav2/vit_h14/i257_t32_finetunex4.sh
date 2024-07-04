@@ -1,7 +1,7 @@
 # have not been tested. use it at your own discretion
 # the original experiment was run on tpu v3-256.
 # this example script assumes 8 gpus, each with huge memory. Tune batchsize, warmup, and lr accordingly if you have different machine setups.
-torchrun --nproc_per_node 8 -m training.main \
+torchrun --nproc_per_node 8 -m open_clip_train.main \
     --save-frequency 1 \
     --save-most-recent \
     --zeroshot-frequency 1 \
