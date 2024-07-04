@@ -2,9 +2,8 @@
 import os
 import sys
 import pytest
-from PIL import Image
 import torch
-from training.main import main
+from open_clip_train.main import main
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
