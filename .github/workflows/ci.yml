@@ -68,9 +68,7 @@ jobs:
       run: |
         python3 -m venv .env
         source .env/bin/activate
-        make install
-        make install-test
-        make install-training
+        pip install -e .[test]
     - name: Prepare test data
       run: |
         source .env/bin/activate
