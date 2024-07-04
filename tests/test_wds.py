@@ -6,9 +6,9 @@ import tarfile
 import io
 from PIL import Image
 
-from training.data import get_wds_dataset
-from training.params import parse_args
-from training.main import random_seed
+from open_clip_train.data import get_wds_dataset
+from open_clip_train.params import parse_args
+from open_clip_train.main import random_seed
 
 TRAIN_NUM_SAMPLES = 10_000
 RTOL = 0.2

@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1 python3 -m training.main \
+CUDA_VISIBLE_DEVICES=1 python3 -m open_clip_train.main \
     --model ViT-H-14-CL32-GAP-BigVision \
     --pretrained "/path/to/vit_h14_i84_224_336_cl32_gap_datacomp1b.pt" \
     --force-image-size 336 \

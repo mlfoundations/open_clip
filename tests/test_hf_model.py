@@ -4,6 +4,7 @@ import torch
 from open_clip.hf_model import _POOLERS, HFTextEncoder
 from transformers import AutoConfig
 from transformers.modeling_outputs import BaseModelOutput
+
 # test poolers
 def test_poolers():
     bs, sl, d = 2, 10, 5

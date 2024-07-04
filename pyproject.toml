@@ -1,0 +1,79 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "open_clip_torch"
+# NOTE for full list of authors see https://github.com/mlfoundations/open_clip?tab=readme-ov-file#citing
+# below covers most active / recent maintainers
+authors = [
+    {name = "Ross Wightman", email = "ross@huggingface.co"},
+    {name = "Gabriel Ilharco"},
+    {name = "Mitchell Wortsman"},
+    {name = "Romain Beaumont"},
+]
+description = "Open reproduction of consastive language-image pretraining (CLIP) and related."
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["pytorch", "clip", "image-text", "language-image", "multimodal"]
+license = {text = "MIT"}
+classifiers = [
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Education',
+        'Intended Audience :: Science/Research',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Topic :: Scientific/Engineering',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+        'Topic :: Software Development',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+]
+dependencies = [
+    'torch>=1.9.0',
+    'torchvision',
+    'regex',
+    'ftfy',
+    'tqdm',
+    'huggingface-hub',
+    'timm',
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+training = [
+    'torch>=2.0',
+    'webdataset>=0.2.5',
+    'pandas',
+    'transformers[sentencepiece]',
+    'timm>=1.0.7',
+    'fsspec',
+]
+test = [
+    'pytest-split',
+    'pytest',
+    'open_clip_torch[training]'
+]
+
+[project.urls]
+homepage = "https://github.com/mlfoundations/open_clip"
+repository = "https://github.com/mlfoundations/open_clip"
+
+[tool.pdm.version]
+source = "file"
+path = "src/open_clip/version.py"
+
+[tool.pdm.build]
+excludes = ["./**/.git", "./**/logs/*"]
+package-dir = "src"
+includes = ["src/open_clip", "src/open_clip_train"]
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+markers = [
+    'regression_test'
+]

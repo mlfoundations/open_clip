@@ -1,5 +1,5 @@
 # 64k batchsize for 2.048e-3 lr
-TORCH_CUDNN_V8_API_ENABLED=1 torchrun --nproc_per_node 8 -m training.main \
+TORCH_CUDNN_V8_API_ENABLED=1 torchrun --nproc_per_node 8 -m open_clip_train.main \
     --save-frequency 1 \
     --save-most-recent \
     --zeroshot-frequency 1 \

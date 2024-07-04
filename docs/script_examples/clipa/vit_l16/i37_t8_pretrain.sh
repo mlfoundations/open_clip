@@ -1,4 +1,4 @@
-torchrun --nproc_per_node 8 -m training.main \
+torchrun --nproc_per_node 8 -m open_clip_train.main \
     --save-frequency 1 \
     --save-most-recent \
     --zeroshot-frequency 1 \

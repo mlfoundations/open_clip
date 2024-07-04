@@ -169,7 +169,7 @@ Running regression tests against a specific git revision or tag:
 ### Sample single-process running code:
 
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
     --save-frequency 1 \
     --zeroshot-frequency 1 \
     --report-to tensorboard \
@@ -234,7 +234,7 @@ a job on a node of 4 GPUs:
 
 ```bash
 cd open_clip/src
-torchrun --nproc_per_node 4 -m training.main \
+torchrun --nproc_per_node 4 -m open_clip_train.main \
     --train-data '/data/cc12m/cc12m-train-{0000..2175}.tar' \
     --train-num-samples 10968539 \
     --dataset-type webdataset \
@@ -253,7 +253,7 @@ of nodes and host node.
 cd open_clip/src
 torchrun --nproc_per_node=4 \
     --rdzv_endpoint=$HOSTE_NODE_ADDR \
-    -m training.main \
+    -m open_clip_train.main \
     --train-data '/data/cc12m/cc12m-train-{0000..2175}.tar' \
     --train-num-samples 10968539 \
     --dataset-type webdataset \
@@ -289,7 +289,7 @@ export MASTER_ADDR=$master_addr
 
 cd /shared/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
-srun --cpu_bind=v --accel-bind=gn python -u src/training/main.py \
+srun --cpu_bind=v --accel-bind=gn python -u src/open_clip_train/main.py \
     --save-frequency 1 \
     --report-to tensorboard \
     --train-data="/data/LAION-400M/{00000..41455}.tar" \
@@ -307,7 +307,7 @@ srun --cpu_bind=v --accel-bind=gn python -u src/training/main.py \
 ### Resuming from a checkpoint:
 
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
     --train-data="/path/to/train_data.csv" \
     --val-data="/path/to/validation_data.csv"  \
     --resume /path/to/checkpoints/epoch_K.pt
@@ -376,7 +376,7 @@ pd.DataFrame.from_dict(future_df).to_csv(
 ```
 This should create a csv dataset that one can use to fine-tune coca with open_clip
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
     --dataset-type "csv" \
     --train-data "path/to/data/dir/train2014.csv" \
     --warmup 1000 \
@@ -392,7 +392,7 @@ python -m training.main \
     --log-every-n-steps 100
 ```
 
-This is a general setting, open_clip has very parameters that can be set, ```python -m training.main --help``` should show them. The only relevant change compared to pre-training are the two arguments
+This is a general setting, open_clip has very parameters that can be set, ```python -m open_clip_train.main --help``` should show them. The only relevant change compared to pre-training are the two arguments
 
 ```bash
 --coca-contrastive-loss-weight 0
@@ -404,7 +404,7 @@ which make the model only train the generative side.
 
 If you wish to use different language models as the text encoder for CLIP you can do so by using one of the Hugging Face model configs in ```src/open_clip/model_configs``` and passing in it's tokenizer as the ```--model``` and ```--hf-tokenizer-name``` parameters respectively. Currently we only support RoBERTa ("test-roberta" config), however adding new models should be trivial. You can also determine how many layers, from the end, to leave unfrozen with the ```--lock-text-unlocked-layers``` parameter. Here's an example command to train CLIP with the RoBERTa LM that has it's last 10 layers unfrozen:
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
          --train-data="pipe:aws s3 cp s3://s-mas/cc3m/{00000..00329}.tar -" \
          --train-num-samples 3000000 \
          --val-data="pipe:aws s3 cp s3://s-mas/cc3m/{00330..00331}.tar -" \
@@ -453,7 +453,7 @@ We recommend https://github.com/LAION-AI/CLIP_benchmark#how-to-use for systemati
 ### Evaluating local checkpoint:
 
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
     --val-data="/path/to/validation_data.csv"  \
     --model RN101 \
     --pretrained /path/to/checkpoints/epoch_K.pt
@@ -462,7 +462,7 @@ python -m training.main \
 ### Evaluating hosted pretrained checkpoint on ImageNet zero-shot prediction:
 
 ```bash
-python -m training.main \
+python -m open_clip_train.main \
     --imagenet-val /path/to/imagenet/validation \
     --model ViT-B-32-quickgelu \
     --pretrained laion400m_e32
