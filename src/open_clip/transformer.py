@@ -21,13 +21,15 @@ class LayerNormFp32(nn.LayerNorm):
         return x.to(orig_type)
 
 
-class LayerNorm(nn.LayerNorm):
-    """Subclass torch's LayerNorm (with cast back to input dtype)."""
+class LayerNorm(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(LayerNorm, self).__init__()
+        self.inner_layernorm = nn.LayerNorm(*args, **kwargs)
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
-        return x.to(orig_type)
+        ret = self.inner_layernorm(x.type(torch.float32))
+        return ret.type(orig_type)
 
 
 class QuickGELU(nn.Module):
