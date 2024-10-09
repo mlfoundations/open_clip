@@ -1,0 +1,30 @@
+{
+    "embed_dim": 1152,
+    "init_logit_bias": -10,
+    "custom_text": true,
+    "vision_cfg": {
+        "image_size": 256,
+        "timm_model_name": "vit_so400m_patch16_siglip_256",
+        "timm_model_pretrained": false,
+        "timm_pool": "map",
+        "timm_proj": "none"
+    },
+    "text_cfg": {
+        "context_length": 64,
+        "vocab_size": 250000,
+        "hf_tokenizer_name": "timm/ViT-B-16-SigLIP-i18n-256",
+        "tokenizer_kwargs": {
+            "clean": "canonicalize"
+        },
+        "width": 1152,
+        "heads": 16,
+        "layers": 27,
+        "mlp_ratio": 3.7362,
+        "no_causal_mask": true,
+        "pool_type": "last",
+        "proj_type": "none",
+        "norm_kwargs":{
+            "eps": 1e-6
+        }
+    }
+}
