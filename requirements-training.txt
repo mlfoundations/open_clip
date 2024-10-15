@@ -9,5 +9,5 @@ braceexpand
 huggingface_hub
 safetensors
 transformers[sentencepiece]
-timm>=1.0.9
+timm>=1.0.10
 fsspec
