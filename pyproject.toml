@@ -55,8 +55,8 @@ training = [
     'fsspec',
 ]
 test = [
-    'pytest-split',
-    'pytest',
+    'pytest-split==0.8.0',
+    'pytest==7.2.0',
     'open_clip_torch[training]'
 ]
 
