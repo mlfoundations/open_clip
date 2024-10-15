@@ -1,6 +1,6 @@
 torch>=1.9.0
 torchvision
-webdataset>=0.2.5
+webdataset>=0.2.5,<=0.2.86
 regex
 ftfy
 tqdm
@@ -9,5 +9,5 @@ braceexpand
 huggingface_hub
 safetensors
 transformers[sentencepiece]
-timm>=1.0.7
+timm>=1.0.9
 fsspec

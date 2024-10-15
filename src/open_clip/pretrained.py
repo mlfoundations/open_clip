@@ -424,6 +424,12 @@ _PRETRAINED = {
     "ViT-SO400M-14-SigLIP": dict(
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP/'),
     ),
+    "ViT-SO400M-16-SigLIP-i18n-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP-i18n-256/'),
+    ),
+    "ViT-SO400M-14-SigLIP-378": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),  # NOTE using 384 weights, but diff img_size used
+    ),
     "ViT-SO400M-14-SigLIP-384": dict(
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
     ),

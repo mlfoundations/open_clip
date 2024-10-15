@@ -188,7 +188,7 @@ def push_pretrained_to_hf_hub(
     tokenizer = get_tokenizer(model_name)
     if hf_tokenizer_self:
         # make hf tokenizer config in the uploaded model point to self instead of original location
-        model_config['text']['hf_tokenizer_name'] = repo_id
+        model_config['text_cfg']['hf_tokenizer_name'] = repo_id
 
     push_to_hf_hub(
         model=model,
@@ -311,6 +311,7 @@ if __name__ == "__main__":
         image_std=args.image_std,
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,
+        hf_tokenizer_self=args.hf_tokenizer_self,
     )
 
     print(f'{args.model} saved.')

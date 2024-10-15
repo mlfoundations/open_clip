@@ -48,7 +48,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 training = [
     'torch>=2.0',
-    'webdataset>=0.2.5',
+    'webdataset>=0.2.5,<=0.2.86',
     'pandas',
     'transformers[sentencepiece]',
     'timm>=1.0.7',
