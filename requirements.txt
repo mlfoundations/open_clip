@@ -4,4 +4,5 @@ regex
 ftfy
 tqdm
 huggingface_hub
+safetensors
 timm
