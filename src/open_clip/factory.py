@@ -125,8 +125,21 @@ def get_tokenizer(
     return tokenizer
 
 
-def load_state_dict(checkpoint_path: str, map_location='cpu'):
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+def load_state_dict(
+        checkpoint_path: str,
+        device='cpu',
+        weights_only=True,
+):
+    # Check if safetensors or not and load weights accordingly
+    if str(checkpoint_path).endswith(".safetensors"):
+        from safetensors.torch import load_file
+        checkpoint = load_file(checkpoint_path, device=device)
+    else:
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=weights_only)
+        except TypeError:
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
     elif isinstance(checkpoint, torch.jit.ScriptModule):
@@ -144,18 +157,16 @@ def load_checkpoint(
         model: Union[CLIP, CustomTextCLIP],
         checkpoint_path: str,
         strict: bool = True,
+        weights_only: bool = True,
+        device='cpu',
 ):
     if Path(checkpoint_path).suffix in ('.npz', '.npy'):
         # Separate path loading numpy big_vision (SigLIP) weights
         from open_clip.convert import load_big_vision_weights
         load_big_vision_weights(model, checkpoint_path)
         return {}
-    elif Path(checkpoint_path).suffix in ('.safetensors',):
-        from safetensors.torch import load_model
-        load_model(model, checkpoint_path)
-        return {}
 
-    state_dict = load_state_dict(checkpoint_path)
+    state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
 
     # Detect & convert 3rd party state_dicts -> open_clip
     state_dict = convert_state_dict(model, state_dict)

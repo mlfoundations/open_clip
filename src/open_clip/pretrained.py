@@ -3,9 +3,17 @@ import os
 import urllib
 import warnings
 from functools import partial
-from typing import Dict, Union
+from typing import Dict, Iterable, Optional, Union
 
 from tqdm import tqdm
+
+
+try:
+    import safetensors.torch
+    _has_safetensors = True
+except ImportError:
+    _has_safetensors = False
+
 
 from .constants import (
     IMAGENET_MEAN,
@@ -14,6 +22,8 @@ from .constants import (
     INCEPTION_STD,
     OPENAI_DATASET_MEAN,
     OPENAI_DATASET_STD,
+    HF_WEIGHTS_NAME,
+    HF_SAFE_WEIGHTS_NAME,
 )
 from .version import __version__
 
@@ -613,35 +623,52 @@ def has_hf_hub(necessary=False):
     return _has_hf_hub
 
 
+def _get_safe_alternatives(filename: str) -> Iterable[str]:
+    """Returns potential safetensors alternatives for a given filename.
+
+    Use case:
+        When downloading a model from the Huggingface Hub, we first look if a .safetensors file exists and if yes, we use it.
+    """
+    if filename == HF_WEIGHTS_NAME:
+        yield HF_SAFE_WEIGHTS_NAME
+
+    if filename not in (HF_WEIGHTS_NAME,) and filename.endswith(".bin") or filename.endswith(".pth"):
+        yield filename[:-4] + ".safetensors"
+
+
 def download_pretrained_from_hf(
-    model_id: str,
-    filename: Union[str, None] = None,
-    revision=None,
-    cache_dir: Union[str, None] = None,
+        model_id: str,
+        filename: Optional[str] = None,
+        revision: Optional[str] = None,
+        cache_dir: Optional[str] = None,
 ):
     has_hf_hub(True)
 
-    # List of filenames to try downloading --> try safetensors if .bin file is missing
-    filenames_to_try = ['open_clip_pytorch_model.bin', 'open_clip_pytorch_model.safetensors'] if filename is None else [filename]
-    
-    last_exception = None  # Variable to store the last exception
-    for fname in filenames_to_try:
-        try:
-            # Attempt to download the file
-            cached_file = hf_hub_download(model_id, fname, revision=revision, cache_dir=cache_dir)
-            return cached_file  # Return the path to the downloaded file if successful
-        except Exception as e:
-            last_exception = e  # Store the last exception encountered
-            continue  # Try the next file
-    
-    # If the loop completes without returning, raise the last encountered exception
-    raise FileNotFoundError(f"Failed to download any files for {model_id}. Last error: {last_exception}") from last_exception
+    filename = filename or HF_WEIGHTS_NAME
+
+    # Look for .safetensors alternatives and load from it if it exists
+    if _has_safetensors:
+        for safe_filename in _get_safe_alternatives(filename):
+            try:
+                cached_file = hf_hub_download(
+                    repo_id=model_id, filename=safe_filename, revision=revision, cache_dir=cache_dir)
+                return cached_file
+            except Exception:
+                pass
+
+    try:
+        # Attempt to download the file
+        cached_file = hf_hub_download(
+            repo_id=model_id, filename=filename, revision=revision, cache_dir=cache_dir)
+        return cached_file  # Return the path to the downloaded file if successful
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to download any files for {model_id}. Last error: {e}")
 
 
 def download_pretrained(
         cfg: Dict,
         force_hf_hub: bool = False,
-        cache_dir: Union[str, None] = None,
+        cache_dir: Optional[str] = None,
 ):
     target = ''
     if not cfg:

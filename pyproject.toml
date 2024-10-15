@@ -40,6 +40,7 @@ dependencies = [
     'ftfy',
     'tqdm',
     'huggingface-hub',
+    'safetensors',
     'timm',
 ]
 dynamic = ["version"]

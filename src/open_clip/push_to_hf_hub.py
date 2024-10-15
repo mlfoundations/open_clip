@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Optional, Tuple, Union
@@ -28,13 +27,9 @@ try:
 except ImportError:
     _has_safetensors = False
 
+from .constants import HF_WEIGHTS_NAME, HF_SAFE_WEIGHTS_NAME, HF_CONFIG_NAME
 from .factory import create_model_from_pretrained, get_model_config, get_tokenizer
 from .tokenizer import HFTokenizer
-
-# Default name for a weights file hosted on the Huggingface Hub.
-HF_WEIGHTS_NAME = "open_clip_pytorch_model.bin"  # default pytorch pkl
-HF_SAFE_WEIGHTS_NAME = "open_clip_model.safetensors"  # safetensors version
-HF_CONFIG_NAME = 'open_clip_config.json'
 
 
 def save_config_for_hf(

@@ -7,6 +7,7 @@ tqdm
 pandas
 braceexpand
 huggingface_hub
+safetensors
 transformers[sentencepiece]
 timm>=1.0.7
 fsspec
