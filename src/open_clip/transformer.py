@@ -677,11 +677,12 @@ class TextTransformer(nn.Module):
             layers: int = 12,
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            output_dim: int = 512,
+            output_dim: Optional[int] = 512,
             embed_cls: bool = False,
             no_causal_mask: bool = False,
             pad_id: int = 0,
             pool_type: str = 'argmax',
+            proj_type: str = 'linear',
             proj_bias: bool = False,
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
@@ -721,10 +722,13 @@ class TextTransformer(nn.Module):
         else:
             self.register_buffer('attn_mask', self.build_causal_mask(), persistent=False)
 
-        if proj_bias:
-            self.text_projection = nn.Linear(width, output_dim)
+        if proj_type == 'none' or not output_dim:
+            self.text_projection = None
         else:
-            self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+            if proj_bias:
+                self.text_projection = nn.Linear(width, output_dim)
+            else:
+                self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
         self.init_parameters()
 

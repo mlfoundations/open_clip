@@ -72,6 +72,7 @@ class CLIPTextCfg:
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
     proj_bias: bool = False
+    proj_type: str = 'linear'  # control final text projection, 'none' forces no projection
     output_tokens: bool = False
     act_kwargs: dict = None
     norm_kwargs: dict = None
@@ -209,6 +210,7 @@ def _build_text_tower(
             no_causal_mask=text_cfg.no_causal_mask,
             pad_id=text_cfg.pad_id,
             pool_type=text_cfg.pool_type,
+            proj_type=text_cfg.proj_type,
             proj_bias=text_cfg.proj_bias,
             output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,

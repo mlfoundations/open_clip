@@ -119,23 +119,3 @@ jobs:
       with:
         name: pytest_durations_${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}
         path: .test_durations
-
-  Collect:
-    needs: Tests
-    runs-on: ubuntu-latest
-    steps:
-    - name: Cache
-      uses: actions/cache@v3
-      with:
-        path: .test_durations
-        key: test_durations-0-${{ github.run_id }}
-    - name: Collect
-      uses: actions/download-artifact@v3
-      with:
-        path: artifacts
-    - name: Consolidate
-      run: |
-        jq -n -S \
-          'reduce (inputs | to_entries[]) as {$key, $value} ({}; .[$key] += $value)' \
-          artifacts/pytest_durations_*/.test_durations > .test_durations
-
