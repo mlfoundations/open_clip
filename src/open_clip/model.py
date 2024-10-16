@@ -34,6 +34,8 @@ class CLIPVisionCfg:
 
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
+    gaussian_masking: bool = False
+    gaussian_masking_std: float = 0.20
     attentional_pool: bool = False  # whether to use attentional pooler in the last embedding layer (overrides pool_type)
     attn_pooler_queries: int = 256  # n_queries for attentional pooler
     attn_pooler_heads: int = 8  # n heads for attentional_pooling
@@ -155,6 +157,8 @@ def _build_vision_tower(
             mlp_ratio=vision_cfg.mlp_ratio,
             ls_init_value=vision_cfg.ls_init_value,
             patch_dropout=vision_cfg.patch_dropout,
+            gaussian_masking=vision_cfg.gaussian_masking,
+            gaussian_masking_std=vision_cfg.gaussian_masking_std,
             attentional_pool=vision_cfg.attentional_pool,
             attn_pooler_queries=vision_cfg.attn_pooler_queries,
             attn_pooler_heads=vision_cfg.attn_pooler_heads,

@@ -280,6 +280,18 @@ def parse_args(args):
         help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
     )
     parser.add_argument(
+        "--gaussian-masking",
+        default=False,
+        action='store_true',
+        help="Use gaussian masking for patch dropout.",
+    )
+    parser.add_argument(
+        "--gaussian-masking-std",
+        default=0.20,
+        type=float,
+        help="Gaussian masking std for patch dropout.",
+    )
+    parser.add_argument(
         "--force-custom-text",
         default=False,
         action='store_true',
