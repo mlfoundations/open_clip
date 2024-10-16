@@ -11,7 +11,6 @@ from functools import partial
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
 
 try:
     import wandb
@@ -329,6 +328,11 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
+        if args.precision == "amp":
+            if torch.npu.is_available():
+                from torch.npu.amp import GradScaler
+            else:
+                from torch.cuda.amp import GradScaler
         scaler = GradScaler() if args.precision == "amp" else None
 
     # optionally resume from a checkpoint
