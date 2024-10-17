@@ -125,7 +125,7 @@ def profile_torch(model, text_input_size, image_input_size, batch_size=1, force_
 def count_params(model):
     return sum(m.numel() for m in model.parameters())
 
-def profile_model(model_name, batch_size=1, profiler='torch'):
+def profile_model(model_name, batch_size=1, profiler='torch', device="cuda"):
     assert profiler in ['torch', 'fvcore'], 'Only torch and fvcore profilers are supported'
     if profiler == 'fvcore':
         assert fvcore is not None, 'Please install fvcore.'
@@ -133,7 +133,7 @@ def profile_model(model_name, batch_size=1, profiler='torch'):
     model.eval()
     if torch.cuda.is_available():
         model = model.cuda()
-    elif torch.npu.is_available():
+    elif device == "npu" and torch.npu.is_available():
         model = model.npu()
 
     if isinstance(model.visual.image_size, (tuple, list)):
@@ -219,7 +219,7 @@ def main():
         print('='*100)
         print(f'Profiling {m}')
         try:
-            row = profile_model(m, batch_size=args.batch_size, profiler=args.profiler)
+            row = profile_model(m, batch_size=args.batch_size, profiler=args.profiler, device=args.device)
             results.append(row)
         except Exception as e:
             print(f'Error profiling {m}: {e}')

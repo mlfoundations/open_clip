@@ -329,7 +329,7 @@ def main(args):
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
         if args.precision == "amp":
-            if torch.npu.is_available():
+            if args.device == "npu" and torch.npu.is_available():
                 from torch.npu.amp import GradScaler
             else:
                 from torch.cuda.amp import GradScaler
