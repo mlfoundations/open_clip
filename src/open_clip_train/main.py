@@ -328,12 +328,12 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
+        scaler = None
         if args.precision == "amp":
-            if args.device == "npu" and torch.npu.is_available():
-                from torch.npu.amp import GradScaler
-            else:
-                from torch.cuda.amp import GradScaler
-        scaler = GradScaler() if args.precision == "amp" else None
+            try:
+                scaler = torch.amp.GradScaler(device=device)
+            except (AttributeError, TypeError) as e:
+                scaler = torch.cuda.amp.GradScaler()
 
     # optionally resume from a checkpoint
     start_epoch = 0
