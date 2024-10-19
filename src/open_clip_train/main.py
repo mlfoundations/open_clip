@@ -11,7 +11,6 @@ from functools import partial
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
 
 try:
     import wandb
@@ -329,7 +328,12 @@ def main(args):
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-        scaler = GradScaler() if args.precision == "amp" else None
+        scaler = None
+        if args.precision == "amp":
+            try:
+                scaler = torch.amp.GradScaler(device=device)
+            except (AttributeError, TypeError) as e:
+                scaler = torch.cuda.amp.GradScaler()
 
     # optionally resume from a checkpoint
     start_epoch = 0
