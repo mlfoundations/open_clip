@@ -131,6 +131,7 @@ def profile_model(model_name, batch_size=1, profiler='torch', device="cuda"):
         assert fvcore is not None, 'Please install fvcore.'
     model = open_clip.create_model(model_name, force_custom_text=True, pretrained_hf=False)
     model.eval()
+
     if torch.cuda.is_available():
         model = model.cuda()
     elif device == "npu" and torch.npu.is_available():

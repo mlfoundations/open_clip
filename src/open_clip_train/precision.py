@@ -1,12 +1,14 @@
 import torch
 from contextlib import suppress
+from functools import partial
 
 
-def get_autocast(precision):
-    if precision == 'amp':
-        return torch.cuda.amp.autocast
+def get_autocast(precision, device='cuda'):
+    if precision =='amp':
+        amp_dtype = torch.float16
     elif precision == 'amp_bfloat16' or precision == 'amp_bf16':
-        # amp_bfloat16 is more stable than amp float16 for clip training
-        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        amp_dtype = torch.bfloat16
     else:
         return suppress
+
+    return partial(torch.amp.autocast, device_type=device, dtype=amp_dtype)

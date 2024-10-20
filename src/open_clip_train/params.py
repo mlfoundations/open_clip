@@ -307,7 +307,7 @@ def parse_args(args):
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
     )
     parser.add_argument(
-        "--device", default="cuda", type=str, choices=["cpu", "cuda", "npu"], help="Accelerator to use."
+        "--device", default="cuda", type=str, help="Accelerator to use."
     )
     # arguments for distributed training
     parser.add_argument(
