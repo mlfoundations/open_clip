@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Optional
 
 import torch
@@ -20,6 +21,34 @@ def is_local_master(args):
 
 def is_master(args, local=False):
     return is_local_master(args) if local else is_global_master(args)
+
+
+def is_device_available(device):
+    device_type = torch.device(device).type
+    is_avail = False
+    is_known = False
+    if device_type == 'cuda':
+        is_avail = torch.cuda.is_available()
+        is_known = True
+    elif device_type == 'npu':
+        # NOTE autoload device extension needed for this not to error out on this check
+        is_avail = torch.npu.is_available()
+        is_known = True
+    elif device_type == 'mps':
+        is_avail = torch.backends.mps.is_available()
+        is_known = True
+    elif device_type == 'cpu':
+        is_avail = True
+        is_known = True
+
+    return is_avail, is_known
+
+
+def set_device(device):
+    if device.startswith('cuda:'):
+        torch.cuda.set_device(device)
+    elif device.startswith('npu:'):
+        torch.npu.set_device(device)
 
 
 def is_using_horovod():
@@ -72,6 +101,8 @@ def init_distributed_device(args):
         device=getattr(args, 'device', 'cuda'),
         dist_backend=getattr(args, 'dist_backend', None),
         dist_url=getattr(args, 'dist_url', None),
+        horovod=args.horovod,
+        no_set_device_rank=args.no_set_device_rank,
     )
     args.device = result['device']
     args.world_size = result['world_size']
@@ -86,7 +117,8 @@ def init_distributed_device_so(
         device: str = 'cuda',
         dist_backend: Optional[str] = None,
         dist_url: Optional[str] = None,
-        horovod: bool = False
+        horovod: bool = False,
+        no_set_device_rank: bool = False,
 ):
     # Distributed training = training on more than one GPU.
     # Works in both single and multi-node scenarios.
@@ -140,22 +172,20 @@ def init_distributed_device_so(
             global_rank = torch.distributed.get_rank()
         distributed = True
 
-    if device_type == 'cuda':
-        assert torch.cuda.is_available(), f'CUDA is not available but {device} was specified.'
-    elif device_type == 'npu':
-        assert torch.npu.is_available(), f'Ascend NPU is not available but {device} was specified.'
+    is_avail, is_known = is_device_available(device_type)
+    if not is_known:
+        warnings.warn(f"Device {device} was not known and checked for availability, trying anyways.")
+    elif not is_avail:
+        warnings.warn(f"Device {device} was not available, falling back to CPU.")
+        device_type = device = 'cpu'
 
-    if distributed and  device_type not in ('cpu', 'mps'):
+    if distributed and not no_set_device_rank and device_type not in ('cpu', 'mps'):
         # Ignore manually specified device index in distributed mode and
         # override with resolved local rank, fewer headaches in most setups.
         if device_idx:
-            warn.warning(f'device index {device_idx[0]} removed from specified ({device}).')
+            warnings.warn(f'device index {device_idx[0]} removed from specified ({device}).')
         device = f'{device_type}:{local_rank}'
-
-    if device.startswith('cuda:'):
-        torch.cuda.set_device(device)
-    elif device.startswith('npu:'):
-        torch.npu.set_device(device)
+        set_device(device)
 
     return dict(
         device=device,

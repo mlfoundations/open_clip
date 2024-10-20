@@ -15,14 +15,15 @@ def accuracy(output, target, topk=(1,)):
 
 
 def run(model, classifier, dataloader, args):
-    autocast = get_autocast(args.precision)
+    device = torch.device(args.device)
+    autocast = get_autocast(args.precision, device_type=device.type)
     input_dtype = get_input_dtype(args.precision)
 
     with torch.inference_mode():
         top1, top5, n = 0., 0., 0.
         for images, target in tqdm(dataloader, unit_scale=args.batch_size):
-            images = images.to(device=args.device, dtype=input_dtype)
-            target = target.to(args.device)
+            images = images.to(device=device, dtype=input_dtype)
+            target = target.to(device)
 
             with autocast():
                 # predict
@@ -56,7 +57,8 @@ def zero_shot_eval(model, data, epoch, args, tokenizer=None):
         tokenizer = get_tokenizer(args.model)
 
     logging.info('Building zero-shot classifier')
-    autocast = get_autocast(args.precision)
+    device = torch.device(args.device)
+    autocast = get_autocast(args.precision, device_type=device.type)
     with autocast():
         classifier = build_zero_shot_classifier(
             model,
@@ -64,7 +66,7 @@ def zero_shot_eval(model, data, epoch, args, tokenizer=None):
             classnames=IMAGENET_CLASSNAMES,
             templates=OPENAI_IMAGENET_TEMPLATES,
             num_classes_per_batch=10,
-            device=args.device,
+            device=device,
             use_tqdm=True,
         )
 
