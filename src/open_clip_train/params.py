@@ -312,12 +312,15 @@ def parse_args(args):
     # arguments for distributed training
     parser.add_argument(
         "--dist-url",
-        default="env://",
+        default=None,
         type=str,
         help="url used to set up distributed training",
     )
     parser.add_argument(
-        "--dist-backend", default="nccl", type=str, help="distributed backend. \"nccl\" for GPU, \"hccl\" for Ascend NPU"
+        "--dist-backend",
+        default=None,
+        type=str,
+        help="distributed backend. \"nccl\" for GPU, \"hccl\" for Ascend NPU"
     )
     parser.add_argument(
         "--report-to",
