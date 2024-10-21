@@ -280,6 +280,10 @@ _VITbigG14 = dict(
     laion2b_s39b_b160k=_pcfg(hf_hub='laion/CLIP-ViT-bigG-14-laion2B-39B-b160k/'),
 )
 
+_VITbigG14_quickgelu = dict(
+    metaclip_fullcc=_pcfg(url='https://dl.fbaipublicfiles.com/MMPT/metaclip/G14_fullcc2.5b.pt'),
+)
+
 _robertaViTB32 = dict(
     laion2b_s12b_b32k=_pcfg(hf_hub='laion/CLIP-ViT-B-32-roberta-base-laion2B-s12B-b32k/'),
 )
@@ -356,6 +360,7 @@ _PRETRAINED = {
     "ViT-H-14-378-quickgelu": _VITH14_378_quickgelu,
     "ViT-g-14": _VITg14,
     "ViT-bigG-14": _VITbigG14,
+    "ViT-bigG-14-quickgelu": _VITbigG14_quickgelu,
 
     "roberta-ViT-B-32": _robertaViTB32,
     "xlm-roberta-base-ViT-B-32": _xlmRobertaBaseViTB32,
