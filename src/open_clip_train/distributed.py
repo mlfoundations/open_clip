@@ -127,6 +127,12 @@ def init_distributed_device_so(
     global_rank = 0
     local_rank = 0
     device_type, *device_idx = device.split(':', maxsplit=1)
+    is_avail, is_known = is_device_available(device_type)
+    if not is_known:
+        warnings.warn(f"Device {device} was not known and checked for availability, trying anyways.")
+    elif not is_avail:
+        warnings.warn(f"Device {device} was not available, falling back to CPU.")
+        device_type = device = 'cpu'
 
     if horovod:
         import horovod.torch as hvd
@@ -171,13 +177,6 @@ def init_distributed_device_so(
             world_size = torch.distributed.get_world_size()
             global_rank = torch.distributed.get_rank()
         distributed = True
-
-    is_avail, is_known = is_device_available(device_type)
-    if not is_known:
-        warnings.warn(f"Device {device} was not known and checked for availability, trying anyways.")
-    elif not is_avail:
-        warnings.warn(f"Device {device} was not available, falling back to CPU.")
-        device_type = device = 'cpu'
 
     if distributed and not no_set_device_rank and device_type not in ('cpu', 'mps'):
         # Ignore manually specified device index in distributed mode and
