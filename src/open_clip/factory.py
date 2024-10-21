@@ -26,6 +26,20 @@ _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
 
 
+try:
+    import _codecs
+    import numpy as np
+    # add safe globals, known to be needed for metaclip weights
+    torch.serialization.add_safe_globals([
+        _codecs.encode,  # now in pytorch main but some pytorch versions w/ weights_only flag don't have it
+        np.core.multiarray.scalar,
+        np.dtype,
+        np.dtypes.Float64DType,
+    ])
+except Exception:
+    pass
+
+
 def _natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
