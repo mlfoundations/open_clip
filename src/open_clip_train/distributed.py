@@ -101,8 +101,8 @@ def init_distributed_device(args):
         device=getattr(args, 'device', 'cuda'),
         dist_backend=getattr(args, 'dist_backend', None),
         dist_url=getattr(args, 'dist_url', None),
-        horovod=args.horovod,
-        no_set_device_rank=args.no_set_device_rank,
+        horovod=getattr(args, 'horovod', False),
+        no_set_device_rank=getattr(args, 'no_set_device_rank', False),
     )
     args.device = result['device']
     args.world_size = result['world_size']
@@ -128,17 +128,6 @@ def init_distributed_device_so(
     local_rank = 0
     device_type, *device_idx = device.split(':', maxsplit=1)
 
-    if dist_backend is None:
-        dist_backends = {
-            "xpu": "ccl",
-            "hpu": "hccl",
-            "cuda": "nccl",
-            "npu": "hccl",
-        }
-        dist_backend = dist_backends.get(device_type, 'gloo')
-    dist_url = dist_url or 'env://'
-
-    # TBD, support horovod?
     if horovod:
         import horovod.torch as hvd
         assert hvd is not None, "Horovod is not installed"
@@ -148,6 +137,17 @@ def init_distributed_device_so(
         world_size = hvd.size()
         distributed = True
     elif is_using_distributed():
+        if dist_backend is None:
+            dist_backends = {
+                "cuda": "nccl",
+                "hpu": "hccl",
+                "npu": "hccl",
+                "xpu": "ccl",
+            }
+            dist_backend = dist_backends.get(device_type, 'gloo')
+
+        dist_url = dist_url or 'env://'
+
         if 'SLURM_PROCID' in os.environ:
             # DDP via SLURM
             local_rank, global_rank, world_size = world_info_from_env()
