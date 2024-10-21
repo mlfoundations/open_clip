@@ -7,6 +7,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
+from scipy.stats import multivariate_normal
+import numpy as np
 
 from .utils import to_2tuple
 from .pos_embed import get_2d_sincos_pos_embed
@@ -51,11 +53,29 @@ class PatchDropout(nn.Module):
     https://arxiv.org/abs/2212.00794
     """
 
-    def __init__(self, prob, exclude_first_token=True):
+    def __init__(self, prob, grid_size, gaussian_masking=False, std=0.20, exclude_first_token=True):
         super().__init__()
         assert 0 <= prob < 1.
         self.prob = prob
         self.exclude_first_token = exclude_first_token  # exclude CLS token
+        self.gaussian_masking = gaussian_masking        
+        self.pdf_values = self.normal_distribution(grid_size, std=std)
+
+    
+    def normal_distribution(self, grid_size=14, mean=0, std=0.20):
+        """
+        https://arxiv.org/abs/2403.15837
+        """
+
+        x = np.linspace(-1, 1, grid_size)
+        x, y = np.meshgrid(x, x)
+        mean, cov_matrix = [mean, mean], [[std, 0], [0, std]]
+        bivariate_dist = multivariate_normal(mean=mean, cov=cov_matrix)
+        points = np.column_stack([x.flatten(), y.flatten()])
+        # Evaluate the PDF at the given points
+        pdf_values = bivariate_dist.pdf(points)
+
+        return 1 - pdf_values
 
     def forward(self, x):
         if not self.training or self.prob == 0.:
@@ -76,6 +96,8 @@ class PatchDropout(nn.Module):
         num_patches_keep = max(1, int(num_tokens * keep_prob))
 
         rand = torch.randn(batch, num_tokens)
+        if self.gaussian_masking:
+            rand = rand - self.pdf_values
         patch_indices_keep = rand.topk(num_patches_keep, dim=-1).indices
 
         x = x[batch_indices, patch_indices_keep]
@@ -448,6 +470,8 @@ class VisionTransformer(nn.Module):
             attn_pooler_heads: int = 8,
             output_dim: int = 512,
             patch_dropout: float = 0.,
+            gaussian_masking: bool = False,
+            gaussian_masking_std: float = 0.20,
             no_ln_pre: bool = False,
             pos_embed_type: str = 'learnable',
             pool_type: str = 'tok',
@@ -485,7 +509,8 @@ class VisionTransformer(nn.Module):
             raise ValueError
 
         # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
-        self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
+        self.patch_dropout = PatchDropout(patch_dropout, self.grid_size[0],
+                                          gaussian_masking, gaussian_masking_std) if patch_dropout > 0. else nn.Identity()
 
         self.ln_pre = nn.Identity() if no_ln_pre else norm_layer(width)
         self.transformer = Transformer(
