@@ -114,6 +114,7 @@ def push_to_hf_hub(
     try:
         repo_files = set(list_repo_files(repo_id))
         repo_exists = True
+        print('Repo exists', repo_files)
     except Exception as e:
         print('Repo does not exist', e)
 
