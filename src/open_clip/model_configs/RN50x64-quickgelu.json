@@ -1,0 +1,22 @@
+{
+    "embed_dim": 1024,
+    "quick_gelu": true,
+    "vision_cfg": {
+        "image_size": 448,
+        "layers": [
+            3,
+            15,
+            36,
+            10
+        ],
+        "width": 128,
+        "patch_size": null
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 1024,
+        "heads": 16,
+        "layers": 12
+    }
+}
