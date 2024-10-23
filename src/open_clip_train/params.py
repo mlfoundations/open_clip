@@ -102,6 +102,12 @@ def parse_args(args):
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Override system default cache path for model & tokenizer file downloads.",
+    )
+    parser.add_argument(
         "--logs",
         type=str,
         default="./logs/",
