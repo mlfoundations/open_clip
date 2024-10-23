@@ -236,6 +236,7 @@ def main(args):
         aug_cfg=args.aug_cfg,
         pretrained_image=args.pretrained_image,
         output_dict=True,
+        cache_dir=args.cache_dir,
         **model_kwargs,
     )
     if args.distill:
@@ -246,6 +247,7 @@ def main(args):
             device=device,
             precision=args.precision,
             output_dict=True,
+            cache_dir=args.cache_dir,
         )
     if args.use_bnb_linear is not None:
         print('=> using a layer from bitsandbytes.\n'
@@ -357,7 +359,7 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    tokenizer = get_tokenizer(args.model)
+    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir)
     data = get_data(
         args,
         (preprocess_train, preprocess_val),

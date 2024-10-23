@@ -67,14 +67,25 @@ def add_model_config(path):
 
 
 def get_model_config(model_name):
+    """ Fetch model config from builtin (local library) configs.
+    """
     if model_name in _MODEL_CONFIGS:
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
         return None
 
 
-def _get_hf_config(model_id, cache_dir=None):
-    config_path = download_pretrained_from_hf(model_id, filename='open_clip_config.json', cache_dir=cache_dir)
+def _get_hf_config(
+        model_id: str,
+        cache_dir: Optional[str] = None,
+):
+    """ Fetch model config from HuggingFace Hub.
+    """
+    config_path = download_pretrained_from_hf(
+        model_id,
+        filename='open_clip_config.json',
+        cache_dir=cache_dir,
+    )
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
     return config
@@ -83,16 +94,18 @@ def _get_hf_config(model_id, cache_dir=None):
 def get_tokenizer(
         model_name: str = '',
         context_length: Optional[int] = None,
+        cache_dir: Optional[str] = None,
         **kwargs,
 ):
     if model_name.startswith(HF_HUB_PREFIX):
         model_name = model_name[len(HF_HUB_PREFIX):]
         try:
-            config = _get_hf_config(model_name)['model_cfg']
+            config = _get_hf_config(model_name, cache_dir=cache_dir)['model_cfg']
         except Exception:
             tokenizer = HFTokenizer(
                 model_name,
                 context_length=context_length or DEFAULT_CONTEXT_LENGTH,
+                cache_dir=cache_dir,
                 **kwargs,
             )
             return tokenizer
@@ -113,6 +126,7 @@ def get_tokenizer(
         tokenizer = HFTokenizer(
             text_config['hf_tokenizer_name'],
             context_length=context_length,
+            cache_dir=cache_dir,
             **tokenizer_kwargs,
         )
     else:
@@ -265,7 +279,7 @@ def create_model(
     if has_hf_hub_prefix:
         model_id = model_name[len(HF_HUB_PREFIX):]
         checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-        config = _get_hf_config(model_id, cache_dir)
+        config = _get_hf_config(model_id, cache_dir=cache_dir)
         preprocess_cfg = merge_preprocess_dict(preprocess_cfg, config['preprocess_cfg'])
         model_cfg = config['model_cfg']
         pretrained_hf = False  # override, no need to load original HF text weights
@@ -456,10 +470,16 @@ def create_model_and_transforms(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
+        load_weights_only: bool = True,
         **model_kwargs,
 ):
     force_preprocess_cfg = merge_preprocess_kwargs(
-        {}, mean=image_mean, std=image_std, interpolation=image_interpolation, resize_mode=image_resize_mode)
+        {},
+        mean=image_mean,
+        std=image_std,
+        interpolation=image_interpolation,
+        resize_mode=image_resize_mode,
+    )
 
     model = create_model(
         model_name,
@@ -476,6 +496,7 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
+        load_weights_only=load_weights_only,
         **model_kwargs,
     )
 
@@ -509,10 +530,16 @@ def create_model_from_pretrained(
         image_resize_mode: Optional[str] = None,  # only effective for inference
         return_transform: bool = True,
         cache_dir: Optional[str] = None,
+        load_weights_only: bool = True,
         **model_kwargs,
 ):
     force_preprocess_cfg = merge_preprocess_kwargs(
-        {}, mean=image_mean, std=image_std, interpolation=image_interpolation, resize_mode=image_resize_mode)
+        {},
+        mean=image_mean,
+        std=image_std,
+        interpolation=image_interpolation,
+        resize_mode=image_resize_mode,
+    )
 
     model = create_model(
         model_name,
@@ -526,6 +553,7 @@ def create_model_from_pretrained(
         force_preprocess_cfg=force_preprocess_cfg,
         cache_dir=cache_dir,
         require_pretrained=True,
+        load_weights_only=load_weights_only,
         **model_kwargs,
     )
 

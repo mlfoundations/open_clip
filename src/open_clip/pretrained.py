@@ -651,7 +651,7 @@ def get_pretrained_url(model: str, tag: str):
 
 def download_pretrained_from_url(
         url: str,
-        cache_dir: Union[str, None] = None,
+        cache_dir: Optional[str] = None,
 ):
     if not cache_dir:
         cache_dir = os.path.expanduser("~/.cache/clip")
@@ -712,7 +712,7 @@ def _get_safe_alternatives(filename: str) -> Iterable[str]:
     if filename == HF_WEIGHTS_NAME:
         yield HF_SAFE_WEIGHTS_NAME
 
-    if filename not in (HF_WEIGHTS_NAME,) and filename.endswith(".bin") or filename.endswith(".pth"):
+    if filename not in (HF_WEIGHTS_NAME,) and (filename.endswith(".bin") or filename.endswith(".pth")):
         yield filename[:-4] + ".safetensors"
 
 
@@ -750,7 +750,7 @@ def download_pretrained_from_hf(
         )
         return cached_file  # Return the path to the downloaded file if successful
     except Exception as e:
-        raise FileNotFoundError(f"Failed to download any files for {model_id}. Last error: {e}")
+        raise FileNotFoundError(f"Failed to download file ({filename}) for {model_id}. Last error: {e}")
 
 
 def download_pretrained(
