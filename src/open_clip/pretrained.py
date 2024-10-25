@@ -189,10 +189,12 @@ _VITB32 = dict(
     # MetaClip models (NOTE quick-gelu activation used)
     metaclip_400m=_pcfg(
         url="https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_400m.pt",
+        hf_hub="timm/vit_base_patch32_clip_224.metaclip_400m/",
         quick_gelu=True,
     ),
     metaclip_fullcc=_pcfg(
         url="https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_fullcc2.5b.pt",
+        hf_hub="timm/vit_base_patch32_clip_224.metaclip_2pt5b/",
         quick_gelu=True,
     ),
 )
