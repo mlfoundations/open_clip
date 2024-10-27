@@ -440,7 +440,9 @@ def create_loss(args):
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
+            dist_impl=args.loss_dist_impl,  # siglip has multiple distributed implementations to choose from
         )
+
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
