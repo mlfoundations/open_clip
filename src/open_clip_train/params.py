@@ -469,6 +469,12 @@ def parse_args(args):
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
     )
+    parser.add_argument(
+        "--loss-dist-impl",
+        default=None,
+        type=str,
+        help='A string to specify a specific distributed loss implementation.'
+    )
 
     args = parser.parse_args(args)
 
