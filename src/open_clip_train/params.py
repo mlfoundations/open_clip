@@ -143,8 +143,13 @@ def parse_args(args):
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
     parser.add_argument("--eps", type=float, default=None, help="Adam epsilon.")
     parser.add_argument("--wd", type=float, default=0.2, help="Weight decay.")
+    parser.add_argument("--momentum", type=float, default=None, help="Momentum (for timm optimizers).")
     parser.add_argument(
         "--warmup", type=int, default=10000, help="Number of steps to warmup for."
+    )
+    parser.add_argument(
+        "--opt", type=str, default='adamw',
+        help="Which optimizer to use. Choices are ['adamw', or any timm optimizer 'timm/{opt_name}']."
     )
     parser.add_argument(
         "--use-bn-sync",
@@ -467,10 +472,11 @@ def parse_args(args):
 
     args = parser.parse_args(args)
 
-    # If some params are not passed, we use the default values based on model name.
-    default_params = get_default_params(args.model)
-    for name, val in default_params.items():
-        if getattr(args, name) is None:
-            setattr(args, name, val)
+    if 'timm' not in args.opt:
+        # set default opt params based on model name (only if timm optimizer not used)
+        default_params = get_default_params(args.model)
+        for name, val in default_params.items():
+            if getattr(args, name) is None:
+                setattr(args, name, val)
 
     return args
