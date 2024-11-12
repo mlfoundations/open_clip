@@ -188,6 +188,14 @@ def load_checkpoint(
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
 
+    # correct if logit_scale differs in being scaler vs 1d param
+    if 'logit_scale' in state_dict and model.logit_scale.ndim != state_dict['logit_scale'].ndim:
+        state_dict['logit_scale'] = state_dict['logit_scale'].reshape(model.logit_scale.shape)
+
+    # correct if logit_bias differs in being scaler vs 1d param
+    if 'logit_bias' in state_dict and model.logit_bias.ndim != state_dict['logit_bias'].ndim:
+        state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model.logit_bias.shape)
+
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
     if 'logit_bias' not in state_dict and model.logit_bias is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])

@@ -96,6 +96,7 @@ class CoCa(nn.Module):
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
+            nonscalar_logit_scale: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
     ):
@@ -131,9 +132,10 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+        lshape = [1] if nonscalar_logit_scale else []
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
         if init_logit_bias is not None:
-            self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
+            self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
         else:
             self.logit_bias = None
         self.pad_id = pad_id
