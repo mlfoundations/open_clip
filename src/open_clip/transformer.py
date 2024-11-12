@@ -595,6 +595,12 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = {'positional_embedding', 'class_embedding'}
+        return no_wd
+
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.pool_type == 'avg':
             pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
@@ -758,6 +764,14 @@ class TextTransformer(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = {'positional_embedding'}
+        if self.cls_emb is not None:
+            no_wd.add('cls_emb')
+        return no_wd
 
     def build_causal_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
