@@ -1,0 +1,14 @@
+FROM python:3.8-slim-buster
+RUN apt-get update && apt-get install -y make
+
+WORKDIR /app
+
+COPY Makefile . 
+COPY requirements-training.txt .
+
+RUN make install-training
+
+COPY . .
+WORKDIR /app/src/
+
+ENTRYPOINT ["python", "-m", "training.main"]
