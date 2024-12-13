@@ -455,6 +455,7 @@ class VisionTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            eps: float = 1e-5  # Add eps as a parameter
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
@@ -487,7 +488,7 @@ class VisionTransformer(nn.Module):
         # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
         self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
 
-        self.ln_pre = nn.Identity() if no_ln_pre else norm_layer(width)
+        self.ln_pre = nn.Identity() if no_ln_pre else norm_layer(width, eps=eps)
         self.transformer = Transformer(
             width,
             layers,
@@ -495,7 +496,7 @@ class VisionTransformer(nn.Module):
             mlp_ratio,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
-            norm_layer=norm_layer,
+            norm_layer=lambda x: norm_layer(x, eps=eps),
         )
 
         if attentional_pool:
@@ -533,7 +534,7 @@ class VisionTransformer(nn.Module):
             pool_dim = width
             self.pool_type = pool_type
 
-        self.ln_post = norm_layer(pool_dim)
+        self.ln_post = norm_layer(pool_dim, eps=eps)
         self.proj = nn.Parameter(scale * torch.randn(pool_dim, output_dim))
 
         self.init_parameters()
@@ -693,6 +694,7 @@ class TextTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            eps: float = 1e-5  # Add eps as a parameter
     ):
         super().__init__()
         assert pool_type in ('first', 'last', 'argmax', 'none')
@@ -719,9 +721,9 @@ class TextTransformer(nn.Module):
             mlp_ratio=mlp_ratio,
             ls_init_value=ls_init_value,
             act_layer=act_layer,
-            norm_layer=norm_layer,
+            norm_layer=lambda x: norm_layer(x, eps=eps),
         )
-        self.ln_final = norm_layer(width)
+        self.ln_final = norm_layer(width, eps=eps)
 
         if no_causal_mask:
             self.attn_mask = None
