@@ -346,9 +346,6 @@ def create_model(
         else:
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
     else:
-        if 'CLIPS' in model_name:
-            model_cfg['vision_cfg']['eps'] = 1e-6
-            model_cfg['text_cfg']['eps'] = 1e-6
         model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
     if precision in ("fp16", "bf16"):

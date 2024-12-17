@@ -8,7 +8,10 @@
         "patch_size": 14,
         "no_ln_pre": true,
         "pool_type": "avg",
-        "final_ln_after_pool": true
+        "final_ln_after_pool": true,
+        "norm_kwargs": {
+            "eps":  1e-6
+        }
       },
       "text_cfg": {
         "context_length": 80,
@@ -24,6 +27,9 @@
         "no_causal_mask": true,
         "act_kwargs": {
           "approximate": "tanh"
+        },
+        "norm_kwargs": {
+            "eps":  1e-6
         }
       }
     },

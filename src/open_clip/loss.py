@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -104,14 +102,8 @@ class ClipLoss(nn.Module):
     def get_logits(self, image_features, text_features, logit_scale):
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
-                image_features,
-                text_features,
-                local_loss=self.local_loss,
-                gather_with_grad=self.gather_with_grad,
-                rank=self.rank,
-                world_size=self.world_size,
-                use_horovod=self.use_horovod,
-            )
+                image_features, text_features,
+                self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
 
             if self.local_loss:
                 logits_per_image = logit_scale * image_features @ all_text_features.T
@@ -166,11 +158,12 @@ class CoCaLoss(ClipLoss):
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
 
     def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
+        
+        clip_loss = torch.tensor(0)
+        
         if self.clip_loss_weight:
             clip_loss = super().forward(image_features, text_features, logit_scale)
             clip_loss = self.clip_loss_weight * clip_loss
-        else:
-            clip_loss = torch.tensor(0, device=logits.device)
 
         caption_loss = self.caption_loss(
             logits.permute(0, 2, 1),
@@ -323,17 +316,19 @@ class SigLipLoss(nn.Module):
     """
     def __init__(
             self,
-            cache_labels: bool = False,
-            rank: int = 0,
-            world_size: int = 1,
-            dist_impl: Optional[str] = None,
+            cache_labels=False,
+            rank=0,
+            world_size=1,
+            bidir=True,
+            use_horovod=False,
     ):
         super().__init__()
         self.cache_labels = cache_labels
         self.rank = rank
         self.world_size = world_size
-        self.dist_impl = dist_impl or 'bidir'  # default to bidir exchange for now, this will likely change
-        assert self.dist_impl in ('bidir', 'shift', 'reduce', 'gather')
+        assert not use_horovod  # FIXME need to look at hvd ops for ring transfers
+        self.use_horovod = use_horovod
+        self.bidir = bidir
 
         # cache state FIXME cache not currently used, worthwhile?
         self.prev_num_logits = 0
@@ -366,9 +361,10 @@ class SigLipLoss(nn.Module):
         loss = self._loss(image_features, text_features, logit_scale, logit_bias)
 
         if self.world_size > 1:
-            if self.dist_impl == 'bidir':
-                right_rank = (self.rank + 1) % self.world_size
-                left_rank = (self.rank - 1 + self.world_size) % self.world_size
+            # exchange text features w/ neighbour world_size - 1 times
+            right_rank = (self.rank + 1) % self.world_size
+            left_rank = (self.rank - 1 + self.world_size) % self.world_size
+            if self.bidir:
                 text_features_to_right = text_features_to_left = text_features
                 num_bidir, remainder = divmod(self.world_size - 1, 2)
                 for i in range(num_bidir):
@@ -378,6 +374,7 @@ class SigLipLoss(nn.Module):
                         text_features_to_left,
                         text_features_to_right,
                     )
+
                     for f in text_features_recv:
                         loss += self._loss(
                             image_features,
@@ -390,10 +387,8 @@ class SigLipLoss(nn.Module):
 
                 if remainder:
                     text_features_recv = neighbour_exchange_with_grad(
-                        left_rank,
-                        right_rank,
-                        text_features_to_right
-                    )
+                        left_rank, right_rank, text_features_to_right)
+
                     loss += self._loss(
                         image_features,
                         text_features_recv,
@@ -401,16 +396,12 @@ class SigLipLoss(nn.Module):
                         logit_bias,
                         negative_only=True,
                     )
-            elif self.dist_impl == "shift":
-                right_rank = (self.rank + 1) % self.world_size
-                left_rank = (self.rank - 1 + self.world_size) % self.world_size
+            else:
                 text_features_to_right = text_features
                 for i in range(self.world_size - 1):
                     text_features_from_left = neighbour_exchange_with_grad(
-                        left_rank,
-                        right_rank,
-                        text_features_to_right,
-                    )
+                        left_rank, right_rank, text_features_to_right)
+
                     loss += self._loss(
                         image_features,
                         text_features_from_left,
@@ -419,30 +410,5 @@ class SigLipLoss(nn.Module):
                         negative_only=True,
                     )
                     text_features_to_right = text_features_from_left
-            elif self.dist_impl == "reduce":
-                for i in range(self.world_size):
-                    text_from_other = torch.distributed.nn.all_reduce(
-                        text_features * (self.rank == i),
-                        torch.distributed.ReduceOp.SUM,
-                    )
-                    loss += float(i != self.rank) * self._loss(
-                        image_features,
-                        text_from_other,
-                        logit_scale,
-                        logit_bias,
-                        negative_only=True,
-                    )
-            elif self.dist_impl == "gather":
-                all_text = torch.distributed.nn.all_gather(text_features)
-                for i in range(self.world_size):
-                    loss += float(i != self.rank) * self._loss(
-                        image_features,
-                        all_text[i],
-                        logit_scale,
-                        logit_bias,
-                        negative_only=True,
-                    )
-            else:
-                assert False
 
         return {"contrastive_loss": loss} if output_dict else loss
