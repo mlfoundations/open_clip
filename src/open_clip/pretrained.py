@@ -318,9 +318,9 @@ _VITH14 = dict(
         hf_hub="timm/vit_huge_patch14_clip_224.metaclip_2pt5b/",
         quick_gelu=True,
     ),
-    metaclip_alltogether=_pcfg(
+    metaclip_altogether=_pcfg(
         url="https://dl.fbaipublicfiles.com/MMPT/metaclip/h14_v1.2_altogether.pt",
-        hf_hub="timm/vit_huge_patch14_clip_224.metaclip_alltogether/",
+        hf_hub="timm/vit_huge_patch14_clip_224.metaclip_altogether/",
         # NOTE unlike other MetaCLIP models, this is not using QuickGELU, yay!
     ),
     # DFN-5B (quick-gelu)
