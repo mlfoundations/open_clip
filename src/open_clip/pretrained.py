@@ -299,6 +299,10 @@ _VITL14 = dict(
         hf_hub='apple/DFN2B-CLIP-ViT-L-14/',
         quick_gelu=True,
     ),
+    # DFN-2B 39B SS
+    dfn2b_s39b=_pcfg(
+        hf_hub='apple/DFN2B-CLIP-ViT-L-14-39B/',
+    ),
 )
 
 _VITL14_336 = dict(
