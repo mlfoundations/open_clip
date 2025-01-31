@@ -252,6 +252,8 @@ def create_model(
         force_quick_gelu: Force use of QuickGELU activation
         force_custom_text: Force use of custom text encoder
         force_patch_dropout: Override default patch dropout value
+        gaussian_masking: Enable Gaussian masking for patch dropout
+        gaussian_masking_std: Set Gaussian masking standard deviation
         force_image_size: Override default image size for vision encoder
         force_preprocess_cfg: Override default preprocessing configuration
         pretrained_image: Load pretrained weights for timm vision models
@@ -321,12 +323,12 @@ def create_model(
         model_cfg["vision_cfg"]["image_size"] = force_image_size
     
     if gaussian_masking is not None:
-            # override the default masking
-            model_cfg["vision_cfg"]["gaussian_masking"] = gaussian_masking
+        # override the default masking
+        model_cfg["vision_cfg"]["gaussian_masking"] = gaussian_masking
         
     if gaussian_masking_std is not None:
-            # override the default gaussian masking std value
-            model_cfg["vision_cfg"]["gaussian_masking_std"] = gaussian_masking_std
+        # override the default gaussian masking std value
+        model_cfg["vision_cfg"]["gaussian_masking_std"] = gaussian_masking_std
 
     is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
     if pretrained_image:
