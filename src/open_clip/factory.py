@@ -315,6 +315,10 @@ def create_model(
     if force_patch_dropout is not None:
         # override the default patch dropout value
         model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
+
+    if force_image_size is not None:
+        # override model config's image size
+        model_cfg["vision_cfg"]["image_size"] = force_image_size
     
     if gaussian_masking is not None:
             # override the default masking
@@ -323,10 +327,6 @@ def create_model(
     if gaussian_masking_std is not None:
             # override the default gaussian masking std value
             model_cfg["vision_cfg"]["gaussian_masking_std"] = gaussian_masking_std
-
-    if force_image_size is not None:
-        # override model config's image size
-        model_cfg["vision_cfg"]["image_size"] = force_image_size
 
     is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
     if pretrained_image:
