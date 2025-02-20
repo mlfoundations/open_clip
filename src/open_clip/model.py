@@ -6,7 +6,7 @@ import copy
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -305,6 +305,69 @@ class CLIP(nn.Module):
         text_logits = image_logits.T
         return image_logits, text_logits
 
+    def forward_intermediates(
+            self,
+            image: Optional[torch.Tensor] = None,
+            text: Optional[torch.Tensor] = None,
+            image_indices: Optional[Union[int, List[int]]] = None,
+            text_indices: Optional[Union[int, List[int]]] = None,
+            return_prefix_tokens: bool = False,
+            norm: bool = False,
+            stop_early: bool = False,
+            image_output_fmt: str = 'NCHW',
+            text_output_fmt: str = 'NLC',
+            intermediates_only: bool = False,
+            include_logit_scale_bias: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            image: Input image tensor
+            text: Input text tensor
+            image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
+            text_indices: Take last n blocks if int, all if None, select matching indices if sequence
+            return_prefix_tokens: Return both prefix and spatial intermediate tokens
+            norm: Apply norm layer to all intermediates
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            image_output_fmt: Shape of intermediate image feature outputs
+            text_output_fmt: Shape of intermediate text feature outputs
+            intermediates_only: Only return intermediate features
+        Returns:
+
+        """
+        output = {}
+
+        if image is not None:
+            image_output = self.visual.forward_intermediates(
+                image,
+                indices=image_indices,
+                return_prefix_tokens=return_prefix_tokens,
+                norm=norm,
+                stop_early=stop_early,
+                output_fmt=image_output_fmt,
+                intermediates_only=intermediates_only,
+            )
+            output.update(image_output)
+
+        if text is not None:
+            text_output = self.visual.forward_intermediates(
+                text,
+                indices=text_indices,
+                return_prefix_tokens=return_prefix_tokens,
+                norm=norm,
+                stop_early=stop_early,
+                output_fmt=text_output_fmt,
+                intermediates_only=intermediates_only,
+            )
+            output.update(text_output)
+
+        if include_logit_scale_bias:
+            output["logit_scale"] = self.logit_scale.exp()
+            if self.logit_bias is not None:
+                output['logit_bias'] = self.logit_bias
+
+        return output
+
     def forward(
             self,
             image: Optional[torch.Tensor] = None,
@@ -397,6 +460,91 @@ class CustomTextCLIP(nn.Module):
             image_logits += self.logit_bias
         text_logits = image_logits.T
         return image_logits, text_logits
+
+    def forward_intermediates(
+            self,
+            image: Optional[torch.Tensor] = None,
+            text: Optional[torch.Tensor] = None,
+            image_indices: Optional[Union[int, List[int]]] = None,
+            text_indices: Optional[Union[int, List[int]]] = None,
+            return_prefix_tokens: bool = False,
+            norm: bool = False,
+            stop_early: bool = False,
+            image_output_fmt: str = 'NCHW',
+            text_output_fmt: str = 'NLC',
+            intermediates_only: bool = False,
+            include_logits: bool = False,
+            include_logit_scale_bias: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            image: Input image tensor
+            text: Input text tensor
+            image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
+            text_indices: Take last n blocks if int, all if None, select matching indices if sequence
+            return_prefix_tokens: Return both prefix and spatial intermediate tokens
+            norm: Apply norm layer to all intermediates
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            image_output_fmt: Shape of intermediate image feature outputs
+            text_output_fmt: Shape of intermediate text feature outputs
+            intermediates_only: Only return intermediate features, do not return final features
+            include_logits: Include logits in output
+            include_logit_scale_bias: Include the logit scale bias in the output
+        Returns:
+
+        """
+        output = {}
+        if include_logits:
+            assert image is not None and text is not None
+        if include_logits:
+            intermediates_only = False
+
+        if image is not None:
+            image_output = self.visual.forward_intermediates(
+                image,
+                indices=image_indices,
+                return_prefix_tokens=return_prefix_tokens,
+                norm=norm,
+                stop_early=stop_early,
+                output_fmt=image_output_fmt,
+                intermediates_only=intermediates_only,
+            )
+            image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
+            output.update(image_output)
+
+        if text is not None:
+            text_output = self.text.forward_intermediates(
+                text,
+                indices=text_indices,
+                return_prefix_tokens=return_prefix_tokens,
+                norm=norm,
+                stop_early=stop_early,
+                output_fmt=text_output_fmt,
+                intermediates_only=intermediates_only,
+            )
+            text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
+            output.update(text_output)
+
+        if include_logits or include_logit_scale_bias:
+            logit_scale_exp = self.logit_scale.exp()
+        else:
+            logit_scale_exp = None
+
+        if include_logits:
+            image_logits = logit_scale_exp * output["image_features"] @ output["text_features"].T
+            if self.logit_bias is not None:
+                image_logits += self.logit_bias
+            text_logits = image_logits.T
+            output["image_logits"] = image_logits
+            output["text_logits"] = text_logits
+
+        if include_logit_scale_bias:
+            output["logit_scale"] = logit_scale_exp
+            if self.logit_bias is not None:
+                output['logit_bias'] = self.logit_bias
+
+        return output
 
     def forward(
             self,

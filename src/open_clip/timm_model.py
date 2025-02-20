@@ -4,22 +4,16 @@ Wraps timm (https://github.com/rwightman/pytorch-image-models) models for use as
 """
 import logging
 from collections import OrderedDict
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
 try:
     import timm
-    try:
-        # new timm imports >= 0.8.1
-        from timm.layers import RotAttentionPool2d
-        from timm.layers import AttentionPool2d as AbsAttentionPool2d
-        from timm.layers import Mlp, to_2tuple
-    except ImportError as e:
-        # fallback, try old timm imports < 0.8.1
-        from timm.models.layers.attention_pool2d import RotAttentionPool2d
-        from timm.models.layers.attention_pool2d import AttentionPool2d as AbsAttentionPool2d
-        from timm.models.layers import Mlp, to_2tuple
+    from timm.layers import RotAttentionPool2d
+    from timm.layers import AttentionPool2d as AbsAttentionPool2d
+    from timm.layers import Mlp, to_2tuple
 except ImportError:
     timm = None
 
@@ -32,20 +26,20 @@ class TimmModel(nn.Module):
 
     def __init__(
             self,
-            model_name,
-            embed_dim,
-            image_size=224,
-            pool='avg',
-            proj='linear',
-            proj_bias=False,
-            drop=0.,
-            drop_path=None,
-            patch_drop=None,
-            pretrained=False,
+            model_name: str,
+            embed_dim: int,
+            image_size: Union[int, Tuple[int, int]] = 224,
+            pool: str = 'avg',
+            proj: str = 'linear',
+            proj_bias: bool = False,
+            drop: float = 0.,
+            drop_path: Optional[float] = None,
+            patch_drop: Optional[float] = None,
+            pretrained: bool = False,
     ):
         super().__init__()
         if timm is None:
-            raise RuntimeError("Please `pip install timm` to use timm models.")
+            raise RuntimeError("Please install the latest timm (`pip install timm`) to use timm based models.")
         self.image_size = to_2tuple(image_size)
 
         # setup kwargs that may not be common across all models
@@ -108,7 +102,7 @@ class TimmModel(nn.Module):
 
         self.head = nn.Sequential(head_layers)
 
-    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+    def lock(self, unlocked_groups: int = 0, freeze_bn_stats: bool = False):
         """ lock modules
         Args:
             unlocked_groups (int): leave last n layer groups unlocked (default: 0)
@@ -141,11 +135,49 @@ class TimmModel(nn.Module):
                 freeze_batch_norm_2d(self.trunk, gmodules)
 
     @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True):
         try:
             self.trunk.set_grad_checkpointing(enable)
         except Exception as e:
             logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
+
+    def forward_intermediates(
+            self,
+            x: torch.Tensor,
+            indices: Optional[Union[int, List[int]]] = None,
+            return_prefix_tokens: bool = False,
+            norm: bool = False,
+            stop_early: bool = False,
+            output_fmt: str = 'NCHW',
+            intermediates_only: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            x: Input image tensor
+            indices: Take last n blocks if int, all if None, select matching indices if sequence
+            return_prefix_tokens: Return both prefix and spatial intermediate tokens
+            norm: Apply norm layer to all intermediates
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            output_fmt: Shape of intermediate feature outputs
+            intermediates_only: Only return intermediate features
+        Returns:
+        """
+        output = self.trunk.get_intermediates(
+                x,
+                indices=indices,
+                return_prefix_tokens=return_prefix_tokens,
+                norm=norm,
+                stop_early=stop_early,
+                output_fmt=output_fmt,
+                intermediates_only=intermediates_only,
+            )
+
+        if intermediates_only:
+            return {'image_intermediates': output}
+        else:
+            image_features = self.head(output[0])
+            return {'image_features': image_features, 'image_intermediates': output[1]}
 
     def forward(self, x):
         x = self.trunk(x)

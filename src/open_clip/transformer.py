@@ -1,14 +1,13 @@
 from collections import OrderedDict
 import math
-from typing import Callable, List, Optional, Sequence, Tuple, Union
-from functools import partial
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
-from .utils import to_2tuple
+from .utils import to_2tuple, feature_take_indices
 from .pos_embed import get_2d_sincos_pos_embed
 
 
@@ -51,7 +50,11 @@ class PatchDropout(nn.Module):
     https://arxiv.org/abs/2212.00794
     """
 
-    def __init__(self, prob, exclude_first_token=True):
+    def __init__(
+            self,
+            prob: float = 0.5,
+            exclude_first_token: bool = True
+    ):
         super().__init__()
         assert 0 <= prob < 1.
         self.prob = prob
@@ -352,15 +355,49 @@ class Transformer(nn.Module):
             return self.resblocks[0].mlp.c_fc.int8_original_dtype
         return self.resblocks[0].mlp.c_fc.weight.dtype
 
+    def forward_intermediates(
+            self,
+            x: torch.Tensor,
+            attn_mask: Optional[torch.Tensor] = None,
+            indices: Optional[Union[int, List[int]]] = None,
+            intermediates_only: bool = False,
+    ):
+        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
+
+        if not self.batch_first:
+            x = x.transpose(0, 1).contiguous()    # NLD -> LND
+
+        intermediates = []
+        for r in self.resblocks:
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
+            else:
+                x = r(x, attn_mask=attn_mask)
+            intermediates.append(x)
+
+        if not self.batch_first:
+            x = x.transpose(0, 1)    # LND -> NLD
+
+        return x, intermediates
+
+    def prune_intermediate_layers(self, indices: Union[int, List[int]] = 1):
+        """ Prune layers not required for specified intermediates.
+        """
+        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
+        self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
+        return take_indices
+
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         if not self.batch_first:
             x = x.transpose(0, 1).contiguous()    # NLD -> LND
+
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask)
+                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
+
         if not self.batch_first:
             x = x.transpose(0, 1)    # LND -> NLD
         return x
@@ -383,7 +420,7 @@ class CustomTransformer(nn.Module):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.batch_first = batch_first  # run trasnformer stack in batch first (N, L, D)
+        self.batch_first = batch_first  # run transformer stack in batch first (N, L, D)
         self.grad_checkpointing = False
 
         if isinstance(block_types, str):
@@ -415,6 +452,39 @@ class CustomTransformer(nn.Module):
             return weight.int8_original_dtype
         return weight.dtype
 
+    def forward_intermediates(
+            self,
+            x: torch.Tensor,
+            attn_mask: Optional[torch.Tensor] = None,
+            indices: Optional[Union[int, List[int]]] = None,
+            intermediates_only: bool = False,
+    ):
+        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
+
+        if not self.batch_first:
+            x = x.transpose(0, 1).contiguous()  # NLD -> LND
+
+        intermediates = []
+        for r in self.resblocks:
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
+            else:
+                x = r(x, attn_mask=attn_mask)
+
+            intermediates.append(x)
+
+        if not self.batch_first:
+            x = x.transpose(0, 1)  # LND -> NLD
+
+        return x, intermediates
+
+    def prune_intermediate_layers(self, indices: Union[int, List[int]] = 1):
+        """ Prune layers not required for specified intermediates.
+        """
+        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
+        self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
+        return take_indices
+
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         if not self.batch_first:
             x = x.transpose(0, 1)  # NLD -> LND
@@ -422,7 +492,7 @@ class CustomTransformer(nn.Module):
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask)
+                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
 
@@ -465,7 +535,13 @@ class VisionTransformer(nn.Module):
         self.final_ln_after_pool = final_ln_after_pool  # currently ignored w/ attn pool enabled
         self.output_dim = output_dim
 
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_channels=3,
+            out_channels=width,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=False,
+        )
 
         # class embeddings and positional embeddings
         scale = width ** -0.5
@@ -538,7 +614,7 @@ class VisionTransformer(nn.Module):
 
         self.init_parameters()
 
-    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+    def lock(self, unlocked_groups: int = 0, freeze_bn_stats: bool = False):
         for param in self.parameters():
             param.requires_grad = False
 
@@ -592,7 +668,7 @@ class VisionTransformer(nn.Module):
         pass
 
     @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True):
         self.transformer.grad_checkpointing = enable
 
     @torch.jit.ignore
@@ -611,8 +687,8 @@ class VisionTransformer(nn.Module):
 
         return pooled, tokens
 
-    def forward(self, x: torch.Tensor):
-        x = self.conv1(x)  # shape = [*, width, grid, grid]
+    def _embeds(self, x:torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)  # shape = [*, dim, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
 
@@ -621,10 +697,14 @@ class VisionTransformer(nn.Module):
         # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
 
+        # patch dropout (if active)
         x = self.patch_dropout(x)
-        x = self.ln_pre(x)
-        x = self.transformer(x)
 
+        # apply norm before transformer
+        x = self.ln_pre(x)
+        return x
+
+    def _pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.attn_pool is not None:
             if self.attn_pool_contrastive is not None:
                 # This is untested, WIP pooling that should match paper
@@ -646,6 +726,89 @@ class VisionTransformer(nn.Module):
         else:
             x = self.ln_post(x)
             pooled, tokens = self._global_pool(x)
+
+        return pooled, tokens
+
+    def forward_intermediates(
+            self,
+            x: torch.Tensor,
+            indices: Optional[Union[int, List[int]]] = None,
+            return_prefix_tokens: bool = False,
+            norm: bool = False,
+            stop_early: bool = False,
+            output_fmt: str = 'NCHW',
+            intermediates_only: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            x: Input image tensor
+            indices: Take last n blocks if int, all if None, select matching indices if sequence
+            return_prefix_tokens: Return both prefix and spatial intermediate tokens
+            norm: Apply norm layer to all intermediates
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            output_fmt: Shape of intermediate feature outputs
+            intermediates_only: Only return intermediate features
+        Returns:
+
+        """
+        assert output_fmt in ('NCHW', 'NLC'), 'Output format must be one of NCHW or NLC.'
+        reshape = output_fmt == 'NCHW'
+
+        # forward pass
+        B, _, height, width = x.shape
+        x = self._embeds(x)
+        x, intermediates = self.transformer(
+            x,
+            indices=indices,
+            stop_early=stop_early,
+            intermediates_only=intermediates_only
+        )
+
+        # process intermediates
+        if norm:
+            # apply final norm to all intermediates
+            intermediates = [self.ln_post(xi) for xi in intermediates]
+        if self.num_prefix_tokens:
+            # split prefix (e.g. class, distill) and spatial feature tokens
+            prefix_tokens = [y[:, 0:self.num_prefix_tokens] for y in intermediates]
+            intermediates = [y[:, self.num_prefix_tokens:] for y in intermediates]
+        else:
+            prefix_tokens = None
+        if reshape:
+            # reshape to BCHW output format
+            H, W = height // self.patch_size[0], width // self.patch_size[1]
+            intermediates = [y.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for y in intermediates]
+
+        output = {'image_intermediates': intermediates}
+        if prefix_tokens is not None and return_prefix_tokens:
+            # return_prefix not support in torchscript due to poor type handling
+            output = {'image_prefix': prefix_tokens}
+        if not intermediates_only:
+            pooled, _ = self._pool(x)
+            output['image_features'] = pooled
+
+        return output
+
+    def prune_intermediate_layers(
+            self,
+            indices: Union[int, List[int]] = 1,
+            prune_norm: bool = False,
+            prune_head: bool = True,
+    ):
+        """ Prune layers not required for specified intermediates.
+        """
+        take_indices = self.transformer.prune_intermediate_layers(indices)
+        if prune_norm:
+            self.ln_post = nn.Identity()
+        if prune_head:
+            self.proj = None
+        return take_indices
+
+    def forward(self, x: torch.Tensor):
+        x = self._embeds(x)
+        x = self.transformer(x)
+        pooled, tokens = self._pool(x)
 
         if self.proj is not None:
             pooled = pooled @ self.proj
@@ -790,10 +953,9 @@ class TextTransformer(nn.Module):
         additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
         return additive_mask
 
-    def forward(self, text):
+    def _embeds(self, text) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
-
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
         attn_mask = self.attn_mask
         if self.cls_emb is not None:
@@ -802,8 +964,97 @@ class TextTransformer(nn.Module):
             cls_mask = self.build_cls_mask(text, cast_dtype)
             if attn_mask is not None:
                 attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
-
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
+        return x, attn_mask
+
+    def forward_intermediates(
+            self,
+            text: torch.Tensor,
+            indices: Optional[Union[int, List[int]]] = None,
+            return_extra_tokens: bool = False,
+            norm: bool = False,
+            stop_early: bool = False,
+            output_fmt: str = 'NCHW',
+            intermediates_only: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            text: Input text ids
+            indices: Take last n blocks if int, all if None, select matching indices if sequence
+            return_extra_tokens: Return both prefix and intermediate tokens
+            norm: Apply norm layer to all intermediates
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            output_fmt: Shape of intermediate feature outputs
+            intermediates_only: Only return intermediate features
+        Returns:
+
+        """
+        assert output_fmt in ('NLC',), 'Output format must be NLC.'
+        # forward pass
+        x, attn_mask = self._embeds(text)
+        x, intermediates = self.transformer(
+            x,
+            attn_mask=attn_mask,
+            indices=indices,
+            stop_early=stop_early,
+            intermediates_only=intermediates_only
+        )
+
+        # process intermediates
+        if norm:
+            # apply final norm to all intermediates
+            intermediates = [self.ln_final(xi) for xi in intermediates]
+        num_extra_tokens = 1 if self.cls_emb is not None else 0
+        if num_extra_tokens:
+            cls_tokens = [y[:, -num_extra_tokens:] for y in intermediates]
+            intermediates = [y[:, 0:num_extra_tokens] for y in intermediates]
+        else:
+            cls_tokens = None
+
+        output = {'text_intermediates': intermediates}
+        if cls_tokens is not None and return_extra_tokens:
+            output = {'text_intermediate_cls': cls_tokens}
+
+        if intermediates_only:
+            return output
+
+        if self.cls_emb is not None:
+            # presence of appended cls embed (CoCa) overrides pool_type, always take last token
+            pooled, _ = text_global_pool(x, pool_type='last')
+            pooled = self.ln_final(pooled)  # final LN applied after pooling in this case
+        else:
+            x = self.ln_final(x)
+            pooled, _ = text_global_pool(x, text, pool_type=self.pool_type)
+
+        if self.text_projection is not None:
+            if isinstance(self.text_projection, nn.Linear):
+                pooled = self.text_projection(pooled)
+            else:
+                pooled = pooled @ self.text_projection
+
+        output['text_features'] = pooled
+
+        return output
+
+    def prune_intermediate_layers(
+            self,
+            indices: Union[int, List[int]] = 1,
+            prune_norm: bool = False,
+            prune_head: bool = True,
+    ):
+        """ Prune layers not required for specified intermediates.
+        """
+        take_indices = self.transformer.prune_intermediate_layers(indices)
+        if prune_norm:
+            self.ln_final = nn.Identity()
+        if prune_head:
+            self.text_projection = None
+        return take_indices
+
+    def forward(self, text):
+        x, attn_mask = self._embeds(text)
+
         x = self.transformer(x, attn_mask=attn_mask)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
@@ -825,6 +1076,8 @@ class TextTransformer(nn.Module):
             return pooled, tokens
 
         return pooled
+
+
 
 
 class MultimodalTransformer(Transformer):
