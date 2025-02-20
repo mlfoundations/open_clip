@@ -510,6 +510,52 @@ _PRETRAINED = {
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP-384/'),
     ),
 
+    "ViT-B-32-SigLIP2-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-32-SigLIP2-256/', file='/data/n/siglip2/siglip2_b32_256.npz'),
+    ),
+    "ViT-B-16-SigLIP2": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2/', file='/data/n/siglip2/siglip2_b16_224.npz'),
+    ),
+    "ViT-B-16-SigLIP2-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2-256/', file='/home/wiggs/Downloads/siglip2_b16_fixres.npz'),
+    ),
+    "ViT-B-16-SigLIP2-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2-384/', file='/data/n/siglip2/siglip2_b16_384.npz'),
+    ),
+    "ViT-B-16-SigLIP2-512": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2-512/', file='/data/n/siglip2/siglip2_b16_512.npz'),
+    ),
+    "ViT-L-16-SigLIP2-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP2-256/', file='/data/n/siglip2/siglip2_l16_256.npz'),
+    ),
+    "ViT-L-16-SigLIP2-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP2-384/', file='/data/n/siglip2/siglip2_l16_384.npz'),
+    ),
+    "ViT-L-16-SigLIP2-512": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP2-512/', file='/data/n/siglip2/siglip2_l16_512.npz'),
+    ),
+    "ViT-SO400M-14-SigLIP2": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP2/', file='/data/n/siglip2/siglip2_so400m14_224.npz'),
+    ),
+    "ViT-SO400M-14-SigLIP2-378": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-14-SigLIP2-384/', file='/data/n/siglip2/siglip2_so400m14_384.npz'),
+    ),
+    "ViT-SO400M-16-SigLIP2-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP2-256/', file='/data/n/siglip2/siglip2_so400m16_256.npz'),
+    ),
+    "ViT-SO400M-16-SigLIP2-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP2-384/', file='/data/n/siglip2/siglip2_so400m16_384.npz'),
+    ),
+    "ViT-SO400M-16-SigLIP2-512": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP2-512/', file='/data/n/siglip2/siglip2_so400m16_512.npz'),
+    ),
+    "ViT-gopt-16-SigLIP2-256": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-gopt-16-SigLIP2-256/', file='/data/n/siglip2/siglip2_g-opt16_256.npz'),
+    ),
+    "ViT-gopt-16-SigLIP2-384": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-gopt-16-SigLIP2-384/', file='/data/n/siglip2/siglip2_g-opt16_384.npz'),
+    ),
+
     "ViT-L-14-CLIPA": dict(
         datacomp1b=_apcfg(hf_hub='UCSC-VLAA/ViT-L-14-CLIPA-datacomp1B/'),
     ),
@@ -772,6 +818,9 @@ def download_pretrained(
     target = ''
     if not cfg:
         return target
+
+    if 'file' in cfg:
+        return cfg['file']
 
     has_hub = has_hf_hub()
     download_url = cfg.get('url', '')

@@ -472,6 +472,8 @@ class SigLipTokenizer:
         "c4-en": "http://storage.googleapis.com/t5-data/vocabs/cc_en.32000/sentencepiece.model",
         # used in multilingual models (mT5, PaLI), vocab_size=250_000
         "mc4": "http://storage.googleapis.com/t5-data/vocabs/mc4.250000.100extra/sentencepiece.model",
+        # used in SigLIP2 models, vocab_size=256000
+        "gemma": "http://storage.googleapis.com/big_vision/gemma_tokenizer.model",
     }
 
     def __init__(
@@ -479,23 +481,34 @@ class SigLipTokenizer:
             tokenizer_name: str,
             context_length: Optional[int] = 64,
     ):
-        from transformers import T5TokenizerFast
+        if 'gemma' in tokenizer_name:
+            from transformers import GemmaTokenizerFast
+            tokenizer_cls = GemmaTokenizerFast
+        else:
+            from transformers import T5TokenizerFast
+            tokenizer_cls = T5TokenizerFast
 
         if tokenizer_name in self.VOCAB_FILES:
             # FIXME temporary hack?
             import tempfile
-
             import fsspec
             vocab_file = self.VOCAB_FILES[tokenizer_name]
             with tempfile.NamedTemporaryFile('wb') as dst:
                 with fsspec.open(vocab_file, 'rb') as src:
                     dst.write(src.read())
-                self.tokenizer = T5TokenizerFast(dst.name, legacy=False)
+                self.tokenizer = tokenizer_cls(dst.name, legacy=False)
         else:
-            self.tokenizer = T5TokenizerFast(tokenizer_name, legacy=False)
+            self.tokenizer = tokenizer_cls(tokenizer_name, legacy=False)
 
-        self.tokenizer.pad_token_id = 1
-        self.tokenizer.eos_token_id = 1
+        if 'gemma' in tokenizer_name:
+            self.tokenizer.pad_token_id = 0
+            self.tokenizer.eos_token_id = 1
+            self.tokenizer.add_bos_token = False
+            self.tokenizer.add_eos_token = True
+            self.tokenizer.padding_side = 'right'
+        else:
+            self.tokenizer.pad_token_id = 1
+            self.tokenizer.eos_token_id = 1
         self.context_length = context_length
 
     def save_pretrained(self, dest):
