@@ -115,7 +115,7 @@ jobs:
           tests
         jq -s -S 'add' durations_* > .test_durations
     - name: Collect pytest durations
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: pytest_durations_${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}
         path: .test_durations
