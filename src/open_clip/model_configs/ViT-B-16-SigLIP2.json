@@ -12,7 +12,7 @@
     "text_cfg": {
         "context_length": 64,
         "vocab_size": 256000,
-        "hf_tokenizer_name": "",
+        "hf_tokenizer_name": "timm/ViT-B-16-SigLIP2",
         "tokenizer_kwargs": {
             "clean": "canonicalize"
         },

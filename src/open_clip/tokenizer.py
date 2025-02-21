@@ -483,10 +483,11 @@ class SigLipTokenizer:
     ):
         if 'gemma' in tokenizer_name:
             from transformers import GemmaTokenizerFast
-            tokenizer_cls = GemmaTokenizerFast
+            tokenizer_cls = partial(
+                GemmaTokenizerFast, padding_side='right', add_bos_token=False, add_eos_token=True)
         else:
             from transformers import T5TokenizerFast
-            tokenizer_cls = T5TokenizerFast
+            tokenizer_cls = partial(T5TokenizerFast, extra_ids=0)
 
         if tokenizer_name in self.VOCAB_FILES:
             # FIXME temporary hack?
@@ -500,15 +501,8 @@ class SigLipTokenizer:
         else:
             self.tokenizer = tokenizer_cls(tokenizer_name, legacy=False)
 
-        if 'gemma' in tokenizer_name:
-            self.tokenizer.pad_token_id = 0
-            self.tokenizer.eos_token_id = 1
-            self.tokenizer.add_bos_token = False
-            self.tokenizer.add_eos_token = True
-            self.tokenizer.padding_side = 'right'
-        else:
-            self.tokenizer.pad_token_id = 1
-            self.tokenizer.eos_token_id = 1
+        self.tokenizer.pad_token_id = 0 if 'gemma' in tokenizer_name else 1
+        self.tokenizer.eos_token_id = 1
         self.context_length = context_length
 
     def save_pretrained(self, dest):

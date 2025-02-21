@@ -29,7 +29,7 @@ except ImportError:
 
 from .constants import HF_WEIGHTS_NAME, HF_SAFE_WEIGHTS_NAME, HF_CONFIG_NAME
 from .factory import create_model_from_pretrained, get_model_config, get_tokenizer
-from .tokenizer import HFTokenizer
+from .tokenizer import HFTokenizer, SigLipTokenizer
 
 
 def save_config_for_hf(
@@ -95,7 +95,7 @@ def push_to_hf_hub(
     model_card: Optional[dict] = None,
     safe_serialization: Union[bool, str] = 'both',
 ):
-    if not isinstance(tokenizer, HFTokenizer):
+    if not isinstance(tokenizer, (HFTokenizer, SigLipTokenizer)):
         # FIXME this makes it awkward to push models with new tokenizers, come up with better soln.
         # default CLIP tokenizers use https://huggingface.co/openai/clip-vit-large-patch14
         tokenizer = HFTokenizer('openai/clip-vit-large-patch14')
