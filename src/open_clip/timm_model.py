@@ -145,8 +145,8 @@ class TimmModel(nn.Module):
             self,
             x: torch.Tensor,
             indices: Optional[Union[int, List[int]]] = None,
-            return_prefix_tokens: bool = False,
-            norm: bool = False,
+            return_extra_tokens: bool = False,
+            normalize_intermediates: bool = False,
             stop_early: bool = False,
             output_fmt: str = 'NCHW',
             intermediates_only: bool = False,
@@ -156,18 +156,18 @@ class TimmModel(nn.Module):
         Args:
             x: Input image tensor
             indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_prefix_tokens: Return both prefix and spatial intermediate tokens
-            norm: Apply norm layer to all intermediates
+            return_extra_tokens: Return both prefix and spatial intermediate tokens
+            normalize_intermediates: Apply norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
             output_fmt: Shape of intermediate feature outputs
             intermediates_only: Only return intermediate features
         Returns:
         """
-        output = self.trunk.get_intermediates(
+        output = self.trunk.forward_intermediates(
                 x,
                 indices=indices,
-                return_prefix_tokens=return_prefix_tokens,
-                norm=norm,
+                return_prefix_tokens=return_extra_tokens,
+                norm=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=output_fmt,
                 intermediates_only=intermediates_only,

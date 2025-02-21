@@ -287,7 +287,7 @@ class CLIP(nn.Module):
         x = x + self.positional_embedding.to(cast_dtype)
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        x, _ = text_global_pool(x, text, self.text_pool_type)
+        x = text_global_pool(x, text, self.text_pool_type)
         if self.text_projection is not None:
             if isinstance(self.text_projection, nn.Linear):
                 x = self.text_projection(x)
@@ -311,11 +311,10 @@ class CLIP(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_indices: Optional[Union[int, List[int]]] = None,
             text_indices: Optional[Union[int, List[int]]] = None,
-            return_prefix_tokens: bool = False,
-            norm: bool = False,
+            return_extra_tokens: bool = False,
+            normalize_intermediates: bool = False,
             stop_early: bool = False,
             image_output_fmt: str = 'NCHW',
-            text_output_fmt: str = 'NLC',
             intermediates_only: bool = False,
             include_logit_scale_bias: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
@@ -326,11 +325,10 @@ class CLIP(nn.Module):
             text: Input text tensor
             image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
             text_indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_prefix_tokens: Return both prefix and spatial intermediate tokens
-            norm: Apply norm layer to all intermediates
+            return_extra_tokens: Return both prefix and spatial intermediate tokens
+            normalize_intermediates: Apply final norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
             image_output_fmt: Shape of intermediate image feature outputs
-            text_output_fmt: Shape of intermediate text feature outputs
             intermediates_only: Only return intermediate features
         Returns:
 
@@ -341,25 +339,47 @@ class CLIP(nn.Module):
             image_output = self.visual.forward_intermediates(
                 image,
                 indices=image_indices,
-                return_prefix_tokens=return_prefix_tokens,
-                norm=norm,
+                return_extra_tokens=return_extra_tokens,
+                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=image_output_fmt,
                 intermediates_only=intermediates_only,
             )
+            image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
             output.update(image_output)
 
         if text is not None:
-            text_output = self.visual.forward_intermediates(
-                text,
-                indices=text_indices,
-                return_prefix_tokens=return_prefix_tokens,
-                norm=norm,
-                stop_early=stop_early,
-                output_fmt=text_output_fmt,
-                intermediates_only=intermediates_only,
+            cast_dtype = self.transformer.get_cast_dtype()
+            x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+            x = x + self.positional_embedding.to(cast_dtype)
+            x, intermediates = self.transformer.forward_intermediates(
+                x,
+                attn_mask=self.attn_mask,
+                indices=text_indices
             )
-            output.update(text_output)
+            if normalize_intermediates:
+                intermediates = [self.ln_final(xi) for xi in intermediates]
+
+            if self.pool_type and self.pool_type != 'none':
+                pooled_intermediates = [text_global_pool(xi, text, pool_type=self.pool_type) for xi in intermediates]
+                if return_extra_tokens:
+                    pooled_intermediates = [pi[0] for pi in pooled_intermediates]
+                    output["text_intermediates_extra"] = pooled_intermediates
+                intermediates = [pi[-1] for pi in pooled_intermediates]
+            output["text_intermediates"] = intermediates
+
+            x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
+
+            x = text_global_pool(x, text, self.text_pool_type)
+
+            if self.text_projection is not None:
+                if isinstance(self.text_projection, nn.Linear):
+                    x = self.text_projection(x)
+                else:
+                    x = x @ self.text_projection
+
+            x = F.normalize(x, dim=-1)
+            output["text_features"] = x
 
         if include_logit_scale_bias:
             output["logit_scale"] = self.logit_scale.exp()
@@ -467,8 +487,8 @@ class CustomTextCLIP(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_indices: Optional[Union[int, List[int]]] = None,
             text_indices: Optional[Union[int, List[int]]] = None,
-            return_prefix_tokens: bool = False,
-            norm: bool = False,
+            return_extra_tokens: bool = False,
+            normalize_intermediates: bool = False,
             stop_early: bool = False,
             image_output_fmt: str = 'NCHW',
             text_output_fmt: str = 'NLC',
@@ -483,8 +503,8 @@ class CustomTextCLIP(nn.Module):
             text: Input text tensor
             image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
             text_indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_prefix_tokens: Return both prefix and spatial intermediate tokens
-            norm: Apply norm layer to all intermediates
+            return_extra_tokens: Return both prefix and spatial intermediate tokens
+            normalize_intermediates: Apply final norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
             image_output_fmt: Shape of intermediate image feature outputs
             text_output_fmt: Shape of intermediate text feature outputs
@@ -504,8 +524,8 @@ class CustomTextCLIP(nn.Module):
             image_output = self.visual.forward_intermediates(
                 image,
                 indices=image_indices,
-                return_prefix_tokens=return_prefix_tokens,
-                norm=norm,
+                return_extra_tokens=return_extra_tokens,
+                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=image_output_fmt,
                 intermediates_only=intermediates_only,
@@ -517,8 +537,8 @@ class CustomTextCLIP(nn.Module):
             text_output = self.text.forward_intermediates(
                 text,
                 indices=text_indices,
-                return_prefix_tokens=return_prefix_tokens,
-                norm=norm,
+                return_extra_tokens=return_extra_tokens,
+                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=text_output_fmt,
                 intermediates_only=intermediates_only,
