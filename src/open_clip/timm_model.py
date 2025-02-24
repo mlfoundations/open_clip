@@ -163,20 +163,25 @@ class TimmModel(nn.Module):
             intermediates_only: Only return intermediate features
         Returns:
         """
+        extra_args = {}
+        if return_extra_tokens:
+            extra_args['return_prefix_tokens'] = True
         output = self.trunk.forward_intermediates(
                 x,
                 indices=indices,
-                return_prefix_tokens=return_extra_tokens,
                 norm=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=output_fmt,
                 intermediates_only=intermediates_only,
+                **extra_args,
             )
 
         if intermediates_only:
             return {'image_intermediates': output}
         else:
-            image_features = self.head(output[0])
+            image_features = output[0]  # output is tuple (features, intermediates)
+            image_features = self.trunk.forward_head(image_features)  # run through timm pooling / projection
+            image_features = self.head(image_features) # run through adapter pooling / projection
             return {'image_features': image_features, 'image_intermediates': output[1]}
 
     def forward(self, x):

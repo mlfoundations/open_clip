@@ -769,7 +769,7 @@ class VisionTransformer(nn.Module):
         # forward pass
         B, _, height, width = x.shape
         x = self._embeds(x)
-        x, intermediates = self.transformer(
+        x, intermediates = self.transformer.forward_intermediates(
             x,
             indices=indices,
             stop_early=stop_early,
@@ -800,6 +800,10 @@ class VisionTransformer(nn.Module):
             return output
 
         pooled, _ = self._pool(x)
+
+        if self.proj is not None:
+            pooled = pooled @ self.proj
+
         output['image_features'] = pooled
 
         return output
@@ -1026,8 +1030,9 @@ class TextTransformer(nn.Module):
         output = {}
 
         if self.cls_emb is not None:
-            seq_intermediates = [xi[:-1] for xi in intermediates]
+            seq_intermediates = [xi[:-1] for xi in intermediates]  # separate concat'd class token from sequence
             if return_extra_tokens:
+                # return class tokens separately
                 cls_intermediates = [xi[-1:] for xi in intermediates]
                 output['text_intermediates_extra'] = cls_intermediates
             intermediates = seq_intermediates
@@ -1166,6 +1171,15 @@ class MultimodalTransformer(Transformer):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
+
+    def forward_intermediates(
+            self,
+            x: torch.Tensor,
+            attn_mask: Optional[torch.Tensor] = None,
+            indices: Optional[Union[int, List[int]]] = None,
+            stop_early: bool = False,
+    ):
+        assert False, "Not currently implemented for MultimodalTransformer w/ xattn"
 
     def forward(self, image_embs, text_embs):
         seq_len = text_embs.shape[1]
