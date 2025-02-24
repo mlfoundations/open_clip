@@ -339,6 +339,12 @@ class CLIP(nn.Module):
 
         """
         output = {}
+        if intermediates_only:
+            # intermediates only disables final feature normalization, and include logits
+            normalize = False
+            include_logits = False
+        if include_logits:
+            assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
 
         if image is not None:
             image_output = self.visual.forward_intermediates(
@@ -529,10 +535,12 @@ class CustomTextCLIP(nn.Module):
 
         """
         output = {}
+        if intermediates_only:
+            # intermediates only disables final feature normalization, and include logits
+            normalize = False
+            include_logits = False
         if include_logits:
             assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
-        if include_logits:
-            intermediates_only = False
 
         if image is not None:
             image_output = self.visual.forward_intermediates(
