@@ -73,6 +73,10 @@ with torch.no_grad(), torch.cuda.amp.autocast():
 print("Label probs:", text_probs)  # prints: [[1., 0., 0.]]
 ```
 
+If model uses `timm` image encoders (convnext, siglip, eva, etc) ensure the latest timm is installed. Upgrade `timm` if you see 'Unknown model' errors for the image encoder.
+
+If model uses transformers tokenizers, ensure `transformers` is installed.
+
 See also this [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb).
 
 To compute billions of embeddings efficiently, you can use [clip-retrieval](https://github.com/rom1504/clip-retrieval) which has openclip support.
