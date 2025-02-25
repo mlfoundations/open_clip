@@ -744,22 +744,22 @@ class VisionTransformer(nn.Module):
             self,
             x: torch.Tensor,
             indices: Optional[Union[int, List[int]]] = None,
-            return_extra_tokens: bool = False,
-            normalize_intermediates: bool = False,
             stop_early: bool = False,
-            output_fmt: str = 'NCHW',
+            normalize_intermediates: bool = False,
             intermediates_only: bool = False,
+            output_fmt: str = 'NCHW',
+            output_extra_tokens: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
 
         Args:
             x: Input image tensor
             indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_extra_tokens: Return both extra class, eot tokens
-            normalize_intermediates: Apply final norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
-            output_fmt: Shape of intermediate feature outputs
             intermediates_only: Only return intermediate features
+            normalize_intermediates: Apply final norm layer to all intermediates
+            output_fmt: Shape of intermediate feature outputs
+            output_extra_tokens: Return both extra prefix class tokens
         Returns:
 
         """
@@ -792,9 +792,8 @@ class VisionTransformer(nn.Module):
             intermediates = [y.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for y in intermediates]
 
         output = {'image_intermediates': intermediates}
-        if prefix_tokens is not None and return_extra_tokens:
-            # return_prefix not support in torchscript due to poor type handling
-            output = {'image_prefix': prefix_tokens}
+        if prefix_tokens is not None and output_extra_tokens:
+            output['image_intermediates_prefix'] = prefix_tokens
 
         if intermediates_only:
             return output
@@ -993,22 +992,22 @@ class TextTransformer(nn.Module):
             self,
             text: torch.Tensor,
             indices: Optional[Union[int, List[int]]] = None,
-            return_extra_tokens: bool = False,
-            normalize_intermediates: bool = False,
             stop_early: bool = False,
-            output_fmt: str = 'NCHW',
+            normalize_intermediates: bool = False,
             intermediates_only: bool = False,
+            output_fmt: str = 'NCHW',
+            output_extra_tokens: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
 
         Args:
             text: Input text ids
             indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_extra_tokens: Return both prefix and intermediate tokens
-            normalize_intermediates: Apply norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
-            output_fmt: Shape of intermediate feature outputs
+            normalize_intermediates: Apply norm layer to all intermediates
             intermediates_only: Only return intermediate features
+            output_fmt: Shape of intermediate feature outputs
+            output_extra_tokens: Return both prefix and intermediate tokens
         Returns:
 
         """
@@ -1030,11 +1029,11 @@ class TextTransformer(nn.Module):
         output = {}
 
         if self.cls_emb is not None:
-            seq_intermediates = [xi[:-1] for xi in intermediates]  # separate concat'd class token from sequence
-            if return_extra_tokens:
-                # return class tokens separately
-                cls_intermediates = [xi[-1:] for xi in intermediates]
-                output['text_intermediates_extra'] = cls_intermediates
+            seq_intermediates = [xi[:, :-1] for xi in intermediates]  # separate concat'd class token from sequence
+            if output_extra_tokens:
+                # return suffix class tokens separately
+                cls_intermediates = [xi[:, -1:] for xi in intermediates]
+                output['text_intermediates_suffix'] = cls_intermediates
             intermediates = seq_intermediates
         output['text_intermediates'] = intermediates
 

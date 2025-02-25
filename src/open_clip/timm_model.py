@@ -145,34 +145,34 @@ class TimmModel(nn.Module):
             self,
             x: torch.Tensor,
             indices: Optional[Union[int, List[int]]] = None,
-            return_extra_tokens: bool = False,
-            normalize_intermediates: bool = False,
             stop_early: bool = False,
-            output_fmt: str = 'NCHW',
+            normalize_intermediates: bool = False,
             intermediates_only: bool = False,
+            output_fmt: str = 'NCHW',
+            output_extra_tokens: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
 
         Args:
             x: Input image tensor
             indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_extra_tokens: Return both prefix and spatial intermediate tokens
-            normalize_intermediates: Apply norm layer to all intermediates
             stop_early: Stop iterating over blocks when last desired intermediate hit
-            output_fmt: Shape of intermediate feature outputs
+            normalize_intermediates: Apply norm layer to all intermediates
             intermediates_only: Only return intermediate features
+            output_fmt: Shape of intermediate feature outputs
+            output_extra_tokens: Return both prefix and spatial intermediate tokens
         Returns:
         """
         extra_args = {}
-        if return_extra_tokens:
+        if output_extra_tokens:
             extra_args['return_prefix_tokens'] = True
         output = self.trunk.forward_intermediates(
                 x,
                 indices=indices,
+                intermediates_only=intermediates_only,
                 norm=normalize_intermediates,
                 stop_early=stop_early,
                 output_fmt=output_fmt,
-                intermediates_only=intermediates_only,
                 **extra_args,
             )
 

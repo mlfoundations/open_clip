@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, List, Optional, Union
 
 import torch
 from torch import nn
@@ -165,6 +165,88 @@ class CoCa(nn.Module):
     def encode_text(self, text, normalize: bool = True):
         text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent
+
+    def forward_intermediates(
+            self,
+            image: Optional[torch.Tensor] = None,
+            text: Optional[torch.Tensor] = None,
+            image_indices: Optional[Union[int, List[int]]] = None,
+            text_indices: Optional[Union[int, List[int]]] = None,
+            stop_early: bool = False,
+            normalize: bool = True,
+            normalize_intermediates: bool = False,
+            intermediates_only: bool = False,
+            image_output_fmt: str = 'NCHW',
+            image_output_extra_tokens: bool = False,
+            text_output_fmt: str = 'NLC',
+            text_output_extra_tokens: bool = False,
+            output_logits: bool = False,
+            output_logit_scale_bias: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        """ Forward features that returns intermediates.
+
+        Args:
+            image: Input image tensor
+            text: Input text tensor
+            image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
+            text_indices: Take last n blocks if int, all if None, select matching indices if sequence
+            stop_early: Stop iterating over blocks when last desired intermediate hit
+            normalize: L2 Normalize final image and text features (if present)
+            normalize_intermediates: Apply final encoder norm layer to all intermediates (if possible)
+            intermediates_only: Only return intermediate features, do not return final features
+            image_output_fmt: Shape of intermediate image feature outputs
+            image_output_extra_tokens: Return both prefix and spatial intermediate tokens
+            text_output_fmt: Shape of intermediate text feature outputs
+            text_output_extra_tokens: Return both prefix and spatial intermediate tokens
+            output_logits: Include logits in output
+            output_logit_scale_bias: Include the logit scale bias in the output
+        Returns:
+
+        """
+        output = {}
+        if intermediates_only:
+            # intermediates only disables final feature normalization, and include logits
+            normalize = False
+            output_logits = False
+        if output_logits:
+            assert False, 'FIXME, needs implementing'
+
+        if image is not None:
+            image_output = self.visual.forward_intermediates(
+                image,
+                indices=image_indices,
+                stop_early=stop_early,
+                normalize_intermediates=normalize_intermediates,
+                intermediates_only=intermediates_only,
+                output_fmt=image_output_fmt,
+                output_extra_tokens=image_output_extra_tokens,
+            )
+            if normalize:
+                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
+            output.update(image_output)
+
+        if text is not None:
+            text_output = self.text.forward_intermediates(
+                text,
+                indices=text_indices,
+                stop_early=stop_early,
+                normalize_intermediates=normalize_intermediates,
+                intermediates_only=intermediates_only,
+                output_fmt=text_output_fmt,
+                output_extra_tokens=text_output_extra_tokens,
+            )
+            if normalize:
+                text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
+            output.update(text_output)
+
+        # FIXME text decoder
+        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
+        if output_logit_scale_bias:
+            output["logit_scale"] = logit_scale_exp
+            if self.logit_bias is not None:
+                output['logit_bias'] = self.logit_bias
+
+        return output
 
     def forward(
             self,

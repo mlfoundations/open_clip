@@ -311,14 +311,16 @@ class CLIP(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_indices: Optional[Union[int, List[int]]] = None,
             text_indices: Optional[Union[int, List[int]]] = None,
-            return_extra_tokens: bool = False,
-            normalize_intermediates: bool = False,
-            normalize: bool = True,
             stop_early: bool = False,
-            image_output_fmt: str = 'NCHW',
+            normalize: bool = True,
+            normalize_intermediates: bool = False,
             intermediates_only: bool = False,
-            include_logits: bool = False,
-            include_logit_scale_bias: bool = False,
+            image_output_fmt: str = 'NCHW',
+            image_output_extra_tokens: bool = False,
+            text_output_fmt: str = 'NLC',
+            text_output_extra_tokens: bool = False,
+            output_logits: bool = False,
+            output_logit_scale_bias: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
 
@@ -327,14 +329,16 @@ class CLIP(nn.Module):
             text: Input text tensor
             image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
             text_indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_extra_tokens: Return both prefix and spatial intermediate tokens
+            stop_early: Stop iterating over blocks when last desired intermediate hit
             normalize_intermediates: Apply final norm layer to all intermediates
             normalize: L2 Normalize final features
-            stop_early: Stop iterating over blocks when last desired intermediate hit
-            image_output_fmt: Shape of intermediate image feature outputs
             intermediates_only: Only return intermediate features, do not return final features
-            include_logits: Include logits in output
-            include_logit_scale_bias: Include the logit scale bias in the output
+            image_output_fmt: Shape of intermediate image feature outputs
+            image_output_extra_tokens: Return both prefix and spatial intermediate tokens
+            text_output_fmt: Shape of intermediate text feature outputs (ignored for this model)
+            text_output_extra_tokens: Return both prefix and spatial intermediate tokens (ignored for this model)
+            output_logits: Include logits in output
+            output_logit_scale_bias: Include the logit scale bias in the output
         Returns:
 
         """
@@ -342,19 +346,19 @@ class CLIP(nn.Module):
         if intermediates_only:
             # intermediates only disables final feature normalization, and include logits
             normalize = False
-            include_logits = False
-        if include_logits:
+            output_logits = False
+        if output_logits:
             assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
 
         if image is not None:
             image_output = self.visual.forward_intermediates(
                 image,
                 indices=image_indices,
-                return_extra_tokens=return_extra_tokens,
-                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
-                output_fmt=image_output_fmt,
+                normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
+                output_fmt=image_output_fmt,
+                output_extra_tokens=image_output_extra_tokens,
             )
             if normalize:
                 image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
@@ -375,23 +379,21 @@ class CLIP(nn.Module):
             # NOTE this model doesn't support cls embed in text transformer, no need for extra intermediate tokens
             output["text_intermediates"] = intermediates
 
-            x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
+            if not intermediates_only:
+                x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
+                x = text_global_pool(x, text, self.text_pool_type)
+                if self.text_projection is not None:
+                    if isinstance(self.text_projection, nn.Linear):
+                        x = self.text_projection(x)
+                    else:
+                        x = x @ self.text_projection
+                if normalize:
+                    x = F.normalize(x, dim=-1)
+                output["text_features"] = x
 
-            x = text_global_pool(x, text, self.text_pool_type)
+        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
 
-            if self.text_projection is not None:
-                if isinstance(self.text_projection, nn.Linear):
-                    x = self.text_projection(x)
-                else:
-                    x = x @ self.text_projection
-
-            if normalize:
-                x = F.normalize(x, dim=-1)
-            output["text_features"] = x
-
-        logit_scale_exp = self.logit_scale.exp() if include_logits or include_logit_scale_bias else None
-
-        if include_logits:
+        if output_logits:
             image_logits = logit_scale_exp * output["image_features"] @ output["text_features"].T
             if self.logit_bias is not None:
                 image_logits += self.logit_bias
@@ -399,7 +401,7 @@ class CLIP(nn.Module):
             output["image_logits"] = image_logits
             output["text_logits"] = text_logits
 
-        if include_logit_scale_bias:
+        if output_logit_scale_bias:
             output["logit_scale"] = logit_scale_exp
             if self.logit_bias is not None:
                 output['logit_bias'] = self.logit_bias
@@ -505,15 +507,16 @@ class CustomTextCLIP(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_indices: Optional[Union[int, List[int]]] = None,
             text_indices: Optional[Union[int, List[int]]] = None,
-            return_extra_tokens: bool = False,
-            normalize_intermediates: bool = False,
-            normalize: bool = True,
             stop_early: bool = False,
-            image_output_fmt: str = 'NCHW',
-            text_output_fmt: str = 'NLC',
+            normalize: bool = True,
+            normalize_intermediates: bool = False,
             intermediates_only: bool = False,
-            include_logits: bool = False,
-            include_logit_scale_bias: bool = False,
+            image_output_fmt: str = 'NCHW',
+            image_output_extra_tokens: bool = False,
+            text_output_fmt: str = 'NLC',
+            text_output_extra_tokens: bool = False,
+            output_logits: bool = False,
+            output_logit_scale_bias: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
 
@@ -522,15 +525,16 @@ class CustomTextCLIP(nn.Module):
             text: Input text tensor
             image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
             text_indices: Take last n blocks if int, all if None, select matching indices if sequence
-            return_extra_tokens: Return both prefix and spatial intermediate tokens
-            normalize_intermediates: Apply final encoder norm layer to all intermediates (if possible)
-            normalize: L2 Normalize final image and text features (if present)
             stop_early: Stop iterating over blocks when last desired intermediate hit
-            image_output_fmt: Shape of intermediate image feature outputs
-            text_output_fmt: Shape of intermediate text feature outputs
+            normalize: L2 Normalize final image and text features (if present)
+            normalize_intermediates: Apply final encoder norm layer to all intermediates (if possible)
             intermediates_only: Only return intermediate features, do not return final features
-            include_logits: Include logits in output
-            include_logit_scale_bias: Include the logit scale bias in the output
+            image_output_fmt: Shape of intermediate image feature outputs
+            image_output_extra_tokens: Return both prefix and spatial intermediate tokens
+            text_output_fmt: Shape of intermediate text feature outputs
+            text_output_extra_tokens: Return both prefix and spatial intermediate tokens
+            output_logits: Include logits in output
+            output_logit_scale_bias: Include the logit scale bias in the output
         Returns:
 
         """
@@ -538,19 +542,19 @@ class CustomTextCLIP(nn.Module):
         if intermediates_only:
             # intermediates only disables final feature normalization, and include logits
             normalize = False
-            include_logits = False
-        if include_logits:
+            output_logits = False
+        if output_logits:
             assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
 
         if image is not None:
             image_output = self.visual.forward_intermediates(
                 image,
                 indices=image_indices,
-                return_extra_tokens=return_extra_tokens,
-                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
-                output_fmt=image_output_fmt,
+                normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
+                output_fmt=image_output_fmt,
+                output_extra_tokens=image_output_extra_tokens,
             )
             if normalize:
                 image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
@@ -560,19 +564,19 @@ class CustomTextCLIP(nn.Module):
             text_output = self.text.forward_intermediates(
                 text,
                 indices=text_indices,
-                return_extra_tokens=return_extra_tokens,
-                normalize_intermediates=normalize_intermediates,
                 stop_early=stop_early,
-                output_fmt=text_output_fmt,
+                normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
+                output_fmt=text_output_fmt,
+                output_extra_tokens=text_output_extra_tokens,
             )
             if normalize:
                 text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
             output.update(text_output)
 
-        logit_scale_exp = self.logit_scale.exp() if include_logits or include_logit_scale_bias else None
+        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
 
-        if include_logits:
+        if output_logits:
             image_logits = logit_scale_exp * output["image_features"] @ output["text_features"].T
             if self.logit_bias is not None:
                 image_logits += self.logit_bias
@@ -580,7 +584,7 @@ class CustomTextCLIP(nn.Module):
             output["image_logits"] = image_logits
             output["text_logits"] = text_logits
 
-        if include_logit_scale_bias:
+        if output_logit_scale_bias:
             output["logit_scale"] = logit_scale_exp
             if self.logit_bias is not None:
                 output['logit_bias'] = self.logit_bias
