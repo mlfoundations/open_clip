@@ -166,7 +166,7 @@ class TimmModel(nn.Module):
         extra_args = {}
         if output_extra_tokens:
             extra_args['return_prefix_tokens'] = True
-        output = self.trunk.forward_intermediates(
+        trunk_output = self.trunk.forward_intermediates(
                 x,
                 indices=indices,
                 intermediates_only=intermediates_only,
@@ -176,13 +176,21 @@ class TimmModel(nn.Module):
                 **extra_args,
             )
 
+        return_dict = {}
+        intermediates = trunk_output if intermediates_only else trunk_output[1]
+        if output_extra_tokens and intermediates and isinstance(intermediates[0], tuple):
+            intermediates_prefix = [xi[1] for xi in intermediates]
+            intermediates = [xi[0] for xi in intermediates]
+            return_dict['image_intermediates_prefix'] = intermediates_prefix
+
+        return_dict['image_intermediates'] = intermediates
         if intermediates_only:
-            return {'image_intermediates': output}
-        else:
-            image_features = output[0]  # output is tuple (features, intermediates)
-            image_features = self.trunk.forward_head(image_features)  # run through timm pooling / projection
-            image_features = self.head(image_features) # run through adapter pooling / projection
-            return {'image_features': image_features, 'image_intermediates': output[1]}
+            return return_dict
+
+        image_features = self.trunk.forward_head(trunk_output[0])  # run through timm pooling / projection
+        image_features = self.head(image_features) # run through adapter pooling / projection
+        return_dict['image_features'] = image_features
+        return return_dict
 
     def forward(self, x):
         x = self.trunk(x)
