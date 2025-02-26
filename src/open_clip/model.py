@@ -360,7 +360,7 @@ class CLIP(nn.Module):
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
             )
-            if normalize:
+            if normalize and "image_features" in image_output:
                 image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
             output.update(image_output)
 
@@ -556,7 +556,7 @@ class CustomTextCLIP(nn.Module):
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
             )
-            if normalize:
+            if normalize and "image_features" in image_output:
                 image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
             output.update(image_output)
 
@@ -570,7 +570,7 @@ class CustomTextCLIP(nn.Module):
                 output_fmt=text_output_fmt,
                 output_extra_tokens=text_output_extra_tokens,
             )
-            if normalize:
+            if normalize and "text_features" in text_output:
                 text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
             output.update(text_output)
 
