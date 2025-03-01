@@ -1,8 +1,10 @@
-from itertools import repeat
 import collections.abc
+from itertools import repeat
+from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn as nn
+from torch import _assert
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 
@@ -87,3 +89,51 @@ def convert_int8_model_to_inference_mode(model):
             int8_original_dtype = m.weight.dtype
             m.prepare_for_eval()
             m.int8_original_dtype = int8_original_dtype
+
+
+def feature_take_indices(
+        num_features: int,
+        indices: Optional[Union[int, List[int]]] = None,
+        as_set: bool = False,
+) -> Tuple[List[int], int]:
+    """ Determine the absolute feature indices to 'take' from.
+
+    Note: This function can be called in forward() so must be torchscript compatible,
+    which requires some incomplete typing and workaround hacks.
+
+    Args:
+        num_features: total number of features to select from
+        indices: indices to select,
+          None -> select all
+          int -> select last n
+          list/tuple of int -> return specified (-ve indices specify from end)
+        as_set: return as a set
+
+    Returns:
+        List (or set) of absolute (from beginning) indices, Maximum index
+    """
+    if indices is None:
+        indices = num_features  # all features if None
+
+    if isinstance(indices, int):
+        # convert int -> last n indices
+        _assert(0 < indices <= num_features, f'last-n ({indices}) is out of range (1 to {num_features})')
+        take_indices = [num_features - indices + i for i in range(indices)]
+    else:
+        take_indices: List[int] = []
+        for i in indices:
+            idx = num_features + i if i < 0 else i
+            _assert(0 <= idx < num_features, f'feature index {idx} is out of range (0 to {num_features - 1})')
+            take_indices.append(idx)
+
+    if not torch.jit.is_scripting() and as_set:
+        return set(take_indices), max(take_indices)
+
+    return take_indices, max(take_indices)
+
+
+def _out_indices_as_tuple(x: Union[int, Tuple[int, ...]]) -> Tuple[int, ...]:
+    if isinstance(x, int):
+        # if indices is an int, take last N features
+        return tuple(range(-x, 0))
+    return tuple(x)
