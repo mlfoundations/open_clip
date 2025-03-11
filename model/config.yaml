@@ -1,0 +1,13 @@
+naive_img_en:
+  class: model.naive.NaiveImageEncoder
+  args:
+    default_arg1: 1
+    default_arg2: 2
+    arg3: 3
+  
+naive_text_en:
+  class: model.naive.NaiveTextEncoder
+  args:
+    default_arg1: 1
+    default_arg2: 2
+    arg3: 3

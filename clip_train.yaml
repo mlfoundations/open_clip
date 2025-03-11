@@ -1,0 +1,31 @@
+default:
+  exp: ContrastiveLearning
+  
+train:
+  epochs: 100
+  batch_size: 64
+  lr: 1e-3
+  scheduler: cosine
+
+dataset:
+  class: naive_dataset
+  args:
+    arg3: 10
+
+img_enc:
+  class: naive_img_en
+  args:
+    arg3: 10
+
+text_enc:
+  class: naive_text_en
+  args:
+    arg3: 10
+
+preprocessor:
+  - class: naive_preprocessor1
+    args:
+      arg3: 10
+  - class: naive_preprocessor2
+    args:
+      arg3: 10

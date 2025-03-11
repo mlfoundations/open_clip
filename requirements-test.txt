@@ -1,4 +1,0 @@
-pytest-split==0.8.0
-pytest==7.2.0
-transformers[sentencepiece]
-timm>=1.0.10

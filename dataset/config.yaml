@@ -1,0 +1,6 @@
+naive_dataset:
+  class: dataset.naive.NaiveDataset
+  args:
+    default_arg1: 1
+    default_arg2: 2
+    arg3: 3
