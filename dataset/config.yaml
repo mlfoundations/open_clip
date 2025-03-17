@@ -1,6 +1,10 @@
 naive_dataset:
-  class: dataset.naive.NaiveDataset
+  class: dataset.CC12M.CC12MDataset
   args:
-    default_arg1: 1
-    default_arg2: 2
-    arg3: 3
+    # default_arg1: 1
+    # default_arg2: 2
+    # arg3: 3
+    # dataset: 'CC12M'
+    # image_folder: '/path/to/cc12m_images'  
+    # metadata_file: '/path/to/cc12m.tsv'    
+    transform: null
