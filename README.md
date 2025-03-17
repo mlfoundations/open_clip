@@ -62,7 +62,7 @@ tokenizer = open_clip.get_tokenizer('ViT-B-32')
 image = preprocess(Image.open("docs/CLIP.png")).unsqueeze(0)
 text = tokenizer(["a diagram", "a dog", "a cat"])
 
-with torch.no_grad(), torch.cuda.amp.autocast():
+with torch.no_grad(), torch.autocast("cuda"):
     image_features = model.encode_image(image)
     text_features = model.encode_text(text)
     image_features /= image_features.norm(dim=-1, keepdim=True)
