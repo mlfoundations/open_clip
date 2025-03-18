@@ -122,15 +122,17 @@ def get_tokenizer(
     if context_length is None:
         context_length = text_config.get('context_length', DEFAULT_CONTEXT_LENGTH)
 
-    model_name = model_name.lower()
     if text_config.get('hf_tokenizer_name', ''):
         tokenizer = HFTokenizer(
-            text_config['hf_tokenizer_name'],
+            model_name,
             context_length=context_length,
             cache_dir=cache_dir,
             **tokenizer_kwargs,
         )
-    elif 'siglip' in model_name:
+        return tokenizer
+    
+    model_name = model_name.lower()
+    if 'siglip' in model_name:
         tn = 'gemma' if 'siglip2'  in model_name else 'mc4' if 'i18n' in model_name else 'c4-en'
         tokenizer = SigLipTokenizer(
             tn,
