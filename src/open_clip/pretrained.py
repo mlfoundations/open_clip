@@ -782,7 +782,8 @@ def download_pretrained_from_hf(
     has_hf_hub(True)
 
     filename = filename or HF_WEIGHTS_NAME
-
+    if os.path.isfile(os.path.join(model_id, filename)):
+        return os.path.join(model_id, filename)
     # Look for .safetensors alternatives and load from it if it exists
     if _has_safetensors:
         for safe_filename in _get_safe_alternatives(filename):
