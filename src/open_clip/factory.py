@@ -404,7 +404,7 @@ def create_model(
                     # QuickGELU compatibility check will happen in after force overrides
                 except Exception as e:
                     logging.error(f"Failed to download weights for tag '{pretrained}': {e}")
-                    checkpoint_path = None # Ensure path is None if download fails
+                    raise RuntimeError(f"Failed to download weights for tag '{pretrained}': {e}")
 
             # Check if `pretrained` is an existing file path
             elif os.path.isfile(pretrained):
@@ -413,7 +413,11 @@ def create_model(
                 checkpoint_path = pretrained
 
             else:
-                logging.warning(f"Pretrained value '{pretrained}' is not a known tag or valid file path.")
+                logging.error(
+                    f"Pretrained tag or path ({pretrained}) for '{model_name_cleaned}' not found. "
+                    f"Available tags: {list_pretrained_tags_by_model(model_name_cleaned)}"
+                )
+                raise RuntimeError(f"Pretrained value '{pretrained}' is not a known tag or valid file path")
 
     # Apply model config overrides
     if model_cfg is None:
@@ -609,6 +613,14 @@ def create_model(
         # Enable dictionary output if model supports it
         model.output_dict = True
 
+    if jit:
+        logging.info("Attempting JIT scripting...")
+        try:
+            model = torch.jit.script(model)
+            logging.info("JIT scripting successful.")
+        except Exception as e:
+            logging.warning(f"JIT scripting failed: {e}. Returning non-JIT model.")
+
     # Prepare and set final preprocessing configuration on the model
     final_preprocess_cfg = deepcopy(preprocess_cfg) # Start with config determined earlier
     # Ensure image_size in preprocess config matches the actual model's visual component size, if possible
@@ -618,17 +630,10 @@ def create_model(
          final_preprocess_cfg['size'] = visual_module.image_size
     # Apply force_preprocess_cfg overrides (highest priority for preprocessing)
     final_preprocess_cfg = merge_preprocess_dict(final_preprocess_cfg, force_preprocess_cfg or {})
+
     # Attach the final config to the model
     set_model_preprocess_cfg(model, final_preprocess_cfg)
     logging.info(f"Final image preprocessing configuration set: {final_preprocess_cfg}")
-
-    if jit:
-        logging.info("Attempting JIT scripting...")
-        try:
-            model = torch.jit.script(model)
-            logging.info("JIT scripting successful.")
-        except Exception as e:
-            logging.warning(f"JIT scripting failed: {e}. Returning non-JIT model.")
 
     # Log completion and return the configured model
     logging.info(f"Model {model_name} creation process complete.")
@@ -845,6 +850,7 @@ def create_loss(args):
 def create_model_and_transforms(
         model_name: str,
         pretrained: Optional[str] = None,
+        load_weights: bool = True,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
         jit: bool = False,
@@ -861,7 +867,7 @@ def create_model_and_transforms(
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
-        load_weights_only: bool = True,
+        weights_only: bool = True,
         **model_kwargs,
 ):
     force_preprocess_cfg = merge_preprocess_kwargs(
@@ -875,6 +881,7 @@ def create_model_and_transforms(
     model = create_model(
         model_name,
         pretrained,
+        load_weights=load_weights,
         precision=precision,
         device=device,
         jit=jit,
@@ -887,7 +894,7 @@ def create_model_and_transforms(
         pretrained_hf=pretrained_hf,
         cache_dir=cache_dir,
         output_dict=output_dict,
-        weights_only=load_weights_only,
+        weights_only=weights_only,
         **model_kwargs,
     )
 
@@ -921,7 +928,7 @@ def create_model_from_pretrained(
         image_resize_mode: Optional[str] = None,  # only effective for inference
         return_transform: bool = True,
         cache_dir: Optional[str] = None,
-        load_weights_only: bool = True,
+        weights_only: bool = True,
         **model_kwargs,
 ):
     force_preprocess_cfg = merge_preprocess_kwargs(
@@ -944,7 +951,7 @@ def create_model_from_pretrained(
         force_preprocess_cfg=force_preprocess_cfg,
         cache_dir=cache_dir,
         require_pretrained=True,
-        weights_only=load_weights_only,
+        weights_only=weights_only,
         **model_kwargs,
     )
 
