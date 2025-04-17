@@ -422,9 +422,10 @@ def create_model(
     # Apply model config overrides
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
+    text_cfg = model_cfg['text_cfg']
+    vision_cfg = model_cfg['vision_cfg']
     if force_quick_gelu:
         model_cfg["quick_gelu"] = True
-    vision_cfg = model_cfg.setdefault("vision_cfg", {})
     if force_patch_dropout is not None:
         vision_cfg["patch_dropout"] = force_patch_dropout
     if force_image_size is not None:
@@ -452,42 +453,31 @@ def create_model(
     else:
         logging.info("No potential checkpoint path found from config source or pretrained arg.")
 
-    # Decide whether to load *default* base weights via constructor config flags
-    load_base_image_weights_via_flag = False # Track if default image weights are enabled
-    load_base_text_weights_via_flag = False # Track if default text weights are enabled
+    # Set default base weight loading flags for image and text towers
+    # Only load base pretrained weights if other weights will not be loaded into respective towers
+    enable_default_image_weights = pretrained_image and pretrained_image_path is None and checkpoint_path is None
+    enable_default_text_weights = pretrained_text and pretrained_text_path is None and checkpoint_path is None
     is_timm_model = 'timm_model_name' in model_cfg.get("vision_cfg", {})
     is_hf_text_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
-
-    # Only enable default base weights if no full CLIP checkpoint will be loaded
-    if checkpoint_path is None:
-        # Check if default image base weights requested via flag
-        if pretrained_image:
-            if is_timm_model:
-                # Modify config passed to constructor to enable timm loading
-                model_cfg.setdefault("vision_cfg", {})['timm_model_pretrained'] = True
-                load_base_image_weights_via_flag = True
-                logging.info("Enabling default pretrained timm vision tower via config flag (no CLIP checkpoint found).")
-            else:
-                # Cannot load timm weights if model is not timm-based
-                logging.warning('`pretrained_image=True` ignored; model is not configured as timm-based.')
-        # Check if default text base weights should load via flag (new pretrained_text arg)
-        if pretrained_text: # Use the new flag, default is True
-            if is_hf_text_model:
-                 # Modify config passed to constructor to enable HF loading
-                 text_cfg = model_cfg.setdefault("text_cfg", {})
-                 # We set it True here, assuming the underlying HF model loader respects it.
-                 # If 'hf_model_pretrained' was explicitly False in the base config, this overrides it.
-                 text_cfg['hf_model_pretrained'] = True
-                 load_base_text_weights_via_flag = True
-                 logging.info("Pretrained HF text transformer base weights enabled via config flag (no CLIP checkpoint found).")
-            # else: No warning needed if not HF text model, flag has no effect
-    else:
-        # CLIP checkpoint exists, so ignore requests for default base weights
-        if pretrained_image:
-            logging.warning(f"`pretrained_image=True` (for default base weights) ignored as CLIP weights are being loaded from {checkpoint_path}.")
-        if pretrained_text:
-             # Technically redundant to log, but good for clarity
-             logging.info(f"`pretrained_text=True` (for default base weights) ignored as CLIP weights are being loaded from {checkpoint_path}.")
+    # FIXME remove excess logs after verified
+    if is_timm_model:
+        vision_cfg['timm_model_pretrained'] = enable_default_image_weights
+        if enable_default_image_weights:
+            logging.info("Setting timm_model_pretrained=True in config.")
+        elif pretrained_image and checkpoint_path is not None:
+            logging.warning(
+                f"`pretrained_image=True` ignored as full CLIP weights specified. Setting timm_model_pretrained=False.")
+        else:
+            logging.info("Setting timm_model_pretrained=False in config.")  # Default case
+    if is_hf_text_model:
+        text_cfg['hf_model_pretrained'] = enable_default_text_weights
+        if enable_default_text_weights:
+            logging.info("Setting hf_model_pretrained=True in config.")
+        elif pretrained_text and checkpoint_path is not None:
+            logging.info(
+                f"`pretrained_text=True` ignored as full CLIP weights specified. Setting hf_model_pretrained=False.")
+        else:
+            logging.info("Setting hf_model_pretrained=False in config.")  # Handles pretrained_text=False case
 
     # Determine model class (CLIP, CustomTextCLIP, CoCa)
     custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
@@ -532,9 +522,6 @@ def create_model(
         except Exception as e:
              logging.error(f"Error loading full checkpoint {checkpoint_path}: {e}")
              # Error will be raised later if require_pretrained is True
-    else:
-        # No path determined for full CLIP weights
-        logging.info("No full CLIP checkpoint path specified or found.")
 
     # Load tower-specific weights (image and text), after the full CLIP checkpoint, potentially overwriting parts.
     pretrained_image_loaded = False # Track if specific image weights loaded
@@ -594,7 +581,7 @@ def create_model(
             # Path provided is not a valid file
             logging.warning(f"Invalid file path specified for pretrained_text_path: {pretrained_text_path}")
 
-    partially_loaded= load_base_image_weights_via_flag or load_base_text_weights_via_flag \
+    partially_loaded = enable_default_text_weights or enable_default_image_weights \
         or pretrained_image_loaded or pretrained_text_loaded
     if require_pretrained and not pretrained_loaded:
          # If CLIP weights were required but failed to load, raise an error.
