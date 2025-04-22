@@ -405,13 +405,10 @@ def create_model(
                 except Exception as e:
                     logging.error(f"Failed to download weights for tag '{pretrained}': {e}")
                     raise RuntimeError(f"Failed to download weights for tag '{pretrained}': {e}")
-
-            # Check if `pretrained` is an existing file path
             elif os.path.isfile(pretrained):
                 # Handle pretrained file path
                 logging.info(f"`pretrained` specifies file path: {pretrained}")
                 checkpoint_path = pretrained
-
             else:
                 logging.error(
                     f"Pretrained tag or path ({pretrained}) for '{model_name_cleaned}' not found. "
@@ -459,30 +456,15 @@ def create_model(
     enable_default_text_weights = pretrained_text and pretrained_text_path is None and checkpoint_path is None
     is_timm_model = 'timm_model_name' in model_cfg.get("vision_cfg", {})
     is_hf_text_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
-    # FIXME remove excess logs after verified
     if is_timm_model:
         vision_cfg['timm_model_pretrained'] = enable_default_image_weights
-        if enable_default_image_weights:
-            logging.info("Setting timm_model_pretrained=True in config.")
-        elif pretrained_image and checkpoint_path is not None:
-            logging.warning(
-                f"`pretrained_image=True` ignored as full CLIP weights specified. Setting timm_model_pretrained=False.")
-        else:
-            logging.info("Setting timm_model_pretrained=False in config.")  # Default case
     if is_hf_text_model:
         text_cfg['hf_model_pretrained'] = enable_default_text_weights
-        if enable_default_text_weights:
-            logging.info("Setting hf_model_pretrained=True in config.")
-        elif pretrained_text and checkpoint_path is not None:
-            logging.info(
-                f"`pretrained_text=True` ignored as full CLIP weights specified. Setting hf_model_pretrained=False.")
-        else:
-            logging.info("Setting hf_model_pretrained=False in config.")  # Handles pretrained_text=False case
 
     # Determine model class (CLIP, CustomTextCLIP, CoCa)
     custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
     if custom_text:
-        # Use CustomTextCLIP or CoCa if multimodal_cfg is present
+        # Use CustomTextCLIP (or CoCa if multimodal_cfg is present)
         if "multimodal_cfg" in model_cfg:
             model_class = CoCa
         else:
@@ -613,7 +595,7 @@ def create_model(
     # Ensure image_size in preprocess config matches the actual model's visual component size, if possible
     visual_module = getattr(model, 'visual', None)
     if visual_module is not None and hasattr(visual_module, 'image_size'):
-        # Update size from the instantiated visual module
+        # Update preprocess size from the instantiated visual module
          final_preprocess_cfg['size'] = visual_module.image_size
     # Apply force_preprocess_cfg overrides (highest priority for preprocessing)
     final_preprocess_cfg = merge_preprocess_dict(final_preprocess_cfg, force_preprocess_cfg or {})
@@ -705,9 +687,6 @@ def get_tokenizer(
     if config is None:
         logging.warning(f"Model configuration not found, returning default SimpleTokenizer.")
         return SimpleTokenizer(context_length=context_length or DEFAULT_CONTEXT_LENGTH, **kwargs)
-
-    # Log final source determination
-    logging.info(f"Final configuration source for tokenizer: {config_source_description}")
 
     # Safely access text_cfg even if config is {} (from non-builtin name case)
     text_config = config.get('text_cfg', {})
