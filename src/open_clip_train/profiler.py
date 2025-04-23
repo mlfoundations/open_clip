@@ -6,6 +6,7 @@ import pandas as pd
 from torch.utils.flop_counter import FlopCounterMode
 try:
     import fvcore
+    import fvcore.nn
 except:
     fvcore = None
 
@@ -18,7 +19,9 @@ parser.add_argument('--results-file', default='', type=str, metavar='FILENAME',
                     help='Output csv file for results')
 parser.add_argument('--profiler', default='torch', type=str, choices=['torch', 'fvcore'])
 parser.add_argument('--batch-size', default=1, type=int, help='Batch size for profiling')
-
+parser.add_argument(
+    "--device", default="cuda", type=str, help="Accelerator to use."
+)
 
 def profile_fvcore(
         model,
