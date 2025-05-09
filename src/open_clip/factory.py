@@ -18,7 +18,7 @@ from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
-from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, DEFAULT_CONTEXT_LENGTH
+from .tokenizer import HFTokenizer, SimpleTokenizer, CLIPS_Tokenizer, SigLipTokenizer, DEFAULT_CONTEXT_LENGTH
 
 HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
@@ -124,12 +124,17 @@ def get_tokenizer(
 
     model_name = model_name.lower()
     if text_config.get('hf_tokenizer_name', ''):
-        tokenizer = HFTokenizer(
-            text_config['hf_tokenizer_name'],
+        if 'openvision' in model_name:
+            tokenizer = CLIPS_Tokenizer(
             context_length=context_length,
-            cache_dir=cache_dir,
             **tokenizer_kwargs,
         )
+        else:
+            tokenizer = HFTokenizer(
+                text_config['hf_tokenizer_name'],
+                context_length=context_length,
+                **tokenizer_kwargs,
+            )
     elif 'siglip' in model_name:
         tn = 'gemma' if 'siglip2'  in model_name else 'mc4' if 'i18n' in model_name else 'c4-en'
         tokenizer = SigLipTokenizer(
