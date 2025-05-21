@@ -138,7 +138,12 @@ class ClipLoss(nn.Module):
             output_dict=False,
     ):
         device = image_features.device
-        logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
+        logits_per_image, logits_per_text = self.get_logits(
+            image_features,
+            text_features,
+            logit_scale,
+            logit_bias=logit_bias,
+        )
 
         labels = self.get_ground_truth(device, logits_per_image.shape[0])
 
