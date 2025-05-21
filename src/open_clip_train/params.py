@@ -275,6 +275,10 @@ def parse_args(args):
         help="enable full distributed gradient for feature gather"
     )
     parser.add_argument(
+        '--force-context-length', type=int, default=None,
+        help='Override default context length'
+    )
+    parser.add_argument(
         '--force-image-size', type=int, nargs='+', default=None,
         help='Override default image size'
     )
