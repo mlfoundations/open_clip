@@ -250,6 +250,7 @@ def create_model(
         force_patch_dropout: Optional[float] = None,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_preprocess_cfg: Optional[Dict[str, Any]] = None,
+        force_context_length: Optional[int] = None,
         pretrained_image: bool = False, # Load default base image weights (at creation, if no CLIP weights)
         pretrained_text: bool = True,  # Load default base text weights (at creation, if no CLIP weights) - NEW
         pretrained_image_path: Optional[str] = None, # Load specific image weights from file (after creation)
@@ -286,6 +287,7 @@ def create_model(
         force_patch_dropout: Override patch dropout value in model config.
         force_image_size: Override image size in model config.
         force_preprocess_cfg: Dict to override specific FINAL preprocessing parameters.
+        force_context_length: Override context length in model config.
         pretrained_image: Load default base weights for image tower at creation if no CLIP weights loaded.
         pretrained_text: Load default base weights for text tower at creation if no CLIP weights loaded (default: True).
         pretrained_image_path: Path to load weights specifically into image tower after creation.
@@ -427,6 +429,8 @@ def create_model(
         vision_cfg["patch_dropout"] = force_patch_dropout
     if force_image_size is not None:
         vision_cfg["image_size"] = force_image_size
+    if force_context_length is not None:
+        text_cfg["context_length"] = force_context_length
 
     # Check compatibility (e.g., QuickGELU warning for tags)
     if schema is None and pretrained_cfg_for_tag:
@@ -824,18 +828,88 @@ def create_model_and_transforms(
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
+        force_context_length: Optional[int] = None,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
         image_resize_mode: Optional[str] = None,  # only effective for inference
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
         pretrained_image: bool = False,
-        pretrained_hf: bool = True,
+        pretrained_text: bool = True,
+        pretrained_image_path: Optional[str] = None,
+        pretrained_text_path: Optional[str] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         weights_only: bool = True,
         **model_kwargs,
 ):
+    """
+    Creates a contrastive vision-language model along with preprocessing transforms for training and validation.
+
+    This function combines model creation with the generation of appropriate image preprocessing pipelines,
+    making it convenient for training workflows where both model and transforms are needed.
+
+    `model_name` specifies architecture/config source:
+      - 'ViT-B-32': Built-in model name. `pretrained` specifies CLIP weights source (tag or file path).
+      - 'hf-hub:org/repo': Loads config/weights from HF Hub. `pretrained` is IGNORED.
+      - 'local-dir:/path/to/folder': Loads config/weights from local dir. `pretrained` is IGNORED.
+
+    The preprocessing transforms are automatically configured based on the model's requirements,
+    with separate pipelines for training (with augmentation) and validation (without augmentation).
+
+    Args:
+        model_name: Model identifier, potentially with schema ('hf-hub:', 'local-dir:').
+        pretrained: Source for CLIP weights (tag or file path) ONLY if model_name has no schema.
+        load_weights: Load the resolved pretrained weights if True, otherwise random init or tower overrides only.
+        precision: Model precision ('fp32', 'fp16', 'bf16', ...).
+        device: Device ('cpu', 'cuda', ...).
+        jit: If True, JIT compile the model.
+        force_quick_gelu: Force use of QuickGELU activation in model config.
+        force_custom_text: Force use of custom text encoder architecture.
+        force_patch_dropout: Override patch dropout value in model config.
+        force_image_size: Override image size in model config.
+        force_context_length: Override context length in model config.
+        image_mean: Override default image normalization mean values (per channel).
+        image_std: Override default image normalization std values (per channel).
+        image_interpolation: Override default interpolation method for image resizing.
+        image_resize_mode: Override resize mode for inference preprocessing ('squash', 'longest', 'shortest').
+        aug_cfg: Augmentation configuration for training transforms. Can be dict or AugmentationCfg object.
+                 Controls random crop, color jitter, etc. If None, uses model defaults.
+        pretrained_image: Load default (timm) base weights for image tower at creation if no CLIP weights loaded.
+        pretrained_text: Load default (hf) base weights for text tower at creation if no CLIP weights loaded.
+        pretrained_image_path: Path to load weights specifically into image tower after creation.
+        pretrained_text_path: Path to load weights specifically into text tower after creation.
+        cache_dir: Cache directory for downloads.
+        output_dict: If True and model supports it, return dict output.
+        weights_only: Use weights_only=True for torch.load (safer).
+        **model_kwargs: Additional keyword arguments for model constructor (highest override priority).
+
+    Returns:
+        Tuple[torch.nn.Module, Callable, Callable]: A tuple containing:
+            - model: The created model instance
+            - preprocess_train: Image preprocessing transform for training (includes augmentation)
+            - preprocess_val: Image preprocessing transform for validation/inference (no augmentation)
+
+    Example:
+        >>> # Basic usage with built-in model
+        >>> model, train_transform, val_transform = create_model_and_transforms('ViT-B-32', pretrained='openai')
+        >>>
+        >>> # With custom augmentation
+        >>> aug_cfg = {'scale': (0.9, 1.0), 'ratio': (1.0, 1.0)}
+        >>> model, train_transform, val_transform = create_model_and_transforms(
+        ...     'ViT-L-14',
+        ...     pretrained='datacomp_xl_s13b_b90k',
+        ...     aug_cfg=aug_cfg
+        ... )
+        >>>
+        >>> # From Hugging Face Hub
+        >>> model, train_transform, val_transform = create_model_and_transforms('hf-hub:org/model-repo')
+
+    Note:
+        The training transform includes data augmentation based on `aug_cfg`, while the validation
+        transform performs only the necessary preprocessing (resize, center crop, normalize) without
+        any random augmentation.
+    """
     force_preprocess_cfg = merge_preprocess_kwargs(
         {},
         mean=image_mean,
@@ -856,8 +930,11 @@ def create_model_and_transforms(
         force_patch_dropout=force_patch_dropout,
         force_image_size=force_image_size,
         force_preprocess_cfg=force_preprocess_cfg,
+        force_context_length=force_context_length,
         pretrained_image=pretrained_image,
-        pretrained_hf=pretrained_hf,
+        pretrained_text=pretrained_text,
+        pretrained_image_path=pretrained_image_path,
+        pretrained_text_path=pretrained_text_path,
         cache_dir=cache_dir,
         output_dict=output_dict,
         weights_only=weights_only,
@@ -888,6 +965,7 @@ def create_model_from_pretrained(
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
+        force_context_length: Optional[int] = None,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
@@ -897,6 +975,73 @@ def create_model_from_pretrained(
         weights_only: bool = True,
         **model_kwargs,
 ):
+    """
+    Creates a contrastive vision-language model from pretrained weights with optional preprocessing transform.
+
+    This function is a convenience wrapper around `create_model` that enforces loading of pretrained weights
+    (require_pretrained=True) and optionally returns the appropriate preprocessing transform for inference.
+    It's designed for use cases where a pretrained model is required, such as feature extraction,
+    zero-shot classification, or fine-tuning.
+
+    `model_name` specifies architecture/config source:
+      - 'ViT-B-32': Built-in model name. `pretrained` specifies CLIP weights source (tag or file path).
+      - 'hf-hub:org/repo': Loads config/weights from HF Hub. `pretrained` is IGNORED.
+      - 'local-dir:/path/to/folder': Loads config/weights from local dir. `pretrained` is IGNORED.
+
+    Unlike `create_model`, this function will raise an error if pretrained weights cannot be loaded.
+
+    Args:
+        model_name: Model identifier, potentially with schema ('hf-hub:', 'local-dir:').
+        pretrained: Source for CLIP weights (tag or file path) ONLY if model_name has no schema.
+                   If None and schema requires it, will raise an error.
+        precision: Model precision ('fp32', 'fp16', 'bf16', ...).
+        device: Device ('cpu', 'cuda', ...).
+        jit: If True, JIT compile the model.
+        force_quick_gelu: Force use of QuickGELU activation in model config.
+        force_custom_text: Force use of custom text encoder architecture.
+        force_image_size: Override image size in model config. Useful for using models at different resolutions.
+        force_context_length: Override context length in model config.
+        image_mean: Override default image normalization mean values (per channel).
+        image_std: Override default image normalization std values (per channel).
+        image_interpolation: Override default interpolation method for image resizing ('bicubic', 'bilinear', 'nearest').
+        image_resize_mode: Override resize mode for inference preprocessing ('squash', 'longest', 'shortest').
+            Only affects the returned preprocessing transform, not training.
+        return_transform: If True, returns (model, preprocess). If False, returns only model.
+        cache_dir: Cache directory for downloads.
+        weights_only: Use weights_only=True for torch.load (safer).
+        **model_kwargs: Additional keyword arguments for model constructor (highest override priority).
+
+    Returns:
+        Union[torch.nn.Module, Tuple[torch.nn.Module, Callable]]:
+            - If return_transform=False: Just the model instance
+            - If return_transform=True: Tuple of (model, preprocess) where preprocess is the
+              inference preprocessing transform
+
+    Raises:
+        RuntimeError: If pretrained weights are required but cannot be loaded.
+
+    Example:
+        >>> # Load model with preprocessing
+        >>> model, preprocess = create_model_from_pretrained('ViT-B-32', pretrained='openai')
+        >>>
+        >>> # Load model without preprocessing (e.g., when using custom preprocessing)
+        >>> model = create_model_from_pretrained('ViT-B-32', pretrained='openai', return_transform=False)
+        >>>
+        >>> # Load from Hugging Face Hub
+        >>> model, preprocess = create_model_from_pretrained('hf-hub:laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K')
+        >>>
+        >>> # Load with custom image size
+        >>> model, preprocess = create_model_from_pretrained(
+        ...     'ViT-L-14',
+        ...     pretrained='openai',
+        ...     force_image_size=336
+        ... )
+
+    Note:
+        This function always requires pretrained weights to be available and loaded successfully.
+        For cases where you want to create a model without pretrained weights or with only
+        partial weight loading, use `create_model` or `create_model_and_transforms` instead.
+    """
     force_preprocess_cfg = merge_preprocess_kwargs(
         {},
         mean=image_mean,
@@ -915,6 +1060,7 @@ def create_model_from_pretrained(
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,
         force_preprocess_cfg=force_preprocess_cfg,
+        force_context_length=force_context_length,
         cache_dir=cache_dir,
         require_pretrained=True,
         weights_only=weights_only,

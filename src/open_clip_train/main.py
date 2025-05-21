@@ -230,6 +230,7 @@ def main(args):
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
         force_image_size=args.force_image_size,
+        force_context_length=args.force_context_length,
         image_mean=args.image_mean,
         image_std=args.image_std,
         image_interpolation=args.image_interpolation,
@@ -394,7 +395,7 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir)
+    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
     data = get_data(
         args,
         (preprocess_train, preprocess_val),
