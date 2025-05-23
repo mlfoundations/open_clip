@@ -59,6 +59,7 @@ class CLIPTextCfg:
     context_length: int = 77
     vocab_size: int = 49408
     hf_tokenizer_name: Optional[str] = None
+    tokenizer_mode: Optional[str] = None
     tokenizer_kwargs: Optional[dict] = None
 
     width: int = 512
