@@ -35,7 +35,7 @@ from .tokenizer import HFTokenizer, SigLipTokenizer
 def save_config_for_hf(
         model,
         config_path: str,
-        model_config: Optional[dict]
+        model_config: Optional[dict],
 ):
     preprocess_cfg = {
         'mean': model.visual.image_mean,
