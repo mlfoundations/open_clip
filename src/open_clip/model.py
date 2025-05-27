@@ -480,7 +480,7 @@ class CustomTextCLIP(nn.Module):
             for n in self.visual.no_weight_decay():
                 no_wd.add('visual.' + n)
         if hasattr(self.text, 'no_weight_decay'):
-            for n in self.visual.no_weight_decay():
+            for n in self.text.no_weight_decay():
                 no_wd.add('text.' + n)
         return no_wd
 
