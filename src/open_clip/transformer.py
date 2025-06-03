@@ -870,6 +870,8 @@ class TextTransformer(nn.Module):
             output_dim: Optional[int] = 512,
             embed_cls: bool = False,
             no_causal_mask: bool = False,
+            use_pad_mask: bool = False,
+            correct_cls_mask: bool = False,
             pad_id: int = 0,
             pool_type: str = 'argmax',
             proj_type: str = 'linear',
@@ -888,6 +890,8 @@ class TextTransformer(nn.Module):
         self.heads = heads
         self.pad_id = pad_id
         self.pool_type = pool_type
+        self.use_pad_mask = use_pad_mask and no_causal_mask  # only use in bi‑dir mode
+        self.correct_cls_mask = correct_cls_mask  # use the correct cls mask for CoCa (original is wrong)
 
         self.token_embedding = nn.Embedding(vocab_size, width)
         if embed_cls:
@@ -908,7 +912,7 @@ class TextTransformer(nn.Module):
         self.ln_final = norm_layer(width)
 
         if no_causal_mask:
-            self.attn_mask = None
+            self.attn_mask = None  # bi‑directional
         else:
             self.register_buffer('attn_mask', self.build_causal_mask(), persistent=False)
 
@@ -965,26 +969,48 @@ class TextTransformer(nn.Module):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def build_cls_mask(self, text, cast_dtype: torch.dtype):
-        cls_mask = (text != self.pad_id).unsqueeze(1)
-        cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
-        additive_mask = torch.empty(cls_mask.shape, dtype=cast_dtype, device=cls_mask.device)
-        additive_mask.fill_(0)
-        additive_mask.masked_fill_(~cls_mask, float("-inf"))
-        additive_mask = torch.repeat_interleave(additive_mask, self.heads, 0)
-        return additive_mask
+    def _build_additive_mask(
+        self,
+        text: torch.Tensor,  # [B, L] – original text ids without CLS yet
+        seq_len: int,  # L (+1 if CLS added)
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """
+        Returns an additive (-inf) mask of shape [B*heads, seq_len, seq_len] that
+        simultaneously masks padding tokens and (optionally) the CLS token.
+        """
+        valid = text != self.pad_id  # [B, L] (True = keep)
+
+        if self.cls_emb is not None:
+            cls_valid = valid.new_ones(valid.size(0), 1) # [B, 1]
+            # cls mask pos at end if correct or front for incorrect legacy mode in existing CoCa weights
+            valid = torch.cat([valid, cls_valid] if self.correct_cls_mask else [cls_valid, valid], 1)
+
+        # broadcast over query dimension
+        key_mask = valid.unsqueeze(1).expand(-1, seq_len, -1)  # [B, Q, K]
+        additive = torch.zeros_like(key_mask, dtype=dtype)
+        additive.masked_fill_(~key_mask, float("-inf"))
+        additive = additive.repeat_interleave(self.heads, 0)  # [B*H, Q, K]
+        return additive
 
     def _embeds(self, text) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cast_dtype = self.transformer.get_cast_dtype()
-        seq_len = text.shape[1]
-        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-        attn_mask = self.attn_mask
+        B, seq_len = text.shape
+
+        x = self.token_embedding(text).to(cast_dtype)
+
+        # Optional class token (always appended ala CoCa)
         if self.cls_emb is not None:
+            x = torch.cat([x, _expand_token(self.cls_emb, x.size(0))], 1)
             seq_len += 1
-            x = torch.cat([x, _expand_token(self.cls_emb, x.shape[0])], dim=1)
-            cls_mask = self.build_cls_mask(text, cast_dtype)
-            if attn_mask is not None:
-                attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
+
+        attn_mask = self.attn_mask  # Base causal mask (if any)
+
+        # Class + padding additive mask
+        if self.use_pad_mask or self.cls_emb is not None:
+            add_mask  = self._build_additive_mask(text, seq_len, x.dtype)
+            attn_mask = add_mask if attn_mask is None else attn_mask.unsqueeze(0) + add_mask
+
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         return x, attn_mask
 
