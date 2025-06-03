@@ -776,7 +776,8 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
 
 
 def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
-    old_pos_embed = state_dict.get('positional_embedding', None)
+    pos_embed_key = 'positional_embedding' if 'positional_embedding' in state_dict else 'text.positional_embedding'
+    old_pos_embed = state_dict.get(pos_embed_key, None)
     if old_pos_embed is None:
         return
     # FIXME add support for text cls_token
@@ -804,7 +805,7 @@ def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', anti
     old_pos_embed = old_pos_embed.permute(0, 2, 1)[0]
     new_pos_embed = old_pos_embed
 
-    state_dict['positional_embedding'] = new_pos_embed
+    state_dict[pos_embed_key] = new_pos_embed
 
 
 def get_model_preprocess_cfg(model):
