@@ -493,21 +493,16 @@ def create_model(
     pretrained_loaded = False
     if checkpoint_path:
         logging.info(f'Loading full pretrained weights from: {checkpoint_path}')
-        try:
-            # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
-            # Use strict=True by default for full model loading to catch mismatches.
-            load_checkpoint(
-                model,
-                checkpoint_path,
-                strict=True,
-                weights_only=weights_only,
-                device='cpu' # Load to CPU first
-            )
-            pretrained_loaded = True
-            logging.info(f"Full weights loaded successfully from {checkpoint_path}.")
-        except Exception as e:
-             logging.error(f"Error loading full checkpoint {checkpoint_path}: {e}")
-             # Error will be raised later if require_pretrained is True
+        # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
+        # Use strict=True by default for full model loading to catch mismatches.
+        load_checkpoint(
+            model,
+            checkpoint_path,
+            strict=True,
+            weights_only=weights_only,
+            device='cpu' # Load to CPU first
+        )
+        pretrained_loaded = True
 
     # Load tower-specific weights (image and text), after the full CLIP checkpoint, potentially overwriting parts.
     pretrained_image_loaded = False # Track if specific image weights loaded
