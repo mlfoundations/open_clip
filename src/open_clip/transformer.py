@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -95,14 +95,17 @@ class Attention(nn.Module):
             dim: int,
             num_heads: int = 8,
             qkv_bias: bool = True,
+            qk_norm: bool = False,
             scaled_cosine: bool = False,
             scale_heads: bool = False,
+            inner_norm: bool = False,
             logit_scale_max: float = math.log(1. / 0.01),
-            batch_first: bool = True,
+            norm_layer: Type[nn.Module] = LayerNormFp32,
             attn_drop: float = 0.,
             proj_drop: float = 0.
     ):
         super().__init__()
+        assert not (scaled_cosine and qk_norm), "Cannot activate both scaled cosine and QK normalization"
         self.scaled_cosine = scaled_cosine
         self.scale_heads = scale_heads
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
@@ -110,7 +113,6 @@ class Attention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.logit_scale_max = logit_scale_max
-        self.batch_first = batch_first
         self.use_fsdpa = hasattr(nn.functional, 'scaled_dot_product_attention')
 
         # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
@@ -120,44 +122,71 @@ class Attention(nn.Module):
         else:
             self.in_proj_bias = None
 
+        # QK normalization (with LN) from https://arxiv.org/abs/2106.04560 and related to other QK Norm ideas
+        if qk_norm:
+            self.ln_q = norm_layer(dim)
+            self.ln_k = norm_layer(dim)
+        else:
+            self.ln_q = nn.Identity()
+            self.ln_k = nn.Identity()
+
+        # Scaled cosine attention (from Swin Transformer V2, https://arxiv.org/abs/2111.09883)
         if self.scaled_cosine:
             self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((num_heads, 1, 1))))
         else:
             self.logit_scale = None
+
         self.attn_drop = nn.Dropout(attn_drop)
+
+        # Per-head attention logit scaling (from NormFormer, https://arxiv.org/abs/2110.09456)
         if self.scale_heads:
             self.head_scale = nn.Parameter(torch.ones((num_heads, 1, 1)))
         else:
             self.head_scale = None
+
+        # Normalization of attention logits, before final projection.
+        # Origin likely Sub-LN in (Foundation Transformers, https://arxiv.org/abs/2210.06423)
+        if inner_norm:
+            self.ln_inner = norm_layer(dim)
+        else:
+            self.ln_inner = nn.Identity()
+
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        if self.batch_first:
-            x = x.transpose(0, 1)
-
-        L, N, C = x.shape
+        N, L, C = x.shape
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-        q = q.reshape(L, N * self.num_heads, -1).transpose(0, 1)
-        k = k.reshape(L, N * self.num_heads, -1).transpose(0, 1)
-        v = v.reshape(L, N * self.num_heads, -1).transpose(0, 1)
+        q = q.reshape(N, L, self.num_heads, -1).transpose(1, 2)
+        k = k.reshape(N, L, self.num_heads, -1).transpose(1, 2)
+        v = v.reshape(N, L, self.num_heads, -1).transpose(1, 2)
 
-        if attn_mask is not None and attn_mask.dtype == torch.bool:
-            new_attn_mask = torch.zeros_like(attn_mask, dtype=q.dtype)
-            new_attn_mask.masked_fill_(attn_mask, float("-inf"))
-            attn_mask = new_attn_mask
+        if attn_mask is not None:
+            if attn_mask.ndim == 3:
+                # this module works with (L, L), or (N, num_heads, L, L) masks
+                attn_mask = attn_mask.reshape(N, self.num_heads, L, L)
+            if attn_mask.dtype == torch.bool:
+                new_attn_mask = torch.zeros_like(attn_mask, dtype=q.dtype)
+                new_attn_mask.masked_fill_(attn_mask, float("-inf"))
+                attn_mask = new_attn_mask
+            else:
+                attn_mask = attn_mask.to(dtype=q.dtype)
 
         if self.logit_scale is not None:
-            attn = torch.bmm(F.normalize(q, dim=-1), F.normalize(k, dim=-1).transpose(-1, -2))
+            attn = torch.bmm(
+                F.normalize(q, dim=-1),
+                F.normalize(k, dim=-1).transpose(-1, -2)
+            )
             logit_scale = torch.clamp(self.logit_scale, max=self.logit_scale_max).exp()
-            attn = attn.view(N, self.num_heads, L, L) * logit_scale
-            attn = attn.view(-1, L, L)
+            attn = attn * logit_scale
             if attn_mask is not None:
                 attn = attn + attn_mask
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = torch.bmm(attn, v)
         else:
+            q = self.ln_q(q)
+            k = self.ln_k(k)
             if self.use_fsdpa:
                 x = F.scaled_dot_product_attention(
                     q, k, v,
@@ -173,15 +202,11 @@ class Attention(nn.Module):
                 attn = self.attn_drop(attn)
                 x = torch.bmm(attn, v)
 
+        # N, num_heads, L, head_dim
         if self.head_scale is not None:
-            x = x.view(N, self.num_heads, L, C) * self.head_scale
-            x = x.view(-1, L, C)
-
-        x = x.transpose(0, 1).reshape(L, N, C)
-
-        if self.batch_first:
-            x = x.transpose(0, 1)
-
+            x = x * self.head_scale
+        x = x.transpose(1, 2).reshape(N, L, C)
+        x = self.ln_inner(x)
         x = self.out_proj(x)
         x = self.out_drop(x)
         return x
@@ -251,7 +276,9 @@ class ResidualAttentionBlock(nn.Module):
 
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
         return self.attn(
-            q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
+            q_x, k_x, v_x,
+            need_weights=False,
+            attn_mask=attn_mask
         )[0]
 
     def forward(
@@ -275,23 +302,28 @@ class CustomResidualAttentionBlock(nn.Module):
             n_head: int,
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
+            qk_norm: bool = False,
             scale_cosine_attn: bool = False,
             scale_heads: bool = False,
+            scale_attn_inner: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
             batch_first: bool = True,
     ):
         super().__init__()
+        assert batch_first, 'batch_first must be True for CustomResidualAttentionBlock'
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
             d_model,
             n_head,
+            qk_norm=qk_norm,
             scaled_cosine=scale_cosine_attn,
             scale_heads=scale_heads,
-            batch_first=batch_first,
+            inner_norm=scale_attn_inner,
+            norm_layer=norm_layer,
         )
         self.ln_attn = norm_layer(d_model) if scale_attn else nn.Identity()
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
@@ -301,7 +333,7 @@ class CustomResidualAttentionBlock(nn.Module):
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, mlp_width)),
             ("gelu", act_layer()),
-            ('ln', norm_layer(mlp_width) if scale_fc else nn.Identity()),
+            ('ln', norm_layer(mlp_width) if scale_fc else nn.Identity()),  # from NormFormer / Foundation Transformers
             ("c_proj", nn.Linear(mlp_width, d_model))
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
@@ -324,8 +356,8 @@ class CustomTransformer(nn.Module):
             heads: int,
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
             batch_first: bool = True,
             block_types: Union[str, List[str]] = 'CustomResidualAttentionBlock',
     ):
@@ -426,9 +458,16 @@ class Transformer(nn.Module):
             heads: int,
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
             batch_first: bool = True,
+            block_type: Optional[str] = None,
+            qk_norm: bool = False,
+            scaled_cosine_attn: bool = False,
+            scale_heads: bool = False,
+            scale_attn_inner: bool = False,
+            scale_attn: bool = False,
+            scale_fc: bool = False,
     ):
         super().__init__()
         self.width = width
@@ -436,23 +475,59 @@ class Transformer(nn.Module):
         self.batch_first = batch_first
         self.grad_checkpointing = False
 
-        self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(
-                width,
-                heads,
-                mlp_ratio,
-                ls_init_value=ls_init_value,
-                act_layer=act_layer,
-                norm_layer=norm_layer,
-                batch_first=batch_first,
-            )
-            for _ in range(layers)
-        ])
+        # Auto-select custom block if any custom features are enabled
+        if block_type is None:
+            if any([qk_norm, scaled_cosine_attn, scale_heads, scale_attn_inner, scale_attn, scale_fc]):
+                block_type = 'custom'
+            else:
+                block_type = 'default'
+
+        if block_type == 'custom':
+            self.resblocks = nn.ModuleList([
+                CustomResidualAttentionBlock(
+                    width,
+                    heads,
+                    mlp_ratio,
+                    ls_init_value=ls_init_value,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer,
+                    qk_norm=qk_norm,
+                    scale_cosine_attn=scaled_cosine_attn,
+                    scale_heads=scale_heads,
+                    scale_attn_inner=scale_attn_inner,
+                    scale_attn=scale_attn,
+                    scale_fc=scale_fc,
+                    batch_first=batch_first,
+                )
+                for _ in range(layers)
+            ])
+        else:
+            self.resblocks = nn.ModuleList([
+                ResidualAttentionBlock(
+                    width,
+                    heads,
+                    mlp_ratio,
+                    ls_init_value=ls_init_value,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer,
+                    batch_first=batch_first,
+                )
+                for _ in range(layers)
+            ])
 
     def get_cast_dtype(self) -> torch.dtype:
-        if hasattr(self.resblocks[0].mlp.c_fc, 'int8_original_dtype'):
-            return self.resblocks[0].mlp.c_fc.int8_original_dtype
-        return self.resblocks[0].mlp.c_fc.weight.dtype
+        # Handle both ResidualAttentionBlock and CustomResidualAttentionBlock
+        if hasattr(self.resblocks[0], 'get_reference_weight'):
+            # CustomResidualAttentionBlock has get_reference_weight method
+            weight = self.resblocks[0].get_reference_weight()
+            if hasattr(weight, 'int8_original_dtype'):
+                return weight.int8_original_dtype
+            return weight.dtype
+        else:
+            # ResidualAttentionBlock
+            if hasattr(self.resblocks[0].mlp.c_fc, 'int8_original_dtype'):
+                return self.resblocks[0].mlp.c_fc.int8_original_dtype
+            return self.resblocks[0].mlp.c_fc.weight.dtype
 
     def forward_intermediates(
             self,
@@ -536,6 +611,13 @@ class VisionTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            block_type: Optional[str] = None,
+            qk_norm: bool = False,
+            scaled_cosine_attn: bool = False,
+            scale_heads: bool = False,
+            scale_attn_inner: bool = False,
+            scale_attn: bool = False,
+            scale_fc: bool = False,
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
@@ -583,6 +665,13 @@ class VisionTransformer(nn.Module):
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            block_type=block_type,
+            qk_norm=qk_norm,
+            scaled_cosine_attn=scaled_cosine_attn,
+            scale_heads=scale_heads,
+            scale_attn_inner=scale_attn_inner,
+            scale_attn=scale_attn,
+            scale_fc=scale_fc,
         )
 
         if attentional_pool:
@@ -874,9 +963,16 @@ class TextTransformer(nn.Module):
             pool_type: str = 'argmax',
             proj_type: str = 'linear',
             proj_bias: bool = False,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
             output_tokens: bool = False,
+            block_type: Optional[str] = None,
+            qk_norm: bool = False,
+            scaled_cosine_attn: bool = False,
+            scale_heads: bool = False,
+            scale_attn_inner: bool = False,
+            scale_attn: bool = False,
+            scale_fc: bool = False,
     ):
         super().__init__()
         assert pool_type in ('first', 'last', 'argmax', 'none')
@@ -904,6 +1000,13 @@ class TextTransformer(nn.Module):
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            block_type=block_type,
+            qk_norm=qk_norm,
+            scaled_cosine_attn=scaled_cosine_attn,
+            scale_heads=scale_heads,
+            scale_attn_inner=scale_attn_inner,
+            scale_attn=scale_attn,
+            scale_fc=scale_fc,
         )
         self.ln_final = norm_layer(width)
 
@@ -1110,8 +1213,8 @@ class MultimodalTransformer(Transformer):
             context_length: int = 77,
             mlp_ratio: float = 4.0,
             ls_init_value: float = None,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
             output_dim: int = 512,
             batch_first: bool = True,
     ):
