@@ -45,6 +45,15 @@ class CLIPVisionCfg:
     act_kwargs: Optional[dict] = None
     norm_kwargs: Optional[dict] = None
 
+    # Custom attention block settings
+    block_type: Optional[str] = None  # attention block type ('default', 'custom'), auto-selects 'custom' if any below features enabled
+    qk_norm: bool = False  # apply layer norm to q and k in attention
+    scaled_cosine_attn: bool = False  # use scaled cosine attention
+    scale_heads: bool = False  # learnable head-specific scale applied to attention logits
+    scale_attn_inner: bool = False  # apply layer norm on attention context, before output projection
+    scale_attn: bool = False  # apply layer norm after full attention block
+    scale_fc: bool = False  # apply layer norm in MLP block
+
     timm_model_name: Optional[str] = None  # a valid model name overrides layers, width, patch_size
     timm_model_pretrained: bool = False  # use (imagenet) pretrained weights for named model
     timm_pool: str = 'avg'  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
@@ -77,6 +86,15 @@ class CLIPTextCfg:
     output_tokens: bool = False
     act_kwargs: dict = None
     norm_kwargs: dict = None
+
+    # Custom attention block settings
+    block_type: Optional[str] = None  # attention block type ('default', 'custom'), auto-selects 'custom' if any custom features enabled
+    qk_norm: bool = False  # apply layer norm to q and k in attention
+    scaled_cosine_attn: bool = False  # use scaled cosine attention
+    scale_heads: bool = False  # learnable head-specific scale applied to attention logits
+    scale_attn_inner: bool = False  # apply layer norm on attention context, before output projection
+    scale_attn: bool = False  # apply layer norm after full attention block
+    scale_fc: bool = False  # apply layer norm in MLP block
 
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
@@ -167,6 +185,13 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            block_type=vision_cfg.block_type,
+            qk_norm=vision_cfg.qk_norm,
+            scaled_cosine_attn=vision_cfg.scaled_cosine_attn,
+            scale_heads=vision_cfg.scale_heads,
+            scale_attn_inner=vision_cfg.scale_attn_inner,
+            scale_attn=vision_cfg.scale_attn,
+            scale_fc=vision_cfg.scale_fc,
         )
 
     return visual
@@ -216,6 +241,13 @@ def _build_text_tower(
             output_tokens=text_cfg.output_tokens,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            block_type=text_cfg.block_type,
+            qk_norm=text_cfg.qk_norm,
+            scaled_cosine_attn=text_cfg.scaled_cosine_attn,
+            scale_heads=text_cfg.scale_heads,
+            scale_attn_inner=text_cfg.scale_attn_inner,
+            scale_attn=text_cfg.scale_attn,
+            scale_fc=text_cfg.scale_fc,
         )
     return text
 
@@ -626,7 +658,7 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
 
         if isinstance(l, (nn.MultiheadAttention, Attention)):
             for attr in [*[f"{s}_proj_weight" for s in ["in", "q", "k", "v"]], "in_proj_bias", "bias_k", "bias_v"]:
-                tensor = getattr(l, attr)
+                tensor = getattr(l, attr, None)
                 if tensor is not None:
                     tensor.data = tensor.data.to(dtype)
 
