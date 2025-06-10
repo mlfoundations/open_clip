@@ -66,14 +66,6 @@ def add_model_config(path):
     _rescan_model_configs()
 
 
-def get_model_config(model_name):
-    """ Fetch model config from builtin (local library) configs.
-    """
-    if model_name in _MODEL_CONFIGS:
-        return deepcopy(_MODEL_CONFIGS[model_name])
-    else:
-        return None
-
 # Define Schema Prefixes as constants
 HF_HUB_PREFIX = 'hf-hub:'
 LOCAL_DIR_PREFIX = 'local-dir:'
@@ -138,6 +130,24 @@ def _get_hf_config(
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
     return config
+
+
+def get_model_config(model_name):
+    """ Fetch model config from schema specified location or local library configs.
+    """
+    loc, model_id = parse_model_name(model_name)
+    if loc == 'local-dir':
+        local_path = Path(model_id) / 'open_clip_config.json'
+        with open(local_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        return config.get('model_cfg', config)
+    elif loc == 'hf-hub':
+        config = _get_hf_config(model_id)
+        return config.get('model_cfg', config)
+    elif model_name in _MODEL_CONFIGS:
+        return deepcopy(_MODEL_CONFIGS[model_name])
+    else:
+        return None
 
 
 def load_state_dict(
@@ -309,13 +319,11 @@ def create_model(
         device = torch.device(device)
 
     model_cfg = None
-    preprocess_cfg = asdict(PreprocessCfg())  # initialize with defaults
-    checkpoint_path = None # Final path for *full CLIP* weights
+    preprocess_cfg = asdict(PreprocessCfg())  # Populate with defaults
+    checkpoint_path = None # Final path for full CLIP weights
     pretrained_cfg_for_tag = None # Store tag config if pretrained is a tag and schema is None
 
-    config_source_description = f"Schema: {schema}, Identifier: {identifier}"
-    logging.info(f"Parsing model identifier. {config_source_description}")
-
+    logging.info(f"Parsing model identifier. Schema: {schema}, Identifier: {identifier}")
     if schema and pretrained:
         logging.warning(f"Ignoring `pretrained='{pretrained}'` because `model_name` has '{schema}' schema.")
         pretrained = None  # Nullify pretrained as it's ignored
@@ -624,8 +632,7 @@ def get_tokenizer(
     """
     schema, identifier = parse_model_name(model_name)
 
-    config = None # Stores the loaded model_cfg relevant section (usually text_cfg)
-    config_source_description = "None" # For logging purposes
+    config = {} # Stores the loaded model_cfg relevant section (usually text_cfg)
     local_dir_path = None # Store path if schema is local-dir to resolve relative paths
     hf_fallback_id = None
 
@@ -635,12 +642,10 @@ def get_tokenizer(
     if schema == 'local-dir':
         # Handle local directory schema
         local_dir_path = Path(identifier) # Store the path for later use
-        config_source_description = f"local-dir: {local_dir_path}"
         if not local_dir_path.is_dir():
-            raise FileNotFoundError(f"Directory specified via 'local-dir:' schema not found: {local_dir_path}")
-
+            raise FileNotFoundError(f"Directory specified via 'local-dir:' schema not found at {local_dir_path}")
         local_config_path = local_dir_path / 'open_clip_config.json'
-        logging.info(f"Attempting to load config from {config_source_description} at {local_config_path}")
+        logging.info(f"Attempting to load config from local-dir: {local_config_path}")
         if local_config_path.is_file():
             try:
                 # Load and parse the JSON config
@@ -651,15 +656,14 @@ def get_tokenizer(
                 else:
                     raise ValueError(f"Local config {local_config_path} missing 'model_cfg'.")
             except Exception as e:
-                raise ValueError(f"Could not load valid config from 'local-dir:{identifier}': {e}") from e
+                raise ValueError(f"Could not load valid config for 'local-dir:{identifier}' ({e}).") from e
         else:
              raise FileNotFoundError(f"'local-dir:' specified, but config file missing: {local_config_path}")
 
     elif schema == 'hf-hub':
         # Handle Hugging Face Hub schema
         model_id = identifier
-        config_source_description = f"hf-hub: {model_id}"
-        logging.info(f"Attempting to load config from {config_source_description}")
+        logging.info(f"Attempting to load config from hf-hub:{model_id}")
         config_err = ''
         try:
             # Fetch config from HF Hub
@@ -673,13 +677,12 @@ def get_tokenizer(
             hf_fallback_id = model_id
             config = {}
             logging.warning(
-                f"Could not load config from {config_source_description}: {config_err}."
+                f"Could not load config from hf-hub:{model_id} ({config_err})."
                 f"Falling back to using model_id for tokenizer.")
 
     elif schema is None and identifier:
         # Try built-in config lookup using the identifier (original model_name)
-        config_source_description = f"built-in: {identifier}"
-        logging.info(f"Attempting to load config from {config_source_description}")
+        logging.info(f"Attempting to load config from built-in: {identifier}")
         config = get_model_config(identifier)
 
     # Check if config determination failed completely (should only be possible if initial schema parsing failed badly)
@@ -712,12 +715,14 @@ def get_tokenizer(
             tokenizer_source = local_dir_path
         else:
             tokenizer_source = hf_tokenizer_name
+        tokenizer_mode = text_config.get('tokenizer_mode', None)
 
-        logging.info(f"Using HFTokenizer with source: '{tokenizer_source}'")
+        logging.info(f"Using HFTokenizer with source: '{tokenizer_source}', mode: '{tokenizer_mode}'")
         tokenizer = HFTokenizer(
             tokenizer_source,
             context_length=context_length,
             cache_dir=cache_dir,
+            tokenizer_mode=tokenizer_mode,
             **tokenizer_kwargs,
         )
 
