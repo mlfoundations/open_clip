@@ -124,8 +124,8 @@ class Attention(nn.Module):
 
         # QK normalization (with LN) from https://arxiv.org/abs/2106.04560 and related to other QK Norm ideas
         if qk_norm:
-            self.ln_q = norm_layer(dim)
-            self.ln_k = norm_layer(dim)
+            self.ln_q = norm_layer(self.head_dim)
+            self.ln_k = norm_layer(self.head_dim)
         else:
             self.ln_q = nn.Identity()
             self.ln_k = nn.Identity()
