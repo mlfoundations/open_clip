@@ -353,13 +353,12 @@ def main(args):
                 assert False, f'Unknown optimizer {opt}'
 
         if is_master(args):
-            if is_master(args):
-                defaults = copy.deepcopy(optimizer.defaults)
-                defaults['weight_decay'] = args.wd
-                defaults = ', '.join([f'{k}: {v}' for k, v in defaults.items()])
-                logging.info(
-                    f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
-                )
+            defaults = copy.deepcopy(optimizer.defaults)
+            defaults['weight_decay'] = args.wd
+            defaults = ', '.join([f'{k}: {v}' for k, v in defaults.items()])
+            logging.info(
+                f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
+            )
 
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
