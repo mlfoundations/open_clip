@@ -675,9 +675,9 @@ _PRETRAINED = {
         # original at facebook/PE-Core-L14-336/PE-Core-L14-336.pt
         meta=_pecfg(hf_hub='timm/PE-Core-L-14-336/'),
     ),
-    "PE-Core-G-14-448": dict(
+    "PE-Core-bigG-14-448": dict(
         # original at facebook/PE-Core-G14-448/PE-Core-G14-448.pt
-        meta=_pecfg(hf_hub='timm/PE-Core-G-14-448/'),
+        meta=_pecfg(hf_hub='timm/PE-Core-bigG-14-448/'),
     ),
 }
 
