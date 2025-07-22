@@ -264,8 +264,11 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
-    def get_reference_weight(self):
-        return self.mlp.c_fc.weight
+    def get_weight_dtype(self) -> torch.dtype:
+        weight = self.mlp.c_fc.weight
+        if hasattr(weight, 'int8_original_dtype'):
+            return weight.int8_original_dtype
+        return weight.dtype
 
     def attention(
             self,
@@ -341,8 +344,11 @@ class CustomResidualAttentionBlock(nn.Module):
         ]))
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
-    def get_reference_weight(self):
-        return self.mlp.c_fc.weight
+    def get_weight_dtype(self) -> torch.dtype:
+        weight = self.mlp.c_fc.weight
+        if hasattr(weight, 'int8_original_dtype'):
+            return weight.int8_original_dtype
+        return weight.dtype
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
@@ -394,10 +400,7 @@ class CustomTransformer(nn.Module):
         ])
 
     def get_cast_dtype(self) -> torch.dtype:
-        weight = self.resblocks[0].get_reference_weight()
-        if hasattr(weight, 'int8_original_dtype'):
-            return weight.int8_original_dtype
-        return weight.dtype
+        return self.resblocks[0].get_weight_dtype()
 
     def forward_intermediates(
             self,
@@ -519,10 +522,7 @@ class Transformer(nn.Module):
             ])
 
     def get_cast_dtype(self) -> torch.dtype:
-        weight = self.resblocks[0].get_reference_weight()
-        if hasattr(weight, 'int8_original_dtype'):
-            return weight.int8_original_dtype
-        return weight.dtype
+        return self.resblocks[0].get_weight_dtype()
 
     def forward_intermediates(
             self,
