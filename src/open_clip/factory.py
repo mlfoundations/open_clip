@@ -589,6 +589,13 @@ def create_model(
         # Enable dictionary output if model supports it
         model.output_dict = True
 
+    # If force_image_size was specified and we have a timm model, call set_input_size after loading weights
+    if force_image_size is not None and is_timm_model:
+        visual_module = getattr(model, 'visual', None)
+        if visual_module is not None and hasattr(visual_module, 'set_input_size'):
+            logging.info(f"Calling set_input_size({force_image_size}) on timm visual model after weight loading")
+            visual_module.set_input_size(force_image_size)
+
     if jit:
         logging.info("Attempting JIT scripting...")
         try:
