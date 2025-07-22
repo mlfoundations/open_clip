@@ -89,6 +89,18 @@ def _mccfg(url='', hf_hub='', **kwargs):
     }
 
 
+def _pecfg(url='', hf_hub='', **kwargs):
+    # PE
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': (0.5, 0.5, 0.5),
+        'std': (0.5, 0.5, 0.5),
+        'interpolation': 'bilinear',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
+
 
 _RN50 = dict(
     openai=_pcfg(
@@ -645,6 +657,27 @@ _PRETRAINED = {
     ),
     "ViTamin-XL-384": dict(
         datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-XL-384px/pytorch_model.bin'),
+    ),
+
+    "PE-Core-T-16-384": dict(
+        # original at facebook/PE-Core-T16-384/PE-Core-T16-384.pt
+        meta=_pecfg(hf_hub='timm/PE-Core-T-16-384/'),
+    ),
+    "PE-Core-S-16-384": dict(
+        # original at facebook/PE-Core-S16-384/PE-Core-S16-384.pt
+        meta=_pecfg(hf_hub='timm/PE-Core-S-16-384/'),
+    ),
+    "PE-Core-B-16": dict(
+        # original at facebook/PE-Core-B16-224/PE-Core-B16-224.pt
+        meta=_pecfg(hf_hub='timm/PE-Core-B-16/'),
+    ),
+    "PE-Core-L-14-336": dict(
+        # original at facebook/PE-Core-L14-336/PE-Core-L14-336.pt
+        meta=_pecfg(hf_hub='timm/PE-Core-L-14-336/'),
+    ),
+    "PE-Core-G-14-448": dict(
+        # original at facebook/PE-Core-G14-448/PE-Core-G14-448.pt
+        meta=_pecfg(hf_hub='timm/PE-Core-G-14-448/'),
     ),
 }
 
