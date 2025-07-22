@@ -1,8 +1,12 @@
 import os
 import random
 import numpy as np
-from PIL import Image
+import PIL
 import torch
+from PIL import Image
+
+
+torch.serialization.add_safe_globals([PIL.Image.Image])
 
 if __name__ != '__main__':
     import open_clip

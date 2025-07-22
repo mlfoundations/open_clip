@@ -4,8 +4,11 @@ import pytest
 import torch
 import open_clip
 import util_test
+import PIL
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
+torch.serialization.add_safe_globals([PIL.Image.Image])
 
 if hasattr(torch._C, '_jit_set_profiling_executor'):
     # legacy executor is too slow to compile large models for unit tests
