@@ -211,7 +211,7 @@ class TimmModel(nn.Module):
             except Exception as e:
                 logging.warning(f"Failed to set input size for timm model: {e}")
         else:
-            logging.warning(f"Timm model {self.trunk.__class__.__name__} does not support set_input_size method")
+            logging.info(f"Timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
 
     def forward(self, x):
         x = self.trunk(x)
