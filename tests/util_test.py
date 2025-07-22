@@ -4,6 +4,8 @@ import numpy as np
 from PIL import Image
 import torch
 
+torch.serialization.safe_globals([Image.Image])
+
 if __name__ != '__main__':
     import open_clip
 
