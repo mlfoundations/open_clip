@@ -265,10 +265,9 @@ class ResidualAttentionBlock(nn.Module):
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def get_weight_dtype(self) -> torch.dtype:
-        weight = self.mlp.c_fc.weight
-        if hasattr(weight, 'int8_original_dtype'):
-            return weight.int8_original_dtype
-        return weight.dtype
+        if hasattr(self.mlp.c_fc, 'int8_original_dtype'):
+            return self.mlp.c_fc.int8_original_dtype
+        return self.mlp.c_fc.weight.dtype
 
     def attention(
             self,
@@ -345,10 +344,9 @@ class CustomResidualAttentionBlock(nn.Module):
         self.ls_2 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def get_weight_dtype(self) -> torch.dtype:
-        weight = self.mlp.c_fc.weight
-        if hasattr(weight, 'int8_original_dtype'):
-            return weight.int8_original_dtype
-        return weight.dtype
+        if hasattr(self.mlp.c_fc, 'int8_original_dtype'):
+            return self.mlp.c_fc.int8_original_dtype
+        return self.mlp.c_fc.weight.dtype
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         x = x + self.ls_1(self.ln_attn(self.attn(self.ln_1(x), attn_mask=attn_mask)))
