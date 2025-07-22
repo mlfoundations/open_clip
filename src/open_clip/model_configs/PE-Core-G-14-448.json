@@ -1,0 +1,18 @@
+{
+    "embed_dim": 1280,
+    "vision_cfg": {
+        "image_size": 448,
+        "timm_model_name": "vit_pe_core_gigantic_patch14_448",
+        "timm_model_pretrained": false,
+        "timm_pool": "map",
+        "timm_proj": null
+    },
+    "text_cfg": {
+        "context_length": 72,
+        "vocab_size": 49408,
+        "width": 1280,
+        "heads": 20,
+        "layers": 24
+    },
+    "custom_text": true
+}

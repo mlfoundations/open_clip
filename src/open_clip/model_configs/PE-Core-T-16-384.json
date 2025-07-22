@@ -1,0 +1,18 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 384,
+        "timm_model_name": "vit_pe_core_tiny_patch16_384",
+        "timm_model_pretrained": false,
+        "timm_pool": "map",
+        "timm_proj": null
+    },
+    "text_cfg": {
+        "context_length": 32,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12
+    },
+    "custom_text": true
+}
