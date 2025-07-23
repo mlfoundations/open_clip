@@ -192,6 +192,23 @@ class TimmModel(nn.Module):
         return_dict['image_features'] = image_features
         return return_dict
 
+    def set_input_size(self, image_size: Union[int, Tuple[int, int]]):
+        """Set the input image size for the model after initialization.
+
+        This method attempts to call set_input_size on the underlying timm model
+        if it supports dynamic input size adjustment.
+
+        Args:
+            image_size: New image size as int (square) or tuple (h, w)
+        """
+        self.image_size = to_2tuple(image_size)
+
+        # Check if the underlying timm model has set_input_size method
+        if hasattr(self.trunk, 'set_input_size'):
+            self.trunk.set_input_size(image_size)
+        else:
+            logging.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
+
     def forward(self, x):
         x = self.trunk(x)
         x = self.head(x)
