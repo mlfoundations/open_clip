@@ -205,13 +205,9 @@ class TimmModel(nn.Module):
 
         # Check if the underlying timm model has set_input_size method
         if hasattr(self.trunk, 'set_input_size'):
-            try:
-                self.trunk.set_input_size(image_size)
-                logging.info(f"Successfully set input size to {self.image_size} for timm model {self.trunk.__class__.__name__}")
-            except Exception as e:
-                logging.warning(f"Failed to set input size for timm model: {e}")
+            self.trunk.set_input_size(image_size)
         else:
-            logging.info(f"Timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
+            logging.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
 
     def forward(self, x):
         x = self.trunk(x)
