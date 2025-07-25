@@ -1022,6 +1022,9 @@ class TextTransformer(nn.Module):
 
         self.init_parameters()
 
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        lock_text_transformer(self, unlocked_layers, freeze_layer_norm)
+
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
@@ -1221,6 +1224,42 @@ class TextTransformer(nn.Module):
             return pooled, tokens
 
         return pooled
+
+
+def lock_text_transformer(
+    transformer: TextTransformer, unlocked_groups: int = 0, freeze_layer_norm: bool = True
+):
+    for param in transformer.parameters():
+        param.requires_grad = False
+
+    if unlocked_groups != 0:
+        groups = [
+            [transformer.token_embedding, transformer.positional_embedding],
+            *transformer.transformer.resblocks[:-1],
+            [transformer.transformer.resblocks[-1], transformer.ln_final],
+            transformer.text_projection,
+        ]
+
+        def _unlock(x):
+            ln_status = False if freeze_layer_norm else True
+            if isinstance(x, Sequence):
+                for g in x:
+                    _unlock(g)
+            else:
+                if isinstance(x, torch.nn.Parameter):
+                    x.requires_grad = True
+                elif isinstance(x, torch.nn.LayerNorm):
+                    for p in x.parameters():
+                        p.requires_grad = ln_status
+                else:
+                    for n,p in x.named_parameters():
+                        # This should grab LayerNorm inside `ResidualAttentionBlock` blocks
+                        if n.startswith("ln_"):
+                            p.requires_grad = ln_status
+                        else:
+                            p.requires_grad = True
+
+        _unlock(groups[-unlocked_groups:])
 
 
 class MultimodalTransformer(Transformer):
