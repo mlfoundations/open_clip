@@ -935,6 +935,7 @@ def text_global_pool(
     elif pool_type == 'eos':
         # take features from tokenizer specific eos
         assert text is not None
+        assert eos_token_id is not None
         idx = (text == eos_token_id).int().argmax(dim=-1)
         pooled = x[torch.arange(x.shape[0], device=x.device), idx]
     else:
