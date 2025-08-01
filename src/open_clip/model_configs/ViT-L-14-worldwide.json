@@ -1,0 +1,22 @@
+{
+    "embed_dim": 768,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 24,
+        "width": 1024,
+        "patch_size": 14
+    },
+    "text_cfg": {
+        "hf_tokenizer_name": "google/mt5-base",
+        "pool_type": "eos",
+        "eos_id": 1,
+        "tokenizer_kwargs": {
+            "clean": "canonicalize"
+        },
+        "context_length": 77,
+        "vocab_size": 250100,
+        "width": 768,
+        "heads": 12,
+        "layers": 12
+    }
+}

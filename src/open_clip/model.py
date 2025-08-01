@@ -78,6 +78,7 @@ class CLIPTextCfg:
     ls_init_value: Optional[float] = None  # layer scale initial value
     embed_cls: bool = False
     pad_id: int = 0
+    eos_id: int = 2  # only used for when pool_type == 'eos', must match tokenizer eos
     no_causal_mask: bool = False  # disable causal masking
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
@@ -235,6 +236,7 @@ def _build_text_tower(
             embed_cls=text_cfg.embed_cls,
             no_causal_mask=text_cfg.no_causal_mask,
             pad_id=text_cfg.pad_id,
+            eos_id=text_cfg.eos_id,
             pool_type=text_cfg.pool_type,
             proj_type=text_cfg.proj_type,
             proj_bias=text_cfg.proj_bias,
@@ -281,6 +283,7 @@ class CLIP(nn.Module):
         self.ln_final = text.ln_final
         self.text_projection = text.text_projection
         self.text_pool_type = text.pool_type
+        self.text_eos_id = text.eos_id
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
         lshape = [1] if nonscalar_logit_scale else []
@@ -320,7 +323,7 @@ class CLIP(nn.Module):
         x = x + self.positional_embedding.to(cast_dtype)
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        x = text_global_pool(x, text, self.text_pool_type)
+        x = text_global_pool(x, text, self.text_pool_type, eos_token_id=getattr(self, "text_eos_id", None))
         if self.text_projection is not None:
             if isinstance(self.text_projection, nn.Linear):
                 x = self.text_projection(x)
@@ -414,7 +417,7 @@ class CLIP(nn.Module):
 
             if not intermediates_only:
                 x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-                x = text_global_pool(x, text, self.text_pool_type)
+                x = text_global_pool(x, text, self.text_pool_type, eos_token_id=getattr(self, "text_eos_id", None))
                 if self.text_projection is not None:
                     if isinstance(self.text_projection, nn.Linear):
                         x = self.text_projection(x)

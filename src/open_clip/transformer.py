@@ -922,6 +922,7 @@ def text_global_pool(
         x: torch.Tensor,
         text: Optional[torch.Tensor] = None,
         pool_type: str = 'argmax',
+        eos_token_id: Optional[int] = None,
 ) -> torch.Tensor:
     if pool_type == 'first':
         pooled = x[:, 0]
@@ -930,7 +931,12 @@ def text_global_pool(
     elif pool_type == 'argmax':
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         assert text is not None
-        pooled = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+        pooled = x[torch.arange(x.shape[0], device=x.device), text.argmax(dim=-1)]
+    elif pool_type == 'eos':
+        # take features from tokenizer specific eos
+        assert text is not None
+        idx = (text == eos_token_id).int().argmax(dim=-1)
+        pooled = x[torch.arange(x.shape[0], device=x.device), idx]
     else:
         pooled = x
 
@@ -955,6 +961,7 @@ class TextTransformer(nn.Module):
             use_pad_mask: bool = False,
             correct_cls_mask: bool = False,
             pad_id: int = 0,
+            eos_id: int = 2,
             pool_type: str = 'argmax',
             proj_type: str = 'linear',
             proj_bias: bool = False,
@@ -970,7 +977,7 @@ class TextTransformer(nn.Module):
             scale_fc: bool = False,
     ):
         super().__init__()
-        assert pool_type in ('first', 'last', 'argmax', 'none')
+        assert pool_type in ('first', 'last', 'argmax', 'eos', 'none')
         self.output_tokens = output_tokens
         self.num_pos = self.context_length = context_length
         self.vocab_size = vocab_size
@@ -978,6 +985,7 @@ class TextTransformer(nn.Module):
         self.output_dim = output_dim
         self.heads = heads
         self.pad_id = pad_id
+        self.eos_id = eos_id
         self.pool_type = pool_type
         self.use_pad_mask = use_pad_mask and no_causal_mask  # only use in bi‑dir mode
         self.correct_cls_mask = correct_cls_mask  # use the correct cls mask for CoCa (original is wrong)
@@ -1168,7 +1176,7 @@ class TextTransformer(nn.Module):
             pooled = self.ln_final(pooled)  # final LN applied after pooling in this case
         else:
             x = self.ln_final(x)
-            pooled = text_global_pool(x, text, pool_type=self.pool_type)
+            pooled = text_global_pool(x, text, pool_type=self.pool_type, eos_token_id=getattr(self, "eos_id", None))
 
         if self.text_projection is not None:
             if isinstance(self.text_projection, nn.Linear):
@@ -1208,7 +1216,7 @@ class TextTransformer(nn.Module):
             tokens = x[:, :-1]
         else:
             x = self.ln_final(x)
-            pooled = text_global_pool(x, text, pool_type=self.pool_type)
+            pooled = text_global_pool(x, text, pool_type=self.pool_type, eos_token_id=getattr(self, "eos_id", None))
             tokens = x
 
         if self.text_projection is not None:
