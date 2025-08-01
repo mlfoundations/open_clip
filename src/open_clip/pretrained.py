@@ -679,6 +679,40 @@ _PRETRAINED = {
         # original at facebook/PE-Core-G14-448/PE-Core-G14-448.pt
         meta=_pecfg(hf_hub='timm/PE-Core-bigG-14-448/'),
     ),
+
+    # MetaCLIP 2
+    "ViT-L-14-worldwide": dict(
+        metaclip2_worldwide=_pcfg(
+            hf_hub="timm/vit_large_patch14_clip_224.metaclip2_worldwide/",
+            quick_gelu=True,
+        ),
+    ),
+    "ViT-H-14-worldwide": dict(
+        metaclip2_worldwide=_pcfg(
+            hf_hub="timm/vit_huge_patch14_clip_224.metaclip2_worldwide/",
+            quick_gelu=True,
+        ),
+    ),
+    "ViT-H-14-worldwide-378": dict(
+        metaclip2_worldwide=_pcfg(
+            hf_hub="timm/vit_huge_patch14_clip_378.metaclip2_worldwide/",
+            resize_mode="squash",
+            # NOTE not quick-gelu
+        ),
+    ),
+    "ViT-bigG-14-worldwide": dict(
+        metaclip2_worldwide=_pcfg(hf_hub="timm/vit_gigantic_patch14_clip_224.metaclip2_worldwide/"),
+        # NOTE not quick-gelu
+    ),
+    "ViT-bigG-14-worldwide-378": dict(
+        metaclip2_worldwide=_pcfg(
+            hf_hub="timm/vit_gigantic_patch14_clip_378.metaclip2_worldwide/",
+            resize_mode="squash",
+            # NOTE not quick-gelu
+        ),
+
+    ),
+
 }
 
 _PRETRAINED_quickgelu = {}

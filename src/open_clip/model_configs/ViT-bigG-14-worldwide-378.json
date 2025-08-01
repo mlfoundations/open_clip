@@ -1,0 +1,21 @@
+{
+    "embed_dim": 1280,
+    "vision_cfg": {
+        "image_size": 378,
+        "layers": 48,
+        "width": 1664,
+        "head_width": 104,
+        "mlp_ratio": 4.9231,
+        "patch_size": 14
+    },
+    "text_cfg": {
+        "hf_tokenizer_name": "facebook/xlm-v-base",
+        "pool_type": "eos",
+        "eos_id": 2,
+        "context_length": 77,
+        "vocab_size": 901629,
+        "width": 1280,
+        "heads": 20,
+        "layers": 32
+    }
+}
