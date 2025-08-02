@@ -239,8 +239,7 @@ For instance, if dataset `A` has 1000 samples and dataset `B` has 100 samples, y
 
 #### Single-Node
 
-We make use of `torchrun` to launch distributed jobs. The following launches a
-a job on a node of 4 GPUs:
+We make use of `torchrun` to launch distributed jobs. The following launches a job on a node of 4 GPUs:
 
 ```bash
 cd open_clip/src
