@@ -1114,7 +1114,11 @@ class TextTransformer(nn.Module):
         # Class + padding additive mask
         if self.use_pad_mask or self.cls_emb is not None:
             add_mask  = self._build_additive_mask(text, seq_len, x.dtype)
-            attn_mask = add_mask if attn_mask is None else attn_mask.unsqueeze(0) + add_mask
+            if attn_mask is not None:
+                # Slice the causal mask to match current sequence length
+                attn_mask = attn_mask[:seq_len, :seq_len].unsqueeze(0) + add_mask
+            else:
+                attn_mask = add_mask
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
         return x, attn_mask
