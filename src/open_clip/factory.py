@@ -470,8 +470,12 @@ def create_model(
     is_hf_text_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
     if is_timm_model:
         vision_cfg['timm_model_pretrained'] = enable_default_image_weights
+    else:
+        enable_default_image_weights = False  # for accurate logging
     if is_hf_text_model:
         text_cfg['hf_model_pretrained'] = enable_default_text_weights
+    else:
+        enable_default_text_weights = False  # for accurate logging
 
     # Determine model class (CLIP, CustomTextCLIP, CoCa)
     custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
