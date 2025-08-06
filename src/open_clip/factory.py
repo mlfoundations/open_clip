@@ -500,7 +500,9 @@ def create_model(
     logging.info(f"Instantiating model architecture: {model_class.__name__}")
     model = model_class(**final_model_cfg, cast_dtype=cast_dtype)
 
-    # The model could be in the meta device if 
+    # The model could be in the meta device if inside a context manager,
+    # such as `accelerate.init_empty_weights`
+    # or inside a `transformers.PreTrainedModel.from_pretrained` call.
     model_is_in_meta_device = next(model.parameters()).device.type == "meta"
 
     if not model_is_in_meta_device:
