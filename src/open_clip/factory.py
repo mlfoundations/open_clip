@@ -499,11 +499,16 @@ def create_model(
     # Instantiate the model
     logging.info(f"Instantiating model architecture: {model_class.__name__}")
     model = model_class(**final_model_cfg, cast_dtype=cast_dtype)
-    _set_model_device_and_precision(model, device, precision, is_timm_model)
+
+    # The model could be in the meta device if 
+    model_is_in_meta_device = next(model.parameters()).device.type != "meta"
+
+    if not model_is_in_meta_device:
+        _set_model_device_and_precision(model, device, precision, is_timm_model)
 
     # Load Full Pretrained CLIP Weights (if path exists)
     pretrained_loaded = False
-    if checkpoint_path:
+    if checkpoint_path and not model_is_in_meta_device:
         logging.info(f'Loading full pretrained weights from: {checkpoint_path}')
         # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
         # Use strict=True by default for full model loading to catch mismatches.
@@ -518,7 +523,7 @@ def create_model(
 
     # Load tower-specific weights (image and text), after the full CLIP checkpoint, potentially overwriting parts.
     pretrained_image_loaded = False # Track if specific image weights loaded
-    if pretrained_image_path:
+    if pretrained_image_path and not model_is_in_meta_device:
         if os.path.isfile(pretrained_image_path):
             logging.info(f"Attempting to load image tower weights from: {pretrained_image_path}")
             try:
@@ -547,7 +552,7 @@ def create_model(
             logging.warning(f"Invalid file path specified for pretrained_image_path: {pretrained_image_path}")
 
     pretrained_text_loaded = False # Track if specific text weights loaded
-    if pretrained_text_path:
+    if pretrained_text_path and not model_is_in_meta_device:
         if os.path.isfile(pretrained_text_path):
             logging.info(f"Attempting to load text tower weights from: {pretrained_text_path}")
             try:
@@ -585,6 +590,8 @@ def create_model(
     elif not pretrained_loaded and partially_loaded:
          # Some tower weights loaded
          logging.warning(f"Model {model_name} initialized partially.")
+    elif model_is_in_meta_device:
+        logging.info("The model is in the 'meta' device and thus it was not initialized.")
     elif not pretrained_loaded and not partially_loaded:
          # Absolutely no weights were loaded from any source
          logging.warning(f"No pretrained weights loaded for model '{model_name}'. Model initialized randomly.")
