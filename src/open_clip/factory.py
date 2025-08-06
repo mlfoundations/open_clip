@@ -501,7 +501,7 @@ def create_model(
     model = model_class(**final_model_cfg, cast_dtype=cast_dtype)
 
     # The model could be in the meta device if 
-    model_is_in_meta_device = next(model.parameters()).device.type != "meta"
+    model_is_in_meta_device = next(model.parameters()).device.type == "meta"
 
     if not model_is_in_meta_device:
         _set_model_device_and_precision(model, device, precision, is_timm_model)
