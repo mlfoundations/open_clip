@@ -89,6 +89,19 @@ def _mccfg(url='', hf_hub='', **kwargs):
     }
 
 
+def _mc2cfg(url='', hf_hub='', **kwargs):
+    # MobileCLIP-2
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': OPENAI_DATASET_MEAN, # some are still 0
+        'std': OPENAI_DATASET_STD,  # some are still 1
+        'interpolation': 'bilinear',
+        'resize_mode': 'shortest',
+        **kwargs,
+    }
+
+
 def _pecfg(url='', hf_hub='', **kwargs):
     # PE
     return {
@@ -612,6 +625,13 @@ _PRETRAINED = {
         datacompdr=_mccfg(hf_hub='apple/MobileCLIP-B-OpenCLIP/'),
         datacompdr_lt=_mccfg(hf_hub='apple/MobileCLIP-B-LT-OpenCLIP/'),
     ),
+
+    "MobileCLIP2-B": dict(dfndr2b=_mccfg(hf_hub='timm/MobileCLIP2-B-OpenCLIP/')),
+    "MobileCLIP2-S0": dict(dfndr2b=_mccfg(hf_hub='timm/MobileCLIP2-S0-OpenCLIP/')),
+    "MobileCLIP2-S2": dict(dfndr2b=_mccfg(hf_hub='timm/MobileCLIP2-S2-OpenCLIP/')),
+    "MobileCLIP2-S3": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-S3-OpenCLIP/')),
+    "MobileCLIP2-S4": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-S4-OpenCLIP/')),
+    "MobileCLIP2-L-14": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-L-14-OpenCLIP/', interpolation='bicubic')),
 
     "ViTamin-S": dict(
         datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S/pytorch_model.bin'),
