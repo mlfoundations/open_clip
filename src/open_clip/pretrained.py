@@ -681,12 +681,6 @@ _PRETRAINED = {
     ),
 
     # MetaCLIP 2
-    "ViT-L-14-worldwide": dict(
-        metaclip2_worldwide=_pcfg(
-            hf_hub="timm/vit_large_patch14_clip_224.metaclip2_worldwide/",
-            quick_gelu=True,
-        ),
-    ),
     "ViT-H-14-worldwide": dict(
         metaclip2_worldwide=_pcfg(
             hf_hub="timm/vit_huge_patch14_clip_224.metaclip2_worldwide/",
