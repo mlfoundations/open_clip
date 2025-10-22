@@ -507,6 +507,7 @@ def create_model(
 
     if not model_is_in_meta_device:
         _set_model_device_and_precision(model, device, precision, is_timm_model)
+        model_is_in_meta_device = device.type == 'meta'
 
     # Load Full Pretrained CLIP Weights (if path exists)
     pretrained_loaded = False
