@@ -4,6 +4,7 @@ import warnings
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as F
 from torchvision.transforms import Normalize, Compose, RandomResizedCrop, InterpolationMode, ToTensor, Resize, \
@@ -235,8 +236,57 @@ class CenterCropOrPad(torch.nn.Module):
         return f"{self.__class__.__name__}(size={self.size})"
 
 
+class MaybeConvertMode:
+    """Perform PIL convert("RGB") iff PIL image.
+    """
+
+    def __init__(self, mode="RGB") -> None:
+        super().__init__()
+        self.mode = mode
+
+    def __call__(self, pic):
+        """
+        Args:
+            pic (PIL Image or numpy.ndarray): Image to be converted to tensor.
+
+        Returns:
+            Tensor: Converted image.
+        """
+        # FIXME if we switched to torchvision v2 transforms, can handle image mode
+        #  conversion more consistently across all input types.
+        if isinstance(pic, (np.ndarray, torch.Tensor)):
+            return pic
+        return pic.convert(self.mode)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+
+
 def _convert_to_rgb(image):
     return image.convert('RGB')
+
+
+class MaybeToTensor(ToTensor):
+    """Convert a PIL Image or ndarray to tensor if it's not already one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __call__(self, pic) -> torch.Tensor:
+        """
+        Args:
+            pic (PIL Image or numpy.ndarray): Image to be converted to tensor.
+
+        Returns:
+            Tensor: Converted image.
+        """
+        if isinstance(pic, torch.Tensor):
+            return pic
+        return F.to_tensor(pic)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
 
 
 class color_jitter(object):
@@ -337,7 +387,7 @@ def image_transform(
                     scale=aug_cfg_dict.pop('scale'),
                     interpolation=InterpolationMode.BICUBIC,
                 ),
-                _convert_to_rgb,
+                MaybeConvertMode(),
             ]
             if aug_cfg.color_jitter_prob:
                 assert aug_cfg.color_jitter is not None and len(aug_cfg.color_jitter) == 4
@@ -349,7 +399,7 @@ def image_transform(
                     gray_scale(aug_cfg.gray_scale_prob)
                 ])
             train_transform.extend([
-                ToTensor(),
+                MaybeToTensor(),
                 normalize,
             ])
             train_transform = Compose(train_transform)
@@ -383,8 +433,8 @@ def image_transform(
             transforms += [CenterCrop(image_size)]
 
         transforms.extend([
-            _convert_to_rgb,
-            ToTensor(),
+            MaybeConvertMode(),
+            MaybeToTensor(),
             normalize,
         ])
         return Compose(transforms)
