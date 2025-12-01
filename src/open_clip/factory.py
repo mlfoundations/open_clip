@@ -14,7 +14,8 @@ from .convert import convert_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .superclip_model import SuperCLIP
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, SuperClipLoss
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
@@ -191,7 +192,8 @@ def load_checkpoint(
         load_big_vision_weights(model, checkpoint_path)
         return {}
 
-    state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
+    state_dict = load_state_dict(checkpoint_path, device=device, weights_only=False)
+    # state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
 
     # Detect & convert 3rd party state_dicts -> open_clip
     state_dict = convert_state_dict(model, state_dict)
@@ -477,17 +479,24 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (CLIP, CustomTextCLIP, CoCa)
-    custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
-    if custom_text:
-        # Use CustomTextCLIP (or CoCa if multimodal_cfg is present)
-        if "multimodal_cfg" in model_cfg:
-            model_class = CoCa
-        else:
-            model_class = CustomTextCLIP
+    # Determine model class (CLIP, CustomTextCLIP, CoCa, SuperCLIP)
+    # Check for SuperCLIP first (based on model name and presence of clstext_cfg)
+    # Use identifier (original model_name) for name check, or check for clstext_cfg in config
+    is_superclip_model = identifier.lower().startswith('superclip-') or 'clstext_cfg' in model_cfg
+    if is_superclip_model:
+        # Use SuperCLIP
+        model_class = SuperCLIP
     else:
-        # Default to standard CLIP
-        model_class = CLIP
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
+        if custom_text:
+            # Use CustomTextCLIP (or CoCa if multimodal_cfg is present)
+            if "multimodal_cfg" in model_cfg:
+                model_class = CoCa
+            else:
+                model_class = CustomTextCLIP
+        else:
+            # Default to standard CLIP
+            model_class = CLIP
 
     # Apply final **kwargs overrides (highest priority) to a copy of model_cfg
     final_model_cfg = deepcopy(model_cfg)
@@ -806,6 +815,16 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
+            use_horovod=args.horovod,
+        )
+    elif "superclip" in args.model.lower():
+        return SuperClipLoss(
+            world_size=args.world_size,
+            pad_id=getattr(args, 'pad_id', 0),
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
             use_horovod=args.horovod,
         )
     elif args.siglip:
