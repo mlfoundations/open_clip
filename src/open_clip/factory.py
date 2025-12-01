@@ -192,8 +192,7 @@ def load_checkpoint(
         load_big_vision_weights(model, checkpoint_path)
         return {}
 
-    state_dict = load_state_dict(checkpoint_path, device=device, weights_only=False)
-    # state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
+    state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
 
     # Detect & convert 3rd party state_dicts -> open_clip
     state_dict = convert_state_dict(model, state_dict)
