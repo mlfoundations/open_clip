@@ -16,7 +16,6 @@ from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_
 
 try:
     from transformers import (
-        BeamSearchScorer,
         LogitsProcessorList,
         TopPLogitsWarper,
         TopKLogitsWarper,
@@ -27,6 +26,11 @@ try:
         EosTokenCriteria,
         StoppingCriteriaList
     )
+    # BeamSearchScorer was moved to transformers.generation in transformers >= 4.56
+    try:
+        from transformers import BeamSearchScorer
+    except ImportError:
+        from transformers.generation import BeamSearchScorer
 
     GENERATION_TYPES = {
         "top_k": TopKLogitsWarper,
