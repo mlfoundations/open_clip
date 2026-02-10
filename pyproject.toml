@@ -56,7 +56,8 @@ training = [
 test = [
     'pytest-split',
     'pytest',
-    'open_clip_torch[training]'
+    'open_clip_torch[training]',
+    'requests'
 ]
 
 [project.urls]
