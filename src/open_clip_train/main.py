@@ -463,6 +463,18 @@ def main(args):
             # As of now (~PyTorch 2.4/2.5), compile + grad checkpointing work, but DDP optimizer must be disabled
             torch._dynamo.config.optimize_ddp = False
 
+        filter_prefixes = (
+            "torch._dynamo",
+            "torch._inductor",
+            "torch._functorch",
+            "torch._utils_internal",
+            "torch.fx",
+        )
+
+        for name in logging.root.manager.loggerDict:
+            if name.startswith(filter_prefixes):
+                logging.getLogger(name).setLevel(logging.WARNING)
+
         model = torch.compile(original_model)
 
     if 'train' not in data:
