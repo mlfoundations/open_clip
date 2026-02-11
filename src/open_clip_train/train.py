@@ -262,7 +262,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        # unwrap DDP for single processe eval
+        # unwrap DDP for single process eval
         if args.distributed and not args.horovod:
             model = model.module
         dataloader = data['val'].dataloader
