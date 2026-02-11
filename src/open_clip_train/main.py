@@ -485,6 +485,12 @@ def main(args):
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
             evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+            # sync to avoid some processes advancing/exiting while rank 0 finishes eval
+            if args.distributed:
+                if args.horovod:
+                    hvd.join()
+                else:
+                    torch.distributed.barrier()
 
         # Saving checkpoints.
         if args.save_logs:
@@ -515,6 +521,13 @@ def main(args):
                 latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
                 torch.save(checkpoint_dict, tmp_save_path)
                 os.replace(tmp_save_path, latest_save_path)
+
+        # keep nodes in sync during checkpointing
+        if args.distributed:
+            if args.horovod:
+                hvd.join()
+            else:
+                torch.distributed.barrier()
 
     if args.wandb and is_master(args):
         wandb.finish()
