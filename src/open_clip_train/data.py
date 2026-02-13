@@ -20,10 +20,6 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
 
 
 class CsvDataset(Dataset):

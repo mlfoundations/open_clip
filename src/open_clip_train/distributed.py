@@ -5,10 +5,6 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
 
 
 def is_global_master(args):
@@ -51,16 +47,6 @@ def set_device(device):
         torch.npu.set_device(device)
 
 
-def is_using_horovod():
-    # NOTE w/ horovod run, OMPI vars should be set, but w/ SLURM PMI vars will be set
-    # Differentiating between horovod and DDP use via SLURM may not be possible, so horovod arg still required...
-    ompi_vars = ["OMPI_COMM_WORLD_RANK", "OMPI_COMM_WORLD_SIZE"]
-    pmi_vars = ["PMI_RANK", "PMI_SIZE"]
-    if all([var in os.environ for var in ompi_vars]) or all([var in os.environ for var in pmi_vars]):
-        return True
-    else:
-        return False
-
 
 def is_using_distributed():
     if 'WORLD_SIZE' in os.environ:
@@ -101,7 +87,6 @@ def init_distributed_device(args):
         device=getattr(args, 'device', 'cuda'),
         dist_backend=getattr(args, 'dist_backend', None),
         dist_url=getattr(args, 'dist_url', None),
-        horovod=getattr(args, 'horovod', False),
         no_set_device_rank=getattr(args, 'no_set_device_rank', False),
     )
     args.device = result['device']
@@ -117,7 +102,6 @@ def init_distributed_device_so(
         device: str = 'cuda',
         dist_backend: Optional[str] = None,
         dist_url: Optional[str] = None,
-        horovod: bool = False,
         no_set_device_rank: bool = False,
 ):
     # Distributed training = training on more than one GPU.
@@ -134,15 +118,7 @@ def init_distributed_device_so(
         warnings.warn(f"Device {device} was not available, falling back to CPU.")
         device_type = device = 'cpu'
 
-    if horovod:
-        import horovod.torch as hvd
-        assert hvd is not None, "Horovod is not installed"
-        hvd.init()
-        local_rank = int(hvd.local_rank())
-        global_rank = hvd.rank()
-        world_size = hvd.size()
-        distributed = True
-    elif is_using_distributed():
+    if is_using_distributed():
         if dist_backend is None:
             dist_backends = {
                 "cuda": "nccl",
@@ -197,22 +173,16 @@ def init_distributed_device_so(
 
 def broadcast_object(args, obj, src=0):
     # broadcast a pickle-able python object from rank-0 to all ranks
-    if args.horovod:
-        return hvd.broadcast_object(obj, root_rank=src)
+    if args.rank == src:
+        objects = [obj]
     else:
-        if args.rank == src:
-            objects = [obj]
-        else:
-            objects = [None]
-        dist.broadcast_object_list(objects, src=src)
-        return objects[0]
+        objects = [None]
+    dist.broadcast_object_list(objects, src=src)
+    return objects[0]
 
 
 def all_gather_object(args, obj, dst=0):
     # gather a pickle-able python object across all ranks
-    if args.horovod:
-        return hvd.allgather_object(obj)
-    else:
-        objects = [None for _ in range(args.world_size)]
-        dist.all_gather_object(objects, obj)
-        return objects
+    objects = [None for _ in range(args.world_size)]
+    dist.all_gather_object(objects, obj)
+    return objects

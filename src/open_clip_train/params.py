@@ -368,16 +368,29 @@ def parse_args(args):
         help="If true, we copy the entire base on the log directory, and execute from there."
     )
     parser.add_argument(
-        "--horovod",
-        default=False,
-        action="store_true",
-        help="Use horovod for distributed training."
-    )
-    parser.add_argument(
         "--ddp-static-graph",
         default=False,
         action='store_true',
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
+    )
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action='store_true',
+        help="Use FSDP2 (fully_shard) instead of DDP for distributed training.",
+    )
+    parser.add_argument(
+        "--fsdp-no-reshard-after-forward",
+        default=False,
+        action='store_true',
+        help="Disable resharding parameters after forward pass. "
+             "Lower communication but higher memory.",
+    )
+    parser.add_argument(
+        "--fsdp-offload-cpu",
+        default=False,
+        action='store_true',
+        help="Offload FSDP parameters to CPU when not in use.",
     )
     parser.add_argument(
         "--no-set-device-rank",

@@ -795,7 +795,6 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif "coca" in args.model.lower():
         return CoCaLoss(
@@ -806,10 +805,8 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif args.siglip:
-        assert not args.horovod, "Horovod not currently supported for SigLip"
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
@@ -822,8 +819,30 @@ def create_loss(args):
         cache_labels=True,
         rank=args.rank,
         world_size=args.world_size,
-        use_horovod=args.horovod,
     )
+
+
+def create_task(args, model, dist_model=None):
+    """Create a training task wrapping model + loss.
+
+    Args:
+        args: Training arguments (must have model, distill, siglip, etc.).
+        model: The CLIP model.
+        dist_model: Optional teacher model for distillation.
+
+    Returns:
+        A CLIPTrainingTask subclass instance.
+    """
+    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
+    loss = create_loss(args)
+    if args.distill:
+        return DistillCLIPTask(student_model=model, teacher_model=dist_model, loss=loss)
+    elif "coca" in args.model.lower():
+        return CoCaTask(model=model, loss=loss)
+    elif args.siglip:
+        return SigLIPTask(model=model, loss=loss)
+    else:
+        return CLIPTask(model=model, loss=loss)
 
 
 def create_model_and_transforms(

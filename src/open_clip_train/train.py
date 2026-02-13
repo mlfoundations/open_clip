@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -15,6 +16,7 @@ except ImportError:
     wandb = None
 
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
+from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
@@ -47,13 +49,6 @@ def postprocess_clip_output(model_out):
     }
 
 
-def unwrap_model(model):
-    if hasattr(model, 'module'):
-        return model.module
-    else:
-        return model
-
-
 def backward(total_loss, scaler):
     if scaler is not None:
         scaler.scale(total_loss).backward()
@@ -61,14 +56,12 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
+def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision, device_type=device.type)
     input_dtype = get_input_dtype(args.precision)
 
-    model.train()
-    if args.distill:
-        dist_model.eval()
+    task.train()
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
@@ -98,23 +91,15 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
-                logit_scale = model_out["logit_scale"]
-                if args.distill:
-                    with torch.no_grad():
-                        dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
-                losses = loss(**model_out, output_dict=True)
-
-                total_loss = sum(losses.values())
-                losses["loss"] = total_loss
+                losses = task(images, texts)
+                total_loss = losses["loss"]
 
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = task.trainable_module(images, texts)
 
                     for f in ("logit_scale", "logit_bias"):
                         model_out.pop(f, None)
@@ -140,44 +125,62 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             for j in range(args.accum_freq):
                 images = accum_images[j]
                 texts = accum_texts[j]
-                with autocast():
-                    model_out = model(images, texts)
 
-                    inputs_no_accum = {}
-                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
-                    if "logit_bias" in model_out:
-                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+                # Disable gradient sync for all but the last accumulation step.
+                # FSDP2: set_requires_gradient_sync; DDP: no_sync context manager.
+                is_last_step = (j == args.accum_freq - 1)
+                use_fsdp_no_sync = (
+                    not is_last_step
+                    and hasattr(task.trainable_module, 'set_requires_gradient_sync')
+                )
+                use_ddp_no_sync = (
+                    not is_last_step
+                    and not use_fsdp_no_sync
+                    and isinstance(task.trainable_module, DistributedDataParallel)
+                )
+                if use_fsdp_no_sync:
+                    task.trainable_module.set_requires_gradient_sync(False)
 
-                    inputs = {}
-                    for key, val in accum_features.items():
-                        accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+                ddp_context = task.trainable_module.no_sync() if use_ddp_no_sync else nullcontext()
+                with ddp_context:
+                    with autocast():
+                        model_out = task.trainable_module(images, texts)
 
-                    losses = loss(**inputs, **inputs_no_accum, output_dict=True)
-                    del inputs
-                    del inputs_no_accum
-                    total_loss = sum(losses.values())
-                    losses["loss"] = total_loss
+                        inputs_no_accum = {}
+                        inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                        if "logit_bias" in model_out:
+                            inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
 
-                backward(total_loss, scaler)
+                        inputs = {}
+                        for key, val in accum_features.items():
+                            accumulated = accum_features[key]
+                            inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+
+                        losses = task.loss(**inputs, **inputs_no_accum, output_dict=True)
+                        del inputs
+                        del inputs_no_accum
+                        total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
+                        losses["loss"] = total_loss
+                        losses["logit_scale"] = logit_scale
+
+                    backward(total_loss, scaler)
+
+                if use_fsdp_no_sync:
+                    task.trainable_module.set_requires_gradient_sync(True)
 
         if scaler is not None:
-            if args.horovod:
-                optimizer.synchronize()
+            if args.grad_clip_norm is not None:
                 scaler.unscale_(optimizer)
-                if args.grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                with optimizer.skip_synchronize():
-                    scaler.step(optimizer)
-            else:
-                if args.grad_clip_norm is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                scaler.step(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    task.trainable_module.parameters(), args.grad_clip_norm, norm_type=2.0,
+                )
+            scaler.step(optimizer)
             scaler.update()
         else:
             if args.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                torch.nn.utils.clip_grad_norm_(
+                    task.trainable_module.parameters(), args.grad_clip_norm, norm_type=2.0,
+                )
             optimizer.step()
 
         # reset gradient accum, if enabled
@@ -185,8 +188,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        task.clamp_logit_scale()
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -203,10 +205,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     losses_m[key] = AverageMeter()
                 losses_m[key].update(val.item(), batch_size)
 
-            logit_scale_scalar = logit_scale.item()
+            logit_scale = losses.get("logit_scale", None)
+            logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
             loss_log = " ".join(
                 [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
+                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
@@ -228,7 +231,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 "samples_per_second_per_gpu": samples_per_second_per_gpu,
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
-            }            
+            }
             log_data.update({name:val.val for name,val in losses_m.items()})
 
             log_data = {"train/" + name: val for name, val in log_data.items()}
@@ -236,35 +239,33 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             if tb_writer is not None:
                 for name, val in log_data.items():
                     tb_writer.add_scalar(name, val, step)
-            
+
             if args.wandb:
                 assert wandb is not None, 'Please install wandb.'
                 log_data['step'] = step  # for backwards compatibility
                 wandb.log(log_data, step=step)
-            
+
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
     # end for
 
 
-def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
+def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
     if not is_master(args):
         return metrics
     device = torch.device(args.device)
+    model = get_model_from_task(model_or_task)
     model.eval()
 
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
+    zero_shot_metrics = zero_shot_eval(model_or_task, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision, device_type=device.type)
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        # unwrap DDP for single process eval
-        if args.distributed and not args.horovod:
-            model = model.module
         dataloader = data['val'].dataloader
         num_samples = 0
         samples_per_val = dataloader.num_samples

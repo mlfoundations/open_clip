@@ -23,12 +23,8 @@ try:
 except ImportError:
     tensorboard = None
 
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
-
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_task
+from open_clip.task import unwrap_model
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.logger import setup_logging
@@ -193,11 +189,7 @@ def main(args):
             'It is recommended to use AMP mixed-precision instead of FP16. '
             'FP16 support needs further verification and tuning, especially for train.')
 
-    if args.horovod:
-        logging.info(
-            f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
-    elif args.distributed:
+    if args.distributed:
         logging.info(
             f'Running in distributed mode with multiple processes. Device: {args.device}.'
             f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
@@ -292,17 +284,31 @@ def main(args):
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
-    if args.distributed and not args.horovod:
+    # Create task (wraps model + loss)
+    task = create_task(args, model=model, dist_model=dist_model)
+    # Keep reference to unwrapped task for checkpoint methods.
+    # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
+    original_task = task
+
+    if args.fsdp and not args.distributed:
+        logging.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
+        args.fsdp = False
+
+    if args.distributed:
         if args.use_bn_sync:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-    
-        if args.distill:
-            dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
+            task.trainable_module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(task.trainable_module)
+        if args.fsdp:
+            fsdp_kwargs = dict(reshard_after_forward=not args.fsdp_no_reshard_after_forward)
+            if args.fsdp_offload_cpu:
+                from torch.distributed._composable.fsdp import CPUOffloadPolicy
+                fsdp_kwargs['offload_policy'] = CPUOffloadPolicy()
+            task.prepare_fsdp(**fsdp_kwargs)
+        else:
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            task.prepare_distributed(device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
@@ -323,7 +329,7 @@ def main(args):
             if args.momentum is not None:
                 opt_kwargs['momentum'] = args.momentum
             optimizer = create_optimizer_v2(
-                model,
+                task.trainable_module,
                 timm_opt,
                 lr=args.lr,
                 weight_decay=args.wd,
@@ -335,7 +341,7 @@ def main(args):
             exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
             include = lambda n, p: not exclude(n, p)
 
-            named_parameters = list(model.named_parameters())
+            named_parameters = list(task.trainable_module.named_parameters())
             gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
             rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
@@ -360,11 +366,6 @@ def main(args):
                 f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
             )
 
-        if args.horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
         scaler = None
         if args.precision == "amp":
             try:
@@ -382,15 +383,15 @@ def main(args):
             sd = checkpoint["state_dict"]
             if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
                 sd = {k[len('module.'):]: v for k, v in sd.items()}
-            model.load_state_dict(sd)
+            original_task.load_state_dict({"state_dict": sd})
             if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer"])
+                original_task.load_optim_state_dict(optimizer, checkpoint["optimizer"])
             if scaler is not None and 'scaler' in checkpoint:
                 scaler.load_state_dict(checkpoint['scaler'])
             logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
         else:
             # loading a bare (model only) checkpoint for fine-tune or evaluation
-            model.load_state_dict(checkpoint)
+            original_task.load_state_dict({"state_dict": checkpoint})
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
@@ -447,18 +448,17 @@ def main(args):
             config=vars(args),
         )
         if args.debug:
-            wandb.watch(model, log='all')
+            wandb.watch(task.trainable_module, log='all')
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
     # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
     # For compatibility, we save state_dict() of the original model, which shares the
     # weights without the prefix.
-    original_model = model
     if args.torchcompile:
         logging.info('Compiling model...')
 
-        if args.grad_checkpointing and args.distributed:
+        if args.grad_checkpointing and args.distributed and not args.fsdp:
             logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
             # As of now (~PyTorch 2.4/2.5), compile + grad checkpointing work, but DDP optimizer must be disabled
             torch._dynamo.config.optimize_ddp = False
@@ -475,42 +475,44 @@ def main(args):
             if name.startswith(filter_prefixes):
                 logging.getLogger(name).setLevel(logging.WARNING)
 
-        model = torch.compile(original_model)
+        task = torch.compile(task)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
             from open_clip.utils import convert_int8_model_to_inference_mode
-            convert_int8_model_to_inference_mode(model)
+            convert_int8_model_to_inference_mode(unwrap_model(task.trainable_module))
         # Evaluate.
-        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        evaluate(task, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
-
-    loss = create_loss(args)
 
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
+        train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+            evaluate(task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
             # sync to avoid some processes advancing/exiting while rank 0 finishes eval
             if args.distributed:
-                if args.horovod:
-                    hvd.join()
-                else:
-                    torch.distributed.barrier()
+                torch.distributed.barrier()
 
         # Saving checkpoints.
+        # With FSDP2, state dict gather is collective — all ranks must participate
+        # even though only master writes to disk.
+        # With DDP, only master needs to call state_dict() to avoid wasting memory.
+        if original_task._fsdp_enabled or args.save_logs:
+            model_sd = original_task.state_dict()["state_dict"]
+            optim_sd = original_task.get_optim_state_dict(optimizer)
+
         if args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": original_model.state_dict(),
-                "optimizer": optimizer.state_dict(),
+                "state_dict": model_sd,
+                "optimizer": optim_sd,
             }
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
@@ -536,10 +538,7 @@ def main(args):
 
         # keep nodes in sync during checkpointing
         if args.distributed:
-            if args.horovod:
-                hvd.join()
-            else:
-                torch.distributed.barrier()
+            torch.distributed.barrier()
 
     if args.wandb and is_master(args):
         wandb.finish()
