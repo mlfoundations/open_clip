@@ -1453,3 +1453,53 @@ def lock_text_tower(
     num_groups_to_unlock = min(unlocked_layers, len(groups))
     for group in groups[-num_groups_to_unlock:]:
         _unlock(group)
+
+
+class MixClsHead(nn.Module):
+    """Classification head for SuperCLIP"""
+    def __init__(
+            self,
+            width: int,
+            layers: int,
+            mlp_ratio: float = 4.0,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = LayerNorm,
+            output_dim: int = 512,
+    ):
+        super().__init__()
+        self.width = width
+        
+        mlp_width = int(width * mlp_ratio)
+        self.mlps = nn.ModuleList([nn.Sequential(OrderedDict([
+            ("c_norm", norm_layer(width)),
+            ("c_fc", nn.Linear(width, mlp_width)),
+            ("gelu", act_layer()),
+            ("c_proj", nn.Linear(mlp_width, width))
+        ])) for _ in range(layers)])
+        
+        self.ln_mlp = norm_layer(width)
+        self.text_projection = nn.Linear(width, output_dim)
+
+        self.init_parameters()
+
+    def init_parameters(self):
+        proj_std = (self.width ** -0.5) * (2 ** -0.5)
+        fc_std = (2 * self.width) ** -0.5
+
+        for block in self.mlps:
+            nn.init.normal_(block.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.c_proj.weight, std=proj_std)
+
+        if self.text_projection is not None:
+            nn.init.normal_(self.text_projection.weight, std=self.width ** -0.5)
+            self.text_projection.bias.data.fill_(0.0)
+
+    def forward(self, x):
+
+        for mlp in self.mlps:
+            x = x + mlp(x)
+
+        x = self.ln_mlp(x)
+        x = self.text_projection(x)
+
+        return x
