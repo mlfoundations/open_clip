@@ -13,7 +13,13 @@ class DistillCLIPTask(CLIPTrainingTask):
             self,
             student_model: nn.Module,
             teacher_model: nn.Module,
-            loss: nn.Module,
+            *,
+            loss: Optional[nn.Module] = None,
+            local_loss: bool = False,
+            gather_with_grad: bool = False,
+            cache_labels: bool = True,
+            rank: int = 0,
+            world_size: int = 1,
             device: Optional[torch.device] = None,
             dtype: Optional[torch.dtype] = None,
             verbose: bool = True,
@@ -25,7 +31,17 @@ class DistillCLIPTask(CLIPTrainingTask):
         # Freeze teacher parameters
         for p in self.teacher.parameters():
             p.requires_grad = False
-        self.loss = loss
+        if loss is not None:
+            self.loss = loss
+        else:
+            from open_clip.loss import DistillClipLoss
+            self.loss = DistillClipLoss(
+                local_loss=local_loss,
+                gather_with_grad=gather_with_grad,
+                cache_labels=cache_labels,
+                rank=rank,
+                world_size=world_size,
+            )
 
     def train(self, mode: bool = True):
         """Override to keep teacher always in eval mode."""

@@ -788,6 +788,13 @@ def _set_model_device_and_precision(
 
 
 def create_loss(args):
+    """Deprecated: use create_task() instead. Loss is now created by the task."""
+    warnings.warn(
+        "create_loss() is deprecated. Loss is now created internally by the task. "
+        "Use create_task() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if args.distill:
         return DistillClipLoss(
             local_loss=args.local_loss,
@@ -810,7 +817,7 @@ def create_loss(args):
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
-            dist_impl=args.loss_dist_impl,  # siglip has multiple distributed implementations to choose from
+            dist_impl=args.loss_dist_impl,
         )
 
     return ClipLoss(
@@ -825,6 +832,9 @@ def create_loss(args):
 def create_task(args, model, dist_model=None):
     """Create a training task wrapping model + loss.
 
+    The task constructs its own loss internally from the provided args.
+    Loss type is determined by the task class (CLIPTask -> ClipLoss, etc.).
+
     Args:
         args: Training arguments (must have model, distill, siglip, etc.).
         model: The CLIP model.
@@ -834,15 +844,37 @@ def create_task(args, model, dist_model=None):
         A CLIPTrainingTask subclass instance.
     """
     from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
-    loss = create_loss(args)
+
+    shared = dict(rank=args.rank, world_size=args.world_size)
     if args.distill:
-        return DistillCLIPTask(student_model=model, teacher_model=dist_model, loss=loss)
+        return DistillCLIPTask(
+            model, dist_model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
     elif "coca" in args.model.lower():
-        return CoCaTask(model=model, loss=loss)
+        return CoCaTask(
+            model,
+            caption_loss_weight=args.coca_caption_loss_weight,
+            clip_loss_weight=args.coca_contrastive_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
     elif args.siglip:
-        return SigLIPTask(model=model, loss=loss)
+        return SigLIPTask(
+            model,
+            dist_impl=args.loss_dist_impl,
+            **shared,
+        )
     else:
-        return CLIPTask(model=model, loss=loss)
+        return CLIPTask(
+            model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
 
 
 def create_model_and_transforms(

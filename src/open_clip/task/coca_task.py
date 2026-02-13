@@ -12,14 +12,34 @@ class CoCaTask(CLIPTrainingTask):
     def __init__(
             self,
             model: nn.Module,
-            loss: nn.Module,
+            *,
+            loss: Optional[nn.Module] = None,
+            caption_loss_weight: float = 2.0,
+            clip_loss_weight: float = 1.0,
+            local_loss: bool = False,
+            gather_with_grad: bool = False,
+            cache_labels: bool = True,
+            rank: int = 0,
+            world_size: int = 1,
             device: Optional[torch.device] = None,
             dtype: Optional[torch.dtype] = None,
             verbose: bool = True,
     ):
         super().__init__(device=device, dtype=dtype, verbose=verbose)
         self.trainable_module = model
-        self.loss = loss
+        if loss is not None:
+            self.loss = loss
+        else:
+            from open_clip.loss import CoCaLoss
+            self.loss = CoCaLoss(
+                caption_loss_weight=caption_loss_weight,
+                clip_loss_weight=clip_loss_weight,
+                local_loss=local_loss,
+                gather_with_grad=gather_with_grad,
+                cache_labels=cache_labels,
+                rank=rank,
+                world_size=world_size,
+            )
 
     def _build_loss_inputs(self, model_out, texts):
         """Build CoCaLoss inputs with autoregressive shift."""
