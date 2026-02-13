@@ -276,6 +276,11 @@ class ResidualAttentionBlock(nn.Module):
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
     ):
+        # TODO(kv-cache): Accept past_key_values tuple. For self-attention,
+        # concatenate past K/V with current K/V before calling attn.
+        # Return updated (K, V) for caching. Requires switching from
+        # nn.MultiheadAttention to F.scaled_dot_product_attention with
+        # explicit Q/K/V projection for incremental K/V management.
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
@@ -1327,6 +1332,11 @@ class MultimodalTransformer(Transformer):
         assert False, "Not currently implemented for MultimodalTransformer w/ xattn"
 
     def forward(self, image_embs, text_embs):
+        # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
+        # and cache_position. When past_key_values is not None, only process
+        # new positions for self-attention (concatenate past K/V).
+        # Cross-attention K/V from image_embs are constant per generation and
+        # can be cached once.
         seq_len = text_embs.shape[1]
         if not self.batch_first:
             image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
