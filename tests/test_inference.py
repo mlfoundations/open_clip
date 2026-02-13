@@ -38,11 +38,15 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
 models_to_test = list(models_to_test)
 models_to_test.sort()
 
+# Keep (model_name, False) tuples so test IDs remain stable for CI caching
+models_to_test_fully = [(m, False) for m in models_to_test]
+
 
 @pytest.mark.regression_test
-@pytest.mark.parametrize("model_name", models_to_test)
+@pytest.mark.parametrize("model_name,jit", models_to_test_fully)
 def test_inference_with_data(
         model_name,
+        jit,
         pretrained = None,
         pretrained_hf = False,
         precision = 'fp32',
