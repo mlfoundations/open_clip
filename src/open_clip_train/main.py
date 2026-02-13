@@ -23,7 +23,7 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_task
+from open_clip import create_model_and_transforms, get_tokenizer, create_task
 from open_clip.task import unwrap_model
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
@@ -217,7 +217,6 @@ def main(args):
         args.pretrained,
         precision=args.precision,
         device=device,
-        jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
@@ -256,9 +255,6 @@ def main(args):
         model = model.to(device)
 
     random_seed(args.seed, args.rank)
-
-    if args.trace:
-        model = trace_model(model, batch_size=args.batch_size, device=device)
 
     if args.lock_image:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
@@ -315,8 +311,6 @@ def main(args):
     scaler = None
 
     if args.train_data or args.dataset_type == "synthetic":
-        assert not args.trace, 'Cannot train with traced model'
-
         opt = getattr(args, 'opt', 'adamw').lower()
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2

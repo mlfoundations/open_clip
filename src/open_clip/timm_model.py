@@ -134,7 +134,6 @@ class TimmModel(nn.Module):
                 gmodules = {k for k, v in gmodules.items() if v <= max_layer_id}
                 freeze_batch_norm_2d(self.trunk, gmodules)
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
         try:
             self.trunk.set_grad_checkpointing(enable)

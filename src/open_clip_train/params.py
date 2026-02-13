@@ -301,22 +301,10 @@ def parse_args(args):
         help="Force use of CustomTextCLIP model (separate text-tower).",
     )
     parser.add_argument(
-        "--torchscript",
-        default=False,
-        action='store_true',
-        help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
-    )
-    parser.add_argument(
         "--torchcompile",
         default=False,
         action='store_true',
         help="torch.compile() the model, requires pytorch 2.0 or later.",
-    )
-    parser.add_argument(
-        "--trace",
-        default=False,
-        action='store_true',
-        help="torch.jit.trace the model for inference / eval only",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."

@@ -263,7 +263,6 @@ def _build_text_tower(
 
 
 class CLIP(nn.Module):
-    output_dict: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -309,12 +308,10 @@ class CLIP(nn.Module):
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
         lock_text_tower(self, unlocked_layers)
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding'}
@@ -480,7 +477,6 @@ class CLIP(nn.Module):
 
 
 class CustomTextCLIP(nn.Module):
-    output_dict: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -515,12 +511,10 @@ class CustomTextCLIP(nn.Module):
     def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         self.text.lock(unlocked_layers, freeze_layer_norm)
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = set()
@@ -771,22 +765,6 @@ def build_model_from_openai_state_dict(
     convert_weights_to_fp16(model)  # OpenAI state dicts are partially converted to float16
     model.load_state_dict(state_dict)
     return model.eval()
-
-
-def trace_model(model, batch_size=256, device=torch.device('cpu')):
-    model.eval()
-    image_size = model.visual.image_size
-    example_images = torch.ones((batch_size, 3, image_size, image_size), device=device)
-    example_text = torch.zeros((batch_size, model.context_length), dtype=torch.int, device=device)
-    model = torch.jit.trace_module(
-        model,
-        inputs=dict(
-            forward=(example_images, example_text),
-            encode_text=(example_text,),
-            encode_image=(example_images,)
-        ))
-    model.visual.image_size = image_size
-    return model
 
 
 def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialias: bool = True):

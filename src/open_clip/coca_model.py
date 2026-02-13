@@ -109,7 +109,6 @@ class CoCa(nn.Module):
 
         self.context_length = multimodal_cfg.context_length
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)

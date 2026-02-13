@@ -115,7 +115,6 @@ def create_test_data_for_model(
         model_name,
         pretrained = None,
         precision = 'fp32',
-        jit = False,
         pretrained_hf = False,
         force_quick_gelu = False,
         create_missing_input_data = True,
@@ -136,7 +135,6 @@ def create_test_data_for_model(
             model_name,
             pretrained = pretrained,
             precision = precision,
-            jit = jit,
             force_quick_gelu = force_quick_gelu,
             pretrained_hf = pretrained_hf
     )
@@ -201,7 +199,7 @@ def _sytem_assert(string):
     assert os.system(string) == 0
 
 class TestWrapper(torch.nn.Module):
-    output_dict: torch.jit.Final[bool]
+
     def __init__(self, model, model_name, output_dict=True) -> None:
         super().__init__()
         self.model = model
@@ -214,7 +212,7 @@ class TestWrapper(torch.nn.Module):
     def forward(self, image, text):
         x = self.model(image, text)
         x = x['image_features'] if self.output_dict else x[0]
-        assert x is not None  # remove Optional[], type refinement for torchscript
+        assert x is not None
         out = self.head(x)
         return {"test_output": out}
 

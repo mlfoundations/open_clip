@@ -7,7 +7,7 @@ from .factory import list_models, add_model_config, get_model_config, load_check
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
 from .task import CLIPTrainingTask, CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask, get_model_from_task
 from .model import CLIP, CustomTextCLIP, CLIPTextCfg, CLIPVisionCfg, \
-    convert_weights_to_lp, convert_weights_to_fp16, trace_model, get_cast_dtype, get_input_dtype, \
+    convert_weights_to_lp, convert_weights_to_fp16, get_cast_dtype, get_input_dtype, \
     get_model_tokenize_cfg, get_model_preprocess_cfg, set_model_preprocess_cfg
 from .openai import load_openai_model, list_openai_models
 from .pretrained import list_pretrained, list_pretrained_models_by_tag, list_pretrained_tags_by_model, \
