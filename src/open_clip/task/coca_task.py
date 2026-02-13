@@ -21,14 +21,29 @@ class CoCaTask(CLIPTrainingTask):
         self.trainable_module = model
         self.loss = loss
 
+    def _build_loss_inputs(self, model_out, texts):
+        """Build CoCaLoss inputs with autoregressive shift."""
+        return {
+            "image_features": model_out["image_features"],
+            "text_features": model_out["text_features"],
+            "logits": model_out["logits"][:, :-1],
+            "labels": texts[:, 1:],
+            "logit_scale": model_out["logit_scale"],
+        }
+
     def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         model_out = self.trainable_module(images, texts)
-        logit_scale = model_out["logit_scale"]
-        # Filter to keys CoCaLoss expects (it doesn't accept logit_bias)
-        loss_keys = ('image_features', 'text_features', 'logits', 'labels', 'logit_scale')
-        loss_input = {k: v for k, v in model_out.items() if k in loss_keys}
+        loss_input = self._build_loss_inputs(model_out, texts)
         losses = self.loss(**loss_input, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
-        losses["logit_scale"] = logit_scale
+        losses["logit_scale"] = loss_input["logit_scale"]
         return losses
+
+    def compute_accum_loss(self, inputs, inputs_no_accum, accum_texts):
+        all_texts = torch.cat(accum_texts)
+        inputs["labels"] = all_texts[:, 1:]
+        inputs["logits"] = inputs["logits"][:, :-1]
+        # CoCaLoss doesn't accept logit_bias
+        inputs_no_accum.pop("logit_bias", None)
+        return self.loss(**inputs, **inputs_no_accum, output_dict=True)

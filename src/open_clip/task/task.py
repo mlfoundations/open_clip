@@ -323,5 +323,13 @@ class CLIPTrainingTask(nn.Module):
             with torch.no_grad():
                 model.logit_scale.clamp_(0, max_val)
 
+    def compute_accum_loss(self, inputs, inputs_no_accum, accum_texts):
+        """Compute loss from accumulated features for gradient accumulation.
+
+        Override in subclasses that need to derive training targets from
+        raw text tokens (e.g. autoregressive label creation in CoCa).
+        """
+        return self.loss(**inputs, **inputs_no_accum, output_dict=True)
+
     def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         raise NotImplementedError

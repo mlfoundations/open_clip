@@ -26,11 +26,17 @@ try:
         EosTokenCriteria,
         StoppingCriteriaList
     )
-    # BeamSearchScorer was moved to transformers.generation in transformers >= 4.56
-    try:
-        from transformers import BeamSearchScorer
-    except ImportError:
-        from transformers.generation import BeamSearchScorer
+
+    # BeamSearchScorer moved across transformers versions and is deprecated
+    # as of v4.57 (removal planned for v4.62). Suppress the deprecation
+    # warning — there is no drop-in replacement package yet.
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", FutureWarning)
+        try:
+            from transformers import BeamSearchScorer
+        except ImportError:
+            from transformers.generation.beam_search import BeamSearchScorer
 
     GENERATION_TYPES = {
         "top_k": TopKLogitsWarper,
@@ -258,7 +264,6 @@ class CoCa(nn.Module):
             text: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
-            output_labels: bool = True,
     ):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
@@ -267,22 +272,14 @@ class CoCa(nn.Module):
             return {"image_features": image_latent, "image_embs": image_embs}
 
         text_latent, token_embs = self._encode_text(text)
-
-        # FIXME this isn't an ideal solution, would like to improve -RW
-        labels: Optional[torch.Tensor] = text[:, 1:] if output_labels else None
-        if output_labels:
-            # align text_embs and thus logits with labels for teacher-forcing caption loss
-            token_embs = token_embs[:, :-1]
-
         logits = self.text_decoder(image_embs, token_embs)
+
         out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
-            "logit_scale": self.logit_scale.exp()
+            "logit_scale": self.logit_scale.exp(),
         }
-        if labels is not None:
-            out_dict["labels"] = labels
         if self.logit_bias is not None:
             out_dict["logit_bias"] = self.logit_bias
         return out_dict
@@ -382,7 +379,6 @@ class CoCa(nn.Module):
                     x,
                     image_latent=image_latent,
                     image_embs=image_embs,
-                    output_labels=False,
                 )["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
@@ -480,7 +476,6 @@ class CoCa(nn.Module):
                 model_inputs['text'],
                 image_latent=image_latent,
                 image_embs=image_embs,
-                output_labels=False,
             )
 
             for beam_group_idx in range(num_beam_groups):

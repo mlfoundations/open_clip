@@ -156,7 +156,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                             accumulated = accum_features[key]
                             inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
 
-                        losses = task.loss(**inputs, **inputs_no_accum, output_dict=True)
+                        losses = task.compute_accum_loss(inputs, inputs_no_accum, accum_texts)
                         del inputs
                         del inputs_no_accum
                         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
@@ -301,9 +301,11 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
-                    gen_loss = maybe_compute_generative_loss(model_out)
+                    gen_loss = maybe_compute_generative_loss(model_out, texts=texts)
 
                 cumulative_loss += total_loss * batch_size
+                if gen_loss is not None:
+                    cumulative_gen_loss += gen_loss * batch_size
                 num_samples += batch_size
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
@@ -311,7 +313,6 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
                         f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
                     if gen_loss is not None:
-                        cumulative_gen_loss += gen_loss * batch_size
                         logging.info(
                             f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 
@@ -381,8 +382,8 @@ def get_clip_metrics(image_features, text_features, logit_scale):
     return metrics
 
 
-def maybe_compute_generative_loss(model_out):
-    if "logits" in model_out and "labels" in model_out:
-        token_logits = model_out["logits"]
-        token_labels = model_out["labels"]
-        return F.cross_entropy(token_logits.permute(0, 2, 1), token_labels)
+def maybe_compute_generative_loss(model_out, texts=None, pad_id=0):
+    if "logits" in model_out and texts is not None:
+        logits = model_out["logits"][:, :-1]
+        labels = texts[:, 1:]
+        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=pad_id)
