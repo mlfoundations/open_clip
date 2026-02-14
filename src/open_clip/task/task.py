@@ -21,13 +21,15 @@ def unwrap_model(model: nn.Module) -> nn.Module:
 
 
 def get_model_from_task(task_or_model: nn.Module) -> nn.Module:
-    """Extract the raw model from a task or model.
+    """Extract the raw model from a task, compiled task, or plain model.
 
-    Used by evaluate() and zero_shot_eval() to avoid duplicated duck-typing.
+    Unwraps torch.compile / DDP wrappers, then if the result has a
+    ``trainable_module`` attribute (i.e. it's a task), unwraps that too.
     """
-    if isinstance(task_or_model, CLIPTrainingTask):
-        return task_or_model.get_trainable_module(use_ema=False)
-    return unwrap_model(task_or_model)
+    unwrapped = unwrap_model(task_or_model)
+    if hasattr(unwrapped, 'trainable_module'):
+        return unwrap_model(unwrapped.trainable_module)
+    return unwrapped
 
 
 class CLIPTrainingTask(nn.Module):
