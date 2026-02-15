@@ -95,7 +95,6 @@ class ClsLastHiddenStatePooler(nn.Module):
 
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
-    output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -185,7 +184,6 @@ class HFTextEncoder(nn.Module):
             for n, p in module.named_parameters():
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.gradient_checkpointing_enable()
 

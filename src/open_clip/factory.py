@@ -167,10 +167,6 @@ def load_state_dict(
 
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
-    elif isinstance(checkpoint, torch.jit.ScriptModule):
-        state_dict = checkpoint.state_dict()
-        for key in ["input_resolution", "context_length", "vocab_size"]:
-            state_dict.pop(key, None)
     else:
         state_dict = checkpoint
     if next(iter(state_dict.items()))[0].startswith('module'):
@@ -254,7 +250,6 @@ def create_model(
         load_weights: bool = True,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -291,7 +286,6 @@ def create_model(
         load_weights: Load the resolved pretrained weights if True, otherwise random init or tower overrides only.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_patch_dropout: Override patch dropout value in model config.
@@ -489,6 +483,16 @@ def create_model(
         # Default to standard CLIP
         model_class = CLIP
 
+    # Strip removed legacy kwargs that external callers may still pass
+    if 'jit' in model_kwargs:
+        model_kwargs.pop('jit')
+        warnings.warn(
+            "The 'jit' argument has been removed from create_model(). "
+            "TorchScript support is no longer available.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     # Apply final **kwargs overrides (highest priority) to a copy of model_cfg
     final_model_cfg = deepcopy(model_cfg)
     final_model_cfg.update(model_kwargs)
@@ -597,14 +601,6 @@ def create_model(
     if force_image_size is not None and is_timm_model and hasattr(model.visual, 'set_input_size'):
         logging.info(f"Calling set_input_size({force_image_size}) on timm vision model.")
         model.visual.set_input_size(force_image_size)
-
-    if jit:
-        logging.info("Attempting JIT scripting...")
-        try:
-            model = torch.jit.script(model)
-            logging.info("JIT scripting successful.")
-        except Exception as e:
-            logging.warning(f"JIT scripting failed: {e}. Returning non-JIT model.")
 
     # Prepare and set final preprocessing configuration on the model
     final_preprocess_cfg = deepcopy(preprocess_cfg) # Start with config determined earlier
@@ -788,6 +784,13 @@ def _set_model_device_and_precision(
 
 
 def create_loss(args):
+    """Deprecated: use create_task() instead. Loss is now created by the task."""
+    warnings.warn(
+        "create_loss() is deprecated. Loss is now created internally by the task. "
+        "Use create_task() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if args.distill:
         return DistillClipLoss(
             local_loss=args.local_loss,
@@ -795,7 +798,6 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif "coca" in args.model.lower():
         return CoCaLoss(
@@ -806,14 +808,12 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif args.siglip:
-        assert not args.horovod, "Horovod not currently supported for SigLip"
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
-            dist_impl=args.loss_dist_impl,  # siglip has multiple distributed implementations to choose from
+            dist_impl=args.loss_dist_impl,
         )
 
     return ClipLoss(
@@ -822,8 +822,55 @@ def create_loss(args):
         cache_labels=True,
         rank=args.rank,
         world_size=args.world_size,
-        use_horovod=args.horovod,
     )
+
+
+def create_task(args, model, dist_model=None):
+    """Create a training task wrapping model + loss.
+
+    The task constructs its own loss internally from the provided args.
+    Loss type is determined by the task class (CLIPTask -> ClipLoss, etc.).
+
+    Args:
+        args: Training arguments (must have model, distill, siglip, etc.).
+        model: The CLIP model.
+        dist_model: Optional teacher model for distillation.
+
+    Returns:
+        A CLIPTrainingTask subclass instance.
+    """
+    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
+
+    shared = dict(rank=args.rank, world_size=args.world_size)
+    if args.distill:
+        return DistillCLIPTask(
+            model, dist_model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
+    elif "coca" in args.model.lower():
+        return CoCaTask(
+            model,
+            caption_loss_weight=args.coca_caption_loss_weight,
+            clip_loss_weight=args.coca_contrastive_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
+    elif args.siglip:
+        return SigLIPTask(
+            model,
+            dist_impl=args.loss_dist_impl,
+            **shared,
+        )
+    else:
+        return CLIPTask(
+            model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
 
 
 def create_model_and_transforms(
@@ -832,7 +879,6 @@ def create_model_and_transforms(
         load_weights: bool = True,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -872,7 +918,6 @@ def create_model_and_transforms(
         load_weights: Load the resolved pretrained weights if True, otherwise random init or tower overrides only.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_patch_dropout: Override patch dropout value in model config.
@@ -933,7 +978,6 @@ def create_model_and_transforms(
         load_weights=load_weights,
         precision=precision,
         device=device,
-        jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_patch_dropout=force_patch_dropout,
@@ -970,7 +1014,6 @@ def create_model_from_pretrained(
         pretrained: Optional[str] = None,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
@@ -1005,7 +1048,6 @@ def create_model_from_pretrained(
                    If None and schema requires it, will raise an error.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_image_size: Override image size in model config. Useful for using models at different resolutions.
@@ -1064,7 +1106,6 @@ def create_model_from_pretrained(
         pretrained,
         precision=precision,
         device=device,
-        jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,

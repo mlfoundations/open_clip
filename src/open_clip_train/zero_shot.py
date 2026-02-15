@@ -5,6 +5,7 @@ from tqdm import tqdm
 
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
+from open_clip.task import get_model_from_task
 from open_clip_train.precision import get_autocast
 
 
@@ -42,15 +43,14 @@ def run(model, classifier, dataloader, args):
     return top1, top5
 
 
-def zero_shot_eval(model, data, epoch, args, tokenizer=None):
+def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
     if args.zeroshot_frequency == 0:
         return {}
     if (epoch % args.zeroshot_frequency) != 0 and epoch != args.epochs:
         return {}
-    if args.distributed and not args.horovod:
-        model = model.module
+    model = get_model_from_task(model_or_task)
 
     logging.info('Starting zero-shot imagenet.')
     if tokenizer is None:

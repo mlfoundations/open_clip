@@ -166,7 +166,6 @@ class ModifiedResNet(nn.Module):
         if freeze_bn_stats:
             freeze_batch_norm_2d(self)
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         # FIXME support for non-transformer
         pass
@@ -208,7 +207,7 @@ class ModifiedResNet(nn.Module):
         output = {}
         intermediates = []
         blocks = [self.stem, self.layer1, self.layer2, self.layer3, self.layer4]
-        if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
+        if not stop_early:
             blocks = blocks[:max_index + 1]
         for i, blk in enumerate(blocks):
             x = blk(x)

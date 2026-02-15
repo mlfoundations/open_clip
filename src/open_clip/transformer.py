@@ -67,7 +67,7 @@ class PatchDropout(nn.Module):
         if self.exclude_first_token:
             cls_tokens, x = x[:, :1], x[:, 1:]
         else:
-            cls_tokens = torch.jit.annotate(torch.Tensor, x[:, :1])
+            cls_tokens = x[:, :1]
 
         batch = x.size()[0]
         num_tokens = x.size()[1]
@@ -276,6 +276,11 @@ class ResidualAttentionBlock(nn.Module):
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
     ):
+        # TODO(kv-cache): Accept past_key_values tuple. For self-attention,
+        # concatenate past K/V with current K/V before calling attn.
+        # Return updated (K, V) for caching. Requires switching from
+        # nn.MultiheadAttention to F.scaled_dot_product_attention with
+        # explicit Q/K/V projection for incremental K/V management.
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
 
@@ -413,12 +418,9 @@ class CustomTransformer(nn.Module):
             x = x.transpose(0, 1).contiguous()  # NLD -> LND
 
         intermediates = []
-        if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
-            blocks = self.resblocks
-        else:
-            blocks = self.resblocks[:max_index + 1]
+        blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
         for i, blk in enumerate(blocks):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = blk(x, attn_mask=attn_mask)
@@ -443,7 +445,7 @@ class CustomTransformer(nn.Module):
             x = x.transpose(0, 1)  # NLD -> LND
 
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
@@ -535,12 +537,9 @@ class Transformer(nn.Module):
             x = x.transpose(0, 1).contiguous()    # NLD -> LND
 
         intermediates = []
-        if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
-            blocks = self.resblocks
-        else:
-            blocks = self.resblocks[:max_index + 1]
+        blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
         for i, blk in enumerate(blocks):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = blk(x, attn_mask=attn_mask)
@@ -565,7 +564,7 @@ class Transformer(nn.Module):
             x = x.transpose(0, 1).contiguous()    # NLD -> LND
 
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
@@ -581,7 +580,6 @@ def _expand_token(token, batch_size: int):
 
 
 class VisionTransformer(nn.Module):
-    output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -760,11 +758,9 @@ class VisionTransformer(nn.Module):
         #     nn.init.normal_(self.text_projection, std=self.scale)
         pass
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
         self.transformer.grad_checkpointing = enable
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding', 'class_embedding'}
@@ -945,7 +941,6 @@ def text_global_pool(
 
 
 class TextTransformer(nn.Module):
-    output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -1054,7 +1049,6 @@ class TextTransformer(nn.Module):
             else:
                 nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
@@ -1069,7 +1063,6 @@ class TextTransformer(nn.Module):
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
         lock_text_tower(self, unlocked_layers)
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding'}
@@ -1327,13 +1320,18 @@ class MultimodalTransformer(Transformer):
         assert False, "Not currently implemented for MultimodalTransformer w/ xattn"
 
     def forward(self, image_embs, text_embs):
+        # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
+        # and cache_position. When past_key_values is not None, only process
+        # new positions for self-attention (concatenate past K/V).
+        # Cross-attention K/V from image_embs are constant per generation and
+        # can be cached once.
         seq_len = text_embs.shape[1]
         if not self.batch_first:
             image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
             text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
 
         for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(
                     resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len], use_reentrant=False)
@@ -1352,7 +1350,6 @@ class MultimodalTransformer(Transformer):
 
         return out
 
-    @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
 
