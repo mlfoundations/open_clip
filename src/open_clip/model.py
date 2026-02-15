@@ -449,7 +449,7 @@ class CLIP(nn.Module):
         if output_logit_scale_bias:
             output["logit_scale"] = logit_scale_exp
             if self.logit_bias is not None:
-                output['logit_bias'] = self.logit_bias
+                output['logit_bias'] = self.logit_bias.clone()
 
         return output
 
@@ -468,11 +468,11 @@ class CLIP(nn.Module):
                 "logit_scale": self.logit_scale.exp()
             }
             if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias
+                out_dict['logit_bias'] = self.logit_bias.clone()
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+            return image_features, text_features, self.logit_scale.exp(), self.logit_bias.clone()
         return image_features, text_features, self.logit_scale.exp()
 
 
@@ -629,7 +629,7 @@ class CustomTextCLIP(nn.Module):
         if output_logit_scale_bias:
             output["logit_scale"] = logit_scale_exp
             if self.logit_bias is not None:
-                output['logit_bias'] = self.logit_bias
+                output['logit_bias'] = self.logit_bias.clone()
 
         return output
 
@@ -648,11 +648,11 @@ class CustomTextCLIP(nn.Module):
                 "logit_scale": self.logit_scale.exp()
             }
             if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias
+                out_dict['logit_bias'] = self.logit_bias.clone()
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
+            return image_features, text_features, self.logit_scale.exp(), self.logit_bias.clone()
         return image_features, text_features, self.logit_scale.exp()
 
 
