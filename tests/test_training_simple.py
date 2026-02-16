@@ -86,6 +86,22 @@ def test_training_unfreezing_vit():
 
 
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
+def test_training_clap():
+    main([
+    '--save-frequency', '1',
+    '--zeroshot-frequency', '1',
+    '--dataset-type', 'synthetic-audio',
+    '--train-num-samples', '16',
+    '--warmup', '1',
+    '--batch-size', '4',
+    '--lr', '1e-3',
+    '--wd', '0.1',
+    '--epochs', '1',
+    '--workers', '2',
+    '--model', 'HTSAT-tiny',
+    ])
+
+@pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
 def test_training_clip_with_jit():
     main([
     '--save-frequency', '1',

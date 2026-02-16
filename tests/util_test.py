@@ -140,6 +140,9 @@ def create_test_data_for_model(
             force_quick_gelu = force_quick_gelu,
             pretrained_hf = pretrained_hf
     )
+    if not hasattr(model, 'visual'):
+        # Audio models don't use image test data
+        return
     # text
     if overwrite or not text_exists:
         input_file_text = os.path.join(input_dir, 'random_text.pt')
@@ -179,12 +182,17 @@ def create_test_data(
         batch_size = 1,
         overwrite = False
 ):
+    # Filter out audio models (no image test data)
+    audio_models = {
+        m for m in open_clip.list_models()
+        if (open_clip.get_model_config(m) or {}).get('audio_cfg')
+    }
     models = list(set(models).difference({
             # not available with timm
             # see https://github.com/mlfoundations/open_clip/issues/219
             'timm-convnext_xlarge',
             'timm-vit_medium_patch16_gap_256'
-    }).intersection(open_clip.list_models()))
+    }).difference(audio_models).intersection(open_clip.list_models()))
     models.sort()
     print(f"generating test data for:\n{models}")
     for model_name in models:
@@ -206,7 +214,7 @@ class TestWrapper(torch.nn.Module):
         super().__init__()
         self.model = model
         self.output_dict = output_dict
-        if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP]:
+        if type(model) in [open_clip.CLIP, open_clip.CustomTextCLIP, open_clip.CLAP]:
             self.model.output_dict = self.output_dict
         config = open_clip.get_model_config(model_name)
         self.head = torch.nn.Linear(config["embed_dim"], 2)

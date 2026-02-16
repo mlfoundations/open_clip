@@ -71,9 +71,32 @@ class DataInfo:
             self.sampler.set_epoch(epoch)
 
 
+def _expand_dirs(urls):
+    """Expand directory paths to sorted lists of .tar files within them."""
+    result = []
+    for url in urls:
+        if os.path.isdir(url):
+            tars = sorted(
+                [os.path.join(url, f) for f in os.listdir(url) if f.endswith('.tar')],
+                key=lambda p: (int(os.path.splitext(os.path.basename(p))[0])
+                               if os.path.splitext(os.path.basename(p))[0].isdigit()
+                               else float('inf'), os.path.basename(p)),
+            )
+            if not tars:
+                logging.warning(f'Directory {url} contains no .tar files, skipping.')
+            result.extend(tars)
+        else:
+            result.append(url)
+    return result
+
+
 def expand_urls(urls, weights=None):
     if weights is None:
-        expanded_urls = wds.shardlists.expand_urls(urls)
+        if isinstance(urls, str):
+            expanded_urls = wds.shardlists.expand_urls(urls)
+        else:
+            expanded_urls = list(urls)
+        expanded_urls = _expand_dirs(expanded_urls)
         return expanded_urls, None
     if isinstance(urls, str):
         urllist = urls.split("::")
@@ -84,12 +107,14 @@ def expand_urls(urls, weights=None):
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
             expanded_url = list(braceexpand.braceexpand(url))
+            expanded_url = _expand_dirs(expanded_url)
             expanded_weights = [weight for _ in expanded_url]
             all_urls.extend(expanded_url)
             all_weights.extend(expanded_weights)
         return all_urls, all_weights
     else:
         all_urls = list(urls)
+        all_urls = _expand_dirs(all_urls)
         return all_urls, weights
 
 
@@ -443,6 +468,320 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
+def filter_no_caption_or_no_audio(sample):
+    has_caption = ('txt' in sample or 'json' in sample or 'cls' in sample)
+    has_audio = ('wav' in sample or 'flac' in sample or 'mp3' in sample)
+    return has_caption and has_audio
+
+
+def _decode_audio(key, data):
+    """WebDataset audio decoder using torchaudio."""
+    import io
+    import torchaudio
+    ext = key.rsplit('.', 1)[-1] if '.' in key else key
+    if ext not in ('wav', 'flac', 'mp3', 'ogg'):
+        return None
+    waveform, sr = torchaudio.load(io.BytesIO(data))
+    return waveform, sr
+
+
+def _extract_caption(text_data):
+    """Extract caption string from text or JSON annotation data.
+
+    Handles:
+    - Plain text string (from .txt files)
+    - JSON dict with 'text' key containing string or list of strings
+    - Falls back to str() for unknown formats
+    """
+    if isinstance(text_data, str):
+        return text_data
+    if isinstance(text_data, dict):
+        texts = text_data.get('text', text_data.get('caption', ''))
+        if isinstance(texts, list) and texts:
+            return random.choice(texts)
+        elif isinstance(texts, str):
+            return texts
+    return str(text_data)
+
+
+def int16_to_float32_torch(x):
+    """Convert int16 tensor to float32 in [-1, 1] range."""
+    return (x / 32767.0).type(torch.float32)
+
+
+def float32_to_int16_torch(x):
+    """Clamp float32 tensor to [-1, 1] and quantize to int16."""
+    x = torch.clamp(x, min=-1., max=1.)
+    return (x * 32767.).type(torch.int16)
+
+
+def _get_mel(audio_data, audio_cfg):
+    """Compute log-mel spectrogram for fusion mode.
+
+    Parameters
+    ----------
+    audio_data : torch.Tensor, shape (T,)
+        Mono waveform.
+    audio_cfg : dict
+        Audio configuration (sample_rate, window_size, hop_size, mel_bins, fmin, fmax).
+
+    Returns
+    -------
+    torch.Tensor, shape (T_frames, n_mels)
+    """
+    import torchaudio
+    mel_tf = torchaudio.transforms.MelSpectrogram(
+        sample_rate=audio_cfg.get('sample_rate', 48000),
+        n_fft=audio_cfg.get('window_size', 1024),
+        win_length=audio_cfg.get('window_size', 1024),
+        hop_length=audio_cfg.get('hop_size', 480),
+        center=True, pad_mode="reflect", power=2.0, norm=None, onesided=True,
+        n_mels=audio_cfg.get('mel_bins', 64),
+        f_min=audio_cfg.get('fmin', 50),
+        f_max=audio_cfg.get('fmax', 14000),
+    )
+    mel = mel_tf(audio_data)
+    mel = torchaudio.transforms.AmplitudeToDB(top_db=None)(mel)
+    return mel.T  # (T_frames, n_mels)
+
+
+def make_audio_preprocess(audio_cfg, data_filling="pad", data_truncating="rand_trunc", int16_normalize=False):
+    """Create audio preprocessing function from audio config.
+
+    Returns a function that takes (waveform, sr) tuple from the decoder
+    and returns a dict suitable for the audio encoder.
+
+    Parameters
+    ----------
+    audio_cfg : dict
+        Audio configuration from model config (sample_rate, clip_samples, etc.)
+    data_filling : str
+        How to fill audio shorter than clip_samples:
+        - "pad": zero-pad to clip_samples (default)
+        - "repeat": loop waveform until clip_samples
+        - "repeatpad": loop waveform then zero-pad remainder
+    data_truncating : str
+        How to truncate audio longer than clip_samples:
+        - "rand_trunc": random crop of clip_samples each call (default, matches Marianna fork)
+        - "trunc": always take first clip_samples (deterministic, old baseline behavior)
+        - "fusion": compute 4-channel mel_fusion (global + 3 local chunks) for HTSAT fusion mode
+    int16_normalize : bool
+        If True, apply int16 quantization roundtrip (clamp→int16→float32) matching CLAP v1/v2.
+        Default False: ablation showed it degrades Clotho text R@5 by ~1.7pp and UrbanSound8K by ~2.8pp.
+    """
+    import torchaudio
+    import numpy as np
+
+    target_sr = audio_cfg.get('sample_rate', 48000)
+    clip_samples = audio_cfg.get('clip_samples', 480000)
+    hop_size = audio_cfg.get('hop_size', 480)
+    mel_bins = audio_cfg.get('mel_bins', 64)
+
+    def _fill_waveform(waveform):
+        """Apply filling strategy to waveform shorter than clip_samples."""
+        if len(waveform) >= clip_samples:
+            return waveform
+        if data_filling == "repeatpad":
+            n_repeat = int(clip_samples / len(waveform))
+            if n_repeat > 1:
+                waveform = waveform.repeat(n_repeat)
+            waveform = torch.nn.functional.pad(waveform, (0, clip_samples - len(waveform)))
+        elif data_filling == "repeat":
+            n_repeat = int(clip_samples / len(waveform)) + 1
+            waveform = waveform.repeat(n_repeat)[:clip_samples]
+        else:  # "pad"
+            waveform = torch.nn.functional.pad(waveform, (0, clip_samples - len(waveform)))
+        return waveform
+
+    def preprocess(audio_data):
+        waveform, sr = audio_data
+        # Mix to mono
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        # Resample if needed
+        if sr != target_sr:
+            waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+        waveform = waveform.squeeze(0)  # (samples,)
+        # Int16 normalization: clamp → quantize → dequantize (matches CLAP v1/v2 convention)
+        if int16_normalize:
+            waveform = int16_to_float32_torch(float32_to_int16_torch(waveform))
+
+        longer = len(waveform) > clip_samples
+        result = {}
+
+        if len(waveform) > clip_samples:
+            if data_truncating == "fusion":
+                # Fusion: create 4-channel mel spectrogram
+                mel = _get_mel(waveform, audio_cfg)  # (T_frames, n_mels)
+                chunk_frames = clip_samples // hop_size + 1
+                total_frames = mel.shape[0]
+                if chunk_frames >= total_frames:
+                    # Corner case: audio barely longer than clip_samples
+                    mel_fusion = torch.stack([mel, mel, mel, mel], dim=0)
+                    longer = False
+                else:
+                    # Split frame range into 3 regions, sample one chunk from each
+                    ranges = np.array_split(list(range(0, total_frames - chunk_frames + 1)), 3)
+                    if len(ranges[1]) == 0:
+                        ranges[1] = [0]
+                    if len(ranges[2]) == 0:
+                        ranges[2] = [0]
+                    idx_front = np.random.choice(ranges[0])
+                    idx_middle = np.random.choice(ranges[1])
+                    idx_back = np.random.choice(ranges[2])
+                    mel_chunk_front = mel[idx_front:idx_front + chunk_frames, :]
+                    mel_chunk_middle = mel[idx_middle:idx_middle + chunk_frames, :]
+                    mel_chunk_back = mel[idx_back:idx_back + chunk_frames, :]
+                    # Global view: resize full mel to chunk size
+                    import torchvision.transforms
+                    mel_shrink = torchvision.transforms.Resize(
+                        size=[chunk_frames, mel_bins]
+                    )(mel[None])[0]
+                    mel_fusion = torch.stack(
+                        [mel_shrink, mel_chunk_front, mel_chunk_middle, mel_chunk_back], dim=0
+                    )
+                result["mel_fusion"] = mel_fusion
+                # Also crop waveform (for non-fusion path compatibility)
+                overflow = len(waveform) - clip_samples
+                idx = np.random.randint(0, overflow + 1)
+                waveform = waveform[idx: idx + clip_samples]
+            elif data_truncating == "rand_trunc":
+                overflow = len(waveform) - clip_samples
+                idx = random.randint(0, overflow)
+                waveform = waveform[idx: idx + clip_samples]
+            else:  # "trunc"
+                waveform = waveform[:clip_samples]
+        else:
+            # Audio is shorter or equal — apply filling
+            waveform = _fill_waveform(waveform)
+            if data_truncating == "fusion":
+                # Fusion for short audio: all 4 channels identical
+                mel = _get_mel(waveform, audio_cfg)
+                mel_fusion = torch.stack([mel, mel, mel, mel], dim=0)
+                result["mel_fusion"] = mel_fusion
+
+        result["waveform"] = waveform
+        result["longer"] = longer
+        return result
+
+    return preprocess
+
+
+def _audio_collate(batch):
+    """Custom collation for audio batches: list of (audio_dict, text) -> (batched_dict, text_tensor)."""
+    audios, texts = zip(*batch)
+    waveforms = torch.stack([a["waveform"] for a in audios])
+    longers = torch.tensor([a["longer"] for a in audios], dtype=torch.bool)
+    texts = torch.stack(list(texts))
+    result = {"waveform": waveforms, "longer": longers}
+    if "mel_fusion" in audios[0]:
+        result["mel_fusion"] = torch.stack([a["mel_fusion"] for a in audios])
+    return result, texts
+
+
+def get_wds_audio_dataset(args, preprocess_audio, is_train, epoch=0, floor=False, tokenizer=None):
+    """WebDataset loader for audio-text pairs. Mirrors get_wds_dataset."""
+    input_shards = args.train_data if is_train else args.val_data
+    assert input_shards is not None
+    resampled = getattr(args, 'dataset_resampled', False) and is_train
+
+    num_shards = None
+    if is_train:
+        if args.train_num_samples is not None:
+            num_samples = args.train_num_samples
+        else:
+            num_samples, num_shards = get_dataset_size(input_shards)
+            if not num_samples:
+                raise RuntimeError(
+                    'Currently, the number of dataset samples must be specified for the training dataset. '
+                    'Please specify it via `--train-num-samples` if no dataset length info is present.')
+    else:
+        num_samples = args.val_num_samples or 0
+
+    shared_epoch = SharedEpoch(epoch=epoch)
+
+    if is_train and args.train_data_upsampling_factors is not None:
+        assert resampled, "--train_data_upsampling_factors is only supported with --dataset-resampled."
+
+    if resampled:
+        pipeline = [ResampledShards2(
+            input_shards,
+            weights=args.train_data_upsampling_factors,
+            deterministic=True,
+            epoch=shared_epoch,
+        )]
+    else:
+        pipeline = [wds.SimpleShardList(input_shards)]
+
+    if is_train:
+        if not resampled:
+            pipeline.extend([
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
+                ),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ])
+        pipeline.extend([
+            wds.tarfile_to_samples(handler=log_and_continue),
+            wds.shuffle(
+                bufsize=_SAMPLE_SHUFFLE_SIZE,
+                initial=_SAMPLE_SHUFFLE_INITIAL,
+            ),
+        ])
+    else:
+        pipeline.extend([
+            wds.split_by_worker,
+            wds.tarfile_to_samples(handler=log_and_continue),
+        ])
+
+    audio_ext = getattr(args, 'audio_ext', 'flac')
+    pipeline.extend([
+        wds.select(filter_no_caption_or_no_audio),
+        wds.decode(_decode_audio, handler=log_and_continue),
+        wds.rename(audio=audio_ext, text="json;txt;cls"),
+        wds.map_dict(
+            audio=preprocess_audio,
+            text=lambda t: tokenizer(_extract_caption(t))[0],
+        ),
+        wds.to_tuple("audio", "text"),
+        wds.batched(args.batch_size, partial=not is_train, collation_fn=_audio_collate),
+    ])
+
+    dataset = wds.DataPipeline(*pipeline)
+
+    if is_train:
+        if not resampled:
+            num_shards = num_shards or len(expand_urls(input_shards)[0])
+            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+        round_fn = math.floor if floor else math.ceil
+        global_batch_size = args.batch_size * args.world_size
+        num_batches = round_fn(num_samples / global_batch_size)
+        num_workers = max(1, args.workers)
+        num_worker_batches = round_fn(num_batches / num_workers)
+        num_batches = num_worker_batches * num_workers
+        num_samples = num_batches * global_batch_size
+        dataset = dataset.with_epoch(num_worker_batches)
+    else:
+        num_batches = math.ceil(num_samples / args.batch_size)
+
+    dataloader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=args.workers,
+        persistent_workers=args.workers > 0,
+    )
+
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
+
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
@@ -523,13 +862,60 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
     return DataInfo(dataloader, sampler)
 
 
+class SyntheticAudioDataset(Dataset):
+
+    def __init__(self, audio_cfg, dataset_size=100, tokenizer=None):
+        self.clip_samples = audio_cfg.get('clip_samples', 480000)
+        self.dataset_size = dataset_size
+        self.preprocess_txt = lambda text: tokenizer(text)[0]
+        self.caption = "Dummy caption"
+
+    def __len__(self):
+        return self.dataset_size
+
+    def __getitem__(self, idx):
+        waveform = torch.randn(self.clip_samples)
+        audio = {"waveform": waveform, "longer": False}
+        return audio, self.preprocess_txt(self.caption)
+
+
+def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+    from open_clip import get_model_config
+    model_cfg = get_model_config(args.model)
+    audio_cfg = model_cfg.get('audio_cfg', {})
+    dataset = SyntheticAudioDataset(
+        audio_cfg=audio_cfg, dataset_size=args.train_num_samples, tokenizer=tokenizer)
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+        collate_fn=_audio_collate,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
+    elif dataset_type == "webdataset-audio":
+        return get_wds_audio_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "synthetic-audio":
+        return get_synthetic_audio_dataset
     elif dataset_type == "auto":
         ext = data_path.split('.')[-1]
         if ext in ['csv', 'tsv']:
@@ -547,7 +933,7 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
-    if args.train_data or args.dataset_type == "synthetic":
+    if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
             args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
 

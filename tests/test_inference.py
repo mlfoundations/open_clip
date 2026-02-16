@@ -18,6 +18,14 @@ if hasattr(torch._C, '_jit_set_profiling_executor'):
 
 models_to_test = set(open_clip.list_models())
 
+# Filter out audio models (they have audio_cfg instead of vision_cfg)
+audio_models = set()
+for m in models_to_test:
+    cfg = open_clip.get_model_config(m)
+    if cfg and 'audio_cfg' in cfg:
+        audio_models.add(m)
+models_to_test = models_to_test.difference(audio_models)
+
 # testing excemptions
 models_to_test = models_to_test.difference({
         # not available with timm yet
