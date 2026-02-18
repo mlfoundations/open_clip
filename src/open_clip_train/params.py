@@ -381,6 +381,14 @@ def parse_args(args):
         help="Offload FSDP parameters to CPU when not in use.",
     )
     parser.add_argument(
+        "--fsdp-checkpoint",
+        default="full",
+        type=str,
+        choices=["full", "sharded"],
+        help="FSDP checkpoint type. 'full' gathers to rank 0 as a single .pt file. "
+             "'sharded' uses DCP per-rank shards in a directory (faster, lower memory).",
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",

@@ -1,3 +1,4 @@
+import inspect
 import os
 import warnings
 from typing import Optional
@@ -130,6 +131,11 @@ def init_distributed_device_so(
 
         dist_url = dist_url or 'env://'
 
+        # Check if init_process_group supports device_id (added in PyTorch ~2.4).
+        _supports_device_id = 'device_id' in inspect.signature(
+            torch.distributed.init_process_group,
+        ).parameters
+
         if 'SLURM_PROCID' in os.environ:
             # DDP via SLURM
             local_rank, global_rank, world_size = world_info_from_env()
@@ -137,19 +143,25 @@ def init_distributed_device_so(
             os.environ['LOCAL_RANK'] = str(local_rank)
             os.environ['RANK'] = str(global_rank)
             os.environ['WORLD_SIZE'] = str(world_size)
-            torch.distributed.init_process_group(
+            pg_kwargs = dict(
                 backend=dist_backend,
                 init_method=dist_url,
                 world_size=world_size,
                 rank=global_rank,
             )
+            if _supports_device_id and not no_set_device_rank and device_type not in ('cpu', 'mps'):
+                pg_kwargs['device_id'] = torch.device(device_type, local_rank)
+            torch.distributed.init_process_group(**pg_kwargs)
         else:
             # DDP via torchrun, torch.distributed.launch
             local_rank, _, _ = world_info_from_env()
-            torch.distributed.init_process_group(
+            pg_kwargs = dict(
                 backend=dist_backend,
                 init_method=dist_url,
             )
+            if _supports_device_id and not no_set_device_rank and device_type not in ('cpu', 'mps'):
+                pg_kwargs['device_id'] = torch.device(device_type, local_rank)
+            torch.distributed.init_process_group(**pg_kwargs)
             world_size = torch.distributed.get_world_size()
             global_rank = torch.distributed.get_rank()
         distributed = True

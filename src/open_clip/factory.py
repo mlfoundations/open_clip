@@ -837,7 +837,7 @@ def create_task(args, model, dist_model=None):
         dist_model: Optional teacher model for distillation.
 
     Returns:
-        A CLIPTrainingTask subclass instance.
+        A TrainingTask subclass instance.
     """
     from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
 

@@ -3,10 +3,10 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 
-from .task import CLIPTrainingTask
+from .task import TrainingTask
 
 
-class CLIPTask(CLIPTrainingTask):
+class CLIPTask(TrainingTask):
     """Standard CLIP training task wrapping model + ClipLoss."""
 
     def __init__(

@@ -3,10 +3,10 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 
-from .task import CLIPTrainingTask
+from .task import TrainingTask
 
 
-class CoCaTask(CLIPTrainingTask):
+class CoCaTask(TrainingTask):
     """CoCa training task wrapping model + CoCaLoss."""
 
     def __init__(

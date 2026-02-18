@@ -3,10 +3,10 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 
-from .task import CLIPTrainingTask
+from .task import TrainingTask
 
 
-class DistillCLIPTask(CLIPTrainingTask):
+class DistillCLIPTask(TrainingTask):
     """Distillation task wrapping student model + frozen teacher + DistillClipLoss."""
 
     def __init__(

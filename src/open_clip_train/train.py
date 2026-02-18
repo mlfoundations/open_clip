@@ -7,6 +7,7 @@ from contextlib import nullcontext
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel.distributed import DistributedDataParallel
 
@@ -253,22 +254,40 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
 
 def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
-    if not is_master(args):
+    use_fsdp_eval = getattr(args, 'fsdp', False) and getattr(args, 'distributed', False)
+    is_rank0 = is_master(args)
+
+    if not use_fsdp_eval and not is_rank0:
         return metrics
+
     device = torch.device(args.device)
     model = get_model_from_task(model_or_task)
     model.eval()
 
     zero_shot_metrics = zero_shot_eval(model_or_task, data, epoch, args, tokenizer=tokenizer)
-    metrics.update(zero_shot_metrics)
+    if is_rank0:
+        metrics.update(zero_shot_metrics)
 
     autocast = get_autocast(args.precision, device_type=device.type)
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        dataloader = data['val'].dataloader
         num_samples = 0
-        samples_per_val = dataloader.num_samples
+        samples_per_val = 0
+
+        if is_rank0:
+            dataloader = data['val'].dataloader
+            samples_per_val = dataloader.num_samples
+            dataloader_iter = iter(dataloader)
+
+        if use_fsdp_eval:
+            # Pre-allocate dummy tensors for non-master ranks
+            image_size = model.visual.image_size
+            if not isinstance(image_size, tuple):
+                image_size = (image_size, image_size)
+            dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
+            dummy_texts = torch.zeros(1, model.context_length, device=device, dtype=torch.long)
+            signal = torch.zeros(1, device=device, dtype=torch.long)
 
         # FIXME this does not scale past small eval datasets
         # all_image_features @ all_text_features will blow up memory and compute very quickly
@@ -276,13 +295,34 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
         cumulative_gen_loss = 0.0
         all_image_features, all_text_features = [], []
         with torch.inference_mode():
-            for i, batch in enumerate(dataloader):
-                images, texts = batch
-                images = images.to(device=device, dtype=input_dtype, non_blocking=True)
-                texts = texts.to(device=device, non_blocking=True)
+            i = 0
+            while True:
+                if use_fsdp_eval:
+                    if is_rank0:
+                        batch = next(dataloader_iter, None)
+                        signal.fill_(0 if batch is None else 1)
+                    dist.broadcast(signal, src=0)
+                    if signal.item() == 0:
+                        break
+
+                    if is_rank0:
+                        images, texts = batch
+                        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+                        texts = texts.to(device=device, non_blocking=True)
+                    else:
+                        images, texts = dummy_images, dummy_texts
+                else:
+                    batch = next(dataloader_iter, None)
+                    if batch is None:
+                        break
+                    images, texts = batch
+                    images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+                    texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
                     model_out = model(images, texts)
+
+                if is_rank0:
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
@@ -303,31 +343,37 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
 
                     gen_loss = maybe_compute_generative_loss(model_out, texts=texts)
 
-                cumulative_loss += total_loss * batch_size
-                if gen_loss is not None:
-                    cumulative_gen_loss += gen_loss * batch_size
-                num_samples += batch_size
-                if is_master(args) and (i % 100) == 0:
-                    logging.info(
-                        f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
-
+                    cumulative_loss += total_loss * batch_size
                     if gen_loss is not None:
+                        cumulative_gen_loss += gen_loss * batch_size
+                    num_samples += batch_size
+                    if (i % 100) == 0:
                         logging.info(
-                            f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+                            f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
+                            f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
-            val_metrics = get_clip_metrics(
-                image_features=torch.cat(all_image_features),
-                text_features=torch.cat(all_text_features),
-                logit_scale=logit_scale.cpu(),
-            )
-            loss = cumulative_loss / num_samples
-            metrics.update(
-                {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
-            )
-            if gen_loss is not None:
-                gen_loss = cumulative_gen_loss / num_samples
-                metrics.update({"val_generative_loss": gen_loss.item()})
+                        if gen_loss is not None:
+                            logging.info(
+                                f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+
+                i += 1
+
+            if is_rank0 and num_samples > 0:
+                val_metrics = get_clip_metrics(
+                    image_features=torch.cat(all_image_features),
+                    text_features=torch.cat(all_text_features),
+                    logit_scale=logit_scale.cpu(),
+                )
+                loss = cumulative_loss / num_samples
+                metrics.update(
+                    {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
+                )
+                if gen_loss is not None:
+                    gen_loss = cumulative_gen_loss / num_samples
+                    metrics.update({"val_generative_loss": gen_loss.item()})
+
+    if not is_rank0:
+        return metrics
 
     if not metrics:
         return metrics

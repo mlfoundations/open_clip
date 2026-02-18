@@ -32,7 +32,7 @@ def get_model_from_task(task_or_model: nn.Module) -> nn.Module:
     return unwrapped
 
 
-class CLIPTrainingTask(nn.Module):
+class TrainingTask(nn.Module):
     """Base class for CLIP training tasks.
 
     Wraps model + loss into a single nn.Module, providing utilities for
@@ -68,7 +68,7 @@ class CLIPTrainingTask(nn.Module):
             return self.trainable_module_ema.module
         return unwrap_model(self.trainable_module)
 
-    def setup_ema(self, decay: float = 0.9999, device: Optional[torch.device] = None) -> 'CLIPTrainingTask':
+    def setup_ema(self, decay: float = 0.9999, device: Optional[torch.device] = None) -> 'TrainingTask':
         """Set up exponential moving average for the trainable module."""
         assert not self._fsdp_enabled, (
             'EMA must be set up before prepare_fsdp(). '
@@ -95,7 +95,7 @@ class CLIPTrainingTask(nn.Module):
             self,
             device_ids: Optional[list] = None,
             **ddp_kwargs,
-    ) -> 'CLIPTrainingTask':
+    ) -> 'TrainingTask':
         """Wrap trainable_module with DistributedDataParallel."""
         assert not self._fsdp_enabled, \
             'Cannot wrap FSDP2-sharded module with DDP. Use --fsdp OR DDP, not both.'
@@ -134,7 +134,7 @@ class CLIPTrainingTask(nn.Module):
             reshard_after_forward: bool = True,
             mp_policy: Optional['MixedPrecisionPolicy'] = None,
             offload_policy: Optional['CPUOffloadPolicy'] = None,
-    ) -> 'CLIPTrainingTask':
+    ) -> 'TrainingTask':
         """Apply FSDP2 sharding to trainable module.
 
         Reshapes any 0-D params to 1-D (FSDP2 requires dim-0 for sharding),
@@ -187,6 +187,14 @@ class CLIPTrainingTask(nn.Module):
 
         # Shard root trainable module (covers remaining params: embeddings, projections, logit_scale)
         fully_shard(self.trainable_module, **fsdp_kwargs)
+
+        # Register encode_text/encode_image as FSDP forward methods so they trigger
+        # the same all-gather/reshard hooks as __call__. Without this, direct calls
+        # like build_zero_shot_classifier → model.encode_text() fail with DTensor errors.
+        from torch.distributed.fsdp import register_fsdp_forward_method
+        register_fsdp_forward_method(self.trainable_module, "encode_text")
+        register_fsdp_forward_method(self.trainable_module, "encode_image")
+
         self._fsdp_enabled = True
         return self
 
@@ -256,7 +264,7 @@ class CLIPTrainingTask(nn.Module):
                     set_model_state_dict,
                     StateDictOptions,
                 )
-                options = StateDictOptions(strict=strict)
+                options = StateDictOptions(full_state_dict=True, cpu_offload=True, strict=strict)
                 set_model_state_dict(model, sd, options=options)
             else:
                 model.load_state_dict(sd, strict=strict)
@@ -264,36 +272,6 @@ class CLIPTrainingTask(nn.Module):
             self.trainable_module_ema.module.load_state_dict(
                 state_dict['state_dict_ema'], strict=strict,
             )
-
-    def get_optim_state_dict(self, optimizer: torch.optim.Optimizer) -> dict:
-        """Get optimizer state dict, handling FSDP2 sharded state."""
-        if self._fsdp_enabled:
-            from torch.distributed.checkpoint.state_dict import (
-                get_optimizer_state_dict,
-                StateDictOptions,
-            )
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            return get_optimizer_state_dict(
-                unwrap_model(self.trainable_module), optimizer, options=options,
-            )
-        return optimizer.state_dict()
-
-    def load_optim_state_dict(self, optimizer: torch.optim.Optimizer, state_dict: dict):
-        """Load optimizer state dict, handling FSDP2 sharded state."""
-        if self._fsdp_enabled:
-            from torch.distributed.checkpoint.state_dict import (
-                set_optimizer_state_dict,
-                StateDictOptions,
-            )
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            set_optimizer_state_dict(
-                unwrap_model(self.trainable_module),
-                optimizer,
-                optim_state_dict=state_dict,
-                options=options,
-            )
-        else:
-            optimizer.load_state_dict(state_dict)
 
     def state_dict_for_inference(self) -> dict:
         """Return state dict for inference (prefers EMA if available)."""
@@ -335,3 +313,6 @@ class CLIPTrainingTask(nn.Module):
 
     def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
+
+
+CLIPTrainingTask = TrainingTask  # backward compatibility

@@ -3,6 +3,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import random
@@ -24,14 +25,14 @@ except ImportError:
     tensorboard = None
 
 from open_clip import create_model_and_transforms, get_tokenizer, create_task
-from open_clip.task import unwrap_model
+from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.train import train_one_epoch, evaluate
-from open_clip_train.file_utils import pt_load, check_exists, start_sync_process, remote_sync
+from open_clip_train.file_utils import start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -48,7 +49,7 @@ def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
-def get_latest_checkpoint(path: str, remote : bool):
+def get_latest_checkpoint(path: str, remote: bool):
     # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
     if remote:
         result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -58,6 +59,10 @@ def get_latest_checkpoint(path: str, remote : bool):
         checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
     else:
         checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        # Also find DCP checkpoint dirs (contain .metadata file from DCP)
+        for d in glob.glob(os.path.join(path, 'epoch_*')):
+            if os.path.isdir(d) and os.path.exists(os.path.join(d, '.metadata')):
+                checkpoints.append(d)
     if checkpoints:
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
@@ -144,8 +149,13 @@ def main(args):
                 # if --save-most-recent flag is set, look for latest at a fixed filename
                 resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
                 if not os.path.exists(resume_from):
-                    # If no latest checkpoint has been saved yet, don't try to resume
-                    resume_from = None
+                    # Check for DCP sharded latest directory
+                    latest_dir = os.path.join(checkpoint_path, "epoch_latest")
+                    if os.path.isdir(latest_dir):
+                        resume_from = latest_dir
+                    else:
+                        # If no latest checkpoint has been saved yet, don't try to resume
+                        resume_from = None
             else:
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
                 resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
@@ -153,10 +163,17 @@ def main(args):
                 logging.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
                 logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
+        # Master determines checkpoint type (dir = sharded DCP, file = full .pt)
+        # and broadcasts both path and type so all ranks agree — avoids per-rank
+        # os.path.isdir() divergence under shared filesystem stress.
+        resume_is_sharded = (
+            resume_from is not None and os.path.isdir(resume_from)
+        ) if is_master(args) else None
         if args.distributed:
-            # sync found checkpoint path to all ranks
             resume_from = broadcast_object(args, resume_from)
+            resume_is_sharded = broadcast_object(args, resume_is_sharded)
         args.resume = resume_from
+        args.resume_is_sharded = resume_is_sharded
 
     if args.copy_codebase:
         copy_codebase(args)
@@ -290,6 +307,10 @@ def main(args):
         logging.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
         args.fsdp = False
 
+    if args.fsdp_checkpoint == 'sharded' and not args.fsdp:
+        logging.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
+        args.fsdp_checkpoint = 'full'
+
     if args.distributed:
         if args.use_bn_sync:
             task.trainable_module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(task.trainable_module)
@@ -370,23 +391,22 @@ def main(args):
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        checkpoint = pt_load(args.resume, map_location='cpu')
-        if 'epoch' in checkpoint:
-            # resuming a train checkpoint w/ epoch and optimizer state
-            start_epoch = checkpoint["epoch"]
-            sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
-            original_task.load_state_dict({"state_dict": sd})
-            if optimizer is not None:
-                original_task.load_optim_state_dict(optimizer, checkpoint["optimizer"])
-            if scaler is not None and 'scaler' in checkpoint:
-                scaler.load_state_dict(checkpoint['scaler'])
-            logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        # Use master-determined flag when available (resume latest); fall back
+        # to local isdir check for explicit --resume <path> from CLI.
+        is_sharded = getattr(args, 'resume_is_sharded', None)
+        if is_sharded is None:
+            is_sharded = os.path.isdir(args.resume)
+        if is_sharded:
+            start_epoch = load_sharded_checkpoint(
+                original_task, args.resume,
+                optimizer=optimizer, scaler=scaler,
+            )
         else:
-            # loading a bare (model only) checkpoint for fine-tune or evaluation
-            original_task.load_state_dict({"state_dict": checkpoint})
-            logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            start_epoch = load_checkpoint(
+                original_task, args.resume,
+                optimizer=optimizer, scaler=scaler,
+                is_distributed=args.distributed,
+            )
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
@@ -494,41 +514,76 @@ def main(args):
                 torch.distributed.barrier()
 
         # Saving checkpoints.
-        # With FSDP2, state dict gather is collective — all ranks must participate
-        # even though only master writes to disk.
-        # With DDP, only master needs to call state_dict() to avoid wasting memory.
-        if original_task._fsdp_enabled or args.save_logs:
-            model_sd = original_task.state_dict()["state_dict"]
-            optim_sd = original_task.get_optim_state_dict(optimizer)
+        sharded_ckpt = args.fsdp and args.fsdp_checkpoint == 'sharded'
 
-        if args.save_logs:
-            checkpoint_dict = {
-                "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": model_sd,
-                "optimizer": optim_sd,
-            }
-            if scaler is not None:
-                checkpoint_dict["scaler"] = scaler.state_dict()
-
-            if completed_epoch == args.epochs or (
+        if sharded_ckpt:
+            # Sharded DCP — all ranks write shard files to a directory
+            save_epoch = completed_epoch == args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-            ):
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+            )
+            if save_epoch:
+                save_sharded_checkpoint(
+                    original_task, optimizer,
+                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}"),
+                    epoch=completed_epoch, scaler=scaler,
+                    name=args.name, is_master=args.save_logs,
                 )
-            if args.delete_previous_checkpoint:
-                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
-                if os.path.exists(previous_checkpoint):
-                    os.remove(previous_checkpoint)
-
             if args.save_most_recent:
-                # try not to corrupt the latest checkpoint if save fails
-                tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
-                latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
-                torch.save(checkpoint_dict, tmp_save_path)
-                os.replace(tmp_save_path, latest_save_path)
+                latest_dir = os.path.join(args.checkpoint_path, "epoch_latest")
+                tmp_dir = os.path.join(args.checkpoint_path, "_tmp_latest")
+                save_sharded_checkpoint(
+                    original_task, optimizer, tmp_dir,
+                    epoch=completed_epoch, scaler=scaler,
+                    name=args.name, is_master=args.save_logs,
+                )
+                torch.distributed.barrier()
+                if args.save_logs:
+                    # Atomic-ish swap: rename old → trash, rename tmp → latest,
+                    # then delete trash. If preempted between any step, at least
+                    # one valid directory survives.
+                    trash_dir = os.path.join(args.checkpoint_path, "_trash_latest")
+                    if os.path.exists(trash_dir):
+                        shutil.rmtree(trash_dir)
+                    if os.path.exists(latest_dir):
+                        os.rename(latest_dir, trash_dir)
+                    os.rename(tmp_dir, latest_dir)
+                    if os.path.exists(trash_dir):
+                        shutil.rmtree(trash_dir)
+            if args.delete_previous_checkpoint and args.save_logs:
+                prev_dir = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}")
+                if os.path.isdir(prev_dir):
+                    shutil.rmtree(prev_dir)
+
+        else:
+            # Full checkpoint — gather to rank 0, single .pt file
+            # With FSDP2, state dict gather is collective — all ranks must participate
+            # even though only master writes to disk.
+            # With DDP, only master needs to call state_dict() to avoid wasting memory.
+            if original_task._fsdp_enabled or args.save_logs:
+                checkpoint_dict = save_checkpoint(
+                    original_task, optimizer,
+                    epoch=completed_epoch, scaler=scaler, name=args.name,
+                )
+
+            if args.save_logs:
+                if completed_epoch == args.epochs or (
+                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                ):
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+                    )
+                if args.delete_previous_checkpoint:
+                    previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                    if os.path.exists(previous_checkpoint):
+                        os.remove(previous_checkpoint)
+
+                if args.save_most_recent:
+                    # try not to corrupt the latest checkpoint if save fails
+                    tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+                    latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                    torch.save(checkpoint_dict, tmp_save_path)
+                    os.replace(tmp_save_path, latest_save_path)
 
         # keep nodes in sync during checkpointing
         if args.distributed:

@@ -320,11 +320,14 @@ class CLIP(nn.Module):
                 no_wd.add('visual.' + n)
         return no_wd
 
-    def encode_image(self, image, normalize: bool = False):
+    def _encode_image(self, image, normalize: bool = False):
         features = self.visual(image)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def encode_text(self, text, normalize: bool = False):
+    def encode_image(self, image, normalize: bool = False):
+        return self._encode_image(image, normalize=normalize)
+
+    def _encode_text(self, text, normalize: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
@@ -341,9 +344,12 @@ class CLIP(nn.Module):
 
         return F.normalize(x, dim=-1) if normalize else x
 
+    def encode_text(self, text, normalize: bool = False):
+        return self._encode_text(text, normalize=normalize)
+
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
+        image_features = self._encode_image(image, normalize=True)
+        text_features = self._encode_text(text, normalize=True)
         image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
             image_logits += self.logit_bias
@@ -458,8 +464,8 @@ class CLIP(nn.Module):
             image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
-        text_features = self.encode_text(text, normalize=True) if text is not None else None
+        image_features = self._encode_image(image, normalize=True) if image is not None else None
+        text_features = self._encode_text(text, normalize=True) if text is not None else None
 
         if self.output_dict:
             out_dict = {
@@ -526,17 +532,23 @@ class CustomTextCLIP(nn.Module):
                 no_wd.add('text.' + n)
         return no_wd
 
-    def encode_image(self, image, normalize: bool = False):
+    def _encode_image(self, image, normalize: bool = False):
         features = self.visual(image)
         return F.normalize(features, dim=-1) if normalize else features
 
-    def encode_text(self, text, normalize: bool = False):
+    def encode_image(self, image, normalize: bool = False):
+        return self._encode_image(image, normalize=normalize)
+
+    def _encode_text(self, text, normalize: bool = False):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
+    def encode_text(self, text, normalize: bool = False):
+        return self._encode_text(text, normalize=normalize)
+
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
+        image_features = self._encode_image(image, normalize=True)
+        text_features = self._encode_text(text, normalize=True)
         image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
             image_logits += self.logit_bias
@@ -638,8 +650,8 @@ class CustomTextCLIP(nn.Module):
             image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
-        text_features = self.encode_text(text, normalize=True) if text is not None else None
+        image_features = self._encode_image(image, normalize=True) if image is not None else None
+        text_features = self._encode_text(text, normalize=True) if text is not None else None
 
         if self.output_dict:
             out_dict = {
