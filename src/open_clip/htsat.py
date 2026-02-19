@@ -847,7 +847,7 @@ class HTSAT_Swin_Transformer(nn.Module):
 
     def crop_wav(self, x, crop_size, spe_pos = None):
         time_steps = x.shape[2]
-        tx = torch.zeros(x.shape[0], x.shape[1], crop_size, x.shape[3]).to(x.device)
+        tx = torch.zeros(x.shape[0], x.shape[1], crop_size, x.shape[3], device=x.device, dtype=x.dtype)
         for i in range(len(x)):
             if spe_pos is None:
                 crop_pos = random.randint(0, time_steps - crop_size - 1)
@@ -939,12 +939,12 @@ class HTSAT_Swin_Transformer(nn.Module):
                     fusion_x_local = fusion_x_local.view(FB,FC,FF,fusion_x_local.size(-1))
                     fusion_x_local = torch.permute(fusion_x_local, (0,2,1,3)).contiguous().flatten(2)
                     if fusion_x_local.size(-1) < FT:
-                        fusion_x_local = torch.cat([fusion_x_local, torch.zeros((FB,FF,FT- fusion_x_local.size(-1)), device=device)], dim=-1)
+                        fusion_x_local = torch.cat([fusion_x_local, torch.zeros((FB,FF,FT- fusion_x_local.size(-1)), device=device, dtype=fusion_x_local.dtype)], dim=-1)
                     else:
                         fusion_x_local = fusion_x_local[:,:,:FT]
                     # 1D fusion
                     new_x = new_x.squeeze(1).permute((0,2,1)).contiguous()
-                    new_x[longer_list_idx] = self.fusion_model(new_x[longer_list_idx], fusion_x_local)
+                    new_x[longer_list_idx] = self.fusion_model(new_x[longer_list_idx], fusion_x_local).to(new_x.dtype)
                     x = new_x.permute((0,2,1)).contiguous()[:,None,:,:]
                 else:
                     x = new_x
