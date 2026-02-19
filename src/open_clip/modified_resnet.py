@@ -166,7 +166,7 @@ class ModifiedResNet(nn.Module):
         if freeze_bn_stats:
             freeze_batch_norm_2d(self)
 
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         # FIXME support for non-transformer
         pass
 

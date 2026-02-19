@@ -109,10 +109,10 @@ class CoCa(nn.Module):
 
         self.context_length = multimodal_cfg.context_length
 
-    def set_grad_checkpointing(self, enable: bool = True):
-        self.visual.set_grad_checkpointing(enable)
-        self.text.set_grad_checkpointing(enable)
-        self.text_decoder.set_grad_checkpointing(enable)
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.visual.set_grad_checkpointing(enable, impl=impl)
+        self.text.set_grad_checkpointing(enable, impl=impl)
+        self.text_decoder.set_grad_checkpointing(enable, impl=impl)
 
     def _encode_image(self, images, normalize: bool = True):
         image_latent, tokens_embs = self.visual(images)

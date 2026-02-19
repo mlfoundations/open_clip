@@ -308,9 +308,9 @@ class CLIP(nn.Module):
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
         lock_text_tower(self, unlocked_layers)
 
-    def set_grad_checkpointing(self, enable=True):
-        self.visual.set_grad_checkpointing(enable)
-        self.transformer.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.visual.set_grad_checkpointing(enable, impl=impl)
+        self.transformer.set_grad_checkpointing(enable, impl=impl)
 
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
@@ -517,9 +517,9 @@ class CustomTextCLIP(nn.Module):
     def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         self.text.lock(unlocked_layers, freeze_layer_norm)
 
-    def set_grad_checkpointing(self, enable=True):
-        self.visual.set_grad_checkpointing(enable)
-        self.text.set_grad_checkpointing(enable)
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.visual.set_grad_checkpointing(enable, impl=impl)
+        self.text.set_grad_checkpointing(enable, impl=impl)
 
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default

@@ -184,7 +184,7 @@ class HFTextEncoder(nn.Module):
             for n, p in module.named_parameters():
                 p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
 
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.transformer.gradient_checkpointing_enable()
 
     def init_parameters(self):

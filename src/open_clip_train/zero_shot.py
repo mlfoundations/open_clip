@@ -18,7 +18,11 @@ def accuracy(output, target, topk=(1,)):
 
 def run(model, classifier, dataloader, args, use_fsdp_eval=False):
     device = torch.device(args.device)
-    autocast = get_autocast(args.precision, device_type=device.type)
+    autocast = get_autocast(
+        args.precision,
+        device_type=device.type,
+        fsdp=getattr(args, 'fsdp', False),
+    )
     input_dtype = get_input_dtype(args.precision)
     is_rank0 = (args.rank == 0)
 
@@ -107,7 +111,11 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
         logging.info('Building zero-shot classifier')
 
     device = torch.device(args.device)
-    autocast = get_autocast(args.precision, device_type=device.type)
+    autocast = get_autocast(
+        args.precision,
+        device_type=device.type,
+        fsdp=getattr(args, 'fsdp', False),
+    )
 
     # All ranks must call encode_text() for FSDP collective ops.
     # build_zero_shot_classifier is deterministic — same number of forward calls on all ranks.

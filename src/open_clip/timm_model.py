@@ -134,7 +134,12 @@ class TimmModel(nn.Module):
                 gmodules = {k for k, v in gmodules.items() if v <= max_layer_id}
                 freeze_batch_norm_2d(self.trunk, gmodules)
 
-    def set_grad_checkpointing(self, enable: bool = True):
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable':
+            logging.warning(
+                'Composable activation checkpointing is not supported for timm models, '
+                'falling back to inline.'
+            )
         try:
             self.trunk.set_grad_checkpointing(enable)
         except Exception as e:

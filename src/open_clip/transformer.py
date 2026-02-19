@@ -440,6 +440,14 @@ class CustomTransformer(nn.Module):
         self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
         return take_indices
 
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for r in self.resblocks:
+                composable_checkpoint(r)
+        else:
+            self.grad_checkpointing = enable
+
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         if not self.batch_first:
             x = x.transpose(0, 1)  # NLD -> LND
@@ -523,6 +531,14 @@ class Transformer(nn.Module):
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].get_weight_dtype()
+
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for r in self.resblocks:
+                composable_checkpoint(r)
+        else:
+            self.grad_checkpointing = enable
 
     def forward_intermediates(
             self,
@@ -758,8 +774,8 @@ class VisionTransformer(nn.Module):
         #     nn.init.normal_(self.text_projection, std=self.scale)
         pass
 
-    def set_grad_checkpointing(self, enable: bool = True):
-        self.transformer.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.transformer.set_grad_checkpointing(enable, impl=impl)
 
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
@@ -1049,8 +1065,8 @@ class TextTransformer(nn.Module):
             else:
                 nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
 
-    def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.transformer.set_grad_checkpointing(enable, impl=impl)
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         """
@@ -1350,8 +1366,15 @@ class MultimodalTransformer(Transformer):
 
         return out
 
-    def set_grad_checkpointing(self, enable=True):
-        self.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for resblock in self.resblocks:
+                composable_checkpoint(resblock)
+            for cross_attn in self.cross_attn:
+                composable_checkpoint(cross_attn)
+        else:
+            self.grad_checkpointing = enable
 
 
 def lock_text_tower(

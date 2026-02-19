@@ -284,7 +284,14 @@ def main(args):
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
     if args.grad_checkpointing:
-        model.set_grad_checkpointing()
+        if args.fsdp and args.torchcompile:
+            # Composable AC will be applied inside prepare_fsdp() after per-block
+            # compile. Correct ordering: compile → AC → FSDP. Applying AC here
+            # would put hooks on the inner blocks, but torch.compile wraps them in
+            # OptimizedModule — leaving hooks at the wrong level.
+            pass
+        else:
+            model.set_grad_checkpointing(impl='composable' if args.fsdp else 'inline')
 
     if is_master(args):
         logging.info("Model:")
@@ -311,6 +318,23 @@ def main(args):
         logging.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
         args.fsdp_checkpoint = 'full'
 
+    # Resolve FSDP mixed-precision from --precision.
+    # Always create MixedPrecisionPolicy when FSDP is active (at minimum for fp32 reductions).
+    # When FSDP is on, autocast is always suppressed — MP policy handles dtype casting.
+    fsdp_mp_dtype = None  # param_dtype for MixedPrecisionPolicy (None = no param casting)
+    if args.fsdp:
+        if args.precision in ('amp', 'fp16', 'pure_fp16'):
+            fsdp_mp_dtype = torch.float16
+        elif args.precision in ('amp_bf16', 'amp_bfloat16', 'bf16', 'pure_bf16'):
+            fsdp_mp_dtype = torch.bfloat16
+        # else: fp32 — fsdp_mp_dtype stays None (no param casting, fp32 reduce only)
+
+        if is_master(args):
+            logging.info(
+                f'FSDP2: MixedPrecisionPolicy(param_dtype={fsdp_mp_dtype}, '
+                f'reduce_dtype=torch.float32). Autocast disabled.'
+            )
+
     if args.distributed:
         if args.use_bn_sync:
             task.trainable_module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(task.trainable_module)
@@ -319,7 +343,16 @@ def main(args):
             if args.fsdp_offload_cpu:
                 from torch.distributed._composable.fsdp import CPUOffloadPolicy
                 fsdp_kwargs['offload_policy'] = CPUOffloadPolicy()
-            task.prepare_fsdp(**fsdp_kwargs)
+            from torch.distributed._composable.fsdp import MixedPrecisionPolicy
+            fsdp_kwargs['mp_policy'] = MixedPrecisionPolicy(
+                param_dtype=fsdp_mp_dtype,
+                reduce_dtype=torch.float32,
+            )
+            task.prepare_fsdp(
+                compile_blocks=bool(args.torchcompile),
+                grad_checkpointing=bool(args.grad_checkpointing),
+                **fsdp_kwargs,
+            )
         else:
             ddp_args = {}
             if args.ddp_static_graph:
@@ -382,10 +415,13 @@ def main(args):
             )
 
         scaler = None
-        if args.precision == "amp":
+        need_scaler = (args.precision == "amp")
+        if args.fsdp:
+            need_scaler = (fsdp_mp_dtype == torch.float16)
+        if need_scaler:
             try:
                 scaler = torch.amp.GradScaler(device=device)
-            except (AttributeError, TypeError) as e:
+            except (AttributeError, TypeError):
                 scaler = torch.cuda.amp.GradScaler()
 
     # optionally resume from a checkpoint
@@ -472,11 +508,7 @@ def main(args):
     if args.torchcompile:
         logging.info('Compiling model...')
 
-        if args.grad_checkpointing and args.distributed and not args.fsdp:
-            logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
-            # As of now (~PyTorch 2.4/2.5), compile + grad checkpointing work, but DDP optimizer must be disabled
-            torch._dynamo.config.optimize_ddp = False
-
+        # Suppress noisy dynamo/inductor logs
         filter_prefixes = (
             "torch._dynamo",
             "torch._inductor",
@@ -484,12 +516,22 @@ def main(args):
             "torch._utils_internal",
             "torch.fx",
         )
-
         for name in logging.root.manager.loggerDict:
             if name.startswith(filter_prefixes):
                 logging.getLogger(name).setLevel(logging.WARNING)
 
-        task = torch.compile(task)
+        if args.fsdp:
+            # Per-block compile for transformer blocks already applied inside
+            # prepare_fsdp(). Task-level compile captures the loss + model glue
+            # (embeddings, projections); per-block OptimizedModules are opaque to
+            # Dynamo so AC/FSDP hooks on blocks stay at module boundaries.
+            logging.info('Compiling task (loss + model glue); blocks already per-block compiled.')
+            task = torch.compile(task)
+        else:
+            if args.grad_checkpointing and args.distributed:
+                logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+                torch._dynamo.config.optimize_ddp = False
+            task = torch.compile(task)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.

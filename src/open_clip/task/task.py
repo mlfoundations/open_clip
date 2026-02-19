@@ -134,6 +134,8 @@ class TrainingTask(nn.Module):
             reshard_after_forward: bool = True,
             mp_policy: Optional['MixedPrecisionPolicy'] = None,
             offload_policy: Optional['CPUOffloadPolicy'] = None,
+            compile_blocks: bool = False,
+            grad_checkpointing: bool = False,
     ) -> 'TrainingTask':
         """Apply FSDP2 sharding to trainable module.
 
@@ -182,6 +184,37 @@ class TrainingTask(nn.Module):
                 'FSDP2: no submodules matched default shard types. '
                 'Consider defining fsdp_shard_modules() on your model for optimal sharding.'
             )
+
+        # Per-block torch.compile (before AC hooks and FSDP sharding).
+        # Required ordering: compile → composable AC → FSDP.
+        #
+        # Composable AC hooks must be registered on the OptimizedModule wrapper,
+        # NOT on the inner block. If hooks are on the inner block, AC recomputation
+        # replays inside the compiled graph where FSDP DTensor metadata has changed,
+        # causing "Recomputed values have different metadata" errors.
+        #
+        # With hooks on the OptimizedModule, AC recomputation triggers at the module
+        # boundary (outside the compiled graph), which also triggers FSDP all-gather
+        # hooks — so parameters are correctly gathered during recompute.
+        if compile_blocks:
+            if self._verbose:
+                logging.info(f'FSDP2: compiling {len(shard_modules)} blocks with torch.compile')
+            if grad_checkpointing:
+                from torch.distributed._composable import checkpoint as composable_checkpoint
+            compiled_modules = []
+            for name, mod in shard_modules:
+                compiled_mod = torch.compile(mod)
+                # Re-register compiled module in parent so FSDP sees it
+                parts = name.rsplit('.', 1)
+                parent_name, child_name = (parts[0], parts[1]) if len(parts) == 2 else ('', name)
+                parent = model.get_submodule(parent_name) if parent_name else model
+                parent.register_module(child_name, compiled_mod)
+                # Apply composable AC to the compiled wrapper (not the inner block)
+                if grad_checkpointing:
+                    composable_checkpoint(compiled_mod)
+                compiled_modules.append((name, compiled_mod))
+            shard_modules = compiled_modules
+
         for name, mod in shard_modules:
             fully_shard(mod, **fsdp_kwargs)
 
