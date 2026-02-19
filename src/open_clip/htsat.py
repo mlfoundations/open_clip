@@ -153,11 +153,11 @@ class PatchEmbed(nn.Module):
                 local_x = local_x.permute((0,2,3,1,4)).contiguous().flatten(3)
                 TB,TC,TH,_ = local_x.size()
                 if local_x.size(-1) < TW:
-                    local_x = torch.cat([local_x, torch.zeros((TB,TC,TH,TW-local_x.size(-1)), device=global_x.device)], dim=-1)
+                    local_x = torch.cat([local_x, torch.zeros((TB,TC,TH,TW-local_x.size(-1)), device=global_x.device, dtype=local_x.dtype)], dim=-1)
                 else:
                     local_x = local_x[:,:,:,:TW]
-                
-                global_x[longer_idx] = self.fusion_model(global_x[longer_idx],local_x)
+
+                global_x[longer_idx] = self.fusion_model(global_x[longer_idx], local_x).to(global_x.dtype)
             x = global_x
         else:
             B, C, H, W = x.shape
