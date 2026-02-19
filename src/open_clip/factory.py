@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 
 from .convert import convert_state_dict
-from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, CustomTextCLIP, CLAP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
@@ -44,7 +44,9 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            has_vision = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
+            has_audio = all(a in model_cfg for a in ('embed_dim', 'audio_cfg', 'text_cfg'))
+            if has_vision or has_audio:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -265,6 +267,7 @@ def create_model(
         pretrained_text: bool = True,  # Load default base text weights (at creation, if no CLIP weights) - NEW
         pretrained_image_path: Optional[str] = None, # Load specific image weights from file (after creation)
         pretrained_text_path: Optional[str] = None, # Load specific text weights from file (after creation)
+        pretrained_audio_path: Optional[str] = None, # Load specific audio encoder weights (after creation)
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
@@ -430,13 +433,15 @@ def create_model(
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
     text_cfg = model_cfg['text_cfg']
-    vision_cfg = model_cfg['vision_cfg']
+    is_audio_model = 'audio_cfg' in model_cfg
+    vision_cfg = model_cfg.get('vision_cfg', {})
     if force_quick_gelu:
         model_cfg["quick_gelu"] = True
-    if force_patch_dropout is not None:
-        vision_cfg["patch_dropout"] = force_patch_dropout
-    if force_image_size is not None:
-        vision_cfg["image_size"] = force_image_size
+    if not is_audio_model:
+        if force_patch_dropout is not None:
+            vision_cfg["patch_dropout"] = force_patch_dropout
+        if force_image_size is not None:
+            vision_cfg["image_size"] = force_image_size
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
 
@@ -477,17 +482,18 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (CLIP, CustomTextCLIP, CoCa)
-    custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
-    if custom_text:
-        # Use CustomTextCLIP (or CoCa if multimodal_cfg is present)
-        if "multimodal_cfg" in model_cfg:
-            model_class = CoCa
-        else:
-            model_class = CustomTextCLIP
+    # Determine model class (CLIP, CustomTextCLIP, CoCa, CLAP)
+    if is_audio_model:
+        model_class = CLAP
     else:
-        # Default to standard CLIP
-        model_class = CLIP
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
+        if custom_text:
+            if "multimodal_cfg" in model_cfg:
+                model_class = CoCa
+            else:
+                model_class = CustomTextCLIP
+        else:
+            model_class = CLIP
 
     # Apply final **kwargs overrides (highest priority) to a copy of model_cfg
     final_model_cfg = deepcopy(model_cfg)
@@ -574,8 +580,49 @@ def create_model(
             # Path provided is not a valid file
             logging.warning(f"Invalid file path specified for pretrained_text_path: {pretrained_text_path}")
 
+    pretrained_audio_loaded = False
+    if pretrained_audio_path:
+        if os.path.isfile(pretrained_audio_path):
+            logging.info(f"Attempting to load audio encoder weights from: {pretrained_audio_path}")
+            try:
+                audio_ckpt = torch.load(pretrained_audio_path, map_location='cpu', weights_only=False)
+                if 'state_dict' in audio_ckpt:
+                    audio_ckpt = audio_ckpt['state_dict']
+                if hasattr(model, 'audio') and hasattr(model.audio, 'encoder'):
+                    is_whisper = getattr(model.audio, '_is_whisper', False)
+                    if not is_whisper:
+                        # HTSAT checkpoints use 'sed_model.' prefix — strip it
+                        audio_state_dict = {}
+                        for key, val in audio_ckpt.items():
+                            if key.startswith('sed_model.'):
+                                audio_state_dict[key[len('sed_model.'):]] = val
+                            else:
+                                audio_state_dict[key] = val
+                    else:
+                        # Whisper: load directly (encoder key prefix from whisper package)
+                        audio_state_dict = {}
+                        for key, val in audio_ckpt.items():
+                            # Strip 'encoder.' prefix if present (from openai-whisper checkpoints)
+                            if key.startswith('encoder.'):
+                                audio_state_dict[key[len('encoder.'):]] = val
+                            else:
+                                audio_state_dict[key] = val
+                    incompatible_keys = model.audio.encoder.load_state_dict(audio_state_dict, strict=False)
+                    logging.info(
+                        f"Loaded audio encoder weights from {pretrained_audio_path}. "
+                        f"Incompatible keys: {incompatible_keys}")
+                    pretrained_audio_loaded = True
+                else:
+                    logging.warning(
+                        f"Model does not have 'audio.encoder' attribute, "
+                        f"cannot load audio encoder weights from {pretrained_audio_path}")
+            except Exception as e:
+                logging.error(f"Error loading audio encoder weights from {pretrained_audio_path}: {e}")
+        else:
+            logging.warning(f"Invalid file path specified for pretrained_audio_path: {pretrained_audio_path}")
+
     partially_loaded = enable_default_text_weights or enable_default_image_weights \
-        or pretrained_image_loaded or pretrained_text_loaded
+        or pretrained_image_loaded or pretrained_text_loaded or pretrained_audio_loaded
     if require_pretrained and not pretrained_loaded:
          # If CLIP weights were required but failed to load, raise an error.
          # Loading tower-specific weights does not satisfy `require_pretrained`.
@@ -950,17 +997,14 @@ def create_model_and_transforms(
         **model_kwargs,
     )
 
-    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
-
-    preprocess_train = image_transform_v2(
-        pp_cfg,
-        is_train=True,
-        aug_cfg=aug_cfg,
-    )
-    preprocess_val = image_transform_v2(
-        pp_cfg,
-        is_train=False,
-    )
+    if hasattr(model, 'visual'):
+        pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
+        preprocess_train = image_transform_v2(pp_cfg, is_train=True, aug_cfg=aug_cfg)
+        preprocess_val = image_transform_v2(pp_cfg, is_train=False)
+    else:
+        # CLAP audio model no image transforms needed
+        preprocess_train = None
+        preprocess_val = None
 
     return model, preprocess_train, preprocess_val
 
@@ -1079,9 +1123,13 @@ def create_model_from_pretrained(
     if not return_transform:
         return model
 
-    preprocess = image_transform_v2(
-        PreprocessCfg(**model.visual.preprocess_cfg),
-        is_train=False,
-    )
+    if hasattr(model, 'visual'):
+        preprocess = image_transform_v2(
+            PreprocessCfg(**model.visual.preprocess_cfg),
+            is_train=False,
+        )
+    else:
+        # CLAP audio model — no image transforms needed
+        preprocess = None
 
     return model, preprocess

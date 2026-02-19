@@ -61,9 +61,54 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "webdataset-audio", "csv", "synthetic", "synthetic-audio", "auto"],
         default="auto",
         help="Which type of dataset to process."
+    )
+    parser.add_argument(
+        "--audio-ext",
+        type=str,
+        default="flac",
+        help="Audio file extension in WebDataset shards (wav, flac, mp3)."
+    )
+    parser.add_argument(
+        "--pretrained-audio",
+        type=str,
+        default=None,
+        help="Path to pretrained audio encoder checkpoint (e.g. HTSAT .ckpt file)."
+    )
+    parser.add_argument(
+        "--data-filling",
+        type=str,
+        default="pad",
+        choices=["pad", "repeat", "repeatpad"],
+        help="How to fill audio shorter than clip_samples: "
+             "pad (zero-pad), repeat (loop waveform), repeatpad (loop then zero-pad)."
+    )
+    parser.add_argument(
+        "--data-truncating",
+        type=str,
+        default="rand_trunc",
+        choices=["rand_trunc", "trunc", "fusion"],
+        help="How to truncate audio longer than clip_samples: "
+             "rand_trunc (random crop each epoch), trunc (always take first clip_samples), "
+             "fusion (4-channel mel spectrogram for HTSAT fusion mode)."
+    )
+    parser.add_argument(
+        "--enable-fusion",
+        default=False,
+        action="store_true",
+        help="Enable HTSAT fusion mode for longer audio clips. "
+             "Automatically sets --data-truncating to fusion for training."
+    )
+    parser.add_argument(
+        "--int16-normalize",
+        default=False,
+        action="store_true",
+        help="Enable int16 quantization normalization in audio preprocessing. "
+             "Clamps waveforms to [-1,1] and quantizes to int16 precision. "
+             "Disabled by default: ablation showed it degrades Clotho text R@5 by ~1.7pp "
+             "and UrbanSound8K by ~2.8pp with no compensating benefit."
     )
     parser.add_argument(
         "--dataset-resampled",

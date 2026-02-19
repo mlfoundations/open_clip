@@ -1,0 +1,22 @@
+{
+    "embed_dim": 768,
+    "audio_cfg": {
+        "audio_length": 1024,
+        "clip_samples": 480000,
+        "mel_bins": 80,
+        "sample_rate": 16000,
+        "window_size": 400,
+        "hop_size": 160,
+        "fmin": 50,
+        "fmax": 8000,
+        "class_num": 527,
+        "model_type": "whisper",
+        "model_name": "base",
+        "pretrained": true
+    },
+    "text_cfg": {
+        "hf_model_name": "roberta-base",
+        "hf_tokenizer_name": "roberta-base",
+        "hf_pooler_type": "mean_pooler"
+    }
+}

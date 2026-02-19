@@ -5,7 +5,8 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .factory import create_model, create_model_and_transforms, create_model_from_pretrained, get_tokenizer, create_loss
 from .factory import list_models, add_model_config, get_model_config, load_checkpoint
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss
-from .model import CLIP, CustomTextCLIP, CLIPTextCfg, CLIPVisionCfg, \
+from .audio import CLIPAudioCfg, AudioTower
+from .model import CLIP, CustomTextCLIP, CLAP, CLIPTextCfg, CLIPVisionCfg, \
     convert_weights_to_lp, convert_weights_to_fp16, trace_model, get_cast_dtype, get_input_dtype, \
     get_model_tokenize_cfg, get_model_preprocess_cfg, set_model_preprocess_cfg
 from .openai import load_openai_model, list_openai_models
