@@ -242,8 +242,8 @@ def main(args):
         data_filling = getattr(args, 'data_filling', 'pad')
         data_truncating = getattr(args, 'data_truncating', 'rand_trunc')
         int16_normalize = getattr(args, 'int16_normalize', False)
-        # When --enable-fusion is set, force fusion truncation for training
-        if getattr(args, 'enable_fusion', False):
+        # When --enable-fusion is set or model config has fusion, force fusion truncation
+        if getattr(args, 'enable_fusion', False) or audio_cfg.get('enable_fusion', False):
             data_truncating = "fusion"
         preprocess_train = make_audio_preprocess(audio_cfg, data_filling=data_filling, data_truncating=data_truncating, int16_normalize=int16_normalize)
         preprocess_val = make_audio_preprocess(audio_cfg, data_filling="pad", data_truncating="trunc", int16_normalize=int16_normalize)

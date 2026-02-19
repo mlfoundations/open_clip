@@ -382,7 +382,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             epoch=shared_epoch,
         )]
     else:
-        pipeline = [wds.SimpleShardList(input_shards)]
+        expanded_shards, _ = expand_urls(input_shards)
+        pipeline = [wds.SimpleShardList(expanded_shards)]
 
     # at this point we have an iterator over all the shards
     if is_train:
@@ -711,7 +712,8 @@ def get_wds_audio_dataset(args, preprocess_audio, is_train, epoch=0, floor=False
             epoch=shared_epoch,
         )]
     else:
-        pipeline = [wds.SimpleShardList(input_shards)]
+        expanded_shards, _ = expand_urls(input_shards)
+        pipeline = [wds.SimpleShardList(expanded_shards)]
 
     if is_train:
         if not resampled:
