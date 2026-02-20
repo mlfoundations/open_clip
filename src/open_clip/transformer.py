@@ -123,19 +123,19 @@ class Attention(nn.Module):
 
         if kdim == dim and vdim == dim:
             # Same-dim: combined in_proj_weight (3*dim, dim) — matches nn.MHA and existing checkpoints
-            self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
+            self.in_proj_weight = nn.Parameter(torch.empty((dim * 3, dim)))
             self.q_proj_weight = None
             self.k_proj_weight = None
             self.v_proj_weight = None
         else:
             # Different-dim: separate projections — key names match nn.MHA for checkpoint compat
             self.in_proj_weight = None
-            self.q_proj_weight = nn.Parameter(torch.randn((dim, dim)) * self.scale)
-            self.k_proj_weight = nn.Parameter(torch.randn((dim, kdim)) * self.scale)
-            self.v_proj_weight = nn.Parameter(torch.randn((dim, vdim)) * self.scale)
+            self.q_proj_weight = nn.Parameter(torch.empty((dim, dim)))
+            self.k_proj_weight = nn.Parameter(torch.empty((dim, kdim)))
+            self.v_proj_weight = nn.Parameter(torch.empty((dim, vdim)))
 
         if qkv_bias:
-            self.in_proj_bias = nn.Parameter(torch.zeros(dim * 3))
+            self.in_proj_bias = nn.Parameter(torch.empty(dim * 3))
         else:
             self.in_proj_bias = None
 
@@ -170,6 +170,20 @@ class Attention(nn.Module):
 
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        # Match nn.MultiheadAttention init
+        if self.in_proj_weight is not None:
+            nn.init.xavier_uniform_(self.in_proj_weight)
+        else:
+            nn.init.xavier_uniform_(self.q_proj_weight)
+            nn.init.xavier_uniform_(self.k_proj_weight)
+            nn.init.xavier_uniform_(self.v_proj_weight)
+        if self.in_proj_bias is not None:
+            nn.init.constant_(self.in_proj_bias, 0.)
+        nn.init.constant_(self.out_proj.bias, 0.)
 
     def forward(
             self,
