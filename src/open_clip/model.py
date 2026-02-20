@@ -677,7 +677,7 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
             if l.bias is not None:
                 l.bias.data = l.bias.data.to(dtype)
 
-        if isinstance(l, (nn.MultiheadAttention, Attention)):
+        if isinstance(l, Attention):
             for attr in [*[f"{s}_proj_weight" for s in ["in", "q", "k", "v"]], "in_proj_bias", "bias_k", "bias_v"]:
                 tensor = getattr(l, attr, None)
                 if tensor is not None:
