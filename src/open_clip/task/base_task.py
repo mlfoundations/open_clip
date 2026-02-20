@@ -1,5 +1,7 @@
 import logging
 import math
+
+_logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import torch
@@ -173,14 +175,14 @@ class TrainingTask(nn.Module):
                     param.data.unsqueeze(0), requires_grad=param.requires_grad,
                 ))
                 if self._verbose:
-                    logging.info(f'FSDP2: reshaped 0-D param {name!r} to [1]')
+                    _logger.info(f'FSDP2: reshaped 0-D param {name!r} to [1]')
 
         # Shard discovered submodules (transformer blocks) first
         shard_modules = self._get_fsdp_shard_modules()
         if self._verbose:
-            logging.info(f'FSDP2: sharding {len(shard_modules)} submodules')
+            _logger.info(f'FSDP2: sharding {len(shard_modules)} submodules')
         if not shard_modules:
-            logging.warning(
+            _logger.warning(
                 'FSDP2: no submodules matched default shard types. '
                 'Consider defining fsdp_shard_modules() on your model for optimal sharding.'
             )
@@ -198,7 +200,7 @@ class TrainingTask(nn.Module):
         # hooks — so parameters are correctly gathered during recompute.
         if compile_blocks:
             if self._verbose:
-                logging.info(f'FSDP2: compiling {len(shard_modules)} blocks with torch.compile')
+                _logger.info(f'FSDP2: compiling {len(shard_modules)} blocks with torch.compile')
             if grad_checkpointing:
                 from torch.distributed._composable import checkpoint as composable_checkpoint
             compiled_modules = []

@@ -4,6 +4,8 @@ Wraps timm (https://github.com/rwightman/pytorch-image-models) models for use as
 """
 import logging
 from collections import OrderedDict
+
+_logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -136,14 +138,14 @@ class TimmModel(nn.Module):
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         if impl == 'composable':
-            logging.warning(
+            _logger.warning(
                 'Composable activation checkpointing is not supported for timm models, '
                 'falling back to inline.'
             )
         try:
             self.trunk.set_grad_checkpointing(enable)
         except Exception as e:
-            logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
+            _logger.warning('grad checkpointing not supported for this timm image tower, continuing without...')
 
     def forward_intermediates(
             self,
@@ -211,7 +213,7 @@ class TimmModel(nn.Module):
         if hasattr(self.trunk, 'set_input_size'):
             self.trunk.set_input_size(image_size)
         else:
-            logging.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
+            _logger.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
 
     def forward(self, x):
         x = self.trunk(x)

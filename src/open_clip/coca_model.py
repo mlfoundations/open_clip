@@ -7,7 +7,7 @@ from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass
 
-log = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 from .transformer import (
     LayerNormFp32,
@@ -328,7 +328,7 @@ class CoCa(nn.Module):
                 )
                 if generation_type == "beam_search":
                     if num_beam_groups > 1:
-                        log.warning(
+                        _logger.warning(
                             "Group beam search (num_beam_groups > 1) requires the "
                             "transformers community extension. Falling back to "
                             "standard beam search (num_beam_groups=1). Pass a "

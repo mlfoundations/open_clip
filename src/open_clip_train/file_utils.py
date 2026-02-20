@@ -1,6 +1,8 @@
 import logging
 import os
 import multiprocessing
+
+_logger = logging.getLogger(__name__)
 import subprocess
 import time
 import fsspec
@@ -11,10 +13,10 @@ def remote_sync_s3(local_dir, remote_dir):
     # skip epoch_latest which can change during sync.
     result = subprocess.run(["aws", "s3", "sync", local_dir, remote_dir, '--exclude', '*epoch_latest.pt'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode != 0:
-        logging.error(f"Error: Failed to sync with S3 bucket {result.stderr.decode('utf-8')}")
+        _logger.error(f"Error: Failed to sync with S3 bucket {result.stderr.decode('utf-8')}")
         return False
         
-    logging.info(f"Successfully synced with S3 bucket")
+    _logger.info(f"Successfully synced with S3 bucket")
     return True
 
 def remote_sync_fsspec(local_dir, remote_dir):
@@ -27,28 +29,28 @@ def remote_sync_fsspec(local_dir, remote_dir):
         if 'epoch_latest.pt' in k:
             continue
 
-        logging.info(f'Attempting to sync {k}')
+        _logger.info(f'Attempting to sync {k}')
         if k in b and len(a[k]) == len(b[k]):
-            logging.debug(f'Skipping remote sync for {k}.')
+            _logger.debug(f'Skipping remote sync for {k}.')
             continue
 
         try:
-            logging.info(f'Successful sync for {k}.')
+            _logger.info(f'Successful sync for {k}.')
             b[k] = a[k]
         except Exception as e:
-            logging.info(f'Error during remote sync for {k}: {e}')
+            _logger.info(f'Error during remote sync for {k}: {e}')
             return False
 
     return True
 
 def remote_sync(local_dir, remote_dir, protocol):
-    logging.info('Starting remote sync.')
+    _logger.info('Starting remote sync.')
     if protocol == 's3':
         return remote_sync_s3(local_dir, remote_dir)
     elif protocol == 'fsspec':
         return remote_sync_fsspec(local_dir, remote_dir)
     else:
-        logging.error('Remote protocol not known')
+        _logger.error('Remote protocol not known')
         return False
 
 def keep_running_remote_sync(sync_every, local_dir, remote_dir, protocol):
@@ -68,7 +70,7 @@ def pt_save(pt_obj, file_path):
 
 def pt_load(file_path, map_location=None):
     if file_path.startswith('s3'):
-        logging.info('Loading remote checkpoint, which may take a bit.')
+        _logger.info('Loading remote checkpoint, which may take a bit.')
     of = fsspec.open(file_path, "rb")
     with of as f:
         out = torch.load(f, map_location=map_location)

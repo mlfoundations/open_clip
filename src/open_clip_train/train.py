@@ -1,6 +1,8 @@
 import json
 import logging
 import math
+
+_logger = logging.getLogger(__name__)
 import os
 import time
 from contextlib import nullcontext
@@ -220,7 +222,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
             )
             samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
             samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
-            logging.info(
+            _logger.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
@@ -356,12 +358,12 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
                         cumulative_gen_loss += gen_loss * batch_size
                     num_samples += batch_size
                     if (i % 100) == 0:
-                        logging.info(
+                        _logger.info(
                             f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                             f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
                         if gen_loss is not None:
-                            logging.info(
+                            _logger.info(
                                 f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 
                 i += 1
@@ -386,7 +388,7 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
     if not metrics:
         return metrics
 
-    logging.info(
+    _logger.info(
         f"Eval Epoch: {epoch} "
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
     )

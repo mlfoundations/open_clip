@@ -5,12 +5,14 @@ Sharded checkpoints: DCP directory, all ranks write, per-rank shards.
 """
 import logging
 import os
+
+_logger = logging.getLogger(__name__)
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
-from .task import TrainingTask, unwrap_model
+from .base_task import TrainingTask, unwrap_model
 
 
 def _get_optim_state_dict(
@@ -106,11 +108,11 @@ def load_checkpoint(
             _load_optim_state_dict(model, optimizer, checkpoint["optimizer"], task._fsdp_enabled)
         if scaler is not None and 'scaler' in checkpoint:
             scaler.load_state_dict(checkpoint['scaler'])
-        logging.info(f"=> resuming checkpoint '{path}' (epoch {start_epoch})")
+        _logger.info(f"=> resuming checkpoint '{path}' (epoch {start_epoch})")
     else:
         start_epoch = 0
         task.load_state_dict({"state_dict": checkpoint})
-        logging.info(f"=> loaded checkpoint '{path}' (epoch {start_epoch})")
+        _logger.info(f"=> loaded checkpoint '{path}' (epoch {start_epoch})")
 
     return start_epoch
 
@@ -183,5 +185,5 @@ def load_sharded_checkpoint(
         if scaler is not None and "scaler" in metadata:
             scaler.load_state_dict(metadata["scaler"])
 
-    logging.info(f"=> resuming sharded checkpoint '{checkpoint_dir}' (epoch {start_epoch})")
+    _logger.info(f"=> resuming sharded checkpoint '{checkpoint_dir}' (epoch {start_epoch})")
     return start_epoch

@@ -2,6 +2,7 @@ import copy
 import glob
 import logging
 import os
+
 import re
 import shutil
 import subprocess
@@ -34,7 +35,7 @@ from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.train import train_one_epoch, evaluate
 from open_clip_train.file_utils import start_sync_process, remote_sync
 
-
+_logger = logging.getLogger('open_clip_train.main')
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
 
@@ -160,9 +161,9 @@ def main(args):
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
                 resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
             if resume_from:
-                logging.info(f'Found latest resume checkpoint at {resume_from}.')
+                _logger.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
-                logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
+                _logger.info(f'No latest resume checkpoint found in {checkpoint_path}.')
         # Master determines checkpoint type (dir = sharded DCP, file = full .pt)
         # and broadcasts both path and type so all ranks agree — avoids per-rank
         # os.path.isdir() divergence under shared filesystem stress.
@@ -188,9 +189,9 @@ def main(args):
             args.remote_sync_protocol
         )
         if result:
-            logging.info('remote sync successful.')
+            _logger.info('remote sync successful.')
         else:
-            logging.info('Error: remote sync failed. Exiting.')
+            _logger.info('Error: remote sync failed. Exiting.')
             return -1
         # if all looks good, start a process to do this every args.remote_sync_frequency seconds
         remote_sync_process = start_sync_process(
@@ -202,16 +203,16 @@ def main(args):
         remote_sync_process.start()
 
     if args.precision == 'fp16':
-        logging.warning(
+        _logger.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
             'FP16 support needs further verification and tuning, especially for train.')
 
     if args.distributed:
-        logging.info(
+        _logger.info(
             f'Running in distributed mode with multiple processes. Device: {args.device}.'
             f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
     else:
-        logging.info(f'Running with a single process. Device {args.device}.')
+        _logger.info(f'Running with a single process. Device {args.device}.')
 
     dist_model = None
     args.distill = args.distill_model is not None and args.distill_pretrained is not None
@@ -294,14 +295,14 @@ def main(args):
             model.set_grad_checkpointing(impl='composable' if args.fsdp else 'inline')
 
     if is_master(args):
-        logging.info("Model:")
-        logging.info(f"{str(model)}")
-        logging.info("Params:")
+        _logger.info("Model:")
+        _logger.info(f"{str(model)}")
+        _logger.info("Params:")
         params_file = os.path.join(args.logs, args.name, "params.txt")
         with open(params_file, "w") as f:
             for name in sorted(vars(args)):
                 val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
+                _logger.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
     # Create task (wraps model + loss)
@@ -311,11 +312,11 @@ def main(args):
     original_task = task
 
     if args.fsdp and not args.distributed:
-        logging.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
+        _logger.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
         args.fsdp = False
 
     if args.fsdp_checkpoint == 'sharded' and not args.fsdp:
-        logging.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
+        _logger.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
         args.fsdp_checkpoint = 'full'
 
     # Resolve FSDP mixed-precision from --precision.
@@ -330,7 +331,7 @@ def main(args):
         # else: fp32 — fsdp_mp_dtype stays None (no param casting, fp32 reduce only)
 
         if is_master(args):
-            logging.info(
+            _logger.info(
                 f'FSDP2: MixedPrecisionPolicy(param_dtype={fsdp_mp_dtype}, '
                 f'reduce_dtype=torch.float32). Autocast disabled.'
             )
@@ -410,7 +411,7 @@ def main(args):
             defaults = copy.deepcopy(optimizer.defaults)
             defaults['weight_decay'] = args.wd
             defaults = ', '.join([f'{k}: {v}' for k, v in defaults.items()])
-            logging.info(
+            _logger.info(
                 f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
             )
 
@@ -470,7 +471,7 @@ def main(args):
                 optimizer, args.lr, args.warmup, total_steps,
                 cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end)
         else:
-            logging.error(
+            _logger.error(
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
 
@@ -483,7 +484,7 @@ def main(args):
 
     if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
-        logging.debug('Starting wandb.')
+        _logger.debug('Starting wandb.')
         args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:
             args.val_sz = data["val"].dataloader.num_samples
@@ -500,13 +501,13 @@ def main(args):
         if args.debug:
             wandb.watch(task.trainable_module, log='all')
         wandb.save(params_file)
-        logging.debug('Finished loading wandb.')
+        _logger.debug('Finished loading wandb.')
 
     # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
     # For compatibility, we save state_dict() of the original model, which shares the
     # weights without the prefix.
     if args.torchcompile:
-        logging.info('Compiling model...')
+        _logger.info('Compiling model...')
 
         # Suppress noisy dynamo/inductor logs
         filter_prefixes = (
@@ -525,11 +526,11 @@ def main(args):
             # prepare_fsdp(). Task-level compile captures the loss + model glue
             # (embeddings, projections); per-block OptimizedModules are opaque to
             # Dynamo so AC/FSDP hooks on blocks stay at module boundaries.
-            logging.info('Compiling task (loss + model glue); blocks already per-block compiled.')
+            _logger.info('Compiling task (loss + model glue); blocks already per-block compiled.')
             task = torch.compile(task)
         else:
             if args.grad_checkpointing and args.distributed:
-                logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+                _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
                 torch._dynamo.config.optimize_ddp = False
             task = torch.compile(task)
 
@@ -544,7 +545,7 @@ def main(args):
 
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
-            logging.info(f'Start epoch {epoch}')
+            _logger.info(f'Start epoch {epoch}')
 
         train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
@@ -636,7 +637,7 @@ def main(args):
 
     # run a final sync.
     if remote_sync_process is not None:
-        logging.info('Final remote sync.')
+        _logger.info('Final remote sync.')
         remote_sync_process.terminate()
         result = remote_sync(
             os.path.join(args.logs, args.name), 
@@ -644,9 +645,9 @@ def main(args):
             args.remote_sync_protocol
         )
         if result:
-            logging.info('Final remote sync successful.')
+            _logger.info('Final remote sync successful.')
         else:
-            logging.info('Final remote sync failed.')
+            _logger.info('Final remote sync failed.')
     
 
 def copy_codebase(args):

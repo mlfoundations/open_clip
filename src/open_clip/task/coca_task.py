@@ -3,7 +3,7 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 
-from .task import TrainingTask
+from .base_task import TrainingTask
 
 
 class CoCaTask(TrainingTask):

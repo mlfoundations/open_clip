@@ -1,5 +1,7 @@
 import logging
 
+_logger = logging.getLogger(__name__)
+
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
@@ -101,13 +103,13 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     model = get_model_from_task(model_or_task)
 
     if is_rank0:
-        logging.info('Starting zero-shot imagenet.')
+        _logger.info('Starting zero-shot imagenet.')
 
     if tokenizer is None:
         tokenizer = get_tokenizer(args.model)
 
     if is_rank0:
-        logging.info('Building zero-shot classifier')
+        _logger.info('Building zero-shot classifier')
 
     device = torch.device(args.device)
     autocast = get_autocast(
@@ -130,7 +132,7 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
         )
 
     if is_rank0:
-        logging.info('Using classifier')
+        _logger.info('Using classifier')
 
     # Extract image_size from raw model for FSDP dummy tensor allocation
     image_size = model.visual.image_size if use_fsdp_eval else None
@@ -157,6 +159,6 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
             results['imagenetv2-zeroshot-val-top5'] = top5
 
     if is_rank0:
-        logging.info('Finished zero-shot imagenet.')
+        _logger.info('Finished zero-shot imagenet.')
 
     return results
