@@ -49,7 +49,7 @@ class DistillCLIPTask(TrainingTask):
         self.teacher.eval()
         return self
 
-    def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def training_forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         model_out = self.trainable_module(images, texts)
         logit_scale = model_out["logit_scale"]
         with torch.no_grad():

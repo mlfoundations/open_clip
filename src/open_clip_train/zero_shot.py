@@ -16,7 +16,7 @@ def accuracy(output, target, topk=(1,)):
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) for k in topk]
 
 
-def run(model, classifier, dataloader, args, use_fsdp_eval=False):
+def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False, image_size=None):
     device = torch.device(args.device)
     autocast = get_autocast(
         args.precision,
@@ -28,7 +28,6 @@ def run(model, classifier, dataloader, args, use_fsdp_eval=False):
 
     if use_fsdp_eval and not is_rank0:
         # Pre-allocate dummy image tensor for non-master ranks
-        image_size = model.visual.image_size
         if not isinstance(image_size, tuple):
             image_size = (image_size, image_size)
         dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
@@ -117,11 +116,11 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
         fsdp=getattr(args, 'fsdp', False),
     )
 
-    # All ranks must call encode_text() for FSDP collective ops.
+    # All ranks must call forward() for FSDP collective ops.
     # build_zero_shot_classifier is deterministic — same number of forward calls on all ranks.
     with autocast():
         classifier = build_zero_shot_classifier(
-            model,
+            model_or_task,
             tokenizer=tokenizer,
             classnames=IMAGENET_CLASSNAMES,
             templates=OPENAI_IMAGENET_TEMPLATES,
@@ -133,20 +132,25 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     if is_rank0:
         logging.info('Using classifier')
 
+    # Extract image_size from raw model for FSDP dummy tensor allocation
+    image_size = model.visual.image_size if use_fsdp_eval else None
+
     results = {}
     if 'imagenet-val' in data:
-        top1, top5 = run(
-            model, classifier, data['imagenet-val'].dataloader, args,
+        top1, top5 = run_zero_shot_classifier(
+            model_or_task, classifier, data['imagenet-val'].dataloader, args,
             use_fsdp_eval=use_fsdp_eval,
+            image_size=image_size,
         )
         if is_rank0:
             results['imagenet-zeroshot-val-top1'] = top1
             results['imagenet-zeroshot-val-top5'] = top5
 
     if 'imagenet-v2' in data:
-        top1, top5 = run(
-            model, classifier, data['imagenet-v2'].dataloader, args,
+        top1, top5 = run_zero_shot_classifier(
+            model_or_task, classifier, data['imagenet-v2'].dataloader, args,
             use_fsdp_eval=use_fsdp_eval,
+            image_size=image_size,
         )
         if is_rank0:
             results['imagenetv2-zeroshot-val-top1'] = top1

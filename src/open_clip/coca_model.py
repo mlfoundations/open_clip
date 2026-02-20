@@ -216,18 +216,22 @@ class CoCa(nn.Module):
 
     def forward(
             self,
-            image,
+            image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
     ):
-        if image_latent is None or image_embs is None:
+        if image is not None and (image_latent is None or image_embs is None):
             image_latent, image_embs = self._encode_image(image)
 
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
 
         text_latent, token_embs = self._encode_text(text)
+
+        if image_latent is None:
+            return {"text_features": text_latent}
+
         logits = self.text_decoder(image_embs, token_embs)
 
         out_dict = {

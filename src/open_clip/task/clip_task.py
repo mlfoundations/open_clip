@@ -37,7 +37,7 @@ class CLIPTask(TrainingTask):
                 world_size=world_size,
             )
 
-    def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def training_forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         model_out = self.trainable_module(images, texts)
         logit_scale = model_out["logit_scale"]
         losses = self.loss(**model_out, output_dict=True)

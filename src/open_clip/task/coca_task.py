@@ -51,7 +51,7 @@ class CoCaTask(TrainingTask):
             "logit_scale": model_out["logit_scale"],
         }
 
-    def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def training_forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
         model_out = self.trainable_module(images, texts)
         loss_input = self._build_loss_inputs(model_out, texts)
         losses = self.loss(**loss_input, output_dict=True)

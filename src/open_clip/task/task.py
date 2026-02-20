@@ -344,7 +344,13 @@ class TrainingTask(nn.Module):
         """
         return self.loss(**inputs, **inputs_no_accum, output_dict=True)
 
-    def forward(self, images: torch.Tensor, texts: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, *args, **kwargs):
+        if not self.training:
+            model = self.get_trainable_module(use_ema=True)
+            return model(*args, **kwargs)
+        return self.training_forward(*args, **kwargs)
+
+    def training_forward(self, *args, **kwargs) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
 
 

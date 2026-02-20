@@ -265,8 +265,8 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
         return metrics
 
     device = torch.device(args.device)
+    model_or_task.eval()
     model = get_model_from_task(model_or_task)
-    model.eval()
 
     zero_shot_metrics = zero_shot_eval(model_or_task, data, epoch, args, tokenizer=tokenizer)
     if is_rank0:
@@ -328,7 +328,7 @@ def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
                     texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = model_or_task(images, texts)
 
                 if is_rank0:
                     image_features = model_out["image_features"]
