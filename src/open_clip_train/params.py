@@ -200,7 +200,7 @@ def parse_args(args):
     parser.add_argument(
         "--precision",
         choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
-        default="amp",
+        default="amp_bf16",
         help="Floating point precision."
     )
     parser.add_argument(
@@ -301,22 +301,10 @@ def parse_args(args):
         help="Force use of CustomTextCLIP model (separate text-tower).",
     )
     parser.add_argument(
-        "--torchscript",
-        default=False,
-        action='store_true',
-        help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
-    )
-    parser.add_argument(
         "--torchcompile",
         default=False,
         action='store_true',
         help="torch.compile() the model, requires pytorch 2.0 or later.",
-    )
-    parser.add_argument(
-        "--trace",
-        default=False,
-        action='store_true',
-        help="torch.jit.trace the model for inference / eval only",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
@@ -368,16 +356,37 @@ def parse_args(args):
         help="If true, we copy the entire base on the log directory, and execute from there."
     )
     parser.add_argument(
-        "--horovod",
-        default=False,
-        action="store_true",
-        help="Use horovod for distributed training."
-    )
-    parser.add_argument(
         "--ddp-static-graph",
         default=False,
         action='store_true',
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
+    )
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action='store_true',
+        help="Use FSDP2 (fully_shard) instead of DDP for distributed training.",
+    )
+    parser.add_argument(
+        "--fsdp-no-reshard-after-forward",
+        default=False,
+        action='store_true',
+        help="Disable resharding parameters after forward pass. "
+             "Lower communication but higher memory.",
+    )
+    parser.add_argument(
+        "--fsdp-offload-cpu",
+        default=False,
+        action='store_true',
+        help="Offload FSDP parameters to CPU when not in use.",
+    )
+    parser.add_argument(
+        "--fsdp-checkpoint",
+        default="full",
+        type=str,
+        choices=["full", "sharded"],
+        help="FSDP checkpoint type. 'full' gathers to rank 0 as a single .pt file. "
+             "'sharded' uses DCP per-rank shards in a directory (faster, lower memory).",
     )
     parser.add_argument(
         "--no-set-device-rank",

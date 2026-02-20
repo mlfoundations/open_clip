@@ -2,6 +2,8 @@ import ast
 import json
 import logging
 import math
+
+_logger = logging.getLogger(__name__)
 import os
 import random
 import sys
@@ -20,21 +22,17 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
 
 
 class CsvDataset(Dataset):
     def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
-        logging.debug(f'Loading csv data from {input_filename}.')
+        _logger.debug(f'Loading csv data from {input_filename}.')
         df = pd.read_csv(input_filename, sep=sep)
 
         self.images = df[img_key].tolist()
         self.captions = df[caption_key].tolist()
         self.transforms = transforms
-        logging.debug('Done loading data.')
+        _logger.debug('Done loading data.')
 
         self.tokenize = tokenizer
 
@@ -179,7 +177,7 @@ def filter_no_caption_or_no_image(sample):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    logging.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    _logger.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
     return True
 
 

@@ -1,11 +1,15 @@
 import json
 import logging
 import math
+
+_logger = logging.getLogger(__name__)
 import os
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel.distributed import DistributedDataParallel
 
@@ -15,6 +19,7 @@ except ImportError:
     wandb = None
 
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
+from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
@@ -47,13 +52,6 @@ def postprocess_clip_output(model_out):
     }
 
 
-def unwrap_model(model):
-    if hasattr(model, 'module'):
-        return model.module
-    else:
-        return model
-
-
 def backward(total_loss, scaler):
     if scaler is not None:
         scaler.scale(total_loss).backward()
@@ -61,14 +59,16 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
+def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
-    autocast = get_autocast(args.precision, device_type=device.type)
+    autocast = get_autocast(
+        args.precision,
+        device_type=device.type,
+        fsdp=getattr(args, 'fsdp', False),
+    )
     input_dtype = get_input_dtype(args.precision)
 
-    model.train()
-    if args.distill:
-        dist_model.eval()
+    task.train()
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
@@ -98,23 +98,15 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
-                logit_scale = model_out["logit_scale"]
-                if args.distill:
-                    with torch.no_grad():
-                        dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
-                losses = loss(**model_out, output_dict=True)
-
-                total_loss = sum(losses.values())
-                losses["loss"] = total_loss
+                losses = task(images, texts)
+                total_loss = losses["loss"]
 
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
             with torch.no_grad():
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = task.trainable_module(images, texts)
 
                     for f in ("logit_scale", "logit_bias"):
                         model_out.pop(f, None)
@@ -140,44 +132,62 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             for j in range(args.accum_freq):
                 images = accum_images[j]
                 texts = accum_texts[j]
-                with autocast():
-                    model_out = model(images, texts)
 
-                    inputs_no_accum = {}
-                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
-                    if "logit_bias" in model_out:
-                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+                # Disable gradient sync for all but the last accumulation step.
+                # FSDP2: set_requires_gradient_sync; DDP: no_sync context manager.
+                is_last_step = (j == args.accum_freq - 1)
+                use_fsdp_no_sync = (
+                    not is_last_step
+                    and hasattr(task.trainable_module, 'set_requires_gradient_sync')
+                )
+                use_ddp_no_sync = (
+                    not is_last_step
+                    and not use_fsdp_no_sync
+                    and isinstance(task.trainable_module, DistributedDataParallel)
+                )
+                if use_fsdp_no_sync:
+                    task.trainable_module.set_requires_gradient_sync(False)
 
-                    inputs = {}
-                    for key, val in accum_features.items():
-                        accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+                ddp_context = task.trainable_module.no_sync() if use_ddp_no_sync else nullcontext()
+                with ddp_context:
+                    with autocast():
+                        model_out = task.trainable_module(images, texts)
 
-                    losses = loss(**inputs, **inputs_no_accum, output_dict=True)
-                    del inputs
-                    del inputs_no_accum
-                    total_loss = sum(losses.values())
-                    losses["loss"] = total_loss
+                        inputs_no_accum = {}
+                        inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                        if "logit_bias" in model_out:
+                            inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
 
-                backward(total_loss, scaler)
+                        inputs = {}
+                        for key, val in accum_features.items():
+                            accumulated = accum_features[key]
+                            inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+
+                        losses = task.compute_accum_loss(inputs, inputs_no_accum, accum_texts)
+                        del inputs
+                        del inputs_no_accum
+                        total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
+                        losses["loss"] = total_loss
+                        losses["logit_scale"] = logit_scale
+
+                    backward(total_loss, scaler)
+
+                if use_fsdp_no_sync:
+                    task.trainable_module.set_requires_gradient_sync(True)
 
         if scaler is not None:
-            if args.horovod:
-                optimizer.synchronize()
+            if args.grad_clip_norm is not None:
                 scaler.unscale_(optimizer)
-                if args.grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                with optimizer.skip_synchronize():
-                    scaler.step(optimizer)
-            else:
-                if args.grad_clip_norm is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
-                scaler.step(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    task.trainable_module.parameters(), args.grad_clip_norm, norm_type=2.0,
+                )
+            scaler.step(optimizer)
             scaler.update()
         else:
             if args.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                torch.nn.utils.clip_grad_norm_(
+                    task.trainable_module.parameters(), args.grad_clip_norm, norm_type=2.0,
+                )
             optimizer.step()
 
         # reset gradient accum, if enabled
@@ -185,8 +195,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_images, accum_texts, accum_features = [], [], {}
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        task.clamp_logit_scale()
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -203,16 +212,17 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     losses_m[key] = AverageMeter()
                 losses_m[key].update(val.item(), batch_size)
 
-            logit_scale_scalar = logit_scale.item()
+            logit_scale = losses.get("logit_scale", None)
+            logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
             loss_log = " ".join(
                 [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
+                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
             samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
             samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
-            logging.info(
+            _logger.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
@@ -228,7 +238,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 "samples_per_second_per_gpu": samples_per_second_per_gpu,
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
-            }            
+            }
             log_data.update({name:val.val for name,val in losses_m.items()})
 
             log_data = {"train/" + name: val for name, val in log_data.items()}
@@ -236,38 +246,58 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             if tb_writer is not None:
                 for name, val in log_data.items():
                     tb_writer.add_scalar(name, val, step)
-            
+
             if args.wandb:
                 assert wandb is not None, 'Please install wandb.'
                 log_data['step'] = step  # for backwards compatibility
                 wandb.log(log_data, step=step)
-            
+
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
     # end for
 
 
-def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
+def evaluate(model_or_task, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
-    if not is_master(args):
+    use_fsdp_eval = getattr(args, 'fsdp', False) and getattr(args, 'distributed', False)
+    is_rank0 = is_master(args)
+
+    if not use_fsdp_eval and not is_rank0:
         return metrics
+
     device = torch.device(args.device)
-    model.eval()
+    model_or_task.eval()
+    model = get_model_from_task(model_or_task)
 
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
-    metrics.update(zero_shot_metrics)
+    zero_shot_metrics = zero_shot_eval(model_or_task, data, epoch, args, tokenizer=tokenizer)
+    if is_rank0:
+        metrics.update(zero_shot_metrics)
 
-    autocast = get_autocast(args.precision, device_type=device.type)
+    autocast = get_autocast(
+        args.precision,
+        device_type=device.type,
+        fsdp=getattr(args, 'fsdp', False),
+    )
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        # unwrap DDP for single process eval
-        if args.distributed and not args.horovod:
-            model = model.module
-        dataloader = data['val'].dataloader
         num_samples = 0
-        samples_per_val = dataloader.num_samples
+        samples_per_val = 0
+
+        if is_rank0:
+            dataloader = data['val'].dataloader
+            samples_per_val = dataloader.num_samples
+            dataloader_iter = iter(dataloader)
+
+        if use_fsdp_eval:
+            # Pre-allocate dummy tensors for non-master ranks
+            image_size = model.visual.image_size
+            if not isinstance(image_size, tuple):
+                image_size = (image_size, image_size)
+            dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
+            dummy_texts = torch.zeros(1, model.context_length, device=device, dtype=torch.long)
+            signal = torch.zeros(1, device=device, dtype=torch.long)
 
         # FIXME this does not scale past small eval datasets
         # all_image_features @ all_text_features will blow up memory and compute very quickly
@@ -275,13 +305,34 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         cumulative_gen_loss = 0.0
         all_image_features, all_text_features = [], []
         with torch.inference_mode():
-            for i, batch in enumerate(dataloader):
-                images, texts = batch
-                images = images.to(device=device, dtype=input_dtype, non_blocking=True)
-                texts = texts.to(device=device, non_blocking=True)
+            i = 0
+            while True:
+                if use_fsdp_eval:
+                    if is_rank0:
+                        batch = next(dataloader_iter, None)
+                        signal.fill_(0 if batch is None else 1)
+                    dist.broadcast(signal, src=0)
+                    if signal.item() == 0:
+                        break
+
+                    if is_rank0:
+                        images, texts = batch
+                        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+                        texts = texts.to(device=device, non_blocking=True)
+                    else:
+                        images, texts = dummy_images, dummy_texts
+                else:
+                    batch = next(dataloader_iter, None)
+                    if batch is None:
+                        break
+                    images, texts = batch
+                    images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+                    texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = model_or_task(images, texts)
+
+                if is_rank0:
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
@@ -300,37 +351,44 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
-                    gen_loss = maybe_compute_generative_loss(model_out)
+                    gen_loss = maybe_compute_generative_loss(model_out, texts=texts)
 
-                cumulative_loss += total_loss * batch_size
-                num_samples += batch_size
-                if is_master(args) and (i % 100) == 0:
-                    logging.info(
-                        f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
-
+                    cumulative_loss += total_loss * batch_size
                     if gen_loss is not None:
                         cumulative_gen_loss += gen_loss * batch_size
-                        logging.info(
-                            f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+                    num_samples += batch_size
+                    if (i % 100) == 0:
+                        _logger.info(
+                            f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
+                            f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
-            val_metrics = get_clip_metrics(
-                image_features=torch.cat(all_image_features),
-                text_features=torch.cat(all_text_features),
-                logit_scale=logit_scale.cpu(),
-            )
-            loss = cumulative_loss / num_samples
-            metrics.update(
-                {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
-            )
-            if gen_loss is not None:
-                gen_loss = cumulative_gen_loss / num_samples
-                metrics.update({"val_generative_loss": gen_loss.item()})
+                        if gen_loss is not None:
+                            _logger.info(
+                                f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+
+                i += 1
+
+            if is_rank0 and num_samples > 0:
+                val_metrics = get_clip_metrics(
+                    image_features=torch.cat(all_image_features),
+                    text_features=torch.cat(all_text_features),
+                    logit_scale=logit_scale.cpu(),
+                )
+                loss = cumulative_loss / num_samples
+                metrics.update(
+                    {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
+                )
+                if gen_loss is not None:
+                    gen_loss = cumulative_gen_loss / num_samples
+                    metrics.update({"val_generative_loss": gen_loss.item()})
+
+    if not is_rank0:
+        return metrics
 
     if not metrics:
         return metrics
 
-    logging.info(
+    _logger.info(
         f"Eval Epoch: {epoch} "
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
     )
@@ -380,8 +438,8 @@ def get_clip_metrics(image_features, text_features, logit_scale):
     return metrics
 
 
-def maybe_compute_generative_loss(model_out):
-    if "logits" in model_out and "labels" in model_out:
-        token_logits = model_out["logits"]
-        token_labels = model_out["labels"]
-        return F.cross_entropy(token_logits.permute(0, 2, 1), token_labels)
+def maybe_compute_generative_loss(model_out, texts=None, pad_id=0):
+    if "logits" in model_out and texts is not None:
+        logits = model_out["logits"][:, :-1]
+        labels = texts[:, 1:]
+        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=pad_id)

@@ -98,9 +98,6 @@ def feature_take_indices(
 ) -> Tuple[List[int], int]:
     """ Determine the absolute feature indices to 'take' from.
 
-    Note: This function can be called in forward() so must be torchscript compatible,
-    which requires some incomplete typing and workaround hacks.
-
     Args:
         num_features: total number of features to select from
         indices: indices to select,
@@ -126,7 +123,7 @@ def feature_take_indices(
             _assert(0 <= idx < num_features, f'feature index {idx} is out of range (0 to {num_features - 1})')
             take_indices.append(idx)
 
-    if not torch.jit.is_scripting() and as_set:
+    if as_set:
         return set(take_indices), max(take_indices)
 
     return take_indices, max(take_indices)

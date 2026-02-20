@@ -67,7 +67,7 @@ class PatchDropout(nn.Module):
         if self.exclude_first_token:
             cls_tokens, x = x[:, :1], x[:, 1:]
         else:
-            cls_tokens = torch.jit.annotate(torch.Tensor, x[:, :1])
+            cls_tokens = x[:, :1]
 
         batch = x.size()[0]
         num_tokens = x.size()[1]
@@ -94,6 +94,8 @@ class Attention(nn.Module):
             self,
             dim: int,
             num_heads: int = 8,
+            kdim: Optional[int] = None,
+            vdim: Optional[int] = None,
             qkv_bias: bool = True,
             qk_norm: bool = False,
             scaled_cosine: bool = False,
@@ -102,7 +104,8 @@ class Attention(nn.Module):
             logit_scale_max: float = math.log(1. / 0.01),
             norm_layer: Type[nn.Module] = LayerNormFp32,
             attn_drop: float = 0.,
-            proj_drop: float = 0.
+            proj_drop: float = 0.,
+            use_sdpa: bool = True,
     ):
         super().__init__()
         assert not (scaled_cosine and qk_norm), "Cannot activate both scaled cosine and QK normalization"
@@ -113,12 +116,26 @@ class Attention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.logit_scale_max = logit_scale_max
-        self.use_fsdpa = hasattr(nn.functional, 'scaled_dot_product_attention')
+        self.use_sdpa = use_sdpa
 
-        # keeping in_proj in this form (instead of nn.Linear) to match weight scheme of original
-        self.in_proj_weight = nn.Parameter(torch.randn((dim * 3, dim)) * self.scale)
+        kdim = kdim if kdim is not None else dim
+        vdim = vdim if vdim is not None else dim
+
+        if kdim == dim and vdim == dim:
+            # Same-dim: combined in_proj_weight (3*dim, dim) — matches nn.MHA and existing checkpoints
+            self.in_proj_weight = nn.Parameter(torch.empty((dim * 3, dim)))
+            self.q_proj_weight = None
+            self.k_proj_weight = None
+            self.v_proj_weight = None
+        else:
+            # Different-dim: separate projections — key names match nn.MHA for checkpoint compat
+            self.in_proj_weight = None
+            self.q_proj_weight = nn.Parameter(torch.empty((dim, dim)))
+            self.k_proj_weight = nn.Parameter(torch.empty((dim, kdim)))
+            self.v_proj_weight = nn.Parameter(torch.empty((dim, vdim)))
+
         if qkv_bias:
-            self.in_proj_bias = nn.Parameter(torch.zeros(dim * 3))
+            self.in_proj_bias = nn.Parameter(torch.empty(dim * 3))
         else:
             self.in_proj_bias = None
 
@@ -154,58 +171,108 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(dim, dim)
         self.out_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        N, L, C = x.shape
-        q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-        q = q.reshape(N, L, self.num_heads, -1).transpose(1, 2)
-        k = k.reshape(N, L, self.num_heads, -1).transpose(1, 2)
-        v = v.reshape(N, L, self.num_heads, -1).transpose(1, 2)
+        self._reset_parameters()
 
-        if attn_mask is not None:
-            if attn_mask.ndim == 3:
-                # this module works with (L, L), or (N, num_heads, L, L) masks
-                attn_mask = attn_mask.reshape(N, self.num_heads, L, L)
-            if attn_mask.dtype == torch.bool:
-                new_attn_mask = torch.zeros_like(attn_mask, dtype=q.dtype)
-                new_attn_mask.masked_fill_(attn_mask, float("-inf"))
-                attn_mask = new_attn_mask
+    def _reset_parameters(self):
+        # Match nn.MultiheadAttention init
+        if self.in_proj_weight is not None:
+            nn.init.xavier_uniform_(self.in_proj_weight)
+        else:
+            nn.init.xavier_uniform_(self.q_proj_weight)
+            nn.init.xavier_uniform_(self.k_proj_weight)
+            nn.init.xavier_uniform_(self.v_proj_weight)
+        if self.in_proj_bias is not None:
+            nn.init.constant_(self.in_proj_bias, 0.)
+        nn.init.constant_(self.out_proj.bias, 0.)
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            k_x: Optional[torch.Tensor] = None,
+            v_x: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None,
+    ):
+        N, L, C = x.shape
+
+        if k_x is None and v_x is None:
+            # Self-attention fast path: fused QKV projection
+            if self.in_proj_weight is not None:
+                q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
             else:
-                attn_mask = attn_mask.to(dtype=q.dtype)
+                bias_q, bias_k, bias_v = (
+                    self.in_proj_bias.chunk(3) if self.in_proj_bias is not None
+                    else (None, None, None)
+                )
+                q = F.linear(x, self.q_proj_weight, bias_q)
+                k = F.linear(x, self.k_proj_weight, bias_k)
+                v = F.linear(x, self.v_proj_weight, bias_v)
+        else:
+            # Cross-attention path: separate Q/K/V projections
+            if k_x is None:
+                k_x = x
+            if v_x is None:
+                v_x = x
+
+            bias_q, bias_k, bias_v = (
+                self.in_proj_bias.chunk(3) if self.in_proj_bias is not None
+                else (None, None, None)
+            )
+            if self.in_proj_weight is not None:
+                # Same-dim case: split combined weight into 3 chunks
+                w_q, w_k, w_v = self.in_proj_weight.chunk(3, dim=0)
+            else:
+                w_q, w_k, w_v = self.q_proj_weight, self.k_proj_weight, self.v_proj_weight
+
+            q = F.linear(x, w_q, bias_q)
+            k = F.linear(k_x, w_k, bias_k)
+            v = F.linear(v_x, w_v, bias_v)
+
+        q = q.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+        if attn_mask is not None and attn_mask.ndim == 3:
+            # reshape (N*num_heads, L, L) -> (N, num_heads, L, L)
+            attn_mask = attn_mask.reshape(N, self.num_heads, L, L)
 
         if self.logit_scale is not None:
-            attn = torch.bmm(
-                F.normalize(q, dim=-1),
-                F.normalize(k, dim=-1).transpose(-1, -2)
-            )
+            attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-1, -2)
             logit_scale = torch.clamp(self.logit_scale, max=self.logit_scale_max).exp()
             attn = attn * logit_scale
             if attn_mask is not None:
-                attn = attn + attn_mask
+                if attn_mask.dtype == torch.bool:
+                    attn.masked_fill_(~attn_mask, float("-inf"))
+                else:
+                    attn = attn + attn_mask.to(dtype=attn.dtype)
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
-            x = torch.bmm(attn, v)
+            x = attn @ v
         else:
             q = self.ln_q(q)
             k = self.ln_k(k)
-            if self.use_fsdpa:
+            if self.use_sdpa:
                 x = F.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=attn_mask,
                     dropout_p=self.attn_drop.p if self.training else 0.,
+                    scale=self.scale,
                 )
             else:
                 q = q * self.scale
-                attn = torch.bmm(q, k.transpose(-1, -2))
+                attn = q @ k.transpose(-1, -2)
                 if attn_mask is not None:
-                    attn += attn_mask
+                    if attn_mask.dtype == torch.bool:
+                        attn.masked_fill_(~attn_mask, float("-inf"))
+                    else:
+                        attn = attn + attn_mask.to(dtype=attn.dtype)
                 attn = attn.softmax(dim=-1)
                 attn = self.attn_drop(attn)
-                x = torch.bmm(attn, v)
+                x = attn @ v
 
         # N, num_heads, L, head_dim
         if self.head_scale is not None:
             x = x * self.head_scale
-        x = x.transpose(1, 2).reshape(N, L, C)
+        x = x.transpose(1, 2).reshape(N, -1, C)
         x = self.ln_inner(x)
         x = self.out_proj(x)
         x = self.out_drop(x)
@@ -223,7 +290,7 @@ class AttentionalPooler(nn.Module):
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))
-        self.attn = nn.MultiheadAttention(d_model, n_head, kdim=context_dim, vdim=context_dim, batch_first=True)
+        self.attn = Attention(d_model, num_heads=n_head, kdim=context_dim, vdim=context_dim, qkv_bias=True)
         self.ln_q = norm_layer(d_model)
         self.ln_k = norm_layer(context_dim)
 
@@ -231,7 +298,7 @@ class AttentionalPooler(nn.Module):
         N = x.shape[0]
         x = self.ln_k(x)
         q = self.ln_q(self.query)
-        out = self.attn(q.unsqueeze(0).expand(N, -1, -1), x, x, need_weights=False)[0]
+        out = self.attn(q.unsqueeze(0).expand(N, -1, -1), k_x=x, v_x=x)
         return out
 
 
@@ -245,12 +312,11 @@ class ResidualAttentionBlock(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             is_cross_attention: bool = False,
-            batch_first: bool = True,
     ):
         super().__init__()
 
         self.ln_1 = norm_layer(d_model)
-        self.attn = nn.MultiheadAttention(d_model, n_head, batch_first=batch_first)
+        self.attn = Attention(d_model, num_heads=n_head, qkv_bias=True)
         self.ls_1 = LayerScale(d_model, ls_init_value) if ls_init_value is not None else nn.Identity()
         if is_cross_attention:
             self.ln_1_kv = norm_layer(d_model)
@@ -278,13 +344,8 @@ class ResidualAttentionBlock(nn.Module):
     ):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
-
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
-        return self.attn(
-            q_x, k_x, v_x,
-            need_weights=False,
-            attn_mask=attn_mask
-        )[0]
+        return self.attn(q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask)
 
     def forward(
             self,
@@ -315,10 +376,8 @@ class CustomResidualAttentionBlock(nn.Module):
             scale_attn_inner: bool = False,
             scale_attn: bool = False,
             scale_fc: bool = False,
-            batch_first: bool = True,
     ):
         super().__init__()
-        assert batch_first, 'batch_first must be True for CustomResidualAttentionBlock'
 
         self.ln_1 = norm_layer(d_model)
         self.attn = Attention(
@@ -365,13 +424,11 @@ class CustomTransformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = LayerNorm,
-            batch_first: bool = True,
             block_types: Union[str, List[str]] = 'CustomResidualAttentionBlock',
     ):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.batch_first = batch_first  # run transformer stack in batch first (N, L, D)
         self.grad_checkpointing = False
 
         if isinstance(block_types, str):
@@ -387,7 +444,6 @@ class CustomTransformer(nn.Module):
                     ls_init_value=ls_init_value,
                     act_layer=act_layer,
                     norm_layer=norm_layer,
-                    batch_first=batch_first,
                 )
             else:
                 assert False
@@ -409,25 +465,16 @@ class CustomTransformer(nn.Module):
     ):
         take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
 
-        if not self.batch_first:
-            x = x.transpose(0, 1).contiguous()  # NLD -> LND
-
         intermediates = []
-        if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
-            blocks = self.resblocks
-        else:
-            blocks = self.resblocks[:max_index + 1]
+        blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
         for i, blk in enumerate(blocks):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = blk(x, attn_mask=attn_mask)
 
             if i in take_indices:
-                intermediates.append(x.transpose(0, 1) if not self.batch_first else x)
-
-        if not self.batch_first:
-            x = x.transpose(0, 1)  # LND -> NLD
+                intermediates.append(x)
 
         return x, intermediates
 
@@ -438,19 +485,22 @@ class CustomTransformer(nn.Module):
         self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
         return take_indices
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        if not self.batch_first:
-            x = x.transpose(0, 1)  # NLD -> LND
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for r in self.resblocks:
+                composable_checkpoint(r)
+        else:
+            self.grad_checkpointing = enable
 
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
 
-        if not self.batch_first:
-            x = x.transpose(0, 1)  # NLD -> LND
         return x
 
 
@@ -464,7 +514,6 @@ class Transformer(nn.Module):
             ls_init_value: float = None,
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = LayerNorm,
-            batch_first: bool = True,
             block_type: Optional[str] = None,
             qk_norm: bool = False,
             scaled_cosine_attn: bool = False,
@@ -476,7 +525,6 @@ class Transformer(nn.Module):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.batch_first = batch_first
         self.grad_checkpointing = False
 
         # Auto-select custom block if any custom features are enabled
@@ -501,7 +549,6 @@ class Transformer(nn.Module):
                     scale_attn_inner=scale_attn_inner,
                     scale_attn=scale_attn,
                     scale_fc=scale_fc,
-                    batch_first=batch_first,
                 )
                 for _ in range(layers)
             ])
@@ -514,13 +561,20 @@ class Transformer(nn.Module):
                     ls_init_value=ls_init_value,
                     act_layer=act_layer,
                     norm_layer=norm_layer,
-                    batch_first=batch_first,
                 )
                 for _ in range(layers)
             ])
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.resblocks[0].get_weight_dtype()
+
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for r in self.resblocks:
+                composable_checkpoint(r)
+        else:
+            self.grad_checkpointing = enable
 
     def forward_intermediates(
             self,
@@ -531,25 +585,16 @@ class Transformer(nn.Module):
     ):
         take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
 
-        if not self.batch_first:
-            x = x.transpose(0, 1).contiguous()    # NLD -> LND
-
         intermediates = []
-        if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
-            blocks = self.resblocks
-        else:
-            blocks = self.resblocks[:max_index + 1]
+        blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
         for i, blk in enumerate(blocks):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = blk(x, attn_mask=attn_mask)
 
             if i in take_indices:
-                intermediates.append(x.transpose(0, 1) if not self.batch_first else x)
-
-        if not self.batch_first:
-            x = x.transpose(0, 1)    # LND -> NLD
+                intermediates.append(x)
 
         return x, intermediates
 
@@ -561,18 +606,13 @@ class Transformer(nn.Module):
         return take_indices
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        if not self.batch_first:
-            x = x.transpose(0, 1).contiguous()    # NLD -> LND
-
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
 
-        if not self.batch_first:
-            x = x.transpose(0, 1)    # LND -> NLD
         return x
 
 
@@ -581,7 +621,6 @@ def _expand_token(token, batch_size: int):
 
 
 class VisionTransformer(nn.Module):
-    output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -760,11 +799,9 @@ class VisionTransformer(nn.Module):
         #     nn.init.normal_(self.text_projection, std=self.scale)
         pass
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable: bool = True):
-        self.transformer.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.transformer.set_grad_checkpointing(enable, impl=impl)
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding', 'class_embedding'}
@@ -945,7 +982,6 @@ def text_global_pool(
 
 
 class TextTransformer(nn.Module):
-    output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
@@ -1054,9 +1090,8 @@ class TextTransformer(nn.Module):
             else:
                 nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        self.transformer.set_grad_checkpointing(enable, impl=impl)
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         """
@@ -1069,7 +1104,6 @@ class TextTransformer(nn.Module):
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
         lock_text_tower(self, unlocked_layers)
 
-    @torch.jit.ignore
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding'}
@@ -1259,7 +1293,6 @@ class MultimodalTransformer(Transformer):
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = LayerNorm,
             output_dim: int = 512,
-            batch_first: bool = True,
     ):
         super().__init__(
             width=width,
@@ -1269,7 +1302,6 @@ class MultimodalTransformer(Transformer):
             ls_init_value=ls_init_value,
             act_layer=act_layer,
             norm_layer=norm_layer,
-            batch_first=batch_first,
         )
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
@@ -1281,7 +1313,6 @@ class MultimodalTransformer(Transformer):
                 act_layer=act_layer,
                 norm_layer=norm_layer,
                 is_cross_attention=True,
-                batch_first=batch_first,
             )
             for _ in range(layers)
         ])
@@ -1327,13 +1358,15 @@ class MultimodalTransformer(Transformer):
         assert False, "Not currently implemented for MultimodalTransformer w/ xattn"
 
     def forward(self, image_embs, text_embs):
+        # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
+        # and cache_position. When past_key_values is not None, only process
+        # new positions for self-attention (concatenate past K/V).
+        # Cross-attention K/V from image_embs are constant per generation and
+        # can be cached once.
         seq_len = text_embs.shape[1]
-        if not self.batch_first:
-            image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
-            text_embs = text_embs.permute(1, 0, 2)  # NLD -> LND
 
         for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self.grad_checkpointing:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(
                     resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len], use_reentrant=False)
@@ -1343,18 +1376,21 @@ class MultimodalTransformer(Transformer):
                 text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
                 text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
 
-        if not self.batch_first:
-            text_embs = text_embs.permute(1, 0, 2)  # LND -> NLD
-
         out = self.ln_final(text_embs)
         if self.text_projection is not None:
             out = out @ self.text_projection
 
         return out
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.grad_checkpointing = enable
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for resblock in self.resblocks:
+                composable_checkpoint(resblock)
+            for cross_attn in self.cross_attn:
+                composable_checkpoint(cross_attn)
+        else:
+            self.grad_checkpointing = enable
 
 
 def lock_text_tower(
