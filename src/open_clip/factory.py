@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+
+_logger = logging.getLogger(__name__)
 import re
 import warnings
 from copy import deepcopy
@@ -167,10 +169,6 @@ def load_state_dict(
 
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
-    elif isinstance(checkpoint, torch.jit.ScriptModule):
-        state_dict = checkpoint.state_dict()
-        for key in ["input_resolution", "context_length", "vocab_size"]:
-            state_dict.pop(key, None)
     else:
         state_dict = checkpoint
     if next(iter(state_dict.items()))[0].startswith('module'):
@@ -240,10 +238,10 @@ def _find_checkpoint_in_dir(dir_path: Path) -> Optional[str]:
     if preferred_checkpoints:
         preferred_checkpoints.sort(key=lambda x: preferred_order.index(x.name))
         chosen = preferred_checkpoints[0]
-        logging.info(f"Found preferred checkpoint file: {chosen.name} in {dir_path}")
+        _logger.info(f"Found preferred checkpoint file: {chosen.name} in {dir_path}")
         return str(chosen)
     chosen = checkpoints[0]
-    logging.warning(
+    _logger.warning(
         f"Multiple checkpoints found in {dir_path}: {[c.name for c in checkpoints]}. Using '{chosen.name}'.")
     return str(chosen)
 
@@ -254,7 +252,6 @@ def create_model(
         load_weights: bool = True,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -291,7 +288,6 @@ def create_model(
         load_weights: Load the resolved pretrained weights if True, otherwise random init or tower overrides only.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_patch_dropout: Override patch dropout value in model config.
@@ -323,9 +319,9 @@ def create_model(
     checkpoint_path = None # Final path for full CLIP weights
     pretrained_cfg_for_tag = None # Store tag config if pretrained is a tag and schema is None
 
-    logging.info(f"Parsing model identifier. Schema: {schema}, Identifier: {identifier}")
+    _logger.info(f"Parsing model identifier. Schema: {schema}, Identifier: {identifier}")
     if schema and pretrained:
-        logging.warning(f"Ignoring `pretrained='{pretrained}'` because `model_name` has '{schema}' schema.")
+        _logger.warning(f"Ignoring `pretrained='{pretrained}'` because `model_name` has '{schema}' schema.")
         pretrained = None  # Nullify pretrained as it's ignored
 
     # Handle schemas first - these ignore the `pretrained` argument
@@ -336,7 +332,7 @@ def create_model(
             raise FileNotFoundError(f"Directory specified via 'local-dir:' schema not found: {local_path}")
 
         local_config_path = local_path / 'open_clip_config.json'
-        logging.info(f"Attempting to load config from local dir: {local_config_path}")
+        _logger.info(f"Attempting to load config from local dir: {local_config_path}")
         if local_config_path.is_file():
             try:
                 # Try loading and parsing the JSON config
@@ -347,13 +343,13 @@ def create_model(
                     # Load model config and merge preprocess config
                     model_cfg = local_json_config['model_cfg']
                     preprocess_cfg = merge_preprocess_dict(preprocess_cfg, local_json_config.get('preprocess_cfg', {}))
-                    logging.info(f"Loaded model config and preprocess from: {local_config_path}")
+                    _logger.info(f"Loaded model config and preprocess from: {local_config_path}")
                     # Look for weights checkpoint in the same directory
                     checkpoint_path = _find_checkpoint_in_dir(local_path)
                     if checkpoint_path:
-                        logging.info(f"Found CLIP weights in local folder: {checkpoint_path}")
+                        _logger.info(f"Found CLIP weights in local folder: {checkpoint_path}")
                     else:
-                        logging.warning(f"Local config loaded, but no CLIP weights found in {local_path}")
+                        _logger.warning(f"Local config loaded, but no CLIP weights found in {local_path}")
                 else:
                     # Config file exists but lacks the necessary key
                     raise ValueError(f"Local config {local_config_path} missing 'model_cfg'.")
@@ -367,7 +363,7 @@ def create_model(
     elif schema == 'hf-hub':
         # Handle Hugging Face Hub schema
         model_id = identifier
-        logging.info(f"Attempting to load config from HF Hub: {model_id}")
+        _logger.info(f"Attempting to load config from HF Hub: {model_id}")
         try:
             # Fetch configuration from Hugging Face Hub
             hf_config = _get_hf_config(model_id, cache_dir=cache_dir)
@@ -376,14 +372,14 @@ def create_model(
             # Load model config and merge preprocess config
             model_cfg = hf_config['model_cfg']
             preprocess_cfg = merge_preprocess_dict(preprocess_cfg, hf_config.get('preprocess_cfg', {}))
-            logging.info(f"Loaded model config from HF Hub: {model_id}")
+            _logger.info(f"Loaded model config from HF Hub: {model_id}")
             # Attempt find default weights file from the Hub repo
             try:
                 checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-                logging.info(f"Found default weights file on HF Hub: {checkpoint_path}")
+                _logger.info(f"Found default weights file on HF Hub: {checkpoint_path}")
             except Exception as e_weights:
                 # Log warning if weights download fails, but proceed (might only need config)
-                logging.warning(f"Could not find/download default weights on HF Hub for {model_id}: {e_weights}")
+                _logger.warning(f"Could not find/download default weights on HF Hub for {model_id}: {e_weights}")
         except Exception as e_config:
             # Handle errors during config fetching from HF Hub
             raise RuntimeError(f"Failed initial config/weights load from HF Hub {model_id}: {e_config}") from e_config
@@ -400,7 +396,7 @@ def create_model(
             # Raise error if no matching built-in config found
             raise RuntimeError(
                 f"Model config for '{model_name_cleaned}' not found in built-ins. Available: {list_models()}")
-        logging.info(f"Loaded built-in {model_name_cleaned} model config.")
+        _logger.info(f"Loaded built-in {model_name_cleaned} model config.")
 
         # Determine checkpoint path and update preprocess_cfg based on `pretrained` arg (tag or file)
         if pretrained:
@@ -413,14 +409,14 @@ def create_model(
                     preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg_for_tag)
                     # QuickGELU compatibility check will happen in after force overrides
                 except Exception as e:
-                    logging.error(f"Failed to download weights for tag '{pretrained}': {e}")
+                    _logger.error(f"Failed to download weights for tag '{pretrained}': {e}")
                     raise RuntimeError(f"Failed to download weights for tag '{pretrained}': {e}")
             elif os.path.isfile(pretrained):
                 # Handle pretrained file path
-                logging.info(f"`pretrained` specifies file path: {pretrained}")
+                _logger.info(f"`pretrained` specifies file path: {pretrained}")
                 checkpoint_path = pretrained
             else:
-                logging.error(
+                _logger.error(
                     f"Pretrained tag or path ({pretrained}) for '{model_name_cleaned}' not found. "
                     f"Available tags: {list_pretrained_tags_by_model(model_name_cleaned)}"
                 )
@@ -456,11 +452,11 @@ def create_model(
     # Decide whether to use the checkpoint path based on load_weights
     if checkpoint_path is not None:
         if not load_weights:
-            logging.info(
+            _logger.info(
                 f"Potential checkpoint path '{checkpoint_path}' found, but skipping assignment due to load_weights=False.")
             checkpoint_path = None
     else:
-        logging.info("No potential checkpoint path found from config source or pretrained arg.")
+        _logger.info("No potential checkpoint path found from config source or pretrained arg.")
 
     # Set default base weight loading flags for image and text towers
     # Only load base pretrained weights if other weights will not be loaded into respective towers
@@ -489,6 +485,16 @@ def create_model(
         # Default to standard CLIP
         model_class = CLIP
 
+    # Strip removed legacy kwargs that external callers may still pass
+    if 'jit' in model_kwargs:
+        model_kwargs.pop('jit')
+        warnings.warn(
+            "The 'jit' argument has been removed from create_model(). "
+            "TorchScript support is no longer available.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     # Apply final **kwargs overrides (highest priority) to a copy of model_cfg
     final_model_cfg = deepcopy(model_cfg)
     final_model_cfg.update(model_kwargs)
@@ -497,14 +503,14 @@ def create_model(
     cast_dtype = get_cast_dtype(precision)
 
     # Instantiate the model
-    logging.info(f"Instantiating model architecture: {model_class.__name__}")
+    _logger.info(f"Instantiating model architecture: {model_class.__name__}")
     model = model_class(**final_model_cfg, cast_dtype=cast_dtype)
     _set_model_device_and_precision(model, device, precision, is_timm_model)
 
     # Load Full Pretrained CLIP Weights (if path exists)
     pretrained_loaded = False
     if checkpoint_path:
-        logging.info(f'Loading full pretrained weights from: {checkpoint_path}')
+        _logger.info(f'Loading full pretrained weights from: {checkpoint_path}')
         # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
         # Use strict=True by default for full model loading to catch mismatches.
         load_checkpoint(
@@ -520,7 +526,7 @@ def create_model(
     pretrained_image_loaded = False # Track if specific image weights loaded
     if pretrained_image_path:
         if os.path.isfile(pretrained_image_path):
-            logging.info(f"Attempting to load image tower weights from: {pretrained_image_path}")
+            _logger.info(f"Attempting to load image tower weights from: {pretrained_image_path}")
             try:
                 # Load the state dict from the file
                 image_state_dict = load_state_dict(
@@ -532,24 +538,24 @@ def create_model(
                 if hasattr(model, 'visual'):
                     # Load into the visual tower, use strict=False for flexibility
                     incompatible_keys = model.visual.load_state_dict(image_state_dict, strict=False)
-                    logging.info(
+                    _logger.info(
                         f"Loaded image tower weights from {pretrained_image_path}. Incompatible keys: {incompatible_keys}")
                     pretrained_image_loaded = True # Mark specific image weights as loaded
                 else:
                     # Model structure doesn't match expectation
-                    logging.warning(
+                    _logger.warning(
                         f"Model does not have a 'visual' attribute, cannot load image tower weights from {pretrained_image_path}")
             except Exception as e:
                 # Handle errors during image tower weight loading
-                logging.error(f"Error loading image tower weights from {pretrained_image_path}: {e}")
+                _logger.error(f"Error loading image tower weights from {pretrained_image_path}: {e}")
         else:
             # Path provided is not a valid file
-            logging.warning(f"Invalid file path specified for pretrained_image_path: {pretrained_image_path}")
+            _logger.warning(f"Invalid file path specified for pretrained_image_path: {pretrained_image_path}")
 
     pretrained_text_loaded = False # Track if specific text weights loaded
     if pretrained_text_path:
         if os.path.isfile(pretrained_text_path):
-            logging.info(f"Attempting to load text tower weights from: {pretrained_text_path}")
+            _logger.info(f"Attempting to load text tower weights from: {pretrained_text_path}")
             try:
                 # Load the state dict from the file
                 text_state_dict = load_state_dict(
@@ -562,17 +568,17 @@ def create_model(
                 if text_module is not None:
                     # Load into the text tower, use strict=False for flexibility
                     incompatible_keys = text_module.load_state_dict(text_state_dict, strict=False)
-                    logging.info(f"Loaded text tower weights from {pretrained_text_path}. Incompatible keys: {incompatible_keys}")
+                    _logger.info(f"Loaded text tower weights from {pretrained_text_path}. Incompatible keys: {incompatible_keys}")
                     pretrained_text_loaded = True # Mark specific text weights as loaded
                 else:
                     # Model structure doesn't match expectation
-                    logging.warning(f"Model does not have a standard 'text' attribute, cannot load text tower weights from {pretrained_text_path}")
+                    _logger.warning(f"Model does not have a standard 'text' attribute, cannot load text tower weights from {pretrained_text_path}")
             except Exception as e:
                 # Handle errors during text tower weight loading
-                logging.error(f"Error loading text tower weights from {pretrained_text_path}: {e}")
+                _logger.error(f"Error loading text tower weights from {pretrained_text_path}: {e}")
         else:
             # Path provided is not a valid file
-            logging.warning(f"Invalid file path specified for pretrained_text_path: {pretrained_text_path}")
+            _logger.warning(f"Invalid file path specified for pretrained_text_path: {pretrained_text_path}")
 
     partially_loaded = enable_default_text_weights or enable_default_image_weights \
         or pretrained_image_loaded or pretrained_text_loaded
@@ -584,10 +590,10 @@ def create_model(
          )
     elif not pretrained_loaded and partially_loaded:
          # Some tower weights loaded
-         logging.warning(f"Model {model_name} initialized partially.")
+         _logger.warning(f"Model {model_name} initialized partially.")
     elif not pretrained_loaded and not partially_loaded:
          # Absolutely no weights were loaded from any source
-         logging.warning(f"No pretrained weights loaded for model '{model_name}'. Model initialized randomly.")
+         _logger.warning(f"No pretrained weights loaded for model '{model_name}'. Model initialized randomly.")
 
     if output_dict and hasattr(model, "output_dict"):
         # Enable dictionary output if model supports it
@@ -595,16 +601,8 @@ def create_model(
 
     # If force_image_size was specified and we have a timm model, call set_input_size after loading weights
     if force_image_size is not None and is_timm_model and hasattr(model.visual, 'set_input_size'):
-        logging.info(f"Calling set_input_size({force_image_size}) on timm vision model.")
+        _logger.info(f"Calling set_input_size({force_image_size}) on timm vision model.")
         model.visual.set_input_size(force_image_size)
-
-    if jit:
-        logging.info("Attempting JIT scripting...")
-        try:
-            model = torch.jit.script(model)
-            logging.info("JIT scripting successful.")
-        except Exception as e:
-            logging.warning(f"JIT scripting failed: {e}. Returning non-JIT model.")
 
     # Prepare and set final preprocessing configuration on the model
     final_preprocess_cfg = deepcopy(preprocess_cfg) # Start with config determined earlier
@@ -618,10 +616,10 @@ def create_model(
 
     # Attach the final config to the model
     set_model_preprocess_cfg(model, final_preprocess_cfg)
-    logging.info(f"Final image preprocessing configuration set: {final_preprocess_cfg}")
+    _logger.info(f"Final image preprocessing configuration set: {final_preprocess_cfg}")
 
     # Log completion and return the configured model
-    logging.info(f"Model {model_name} creation process complete.")
+    _logger.info(f"Model {model_name} creation process complete.")
     return model
 
 
@@ -646,7 +644,7 @@ def get_tokenizer(
     hf_fallback_id = None
 
     # Determine Configuration Source based on Schema
-    logging.info(f"Parsing tokenizer identifier. Schema: {schema}, Identifier: {identifier}")
+    _logger.info(f"Parsing tokenizer identifier. Schema: {schema}, Identifier: {identifier}")
 
     if schema == 'local-dir':
         # Handle local directory schema
@@ -654,7 +652,7 @@ def get_tokenizer(
         if not local_dir_path.is_dir():
             raise FileNotFoundError(f"Directory specified via 'local-dir:' schema not found at {local_dir_path}")
         local_config_path = local_dir_path / 'open_clip_config.json'
-        logging.info(f"Attempting to load config from local-dir: {local_config_path}")
+        _logger.info(f"Attempting to load config from local-dir: {local_config_path}")
         if local_config_path.is_file():
             try:
                 # Load and parse the JSON config
@@ -672,7 +670,7 @@ def get_tokenizer(
     elif schema == 'hf-hub':
         # Handle Hugging Face Hub schema
         model_id = identifier
-        logging.info(f"Attempting to load config from hf-hub:{model_id}")
+        _logger.info(f"Attempting to load config from hf-hub:{model_id}")
         config_err = ''
         try:
             # Fetch config from HF Hub
@@ -685,18 +683,18 @@ def get_tokenizer(
         if not config:
             hf_fallback_id = model_id
             config = {}
-            logging.warning(
+            _logger.warning(
                 f"Could not load config from hf-hub:{model_id} ({config_err})."
                 f"Falling back to using model_id for tokenizer.")
 
     elif schema is None and identifier:
         # Try built-in config lookup using the identifier (original model_name)
-        logging.info(f"Attempting to load config from built-in: {identifier}")
+        _logger.info(f"Attempting to load config from built-in: {identifier}")
         config = get_model_config(identifier)
 
     # Check if config determination failed completely (should only be possible if initial schema parsing failed badly)
     if config is None:
-        logging.warning(f"Model configuration not found, returning default SimpleTokenizer.")
+        _logger.warning(f"Model configuration not found, returning default SimpleTokenizer.")
         return SimpleTokenizer(context_length=context_length or DEFAULT_CONTEXT_LENGTH, **kwargs)
 
     # Safely access text_cfg even if config is {} (from non-builtin name case)
@@ -726,7 +724,7 @@ def get_tokenizer(
             tokenizer_source = hf_tokenizer_name
         tokenizer_mode = text_config.get('tokenizer_mode', None)
 
-        logging.info(f"Using HFTokenizer with source: '{tokenizer_source}', mode: '{tokenizer_mode}'")
+        _logger.info(f"Using HFTokenizer with source: '{tokenizer_source}', mode: '{tokenizer_mode}'")
         tokenizer = HFTokenizer(
             tokenizer_source,
             context_length=context_length,
@@ -739,14 +737,14 @@ def get_tokenizer(
         # Check for SigLIP naming convention ONLY if no schema was present AND no hf_tokenizer_name found
         # Avoids misinterpreting 'local-dir:/path/with/siglip/in/name'
         tn_variant = 'gemma' if 'siglip2' in identifier.lower() else 'mc4' if 'i18n' in identifier.lower() else 'c4-en'
-        logging.info(f"Using SigLipTokenizer variant: {tn_variant}")
+        _logger.info(f"Using SigLipTokenizer variant: {tn_variant}")
         tokenizer = SigLipTokenizer(
             tn_variant,
             context_length=context_length,
         )
     else:
         # Default to SimpleTokenizer if no HF specified and not SigLIP name match
-        logging.info("Using default SimpleTokenizer.")
+        _logger.info("Using default SimpleTokenizer.")
         tokenizer = SimpleTokenizer(
             context_length=context_length,
             **tokenizer_kwargs,
@@ -788,6 +786,13 @@ def _set_model_device_and_precision(
 
 
 def create_loss(args):
+    """Deprecated: use create_task() instead. Loss is now created by the task."""
+    warnings.warn(
+        "create_loss() is deprecated. Loss is now created internally by the task. "
+        "Use create_task() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if args.distill:
         return DistillClipLoss(
             local_loss=args.local_loss,
@@ -795,7 +800,6 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif "coca" in args.model.lower():
         return CoCaLoss(
@@ -806,14 +810,12 @@ def create_loss(args):
             cache_labels=True,
             rank=args.rank,
             world_size=args.world_size,
-            use_horovod=args.horovod,
         )
     elif args.siglip:
-        assert not args.horovod, "Horovod not currently supported for SigLip"
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
-            dist_impl=args.loss_dist_impl,  # siglip has multiple distributed implementations to choose from
+            dist_impl=args.loss_dist_impl,
         )
 
     return ClipLoss(
@@ -822,8 +824,55 @@ def create_loss(args):
         cache_labels=True,
         rank=args.rank,
         world_size=args.world_size,
-        use_horovod=args.horovod,
     )
+
+
+def create_task(args, model, dist_model=None):
+    """Create a training task wrapping model + loss.
+
+    The task constructs its own loss internally from the provided args.
+    Loss type is determined by the task class (CLIPTask -> ClipLoss, etc.).
+
+    Args:
+        args: Training arguments (must have model, distill, siglip, etc.).
+        model: The CLIP model.
+        dist_model: Optional teacher model for distillation.
+
+    Returns:
+        A TrainingTask subclass instance.
+    """
+    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
+
+    shared = dict(rank=args.rank, world_size=args.world_size)
+    if args.distill:
+        return DistillCLIPTask(
+            model, dist_model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
+    elif "coca" in args.model.lower():
+        return CoCaTask(
+            model,
+            caption_loss_weight=args.coca_caption_loss_weight,
+            clip_loss_weight=args.coca_contrastive_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
+    elif args.siglip:
+        return SigLIPTask(
+            model,
+            dist_impl=args.loss_dist_impl,
+            **shared,
+        )
+    else:
+        return CLIPTask(
+            model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
 
 
 def create_model_and_transforms(
@@ -832,7 +881,6 @@ def create_model_and_transforms(
         load_weights: bool = True,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_patch_dropout: Optional[float] = None,
@@ -872,7 +920,6 @@ def create_model_and_transforms(
         load_weights: Load the resolved pretrained weights if True, otherwise random init or tower overrides only.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_patch_dropout: Override patch dropout value in model config.
@@ -933,7 +980,6 @@ def create_model_and_transforms(
         load_weights=load_weights,
         precision=precision,
         device=device,
-        jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_patch_dropout=force_patch_dropout,
@@ -970,7 +1016,6 @@ def create_model_from_pretrained(
         pretrained: Optional[str] = None,
         precision: str = 'fp32',
         device: Union[str, torch.device] = 'cpu',
-        jit: bool = False,
         force_quick_gelu: bool = False,
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
@@ -1005,7 +1050,6 @@ def create_model_from_pretrained(
                    If None and schema requires it, will raise an error.
         precision: Model precision ('fp32', 'fp16', 'bf16', ...).
         device: Device ('cpu', 'cuda', ...).
-        jit: If True, JIT compile the model.
         force_quick_gelu: Force use of QuickGELU activation in model config.
         force_custom_text: Force use of custom text encoder architecture.
         force_image_size: Override image size in model config. Useful for using models at different resolutions.
@@ -1064,7 +1108,6 @@ def create_model_from_pretrained(
         pretrained,
         precision=precision,
         device=device,
-        jit=jit,
         force_quick_gelu=force_quick_gelu,
         force_custom_text=force_custom_text,
         force_image_size=force_image_size,

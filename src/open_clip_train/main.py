@@ -2,7 +2,9 @@ import copy
 import glob
 import logging
 import os
+
 import re
+import shutil
 import subprocess
 import sys
 import random
@@ -23,21 +25,17 @@ try:
 except ImportError:
     tensorboard = None
 
-try:
-    import horovod.torch as hvd
-except ImportError:
-    hvd = None
-
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, get_tokenizer, create_task
+from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.train import train_one_epoch, evaluate
-from open_clip_train.file_utils import pt_load, check_exists, start_sync_process, remote_sync
+from open_clip_train.file_utils import start_sync_process, remote_sync
 
-
+_logger = logging.getLogger('open_clip_train.main')
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
 
@@ -52,7 +50,7 @@ def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
-def get_latest_checkpoint(path: str, remote : bool):
+def get_latest_checkpoint(path: str, remote: bool):
     # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
     if remote:
         result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -62,6 +60,10 @@ def get_latest_checkpoint(path: str, remote : bool):
         checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
     else:
         checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        # Also find DCP checkpoint dirs (contain .metadata file from DCP)
+        for d in glob.glob(os.path.join(path, 'epoch_*')):
+            if os.path.isdir(d) and os.path.exists(os.path.join(d, '.metadata')):
+                checkpoints.append(d)
     if checkpoints:
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
@@ -148,19 +150,31 @@ def main(args):
                 # if --save-most-recent flag is set, look for latest at a fixed filename
                 resume_from = os.path.join(checkpoint_path, LATEST_CHECKPOINT_NAME)
                 if not os.path.exists(resume_from):
-                    # If no latest checkpoint has been saved yet, don't try to resume
-                    resume_from = None
+                    # Check for DCP sharded latest directory
+                    latest_dir = os.path.join(checkpoint_path, "epoch_latest")
+                    if os.path.isdir(latest_dir):
+                        resume_from = latest_dir
+                    else:
+                        # If no latest checkpoint has been saved yet, don't try to resume
+                        resume_from = None
             else:
                 # otherwise, list checkpoint dir contents and pick the newest checkpoint
                 resume_from = get_latest_checkpoint(checkpoint_path, remote=args.remote_sync is not None)
             if resume_from:
-                logging.info(f'Found latest resume checkpoint at {resume_from}.')
+                _logger.info(f'Found latest resume checkpoint at {resume_from}.')
             else:
-                logging.info(f'No latest resume checkpoint found in {checkpoint_path}.')
+                _logger.info(f'No latest resume checkpoint found in {checkpoint_path}.')
+        # Master determines checkpoint type (dir = sharded DCP, file = full .pt)
+        # and broadcasts both path and type so all ranks agree — avoids per-rank
+        # os.path.isdir() divergence under shared filesystem stress.
+        resume_is_sharded = (
+            resume_from is not None and os.path.isdir(resume_from)
+        ) if is_master(args) else None
         if args.distributed:
-            # sync found checkpoint path to all ranks
             resume_from = broadcast_object(args, resume_from)
+            resume_is_sharded = broadcast_object(args, resume_is_sharded)
         args.resume = resume_from
+        args.resume_is_sharded = resume_is_sharded
 
     if args.copy_codebase:
         copy_codebase(args)
@@ -175,9 +189,9 @@ def main(args):
             args.remote_sync_protocol
         )
         if result:
-            logging.info('remote sync successful.')
+            _logger.info('remote sync successful.')
         else:
-            logging.info('Error: remote sync failed. Exiting.')
+            _logger.info('Error: remote sync failed. Exiting.')
             return -1
         # if all looks good, start a process to do this every args.remote_sync_frequency seconds
         remote_sync_process = start_sync_process(
@@ -189,20 +203,16 @@ def main(args):
         remote_sync_process.start()
 
     if args.precision == 'fp16':
-        logging.warning(
+        _logger.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
             'FP16 support needs further verification and tuning, especially for train.')
 
-    if args.horovod:
-        logging.info(
-            f'Running in horovod mode with multiple processes / nodes. Device: {args.device}.'
-            f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
-    elif args.distributed:
-        logging.info(
+    if args.distributed:
+        _logger.info(
             f'Running in distributed mode with multiple processes. Device: {args.device}.'
             f'Process (global: {args.rank}, local {args.local_rank}), total {args.world_size}.')
     else:
-        logging.info(f'Running with a single process. Device {args.device}.')
+        _logger.info(f'Running with a single process. Device {args.device}.')
 
     dist_model = None
     args.distill = args.distill_model is not None and args.distill_pretrained is not None
@@ -225,7 +235,6 @@ def main(args):
         args.pretrained,
         precision=args.precision,
         device=device,
-        jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
@@ -265,9 +274,6 @@ def main(args):
 
     random_seed(args.seed, args.rank)
 
-    if args.trace:
-        model = trace_model(model, batch_size=args.batch_size, device=device)
-
     if args.lock_image:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         model.lock_image_tower(
@@ -279,38 +285,87 @@ def main(args):
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
     if args.grad_checkpointing:
-        model.set_grad_checkpointing()
+        if args.fsdp and args.torchcompile:
+            # Composable AC will be applied inside prepare_fsdp() after per-block
+            # compile. Correct ordering: compile → AC → FSDP. Applying AC here
+            # would put hooks on the inner blocks, but torch.compile wraps them in
+            # OptimizedModule — leaving hooks at the wrong level.
+            pass
+        else:
+            model.set_grad_checkpointing(impl='composable' if args.fsdp else 'inline')
 
     if is_master(args):
-        logging.info("Model:")
-        logging.info(f"{str(model)}")
-        logging.info("Params:")
+        _logger.info("Model:")
+        _logger.info(f"{str(model)}")
+        _logger.info("Params:")
         params_file = os.path.join(args.logs, args.name, "params.txt")
         with open(params_file, "w") as f:
             for name in sorted(vars(args)):
                 val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
+                _logger.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
-    if args.distributed and not args.horovod:
+    # Create task (wraps model + loss)
+    task = create_task(args, model=model, dist_model=dist_model)
+    # Keep reference to unwrapped task for checkpoint methods.
+    # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
+    original_task = task
+
+    if args.fsdp and not args.distributed:
+        _logger.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
+        args.fsdp = False
+
+    if args.fsdp_checkpoint == 'sharded' and not args.fsdp:
+        _logger.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
+        args.fsdp_checkpoint = 'full'
+
+    # Resolve FSDP mixed-precision from --precision.
+    # Always create MixedPrecisionPolicy when FSDP is active (at minimum for fp32 reductions).
+    # When FSDP is on, autocast is always suppressed — MP policy handles dtype casting.
+    fsdp_mp_dtype = None  # param_dtype for MixedPrecisionPolicy (None = no param casting)
+    if args.fsdp:
+        if args.precision in ('amp', 'fp16', 'pure_fp16'):
+            fsdp_mp_dtype = torch.float16
+        elif args.precision in ('amp_bf16', 'amp_bfloat16', 'bf16', 'pure_bf16'):
+            fsdp_mp_dtype = torch.bfloat16
+        # else: fp32 — fsdp_mp_dtype stays None (no param casting, fp32 reduce only)
+
+        if is_master(args):
+            _logger.info(
+                f'FSDP2: MixedPrecisionPolicy(param_dtype={fsdp_mp_dtype}, '
+                f'reduce_dtype=torch.float32). Autocast disabled.'
+            )
+
+    if args.distributed:
         if args.use_bn_sync:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-    
-        if args.distill:
-            dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
+            task.trainable_module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(task.trainable_module)
+        if args.fsdp:
+            fsdp_kwargs = dict(reshard_after_forward=not args.fsdp_no_reshard_after_forward)
+            if args.fsdp_offload_cpu:
+                from torch.distributed._composable.fsdp import CPUOffloadPolicy
+                fsdp_kwargs['offload_policy'] = CPUOffloadPolicy()
+            from torch.distributed._composable.fsdp import MixedPrecisionPolicy
+            fsdp_kwargs['mp_policy'] = MixedPrecisionPolicy(
+                param_dtype=fsdp_mp_dtype,
+                reduce_dtype=torch.float32,
+            )
+            task.prepare_fsdp(
+                compile_blocks=bool(args.torchcompile),
+                grad_checkpointing=bool(args.grad_checkpointing),
+                **fsdp_kwargs,
+            )
+        else:
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            task.prepare_distributed(device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
     scaler = None
 
     if args.train_data or args.dataset_type == "synthetic":
-        assert not args.trace, 'Cannot train with traced model'
-
         opt = getattr(args, 'opt', 'adamw').lower()
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2
@@ -323,7 +378,7 @@ def main(args):
             if args.momentum is not None:
                 opt_kwargs['momentum'] = args.momentum
             optimizer = create_optimizer_v2(
-                model,
+                task.trainable_module,
                 timm_opt,
                 lr=args.lr,
                 weight_decay=args.wd,
@@ -335,7 +390,7 @@ def main(args):
             exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
             include = lambda n, p: not exclude(n, p)
 
-            named_parameters = list(model.named_parameters())
+            named_parameters = list(task.trainable_module.named_parameters())
             gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
             rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
@@ -356,42 +411,39 @@ def main(args):
             defaults = copy.deepcopy(optimizer.defaults)
             defaults['weight_decay'] = args.wd
             defaults = ', '.join([f'{k}: {v}' for k, v in defaults.items()])
-            logging.info(
+            _logger.info(
                 f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
             )
 
-        if args.horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
-            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
         scaler = None
-        if args.precision == "amp":
+        need_scaler = (args.precision == "amp")
+        if args.fsdp:
+            need_scaler = (fsdp_mp_dtype == torch.float16)
+        if need_scaler:
             try:
                 scaler = torch.amp.GradScaler(device=device)
-            except (AttributeError, TypeError) as e:
+            except (AttributeError, TypeError):
                 scaler = torch.cuda.amp.GradScaler()
 
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        checkpoint = pt_load(args.resume, map_location='cpu')
-        if 'epoch' in checkpoint:
-            # resuming a train checkpoint w/ epoch and optimizer state
-            start_epoch = checkpoint["epoch"]
-            sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
-            model.load_state_dict(sd)
-            if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer"])
-            if scaler is not None and 'scaler' in checkpoint:
-                scaler.load_state_dict(checkpoint['scaler'])
-            logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        # Use master-determined flag when available (resume latest); fall back
+        # to local isdir check for explicit --resume <path> from CLI.
+        is_sharded = getattr(args, 'resume_is_sharded', None)
+        if is_sharded is None:
+            is_sharded = os.path.isdir(args.resume)
+        if is_sharded:
+            start_epoch = load_sharded_checkpoint(
+                original_task, args.resume,
+                optimizer=optimizer, scaler=scaler,
+            )
         else:
-            # loading a bare (model only) checkpoint for fine-tune or evaluation
-            model.load_state_dict(checkpoint)
-            logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+            start_epoch = load_checkpoint(
+                original_task, args.resume,
+                optimizer=optimizer, scaler=scaler,
+                is_distributed=args.distributed,
+            )
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
@@ -419,7 +471,7 @@ def main(args):
                 optimizer, args.lr, args.warmup, total_steps,
                 cooldown_steps, args.lr_cooldown_power, args.lr_cooldown_end)
         else:
-            logging.error(
+            _logger.error(
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
 
@@ -432,7 +484,7 @@ def main(args):
 
     if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
-        logging.debug('Starting wandb.')
+        _logger.debug('Starting wandb.')
         args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:
             args.val_sz = data["val"].dataloader.num_samples
@@ -447,22 +499,17 @@ def main(args):
             config=vars(args),
         )
         if args.debug:
-            wandb.watch(model, log='all')
+            wandb.watch(task.trainable_module, log='all')
         wandb.save(params_file)
-        logging.debug('Finished loading wandb.')
+        _logger.debug('Finished loading wandb.')
 
     # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
     # For compatibility, we save state_dict() of the original model, which shares the
     # weights without the prefix.
-    original_model = model
     if args.torchcompile:
-        logging.info('Compiling model...')
+        _logger.info('Compiling model...')
 
-        if args.grad_checkpointing and args.distributed:
-            logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
-            # As of now (~PyTorch 2.4/2.5), compile + grad checkpointing work, but DDP optimizer must be disabled
-            torch._dynamo.config.optimize_ddp = False
-
+        # Suppress noisy dynamo/inductor logs
         filter_prefixes = (
             "torch._dynamo",
             "torch._inductor",
@@ -470,83 +517,127 @@ def main(args):
             "torch._utils_internal",
             "torch.fx",
         )
-
         for name in logging.root.manager.loggerDict:
             if name.startswith(filter_prefixes):
                 logging.getLogger(name).setLevel(logging.WARNING)
 
-        model = torch.compile(original_model)
+        if args.fsdp:
+            # Per-block compile for transformer blocks already applied inside
+            # prepare_fsdp(). Task-level compile captures the loss + model glue
+            # (embeddings, projections); per-block OptimizedModules are opaque to
+            # Dynamo so AC/FSDP hooks on blocks stay at module boundaries.
+            _logger.info('Compiling task (loss + model glue); blocks already per-block compiled.')
+            task = torch.compile(task)
+        else:
+            if args.grad_checkpointing and args.distributed:
+                _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+                torch._dynamo.config.optimize_ddp = False
+            task = torch.compile(task)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
             from open_clip.utils import convert_int8_model_to_inference_mode
-            convert_int8_model_to_inference_mode(model)
+            convert_int8_model_to_inference_mode(unwrap_model(task.trainable_module))
         # Evaluate.
-        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        evaluate(task, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
-
-    loss = create_loss(args)
 
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
-            logging.info(f'Start epoch {epoch}')
+            _logger.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
+        train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+            evaluate(task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
             # sync to avoid some processes advancing/exiting while rank 0 finishes eval
             if args.distributed:
-                if args.horovod:
-                    hvd.join()
-                else:
-                    torch.distributed.barrier()
+                torch.distributed.barrier()
 
         # Saving checkpoints.
-        if args.save_logs:
-            checkpoint_dict = {
-                "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": original_model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }
-            if scaler is not None:
-                checkpoint_dict["scaler"] = scaler.state_dict()
+        sharded_ckpt = args.fsdp and args.fsdp_checkpoint == 'sharded'
 
-            if completed_epoch == args.epochs or (
+        if sharded_ckpt:
+            # Sharded DCP — all ranks write shard files to a directory
+            save_epoch = completed_epoch == args.epochs or (
                 args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-            ):
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+            )
+            if save_epoch:
+                save_sharded_checkpoint(
+                    original_task, optimizer,
+                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}"),
+                    epoch=completed_epoch, scaler=scaler,
+                    name=args.name, is_master=args.save_logs,
                 )
-            if args.delete_previous_checkpoint:
-                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
-                if os.path.exists(previous_checkpoint):
-                    os.remove(previous_checkpoint)
-
             if args.save_most_recent:
-                # try not to corrupt the latest checkpoint if save fails
-                tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
-                latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
-                torch.save(checkpoint_dict, tmp_save_path)
-                os.replace(tmp_save_path, latest_save_path)
+                latest_dir = os.path.join(args.checkpoint_path, "epoch_latest")
+                tmp_dir = os.path.join(args.checkpoint_path, "_tmp_latest")
+                save_sharded_checkpoint(
+                    original_task, optimizer, tmp_dir,
+                    epoch=completed_epoch, scaler=scaler,
+                    name=args.name, is_master=args.save_logs,
+                )
+                torch.distributed.barrier()
+                if args.save_logs:
+                    # Atomic-ish swap: rename old → trash, rename tmp → latest,
+                    # then delete trash. If preempted between any step, at least
+                    # one valid directory survives.
+                    trash_dir = os.path.join(args.checkpoint_path, "_trash_latest")
+                    if os.path.exists(trash_dir):
+                        shutil.rmtree(trash_dir)
+                    if os.path.exists(latest_dir):
+                        os.rename(latest_dir, trash_dir)
+                    os.rename(tmp_dir, latest_dir)
+                    if os.path.exists(trash_dir):
+                        shutil.rmtree(trash_dir)
+            if args.delete_previous_checkpoint and args.save_logs:
+                prev_dir = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}")
+                if os.path.isdir(prev_dir):
+                    shutil.rmtree(prev_dir)
+
+        else:
+            # Full checkpoint — gather to rank 0, single .pt file
+            # With FSDP2, state dict gather is collective — all ranks must participate
+            # even though only master writes to disk.
+            # With DDP, only master needs to call state_dict() to avoid wasting memory.
+            if original_task._fsdp_enabled or args.save_logs:
+                checkpoint_dict = save_checkpoint(
+                    original_task, optimizer,
+                    epoch=completed_epoch, scaler=scaler, name=args.name,
+                )
+
+            if args.save_logs:
+                if completed_epoch == args.epochs or (
+                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                ):
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+                    )
+                if args.delete_previous_checkpoint:
+                    previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                    if os.path.exists(previous_checkpoint):
+                        os.remove(previous_checkpoint)
+
+                if args.save_most_recent:
+                    # try not to corrupt the latest checkpoint if save fails
+                    tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+                    latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                    torch.save(checkpoint_dict, tmp_save_path)
+                    os.replace(tmp_save_path, latest_save_path)
 
         # keep nodes in sync during checkpointing
         if args.distributed:
-            if args.horovod:
-                hvd.join()
-            else:
-                torch.distributed.barrier()
+            torch.distributed.barrier()
 
     if args.wandb and is_master(args):
         wandb.finish()
 
     # run a final sync.
     if remote_sync_process is not None:
-        logging.info('Final remote sync.')
+        _logger.info('Final remote sync.')
         remote_sync_process.terminate()
         result = remote_sync(
             os.path.join(args.logs, args.name), 
@@ -554,9 +645,9 @@ def main(args):
             args.remote_sync_protocol
         )
         if result:
-            logging.info('Final remote sync successful.')
+            _logger.info('Final remote sync successful.')
         else:
-            logging.info('Final remote sync failed.')
+            _logger.info('Final remote sync failed.')
     
 
 def copy_codebase(args):

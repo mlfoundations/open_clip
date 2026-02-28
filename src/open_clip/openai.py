@@ -60,20 +60,19 @@ def load_openai_model(
         raise RuntimeError(f"Model {name} not found; available models = {list_openai_models()}")
 
     try:
-        # loading JIT archive
-        model = torch.jit.load(model_path, map_location="cpu").eval()
-        state_dict = None
+        # Original OpenAI checkpoints are JIT archives — load and extract state dict
+        jit_model = torch.jit.load(model_path, map_location="cpu").eval()
+        state_dict = jit_model.state_dict()
+        for key in ["input_resolution", "context_length", "vocab_size"]:
+            state_dict.pop(key, None)
     except RuntimeError:
-        # loading saved state dict
+        # Non-JIT checkpoint (plain state dict)
         state_dict = torch.load(model_path, map_location="cpu")
+        if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+            state_dict = {k[7:] if k.startswith('module.') else k: v for k, v in state_dict["state_dict"].items()}
 
-    # Build a non-jit model from the OpenAI jitted model state dict
     cast_dtype = get_cast_dtype(precision)
-    try:
-        model = build_model_from_openai_state_dict(state_dict or model.state_dict(), cast_dtype=cast_dtype)
-    except KeyError:
-        sd = {k[7:]: v for k, v in state_dict["state_dict"].items()}
-        model = build_model_from_openai_state_dict(sd, cast_dtype=cast_dtype)
+    model = build_model_from_openai_state_dict(state_dict, cast_dtype=cast_dtype)
 
     # model from OpenAI state dict is in manually cast fp16 mode, must be converted for AMP/fp32/bf16 use
     model = model.to(device)
