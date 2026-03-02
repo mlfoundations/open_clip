@@ -75,6 +75,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
+    # Auto-cap log frequency to ensure at least ~10 log lines per epoch
+    log_every = min(args.log_every_n_steps, max(1, num_batches_per_epoch // 10))
+
     if args.accum_freq > 1:
         accum_images, accum_texts, accum_features = [], [], {}
 
@@ -89,16 +92,24 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if not args.skip_scheduler:
             scheduler(step)
 
-        images, texts = batch
-        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
-        texts = texts.to(device=device, non_blocking=True)
+        is_audio = args.dataset_type in ("webdataset-audio", "synthetic-audio")
+        if is_audio:
+            audio, texts = batch
+            # Transfer all audio tensors (waveform, longer, mel_fusion) to device
+            audio = {k: v.to(device=device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                     for k, v in audio.items()}
+            texts = texts.to(device=device, non_blocking=True)
+        else:
+            images, texts = batch
+            images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+            texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
+                model_out = model(audio if is_audio else images, texts)
                 logit_scale = model_out["logit_scale"]
                 if args.distill:
                     with torch.no_grad():
@@ -112,9 +123,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
+            first_input = audio if is_audio else images
             with torch.no_grad():
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = model(first_input, texts)
 
                     for f in ("logit_scale", "logit_bias"):
                         model_out.pop(f, None)
@@ -125,7 +137,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                         else:
                             accum_features[key] = [val]
 
-                accum_images.append(images)
+                accum_images.append(first_input)
                 accum_texts.append(texts)
 
             # If (i + 1) % accum_freq is not zero, move on to the next batch.
@@ -138,10 +150,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             # Call backwards each time, but only step optimizer at the end.
             optimizer.zero_grad()
             for j in range(args.accum_freq):
-                images = accum_images[j]
+                first_input_j = accum_images[j]
                 texts = accum_texts[j]
                 with autocast():
-                    model_out = model(images, texts)
+                    model_out = model(first_input_j, texts)
 
                     inputs_no_accum = {}
                     inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
@@ -191,8 +203,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
-        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
-            batch_size = len(images)
+        if is_master(args) and (i_accum % log_every == 0 or batch_count == num_batches_per_epoch):
+            batch_size = len(texts)
             num_samples = batch_count * batch_size * args.accum_freq * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
