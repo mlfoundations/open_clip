@@ -523,9 +523,11 @@ def main(args):
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                 )
             if args.delete_previous_checkpoint:
-                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
-                if os.path.exists(previous_checkpoint):
-                    os.remove(previous_checkpoint)
+                previous_epoch = completed_epoch - args.save_frequency
+                if previous_epoch > 0:
+                    previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{previous_epoch}.pt")
+                    if os.path.exists(previous_checkpoint):
+                        os.remove(previous_checkpoint)
 
             if args.save_most_recent:
                 # try not to corrupt the latest checkpoint if save fails
