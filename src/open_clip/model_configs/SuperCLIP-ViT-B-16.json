@@ -1,0 +1,24 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 16,
+        "output_tokens": true
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12
+    },
+    "clstext_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "layers": 0,
+        "mlp_ratio": 4
+    }
+}
+
