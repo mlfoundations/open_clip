@@ -28,8 +28,9 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
-from open_clip_train.data import get_data
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss, create_model
+from open_clip.model import CLAP
+from open_clip_train.data import get_data, make_audio_preprocess
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
@@ -220,27 +221,54 @@ def main(args):
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
-    model, preprocess_train, preprocess_val = create_model_and_transforms(
-        args.model,
-        args.pretrained,
-        precision=args.precision,
-        device=device,
-        jit=args.torchscript,
-        force_quick_gelu=args.force_quick_gelu,
-        force_custom_text=args.force_custom_text,
-        force_patch_dropout=args.force_patch_dropout,
-        force_image_size=args.force_image_size,
-        force_context_length=args.force_context_length,
-        image_mean=args.image_mean,
-        image_std=args.image_std,
-        image_interpolation=args.image_interpolation,
-        image_resize_mode=args.image_resize_mode,  # only effective for inference
-        aug_cfg=args.aug_cfg,
-        pretrained_image=args.pretrained_image,
-        output_dict=True,
-        cache_dir=args.cache_dir,
-        **model_kwargs,
-    )
+
+    is_audio_model = args.dataset_type in ("webdataset-audio", "synthetic-audio")
+    if is_audio_model:
+        # CLAP model: create model directly (no image transforms needed)
+        model = create_model(
+            args.model,
+            args.pretrained,
+            precision=args.precision,
+            device=device,
+            force_context_length=args.force_context_length,
+            pretrained_audio_path=getattr(args, 'pretrained_audio', None),
+            output_dict=True,
+            cache_dir=args.cache_dir,
+            **model_kwargs,
+        )
+        from open_clip import get_model_config
+        model_cfg = get_model_config(args.model)
+        audio_cfg = model_cfg.get('audio_cfg', {})
+        data_filling = getattr(args, 'data_filling', 'pad')
+        data_truncating = getattr(args, 'data_truncating', 'rand_trunc')
+        int16_normalize = getattr(args, 'int16_normalize', False)
+        # When --enable-fusion is set or model config has fusion, force fusion truncation
+        if getattr(args, 'enable_fusion', False) or audio_cfg.get('enable_fusion', False):
+            data_truncating = "fusion"
+        preprocess_train = make_audio_preprocess(audio_cfg, data_filling=data_filling, data_truncating=data_truncating, int16_normalize=int16_normalize)
+        preprocess_val = make_audio_preprocess(audio_cfg, data_filling="pad", data_truncating="trunc", int16_normalize=int16_normalize)
+    else:
+        model, preprocess_train, preprocess_val = create_model_and_transforms(
+            args.model,
+            args.pretrained,
+            precision=args.precision,
+            device=device,
+            jit=args.torchscript,
+            force_quick_gelu=args.force_quick_gelu,
+            force_custom_text=args.force_custom_text,
+            force_patch_dropout=args.force_patch_dropout,
+            force_image_size=args.force_image_size,
+            force_context_length=args.force_context_length,
+            image_mean=args.image_mean,
+            image_std=args.image_std,
+            image_interpolation=args.image_interpolation,
+            image_resize_mode=args.image_resize_mode,  # only effective for inference
+            aug_cfg=args.aug_cfg,
+            pretrained_image=args.pretrained_image,
+            output_dict=True,
+            cache_dir=args.cache_dir,
+            **model_kwargs,
+        )
     if args.distill:
         # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
@@ -299,6 +327,9 @@ def main(args):
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
+        if is_audio_model:
+            # HTSAT encoder has unused classification head params in contrastive mode
+            ddp_args['find_unused_parameters'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
     
         if args.distill:
@@ -308,7 +339,7 @@ def main(args):
     optimizer = None
     scaler = None
 
-    if args.train_data or args.dataset_type == "synthetic":
+    if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         assert not args.trace, 'Cannot train with traced model'
 
         opt = getattr(args, 'opt', 'adamw').lower()
