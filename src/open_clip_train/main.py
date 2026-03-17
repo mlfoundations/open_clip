@@ -1,3 +1,4 @@
+import atexit
 import copy
 import glob
 import logging
@@ -6,6 +7,7 @@ import re
 import subprocess
 import sys
 import random
+import warnings
 from datetime import datetime
 from functools import partial
 
@@ -39,6 +41,38 @@ from open_clip_train.file_utils import pt_load, check_exists, start_sync_process
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
+
+
+def _log_logit_scale_bias(model):
+    """Print logit_scale and logit_bias after model load (handles DDP + PEFT)."""
+    m = getattr(model, 'module', model)
+    if hasattr(m, 'base_model') and hasattr(m.base_model, 'model'):
+        m = m.base_model.model
+    if hasattr(m, 'logit_scale'):
+        scale = m.logit_scale
+        scale_val = scale.data if hasattr(scale, 'data') else scale
+        if scale_val.numel() == 1:
+            logging.info(f"logit_scale (log space): {scale_val.item():.6f}  -> exp(scale): {torch.exp(scale_val).item():.6f}")
+        else:
+            logging.info(f"logit_scale (log space): {scale_val.tolist()}  -> exp(scale): {torch.exp(scale_val).tolist()}")
+    else:
+        logging.info("logit_scale: not found on model")
+    if hasattr(m, 'logit_bias'):
+        bias = m.logit_bias
+        bias_val = bias.data if hasattr(bias, 'data') else bias
+        if bias_val.numel() == 1:
+            logging.info(f"logit_bias: {bias_val.item():.6f}")
+        else:
+            logging.info(f"logit_bias: {bias_val.tolist()}")
+    else:
+        logging.info("logit_bias: not found on model")
+
+
+def _distributed_barrier():
+    """Call torch.distributed.barrier(), muting the device-under-context UserWarning."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*device under current context.*", category=UserWarning)
+        torch.distributed.barrier()
 
 
 def random_seed(seed=42, rank=0):
@@ -81,6 +115,13 @@ def main(args):
 
     # fully initialize distributed device environment
     device = init_distributed_device(args)
+    if args.distributed and not args.horovod:
+
+        def _destroy_process_group():
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+
+        atexit.register(_destroy_process_group)
 
     # get the name of the experiments
     if args.name is None:
@@ -115,6 +156,13 @@ def main(args):
     # Setup text logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
+    # Reduce log noise from DDP, TorchDynamo, and FakeTensor
+    for _logger in (
+        "torch.nn.parallel.distributed",
+        "torch._dynamo",
+        "torch._subclasses.fake_tensor",
+    ):
+        logging.getLogger(_logger).setLevel(logging.WARNING)
 
     # Setup wandb, tensorboard, checkpoint logging
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
@@ -263,17 +311,44 @@ def main(args):
         replace_linear(model, linear_replacement_cls)
         model = model.to(device)
 
+    if args.lora:
+        from peft import get_peft_model, LoraConfig
+        target_modules = args.lora_target_modules
+        if not target_modules:
+            # target_modules = ["qkv", "out_proj",  "fc1", "fc2", "c_fc", "c_proj" ]
+            target_modules = ["qkv"]
+
+        # task_type=None so get_peft_model returns base PeftModel (forward passes *args/**kwargs
+        # through). PeftModelForFeatureExtraction would force input_ids/pixel_values kwargs and
+        # break CustomTextCLIP.forward(image, text).
+        lora_config = LoraConfig(
+            task_type=None,
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            target_modules=target_modules,
+            bias="none",
+            inference_mode=False,
+        )
+        model = get_peft_model(model, lora_config)
+        # Keep logit scale/bias trainable (PEFT freezes base model)
+        for name, param in model.named_parameters():
+            if "logit_scale" in name or "logit_bias" in name:
+                param.requires_grad = True
+        if is_master(args):
+            model.print_trainable_parameters()
+
     random_seed(args.seed, args.rank)
 
     if args.trace:
         model = trace_model(model, batch_size=args.batch_size, device=device)
 
-    if args.lock_image:
+    if args.lock_image and not args.lora:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        # skip when using LoRA so we do not freeze adapter params
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
-    if args.lock_text:
+    if args.lock_text and not args.lora:
         model.lock_text_tower(
             unlocked_layers=args.lock_text_unlocked_layers,
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
@@ -298,6 +373,10 @@ def main(args):
         ddp_args = {}
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
+            ddp_args['static_graph'] = True
+        if args.lora:
+            # LoRA: base params frozen; logit_scale/logit_bias used multiple times in loss -> "marked ready twice".
+            # static_graph detects unused params and fixes backward order; no need for find_unused_parameters.
             ddp_args['static_graph'] = True
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
     
@@ -380,8 +459,13 @@ def main(args):
             # resuming a train checkpoint w/ epoch and optimizer state
             start_epoch = checkpoint["epoch"]
             sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
+            first_key = next(iter(sd.keys()))
+            if first_key.startswith('module.'):
+                if not args.distributed:
+                    sd = {k[len('module.'):]: v for k, v in sd.items()}
+            else:
+                if args.distributed:
+                    sd = {('module.' + k): v for k, v in sd.items()}
             model.load_state_dict(sd)
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint["optimizer"])
@@ -392,6 +476,9 @@ def main(args):
             # loading a bare (model only) checkpoint for fine-tune or evaluation
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+
+    if is_master(args):
+        _log_logit_scale_bias(model)
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
@@ -455,6 +542,12 @@ def main(args):
     # For compatibility, we save state_dict() of the original model, which shares the
     # weights without the prefix.
     original_model = model
+    # When training with DDP, model is wrapped so state_dict() keys have "module." prefix.
+    # Save unwrapped state_dict so checkpoints are consistent (single-GPU and multi-GPU
+    # produce the same key layout and loaders don't need to strip "module.").
+    def _state_dict_for_checkpoint(m):
+        sd = getattr(m, 'module', m).state_dict()
+        return sd
     if args.torchcompile:
         logging.info('Compiling model...')
 
@@ -502,14 +595,14 @@ def main(args):
                 if args.horovod:
                     hvd.join()
                 else:
-                    torch.distributed.barrier()
+                    _distributed_barrier()
 
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": original_model.state_dict(),
+                "state_dict": _state_dict_for_checkpoint(original_model),
                 "optimizer": optimizer.state_dict(),
             }
             if scaler is not None:
@@ -539,7 +632,7 @@ def main(args):
             if args.horovod:
                 hvd.join()
             else:
-                torch.distributed.barrier()
+                _distributed_barrier()
 
     if args.wandb and is_master(args):
         wandb.finish()

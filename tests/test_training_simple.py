@@ -5,7 +5,9 @@ import pytest
 import torch
 from open_clip_train.main import main
 
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Only force CPU when explicitly requested (e.g. CI); otherwise use GPUs if present
+if os.environ.get("OPEN_CLIP_TEST_CPU_ONLY", "").lower() in ("1", "true", "yes"):
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 if hasattr(torch._C, '_jit_set_profiling_executor'):
     # legacy executor is too slow to compile large models for unit tests
@@ -87,6 +89,7 @@ def test_training_unfreezing_vit():
 
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
 def test_training_clip_with_jit():
+    # workers=0 to avoid segfault: TorchScript + DataLoader multiprocessing + CUDA can crash
     main([
     '--save-frequency', '1',
     '--zeroshot-frequency', '1',
@@ -97,7 +100,7 @@ def test_training_clip_with_jit():
     '--lr', '1e-3',
     '--wd', '0.1',
     '--epochs', '1',
-    '--workers', '2',
+    '--workers', '0',
     '--model', 'ViT-B-32',
     '--torchscript'
     ])

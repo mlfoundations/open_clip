@@ -327,6 +327,34 @@ def neighbour_exchange_bidir_with_grad(left_rank, right_rank, tensor_to_left, te
     return NeighbourExchangeBidir.apply(left_rank, right_rank, group, tensor_to_left, tensor_to_right)
 
 
+def compute_mask_weight_matrix(img_attr, txt_attr, txt_mask, is_diag_block=True):
+    """
+    Compute weight matrix W (B, B) for masked attribute alignment.
+    - is_diag_block=True (local batch): diagonal = 1 (True Positive). Off-diagonal: W[i,j]=0 if
+      masked attributes match (neutral), else 1 (true negative).
+    - is_diag_block=False (remote block, e.g. local images vs received texts): there is no
+      ground-truth diagonal; all (i,j) are negatives. W[i,j]=0 if match (neutral), else 1.
+      Do not protect (i,i) — (local image i, remote text i) is not a positive pair.
+    img_attr, txt_attr: (B, 9) long; txt_mask: (B, 9) bool.
+    """
+    B = img_attr.shape[0]
+    device = img_attr.device
+    img_attr = img_attr.long()
+    txt_attr = txt_attr.long()
+    txt_mask = txt_mask.bool()
+    eq = img_attr.unsqueeze(1) == txt_attr.unsqueeze(0)  # (B, B, 9)
+    no_mask = ~txt_mask.unsqueeze(0)  # (1, B, 9)
+    match = (eq | no_mask).all(dim=2)  # (B, B); True where (i,j) masked attrs match
+    W = torch.ones(B, B, device=device, dtype=torch.float32)
+    if is_diag_block:
+        # Only zero off-diagonal matches; diagonal stays 1 (true positives).
+        W[match & ~torch.eye(B, dtype=torch.bool, device=device)] = 0
+    else:
+        # Remote block: no diagonal to protect; zero all matches (including (i,i)).
+        W[match] = 0
+    return W
+
+
 class SigLipLoss(nn.Module):
     """ Sigmoid Loss for Language Image Pre-Training (SigLIP) - https://arxiv.org/abs/2303.15343
 
@@ -462,3 +490,165 @@ class SigLipLoss(nn.Module):
                 assert False
 
         return {"contrastive_loss": loss} if output_dict else loss
+
+
+class SigLipMaskedAttrLoss(SigLipLoss):
+    """
+    SigLIP loss with dynamic loss mask (masked attribute alignment).
+    Weight matrix W zeros out off-diagonal pairs where masked attributes match (neutral).
+    """
+
+    def _loss_weighted(
+        self, image_features, text_features, logit_scale, logit_bias, W, negative_only=False
+    ):
+        logits = self.get_logits(image_features, text_features, logit_scale, logit_bias)
+        B = image_features.shape[0]
+        device = image_features.device
+        dtype = image_features.dtype
+        if negative_only:
+            labels = -torch.ones((B, B), device=device, dtype=dtype)
+        else:
+            labels = 2 * torch.eye(B, device=device, dtype=dtype) - 1
+        elem_loss = -F.logsigmoid(labels * logits)
+        # Normalize by batch size B (not W.sum()) so the loss scale matches standard SigLIP.
+        # Dividing by W.sum() would increase effective learning rate when many pairs are neutral.
+        B = image_features.shape[0]
+        return (W * elem_loss).sum() / B
+
+    def forward(
+        self,
+        image_features,
+        text_features,
+        logit_scale,
+        logit_bias,
+        img_attr=None,
+        txt_attr=None,
+        txt_mask=None,
+        output_dict=False,
+    ):
+        if img_attr is None or txt_attr is None or txt_mask is None:
+            return super().forward(
+                image_features, text_features, logit_scale, logit_bias, output_dict=output_dict
+            )
+
+        W = compute_mask_weight_matrix(img_attr, txt_attr, txt_mask)
+        B = image_features.shape[0]
+        # Per-batch stats: how many off-diagonal pairs are zeroed by masking (neutral)
+        off_diag_mask = ~torch.eye(B, dtype=torch.bool, device=W.device)
+        num_masked = (W == 0).logical_and(off_diag_mask).sum().item()
+        total_off_diag = B * B - B
+        frac_masked = num_masked / total_off_diag if total_off_diag else 0.0
+
+        loss = self._loss_weighted(
+            image_features, text_features, logit_scale, logit_bias, W, negative_only=False
+        )
+
+        if self.world_size > 1:
+            right_rank = (self.rank + 1) % self.world_size
+            left_rank = (self.rank - 1 + self.world_size) % self.world_size
+            # Cast attr/mask to float for exchange (neighbour_exchange expects same dtype)
+            txt_attr_f = txt_attr.float()
+            txt_mask_f = txt_mask.float()
+
+            if self.dist_impl == 'bidir':
+                text_features_to_right = text_features_to_left = text_features
+                txt_attr_to_right = txt_attr_to_left = txt_attr_f
+                txt_mask_to_right = txt_mask_to_left = txt_mask_f
+                num_bidir, remainder = divmod(self.world_size - 1, 2)
+                for _ in range(num_bidir):
+                    text_recv = neighbour_exchange_bidir_with_grad(
+                        left_rank, right_rank, text_features_to_left, text_features_to_right
+                    )
+                    txt_attr_recv = neighbour_exchange_bidir(
+                        left_rank, right_rank, txt_attr_to_left, txt_attr_to_right
+                    )
+                    txt_mask_recv = neighbour_exchange_bidir(
+                        left_rank, right_rank, txt_mask_to_left, txt_mask_to_right
+                    )
+                    for t_idx, (f_recv, a_recv, m_recv) in enumerate(
+                        zip(text_recv, txt_attr_recv, txt_mask_recv)
+                    ):
+                        W_recv = compute_mask_weight_matrix(img_attr, a_recv.long(), m_recv.bool(), is_diag_block=False)
+                        loss += self._loss_weighted(
+                            image_features,
+                            f_recv,
+                            logit_scale,
+                            logit_bias,
+                            W_recv,
+                            negative_only=True,
+                        )
+                    text_features_to_left, text_features_to_right = text_recv
+                    txt_attr_to_left, txt_attr_to_right = txt_attr_recv
+                    txt_mask_to_left, txt_mask_to_right = txt_mask_recv
+
+                if remainder:
+                    f_recv = neighbour_exchange_with_grad(
+                        left_rank, right_rank, text_features_to_right
+                    )
+                    a_recv = neighbour_exchange(left_rank, right_rank, txt_attr_to_right)
+                    m_recv = neighbour_exchange(left_rank, right_rank, txt_mask_to_right)
+                    W_recv = compute_mask_weight_matrix(img_attr, a_recv.long(), m_recv.bool(), is_diag_block=False)
+                    loss += self._loss_weighted(
+                        image_features, f_recv, logit_scale, logit_bias, W_recv, negative_only=True
+                    )
+            elif self.dist_impl == "shift":
+                text_features_to_right = text_features
+                txt_attr_to_right = txt_attr_f
+                txt_mask_to_right = txt_mask_f
+                for _ in range(self.world_size - 1):
+                    f_recv = neighbour_exchange_with_grad(
+                        left_rank, right_rank, text_features_to_right
+                    )
+                    a_recv = neighbour_exchange(left_rank, right_rank, txt_attr_to_right)
+                    m_recv = neighbour_exchange(left_rank, right_rank, txt_mask_to_right)
+                    W_recv = compute_mask_weight_matrix(img_attr, a_recv.long(), m_recv.bool(), is_diag_block=False)
+                    loss += self._loss_weighted(
+                        image_features, f_recv, logit_scale, logit_bias, W_recv, negative_only=True
+                    )
+                    text_features_to_right = f_recv
+                    txt_attr_to_right = a_recv
+                    txt_mask_to_right = m_recv
+            elif self.dist_impl == "reduce":
+                for i in range(self.world_size):
+                    text_from_other = torch.distributed.nn.all_reduce(
+                        text_features * (self.rank == i), torch.distributed.ReduceOp.SUM
+                    )
+                    txt_attr_other = torch.distributed.nn.all_reduce(
+                        txt_attr_f * (self.rank == i), torch.distributed.ReduceOp.SUM
+                    )
+                    txt_mask_other = torch.distributed.nn.all_reduce(
+                        txt_mask_f * (self.rank == i), torch.distributed.ReduceOp.SUM
+                    )
+                    W_other = compute_mask_weight_matrix(
+                        img_attr, txt_attr_other.long(), txt_mask_other.bool(), is_diag_block=False
+                    )
+                    loss += float(i != self.rank) * self._loss_weighted(
+                        image_features,
+                        text_from_other,
+                        logit_scale,
+                        logit_bias,
+                        W_other,
+                        negative_only=True,
+                    )
+            elif self.dist_impl == "gather":
+                all_text = torch.distributed.nn.all_gather(text_features)
+                all_attr = torch.distributed.nn.all_gather(txt_attr_f)
+                all_mask = torch.distributed.nn.all_gather(txt_mask_f)
+                for i in range(self.world_size):
+                    W_other = compute_mask_weight_matrix(
+                        img_attr, all_attr[i].long(), all_mask[i].bool(), is_diag_block=False
+                    )
+                    loss += float(i != self.rank) * self._loss_weighted(
+                        image_features,
+                        all_text[i],
+                        logit_scale,
+                        logit_bias,
+                        W_other,
+                        negative_only=True,
+                    )
+            else:
+                assert False
+
+        if output_dict:
+            return {"contrastive_loss": loss, "masked_pairs": num_masked, "frac_masked": frac_masked}
+        return loss

@@ -1,5 +1,6 @@
 import os
 import warnings
+from datetime import timedelta
 from typing import Optional
 
 import torch
@@ -103,6 +104,7 @@ def init_distributed_device(args):
         dist_url=getattr(args, 'dist_url', None),
         horovod=getattr(args, 'horovod', False),
         no_set_device_rank=getattr(args, 'no_set_device_rank', False),
+        dist_timeout_minutes=getattr(args, 'dist_timeout_minutes', None),
     )
     args.device = result['device']
     args.world_size = result['world_size']
@@ -119,6 +121,7 @@ def init_distributed_device_so(
         dist_url: Optional[str] = None,
         horovod: bool = False,
         no_set_device_rank: bool = False,
+        dist_timeout_minutes: Optional[int] = None,
 ):
     # Distributed training = training on more than one GPU.
     # Works in both single and multi-node scenarios.
@@ -153,6 +156,9 @@ def init_distributed_device_so(
             dist_backend = dist_backends.get(device_type, 'gloo')
 
         dist_url = dist_url or 'env://'
+        init_kw = dict(backend=dist_backend, init_method=dist_url)
+        if dist_timeout_minutes is not None:
+            init_kw["timeout"] = timedelta(minutes=dist_timeout_minutes)
 
         if 'SLURM_PROCID' in os.environ:
             # DDP via SLURM
@@ -162,18 +168,14 @@ def init_distributed_device_so(
             os.environ['RANK'] = str(global_rank)
             os.environ['WORLD_SIZE'] = str(world_size)
             torch.distributed.init_process_group(
-                backend=dist_backend,
-                init_method=dist_url,
                 world_size=world_size,
                 rank=global_rank,
+                **init_kw,
             )
         else:
             # DDP via torchrun, torch.distributed.launch
             local_rank, _, _ = world_info_from_env()
-            torch.distributed.init_process_group(
-                backend=dist_backend,
-                init_method=dist_url,
-            )
+            torch.distributed.init_process_group(**init_kw)
             world_size = torch.distributed.get_world_size()
             global_rank = torch.distributed.get_rank()
         distributed = True

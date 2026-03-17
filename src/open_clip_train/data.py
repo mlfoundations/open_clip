@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import pickle
 import random
 import sys
 import braceexpand
@@ -473,6 +474,312 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     return DataInfo(dataloader, sampler)
 
 
+def _collate_attr_jsonl(batch):
+    """Collate batch of (image, text, img_attr, txt_attr, txt_mask[, caption]) into stacked tensors + optional captions."""
+    images = torch.stack([b[0] for b in batch])
+    texts = torch.stack([b[1] for b in batch])
+    img_attr = torch.stack([b[2] for b in batch])
+    txt_attr = torch.stack([b[3] for b in batch])
+    txt_mask = torch.stack([b[4] for b in batch])
+    if len(batch[0]) > 5:
+        captions = [b[5] for b in batch]
+        return images, texts, img_attr, txt_attr, txt_mask, captions
+    return images, texts, img_attr, txt_attr, txt_mask
+
+
+def _build_jsonl_offset_index(captions_path, index_path):
+    """Stream the JSONL once and build a list of byte offsets (one per non-empty line)."""
+    offsets = []
+    with open(captions_path, 'rb') as f:
+        while True:
+            pos = f.tell()
+            line = f.readline()
+            if not line:
+                break
+            if line.strip():
+                offsets.append(pos)
+    with open(index_path, 'wb') as f:
+        pickle.dump(offsets, f, protocol=pickle.HIGHEST_PROTOCOL)
+    return offsets
+
+
+# When image index space is dense (max_index not huge, most slots used), use a dense numpy
+# array of offsets so it can be memory-mapped and shared across DataLoader workers.
+_IMAGE_ATTR_DENSE_MAX_INDEX = 50_000_000  # use dense array only if max_index <= this
+_IMAGE_ATTR_DENSE_FILL_RATIO = 0.5  # and at least this fraction of [0, max_index] is present
+
+
+def _build_image_attr_index(image_attr_path):
+    """Stream image_attr JSONL and build index: image_index -> byte offset.
+    Also builds image_path -> byte offset when rows have image_path (so img_attr matches caption's image).
+    Uses a dense numpy array (memmap-friendly) when indices are dense, else a pickle dict."""
+    base = image_attr_path
+    index_pickle_path = base + '.attr_index.pkl'
+    path_index_path = base + '.attr_path_index.pkl'
+    offsets_npy_path = base + '.attr_offsets.npy'
+    meta_path = base + '.attr_offsets_meta.json'
+
+    if os.path.exists(offsets_npy_path) and os.path.exists(meta_path):
+        pass  # index already built; may still need path index
+    elif os.path.exists(index_pickle_path):
+        pass
+    else:
+        pairs = []
+        path_pairs = []
+        max_index = -1
+        with open(image_attr_path, 'rb') as f:
+            while True:
+                pos = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                if not line.strip():
+                    continue
+                row = json.loads(line.decode('utf-8'))
+                idx = int(row['index'])
+                pairs.append((idx, pos))
+                max_index = max(max_index, idx)
+                path_str = (row.get('image_path') or '').strip()
+                if path_str:
+                    path_pairs.append((os.path.normpath(path_str), pos))
+
+        if not pairs:
+            with open(index_pickle_path, 'wb') as f:
+                pickle.dump({}, f, protocol=pickle.HIGHEST_PROTOCOL)
+            return None
+
+        n = len(pairs)
+        use_dense = (
+            max_index <= _IMAGE_ATTR_DENSE_MAX_INDEX
+            and (n / (max_index + 1)) >= _IMAGE_ATTR_DENSE_FILL_RATIO
+        )
+        if use_dense:
+            offsets_arr = np.full(max_index + 1, -1, dtype=np.int64)
+            for idx, pos in pairs:
+                offsets_arr[idx] = pos
+            np.save(offsets_npy_path, offsets_arr)
+            with open(meta_path, 'w') as f:
+                json.dump({'max_index': max_index, 'n': n}, f)
+            logging.info(f'Built dense image-attr index: {n} entries, max_index={max_index}, saved to {offsets_npy_path}.')
+        else:
+            index_to_offset = {idx: pos for idx, pos in pairs}
+            with open(index_pickle_path, 'wb') as f:
+                pickle.dump(index_to_offset, f, protocol=pickle.HIGHEST_PROTOCOL)
+            logging.info(f'Built sparse image-attr index: {n} entries, saved to {index_pickle_path}.')
+
+        if path_pairs and not os.path.exists(path_index_path):
+            path_to_offset = {p: pos for p, pos in path_pairs}
+            with open(path_index_path, 'wb') as f:
+                pickle.dump(path_to_offset, f, protocol=pickle.HIGHEST_PROTOCOL)
+            logging.info(f'Built image-attr path index: {len(path_to_offset)} entries, saved to {path_index_path}.')
+
+    # Ensure path index exists if image_attr file has image_path (build from current file)
+    if not os.path.exists(path_index_path):
+        path_pairs = []
+        with open(image_attr_path, 'rb') as f:
+            while True:
+                pos = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                if not line.strip():
+                    continue
+                row = json.loads(line.decode('utf-8'))
+                path_str = (row.get('image_path') or '').strip()
+                if path_str:
+                    path_pairs.append((os.path.normpath(path_str), pos))
+        if path_pairs:
+            path_to_offset = {p: pos for p, pos in path_pairs}
+            with open(path_index_path, 'wb') as f:
+                pickle.dump(path_to_offset, f, protocol=pickle.HIGHEST_PROTOCOL)
+            logging.info(f'Built image-attr path index: {len(path_to_offset)} entries, saved to {path_index_path}.')
+    return None
+
+
+def _load_image_attr_index(image_attr_path):
+    """Load image_index -> byte offset. Returns (index_lookup, is_dense).
+    index_lookup: for dense, np.ndarray (use with mmap); for sparse, dict."""
+    base = image_attr_path
+    offsets_npy_path = base + '.attr_offsets.npy'
+    meta_path = base + '.attr_offsets_meta.json'
+    index_pickle_path = base + '.attr_index.pkl'
+
+    if os.path.exists(offsets_npy_path) and os.path.exists(meta_path):
+        # Dense: memory-mapped so workers share pages
+        index_lookup = np.load(offsets_npy_path, mmap_mode='r')
+        return index_lookup, True
+    if os.path.exists(index_pickle_path):
+        with open(index_pickle_path, 'rb') as f:
+            index_lookup = pickle.load(f)
+        return index_lookup, False
+    return None, None
+
+
+def _load_image_attr_path_index(image_attr_path):
+    """Load image_path -> byte offset if .attr_path_index.pkl exists. Returns dict or None."""
+    path_index_path = image_attr_path + '.attr_path_index.pkl'
+    if not os.path.exists(path_index_path):
+        return None
+    with open(path_index_path, 'rb') as f:
+        return pickle.load(f)
+
+
+def ensure_attr_jsonl_indices(captions_path, image_attr_path, is_master, distributed):
+    """Build .index and .attr_* index files if missing. Only rank 0 builds when distributed to avoid races."""
+    if distributed and not is_master:
+        # Non-master ranks wait; rank 0 will build and then we all proceed
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        return
+    # Rank 0 or single process: build any missing indices
+    captions_index_path = captions_path + '.index'
+    if not os.path.exists(captions_index_path):
+        logging.info(f'Building captions index for {captions_path} (one-time pass)...')
+        _build_jsonl_offset_index(captions_path, captions_index_path)
+        logging.info(f'Built captions index, saved to {captions_index_path}.')
+    attr_npy = image_attr_path + '.attr_offsets.npy'
+    attr_pkl = image_attr_path + '.attr_index.pkl'
+    path_pkl = image_attr_path + '.attr_path_index.pkl'
+    if not os.path.exists(attr_npy) and not os.path.exists(attr_pkl):
+        logging.info(f'Building image-attr index for {image_attr_path} (one-time pass)...')
+        _build_image_attr_index(image_attr_path)
+    elif not os.path.exists(path_pkl):
+        logging.info(f'Building image-attr path index for {image_attr_path} (one-time pass)...')
+        _build_image_attr_index(image_attr_path)
+    if distributed and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
+class AttrCaptionJsonlDataset(Dataset):
+    """Dataset for masked attribute alignment: captions JSONL + image attribute vectors JSONL.
+    Uses offset indices for both files so neither is loaded fully into memory (suitable for very large JSONL)."""
+
+    def __init__(self, captions_path, image_attr_path, transforms, tokenizer=None):
+        logging.debug(f'Loading captions index from {captions_path}, image attrs from {image_attr_path}.')
+        self.captions_path = captions_path
+        self.image_attr_path = image_attr_path
+        self.transforms = transforms
+        self.tokenize = tokenizer
+        self._file = None  # lazy per-process open (safe for DataLoader workers)
+        self._attr_file = None
+
+        # Load image_attr index (must already exist; built by ensure_attr_jsonl_indices on rank 0)
+        self.image_attr_index, self.image_attr_dense = _load_image_attr_index(image_attr_path)
+        if self.image_attr_index is None:
+            raise FileNotFoundError(
+                f'No image-attr index found for {image_attr_path}. '
+                'Indices are built by rank 0 before dataset creation; ensure ensure_attr_jsonl_indices was called.'
+            )
+        self.image_attr_path_index = _load_image_attr_path_index(image_attr_path)
+        if self.image_attr_path_index is not None:
+            logging.debug(f'Using image-attr path index: {len(self.image_attr_path_index)} entries (img_attr by image_path).')
+        if self.image_attr_dense:
+            logging.debug(f'Using dense (mmap) image-attr index, size={len(self.image_attr_index)}.')
+        else:
+            logging.debug(f'Using sparse image-attr index, {len(self.image_attr_index)} entries.')
+
+        # Load captions offset index (must already exist; built by ensure_attr_jsonl_indices on rank 0)
+        index_path = captions_path + '.index'
+        if not os.path.exists(index_path):
+            raise FileNotFoundError(
+                f'Captions index not found: {index_path}. '
+                'Indices are built by rank 0 before dataset creation; ensure ensure_attr_jsonl_indices was called.'
+            )
+        with open(index_path, 'rb') as f:
+            self.offsets = pickle.load(f)
+        logging.debug(f'Loaded captions index: {len(self.offsets)} samples from {index_path}.')
+
+    def __len__(self):
+        return len(self.offsets)
+
+    def _read_sample(self, idx):
+        if self._file is None:
+            self._file = open(self.captions_path, 'rb')
+        self._file.seek(self.offsets[idx])
+        line = self._file.readline()
+        return json.loads(line.decode('utf-8'))
+
+    def _get_image_attr(self, image_index, image_path=None):
+        """Resolve to attr_values by image_path (if path index exists) or image_index.
+        Prefer image_path so img_attr matches the same image as the caption regardless of index ordering."""
+        offset = -1
+        if self.image_attr_path_index is not None and image_path:
+            path_norm = os.path.normpath((image_path or '').strip())
+            offset = self.image_attr_path_index.get(path_norm, -1)
+        if offset < 0:
+            if self.image_attr_dense:
+                if image_index < 0 or image_index >= len(self.image_attr_index):
+                    return [0] * 9
+                offset = int(self.image_attr_index[image_index])
+            else:
+                offset = self.image_attr_index.get(image_index, -1)
+        if offset < 0:
+            return [0] * 9
+        if self._attr_file is None:
+            self._attr_file = open(self.image_attr_path, 'rb')
+        self._attr_file.seek(offset)
+        line = self._attr_file.readline()
+        row = json.loads(line.decode('utf-8'))
+        return row.get('attr_values', [0] * 9)
+
+    def __getitem__(self, idx):
+        s = self._read_sample(idx)
+        image_path = s['image_path']
+        image_index = s['image_index']
+        caption = s['caption']
+        caption_mask = s['caption_mask']
+        caption_value = s['caption_value']
+
+        image = self.transforms(Image.open(str(image_path)).convert('RGB'))
+        text = self.tokenize([str(caption)])[0]
+
+        img_attr = self._get_image_attr(image_index, image_path=image_path)
+        if len(img_attr) != 9:
+            img_attr = (list(img_attr) + [0] * 9)[:9]
+
+        img_attr_t = torch.tensor(img_attr, dtype=torch.long)
+        txt_attr_t = torch.tensor(caption_value if len(caption_value) >= 9 else (list(caption_value) + [0] * 9)[:9], dtype=torch.long)
+        txt_mask_t = torch.tensor(caption_mask if len(caption_mask) >= 9 else (list(caption_mask) + [0] * 9)[:9], dtype=torch.bool)
+
+        return image, text, img_attr_t, txt_attr_t, txt_mask_t, caption
+
+
+def get_attr_jsonl_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+    input_filename = args.train_data if is_train else args.val_data
+    image_attr_path = getattr(args, 'image_attr_vectors', None)
+    assert input_filename, 'train_data or val_data must be set for attr_jsonl'
+    assert image_attr_path, 'image_attr_vectors must be set for attr_jsonl'
+
+    # Only rank 0 builds index files; then all ranks synchronize before loading (avoids DDP write races)
+    is_master = (not getattr(args, 'distributed', False)) or (getattr(args, 'rank', 0) == 0)
+    ensure_attr_jsonl_indices(input_filename, image_attr_path, is_master, getattr(args, 'distributed', False))
+
+    dataset = AttrCaptionJsonlDataset(
+        input_filename,
+        image_attr_path,
+        preprocess_fn,
+        tokenizer=tokenizer,
+    )
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+        collate_fn=_collate_attr_jsonl,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
 class SyntheticDataset(Dataset):
 
     def __init__(
@@ -530,12 +837,16 @@ def get_dataset_fn(data_path, dataset_type):
         return get_csv_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "attr_jsonl":
+        return get_attr_jsonl_dataset
     elif dataset_type == "auto":
-        ext = data_path.split('.')[-1]
+        ext = data_path.split('.')[-1].lower()
         if ext in ['csv', 'tsv']:
             return get_csv_dataset
         elif ext in ['tar']:
             return get_wds_dataset
+        elif ext == 'jsonl':
+            return get_attr_jsonl_dataset
         else:
             raise ValueError(
                 f"Tried to figure out dataset type, but failed for extension {ext}.")

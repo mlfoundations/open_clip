@@ -61,9 +61,27 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "csv", "synthetic", "attr_jsonl", "auto"],
         default="auto",
         help="Which type of dataset to process."
+    )
+    parser.add_argument(
+        "--image-attr-vectors",
+        type=str,
+        default=None,
+        help="Path to image_val_vectors.jsonl (required when using attr_jsonl).",
+    )
+    parser.add_argument(
+        "--masked-attr-alignment",
+        action="store_true",
+        default=False,
+        help="Use masked attribute alignment loss for SigLIP (dynamic loss mask).",
+    )
+    parser.add_argument(
+        "--masked-attr-loss-weight",
+        type=float,
+        default=1.0,
+        help="Weight for masked attribute alignment loss term (if combined with standard SigLIP).",
     )
     parser.add_argument(
         "--dataset-resampled",
@@ -386,6 +404,12 @@ def parse_args(args):
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc)."
     )
     parser.add_argument(
+        "--dist-timeout-minutes",
+        type=int,
+        default=None,
+        help="NCCL collective timeout in minutes (default: PyTorch default ~10 min). Increase for long runs if you hit timeout (e.g. 60 or 120)."
+    )
+    parser.add_argument(
         "--seed", type=int, default=0, help="Default random seed."
     )
     parser.add_argument(
@@ -414,6 +438,23 @@ def parse_args(args):
         type=int,
         default=100,
         help="Log every n steps to tensorboard/console/wandb.",
+    )
+    parser.add_argument(
+        "--viz-batch-matrix",
+        action="store_true",
+        help="Visualize the batch label/weight matrix (1=positive, -1=negative, 0=neutral) with images during training.",
+    )
+    parser.add_argument(
+        "--viz-batch-matrix-every",
+        type=int,
+        default=0,
+        help="Visualize batch matrix every N steps (0 = only when --viz-batch-matrix and first batch). If >0, also requires --viz-batch-matrix.",
+    )
+    parser.add_argument(
+        "--viz-batch-matrix-max-batch",
+        type=int,
+        default=8,
+        help="Max batch size to include in the visualization grid (default 8).",
     )
     parser.add_argument(
         "--coca-caption-loss-weight",
@@ -478,6 +519,38 @@ def parse_args(args):
         default=None,
         type=str,
         help='A string to specify a specific distributed loss implementation.'
+    )
+    # LoRA (PEFT)
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        default=False,
+        help="Enable LoRA fine-tuning via PEFT (low-rank adaptation).",
+    )
+    parser.add_argument(
+        "--lora-r",
+        type=int,
+        default=8,
+        help="LoRA rank (default: 8).",
+    )
+    parser.add_argument(
+        "--lora-alpha",
+        type=int,
+        default=32,
+        help="LoRA alpha scaling (default: 32).",
+    )
+    parser.add_argument(
+        "--lora-dropout",
+        type=float,
+        default=0.0,
+        help="LoRA dropout (default: 0.0).",
+    )
+    parser.add_argument(
+        "--lora-target-modules",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Module name substrings to apply LoRA to (default: out_proj c_fc c_proj for CLIP/ViT).",
     )
 
     args = parser.parse_args(args)
