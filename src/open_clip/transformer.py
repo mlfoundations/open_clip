@@ -1141,7 +1141,7 @@ class TextTransformer(nn.Module):
             stop_early: bool = False,
             normalize_intermediates: bool = False,
             intermediates_only: bool = False,
-            output_fmt: str = 'NCHW',
+            output_fmt: str = 'NLC',
             output_extra_tokens: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
