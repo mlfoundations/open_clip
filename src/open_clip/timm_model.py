@@ -210,6 +210,16 @@ class TimmModel(nn.Module):
             logging.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
 
     def forward(self, x):
-        x = self.trunk(x)
+        if type(x) == dict:
+            # if input is dict, assume it contains pre-extracted patches and 
+            # optional patch coordinates and valid mask for NaFlex models, and pass 
+            # them through the trunk accordingly
+            x = self.trunk(
+                x['patches'], 
+                patch_coord=x.get('patch_coord', None), 
+                patch_valid=x.get('patch_valid', None),
+            )
+        else:
+            x = self.trunk(x)
         x = self.head(x)
         return x

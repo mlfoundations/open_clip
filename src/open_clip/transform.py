@@ -13,6 +13,7 @@ from torchvision.transforms import Normalize, Compose, RandomResizedCrop, Interp
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .utils import to_2tuple
 
+from functools import partial
 
 @dataclass
 class PreprocessCfg:
@@ -66,6 +67,7 @@ class AugmentationCfg:
     color_jitter: Optional[Union[float, Tuple[float, float, float], Tuple[float, float, float, float]]] = None
     re_prob: Optional[float] = None
     re_count: Optional[int] = None
+    naflex: bool = False
     use_timm: bool = False
 
     # params for simclr_jitter_gray
@@ -370,7 +372,7 @@ def image_transform(
             aug_cfg_dict.pop('color_jitter_prob', None)
             aug_cfg_dict.pop('gray_scale_prob', None)
 
-            train_transform = create_transform(
+            train_transform = partial(create_transform,
                 input_size=input_size,
                 is_training=True,
                 hflip=0.,

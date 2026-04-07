@@ -5,9 +5,11 @@ import math
 import os
 import random
 import sys
+import warnings
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
+from typing import Any, Iterator, List, Tuple, Dict, Optional, Union, Callable
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,12 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableD
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
+
+try:
+    from timm.data.naflex_transforms import Patchify
+    from timm.data.naflex_dataset import NaFlexCollator, calculate_naflex_batch_size, _resolve_patch_cfg
+except ImportError:
+    naflex_available = False
 
 try:
     import horovod.torch as hvd
@@ -192,6 +200,8 @@ def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, h
     current_sample = None
     for filesample in data:
         assert isinstance(filesample, dict)
+        if "fname" not in filesample or "data" not in filesample:
+            continue
         fname, value = filesample["fname"], filesample["data"]
         prefix, suffix = keys(fname)
         if prefix is None:
@@ -237,7 +247,6 @@ _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
-
 
 class detshuffle2(wds.PipelineStage):
     def __init__(
@@ -324,16 +333,345 @@ class ResampledShards2(IterableDataset):
             else:
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
+class NaFlexBatching(wds.PipelineStage):
+    """
+    
+    WebDataset PipelineStage that implements the NaFlex batching strategy for image-text datasets.
+    Adapted directly from timm's NaFlexDatasetWrapper 
+    (https://github.com/huggingface/pytorch-image-models/blob/c769a585e0915c58fd7bb92f2355377aab7fc0e0/timm/data/naflex_dataset.py#L157).
+
+    Yields batches with variable sequence lengths. It calculates a canonical
+    batch schedule (sequence length, batch size pairs) once based on the
+    total dataset size (padded for distribution). Each epoch, it shuffles
+    the order of this canonical schedule and the dataset indices.
+    This ensures a consistent number of batches and samples per epoch
+    across all ranks. Handles distributed training and multiple workers.
+
+    Supports both specification the total number of samples (`train_num_samples`) or total number of vision
+    tokens (`train_num_tokens`) seen per epoch, and calculates a canonical batch schedule accordingly.
+
+    """
+
+    def __init__(
+            self,
+            train_num_samples: int = None,
+            train_num_tokens: int = None,
+            patch_size: Optional[Union[int, Tuple[int, int]]] = None,
+            patch_size_choices: Optional[List[int]] = None,
+            patch_size_choice_probs: Optional[List[float]] = None,
+            seq_lens: Tuple[int, ...] = (128, 256, 576, 784, 1024),
+            max_tokens_per_batch: int = 4096 * 4,
+            transform_factory: Optional[Callable] = None,
+            seed: int = 42,
+            shuffle: bool = True,
+            distributed: bool = False,
+            rank: int = 0,
+            world_size: int = 1,
+            epoch: int = -1,
+            batch_divisor: int = 8,
+    ):
+        """
+        Args:
+            train_num_samples: Total number of samples in the training dataset. Adjust the canonical batch schedule based on this.
+            train_num_tokens: Total number of vision tokens in the training dataset. Adjust the canonical batch schedule based on this. Either `train_num_tokens` or `train_num_samples` must be specified, not both.
+            patch_size: Single patch size to use.
+            patch_size_choices: List of patch sizes to randomly select from.
+            patch_size_choice_probs: Probabilities for each patch size.
+            seq_lens: Sequence lengths to use for batching.
+            max_tokens_per_batch: Target tokens per batch.
+            transform_factory: Factory function for creating transforms.
+            seed: Random seed.
+            shuffle: Whether to shuffle data.
+            distributed: Whether using distributed training.
+            rank: Process rank for distributed training.
+            world_size: Total number of processes.
+            epoch: Starting epoch.
+            batch_divisor: Ensure batch size is divisible by this.
+        """
+        super().__init__()
+        self.seq_lens = sorted(list(set(seq_lens))) # Ensure unique and sorted
+        self.max_tokens_per_batch = max_tokens_per_batch
+        self.seed = seed
+        self.shuffle = shuffle
+        self.distributed = distributed
+        self.rank = rank if distributed else 0
+        self.world_size = world_size if distributed else 1
+        self.epoch = epoch
+        self.batch_divisor = batch_divisor
+
+        # Resolve patch size configuration
+        self.patch_sizes, self.patch_size_probs, self.variable_patch_size = _resolve_patch_cfg(
+            patch_size,
+            patch_size_choices,
+            patch_size_choice_probs
+        )
+        # Pre-initialize transforms and collate fns for each (seq_len, patch_idx) combination
+        self.transforms: Dict[Tuple[int, int], Optional[Callable]] = {}
+        self.collate_fns: Dict[int, Callable] = {}
+        self.patchifiers: List[Callable] = []
+
+        for seq_len in self.seq_lens:
+            self.collate_fns[seq_len] = NaFlexCollator(seq_len)
+
+        for patch_idx, patch_size_tuple in enumerate(self.patch_sizes):
+            # Pre-initialize patchifiers for each patch size (indexed by patch_idx)
+            self.patchifiers.append(Patchify(
+                patch_size=patch_size_tuple,
+                flatten_patches=not self.variable_patch_size
+            ))
+
+            # Create transforms for each (seq_len, patch_idx) combination
+            for seq_len in self.seq_lens:
+                key = (seq_len, patch_idx)
+                if transform_factory:
+                    self.transforms[key] = transform_factory(max_seq_len=seq_len, patch_size=patch_size_tuple)
+                else:
+                    self.transforms[key] = None # No transform
+
+        # Canonical Schedule Calculation (Done Once)
+        self._canonical_batch_schedule: List[Tuple[int, int]] = []
+        self._num_batches_per_rank: int = 0
+        self._num_samples_per_rank: int = 0
+
+        if train_num_samples is not None and train_num_tokens is None:
+            self._create_canonical_schedule_from_num_samples(train_num_samples)
+        elif train_num_tokens is not None and train_num_samples is None:
+            self._create_canonical_schedule_from_num_tokens(train_num_tokens)
+        else:
+            raise ValueError("Must specify either `train_num_samples` or `train_num_tokens` for NaFlexBatching to create a canonical schedule.")
+        
+    def _create_canonical_schedule_from_num_tokens(self, num_tokens: int):
+        """
+        Alternative method to calculate canonical schedule based on total tokens instead of samples.
+        This can be used if we want to target a specific number of tokens per epoch rather than samples.
+        """
+        current_schedule: List[Tuple[int, int]] = []
+
+        if self.distributed and self.world_size > 1:
+            # Calculate padding needed for even distribution
+            if num_tokens % self.world_size != 0:
+                 pad_size = self.world_size - (num_tokens % self.world_size)
+                 padded_num_tokens += pad_size
+            else:
+                 pad_size = 0
+                 padded_num_tokens = num_tokens
+            if padded_num_tokens % self.world_size != 0:
+                 # This should not happen with the padding logic, but safeguard
+                 raise RuntimeError(f"Internal Error: Padded total length {padded_num_tokens} not divisible by world size {self.world_size}")
+            num_tokens_per_rank = padded_num_tokens // self.world_size
+        elif self.distributed and self.world_size <= 1:
+             # Distributed flag set but world_size is 1, treat as non-distributed
+             num_tokens_per_rank = num_tokens
+        
+        remaining_tokens = num_tokens_per_rank
+        g = torch.Generator()
+        g.manual_seed(self.seed) # Use base seed for deterministic schedule structure
+        while remaining_tokens > 0:
+            # Sample sequence length deterministically based on base seed
+            seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=g).item()
+            seq_len = self.seq_lens[seq_idx]
+
+            # Calculate batch size
+            batch_size = calculate_naflex_batch_size(
+                tokens_per_batch=min(self.max_tokens_per_batch, remaining_tokens), # Don't exceed remaining tokens
+                seq_len=seq_len,
+                divisor=self.batch_divisor,
+                rounding='floor',
+            )
+            batch_size = int(batch_size)
+            if batch_size == 0:
+                break
+
+            current_schedule.append((seq_len, batch_size))
+            remaining_tokens -= (batch_size * seq_len) # Account for all ranks
+
+        self._canonical_batch_schedule = current_schedule
+        self._num_batches_per_rank = len(current_schedule)
+        self._num_samples_per_rank = sum(batch_size for _, batch_size in current_schedule)
+
+    def _create_canonical_schedule_from_num_samples(self, num_samples):
+        """
+        Calculates the canonical batch schedule (seq_len, batch_size pairs)
+        based on the dataset size, padded for distributed training.
+        This schedule is the *same* for all ranks and ensures consistent
+        epoch length. It is calculated once during initialization.
+        """
+        total_len = num_samples
+        padded_total_len = total_len
+        num_samples_per_rank = total_len
+
+        if self.distributed and self.world_size > 1:
+            # Calculate padding needed for even distribution
+            if total_len % self.world_size != 0:
+                 pad_size = self.world_size - (total_len % self.world_size)
+                 padded_total_len += pad_size
+            else:
+                 pad_size = 0
+
+            if padded_total_len % self.world_size != 0:
+                 # This should not happen with the padding logic, but safeguard
+                 raise RuntimeError(f"Internal Error: Padded total length {padded_total_len} not divisible by world size {self.world_size}")
+
+            num_samples_per_rank = padded_total_len // self.world_size
+        elif self.distributed and self.world_size <= 1:
+             # Distributed flag set but world_size is 1, treat as non-distributed
+             pass # num_samples_per_rank remains total_len
+
+        self._num_samples_per_rank = num_samples_per_rank
+
+        if num_samples_per_rank == 0:
+             self._canonical_batch_schedule = []
+             self._num_batches_per_rank = 0
+             return
+
+        # Use a fixed seed for generating the canonical schedule structure
+        g = torch.Generator()
+        g.manual_seed(self.seed) # Use base seed, NOT epoch seed
+
+        current_schedule: List[Tuple[int, int]] = []
+        remaining_samples = num_samples_per_rank
+        total_scheduled_samples = 0
+
+        while remaining_samples > 0:
+            # Sample sequence length deterministically based on base seed
+            seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=g).item()
+            seq_len = self.seq_lens[seq_idx]
+
+            # Calculate batch size
+            batch_size = calculate_naflex_batch_size(
+                tokens_per_batch=self.max_tokens_per_batch,
+                seq_len=seq_len,
+                # max_size should be remaining_samples to avoid overshooting
+                max_size=remaining_samples,
+                divisor=self.batch_divisor,
+                rounding='floor',
+            )
+            # Ensure batch size is positive and doesn't exceed remaining samples
+            batch_size = max(1, batch_size)
+            batch_size = min(batch_size, remaining_samples)
+
+            if batch_size <= 0:
+                 warnings.warn(f"Calculated batch size <= 0 (seq_len={seq_len}, remaining={remaining_samples}). Stopping schedule generation early.")
+                 break # Avoid infinite loop if something goes wrong
+
+            current_schedule.append((seq_len, batch_size))
+            remaining_samples -= batch_size
+            total_scheduled_samples += batch_size
+
+        # Sanity check: Ensure the schedule covers all samples for the rank
+        if total_scheduled_samples != num_samples_per_rank:
+            warnings.warn(
+                f"Rank {self.rank}: Canonical schedule accounts for {total_scheduled_samples} samples, "
+                f"but expected {num_samples_per_rank} samples per rank. "
+                f"This might happen if min_batch_size or batch_divisor constraints prevent utilizing all samples. "
+                f"Check parameters. Remaining samples: {remaining_samples}"
+            )
+            # Adjust if needed? Could add a final small batch, but might violate constraints.
+            # Current behavior: some samples might be dropped if schedule logic fails.
+
+        self._canonical_batch_schedule = current_schedule
+        self._num_batches_per_rank = len(current_schedule)
+        self._num_samples_per_rank = total_scheduled_samples
+
+    @property
+    def num_samples(self) -> int:
+        """Returns the total number of samples on training."""
+        return self._num_samples_per_rank * self.world_size if self.distributed else self._num_samples_per_rank
+
+    def __len__(self) -> int:
+        """Returns the number of batches per worker for the current epoch.
+
+        Returns:
+            Number of batches this worker will process.
+        """
+        return self._num_batches_per_rank
+
+    def run(self, src):
+        """Iterates through pre-calculated batches for the current epoch.
+
+        Yields:
+            Tuple of (input_dict, targets) for each batch.
+        """
+        g = torch.Generator()
+        if isinstance(self.epoch, SharedEpoch):
+            # if Epoch value is shared across workers, use that for deterministic shuffling across workers. Otherwise, increment local epoch counter for shuffling.
+            epoch = self.epoch.get_value()
+        else:
+            self.epoch += 1
+            epoch = self.epoch
+        g.manual_seed(self.seed + epoch) # Ensure same shuffling for all workers
+
+        schedule = list(self._canonical_batch_schedule)
+        # shuffle the schedule for this epoch
+        if self.shuffle:
+            random.Random(self.seed + epoch).shuffle(schedule) # Use Python random for shuffling schedule to avoid affecting torch generator state used for patch size sampling
+        
+        # divide up schedule based on dataloader worker id
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+            # Split the schedule into roughly equal parts for each worker
+            batches_per_worker = (self._num_batches_per_rank + num_workers - 1) // num_workers
+            start_idx = worker_id * batches_per_worker
+            end_idx = min(start_idx + batches_per_worker, self._num_batches_per_rank)
+            schedule = schedule[start_idx:end_idx]
+        else:
+            print(f"Warning: Could not get worker info in NaFlexBatching. Processing full schedule in single worker mode.")
+        
+        samples = iter(src)
+        for _, (seq_len, batch_size) in enumerate(schedule):
+            batch_imgs = []
+            batch_targets = []
+            for _ in range(batch_size):
+                try:
+                    sample = next(samples)
+                except StopIteration:
+                    # This can happen if the underlying dataset is smaller than expected
+                    # due to padding issues or if schedule generation had problems.
+                    # In this case, we stop yielding batches for this epoch.
+                    warnings.warn(f"Rank {self.rank}: Reached end of dataset samples while processing batch (seq_len={seq_len}, batch_size={batch_size}). Stopping iteration.")
+                    return
+                # Select patch size for this batch
+                patch_idx = 0
+                if self.variable_patch_size:
+                    # Use torch multinomial for weighted random choice
+                    patch_idx = torch.multinomial(torch.tensor(self.patch_size_probs), 1, generator=g).item()
+
+                # Get the pre-initialized transform and patchifier using patch_idx
+                transform_key = (seq_len, patch_idx)
+                transform = self.transforms.get(transform_key)
+                batch_patchifier = self.patchifiers[patch_idx]
+                
+                img, label = sample
+
+                # Apply transform if available
+                processed_img = transform(img) if transform else img
+                batch_imgs.append(processed_img)
+                batch_targets.append(label)
+                
+            batch_imgs = [batch_patchifier(img) for img in batch_imgs]
+            batch_samples = list(zip(batch_imgs, batch_targets))
+            if batch_samples: # Only yield if we successfully processed samples
+                # Collate the processed samples into a batch
+                yield self.collate_fns[seq_len](batch_samples)
+
 
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
+    if args.use_naflex:
+        assert naflex_available, "NaFlexBatching requires timm version with NaFlex support. Please install timm>=1.0.16 to use this feature."
 
     num_shards = None
     if is_train:
-        if args.train_num_samples is not None:
+        if args.naflex_num_train_image_tokens is not None and args.train_num_samples is None:
+            num_image_tokens = args.naflex_num_train_image_tokens
+            num_samples = None
+        elif args.train_num_samples is not None:
             num_samples = args.train_num_samples
+            num_image_tokens = None
         else:
             num_samples, num_shards = get_dataset_size(input_shards)
             if not num_samples:
@@ -389,30 +727,59 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.to_tuple("image", "text"),
-        wds.batched(args.batch_size, partial=not is_train)
+        wds.rename(image="jpg;png;jpeg;webp", text="txt")
     ])
-
-    dataset = wds.DataPipeline(*pipeline)
-
-    if is_train:
-        if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
-        # roll over and repeat a few samples to get same number of full batches on each node
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.workers)
-        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
+    if args.use_naflex:
+        # for naflex we need to keep the original image for patching, and we will apply the preprocess_img transform inside the naflex batching 
+        # see below, where we pass the transform factory to the NaFlexBatching instance)
+        pipeline.append(wds.map_dict(image=lambda img: img, text=lambda text: tokenizer(text)[0]))
     else:
-        # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
+        # for non-naflex we can just apply the preprocess_img transform here as usualß
+        pipeline.append(wds.map_dict(image=lambda img: preprocess_img(img), text=lambda text: tokenizer(text)[0]))
+    pipeline.append(wds.to_tuple("image", "text"))
+
+    if args.use_naflex:
+        # When we use NaFlex, batching is handled by NaFlexBatching which:
+        # randomly selects a patch size and sequence length for each batch, applies the appropriate image transformations, and dynamically 
+        # adjusts the batch size to fit within the specified max tokens per batch.
+        if is_train:
+            naflex_batching = NaFlexBatching(
+                epoch=shared_epoch,
+                train_num_samples=num_samples,
+                train_num_tokens=num_image_tokens,
+                rank=args.rank, 
+                world_size=args.world_size, 
+                distributed=args.distributed,
+                max_tokens_per_batch=args.naflex_max_image_tokens_per_batch, 
+                patch_size_choices=args.naflex_patch_sizes, 
+                seq_lens=args.naflex_seq_lens, 
+                transform_factory=preprocess_img
+            )
+            pipeline.append(naflex_batching)
+            dataset = wds.DataPipeline(*pipeline)
+            num_batches = len(naflex_batching)
+            num_samples = naflex_batching.num_samples
+        else:
+            raise NotImplementedError("NaFlex batching is currently only implemented for training.")
+    else:
+        pipeline.append(wds.batched(args.batch_size, partial=not is_train))
+        dataset = wds.DataPipeline(*pipeline)
+        if is_train:
+            if not resampled:
+                num_shards = num_shards or len(expand_urls(input_shards)[0])
+                assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+            # roll over and repeat a few samples to get same number of full batches on each node
+            round_fn = math.floor if floor else math.ceil
+            global_batch_size = args.batch_size * args.world_size
+            num_batches = round_fn(num_samples / global_batch_size)
+            num_workers = max(1, args.workers)
+            num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+            num_batches = num_worker_batches * num_workers
+            num_samples = num_batches * global_batch_size
+            dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
+        else:
+            # last batches are partial, eval is done on single (master) node
+            num_batches = math.ceil(num_samples / args.batch_size)
 
     dataloader = wds.WebLoader(
         dataset,

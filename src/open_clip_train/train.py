@@ -73,6 +73,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
+
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
     if args.accum_freq > 1:
@@ -82,6 +83,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
+    num_samples = 0
     for i, batch in enumerate(dataloader):
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
@@ -90,7 +92,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             scheduler(step)
 
         images, texts = batch
-        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+
+        if type(images) == dict:
+            images = {k: (v.to(device=device, dtype=input_dtype, non_blocking=True) if isinstance(v, torch.Tensor) else v) for k, v in images.items()}
+        else: 
+            images = images.to(device=device, dtype=input_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -191,10 +197,23 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
-        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
+
+        
+        if type(images) == dict:
+            # In the case of NaFlex batching, batch size is variable (variable for different iterations but same on different ranks).
+            batch_size = images['patches'].shape[0]
+        else:
             batch_size = len(images)
-            num_samples = batch_count * batch_size * args.accum_freq * args.world_size
+
+        num_samples += batch_size * args.accum_freq * args.world_size
+
+        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
+
             samples_per_epoch = dataloader.num_samples
+            
+            samples_per_second = args.accum_freq * batch_size * args.world_size / batch_time_m.val
+            samples_per_second_per_gpu = args.accum_freq * batch_size / batch_time_m.val
+
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
             # NOTE loss is coarsely sampled, just master node and per log update
@@ -210,8 +229,6 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
-            samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
-            samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
             logging.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "

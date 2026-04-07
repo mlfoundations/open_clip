@@ -129,7 +129,7 @@ def parse_args(args):
         "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size per GPU."
+        "--batch-size", type=int, default=64, help="Batch size per GPU. Ignored when using NaFlex, with --use-naflex."
     )
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
@@ -478,6 +478,38 @@ def parse_args(args):
         default=None,
         type=str,
         help='A string to specify a specific distributed loss implementation.'
+    )
+    parser.add_argument(
+        "--use-naflex",
+        default=False,
+        action="store_true",
+        help='Use NaFlex data loading and training.'
+    )
+    parser.add_argument(
+        "--naflex-num-train-image-tokens",
+        type=int,
+        default=None,
+        help="Number of image tokens in dataset. Either this or --train-num-samples must be specified for NaFlex training, to calculate the canonical batch schedule. If used, determines the total number of vision tokens seen in one epoch.",
+    )
+    parser.add_argument( 
+        "--naflex-patch-sizes",
+        type=int,
+        nargs='+',
+        default=None,
+        help="Patch sizes to use for NaFlex training. Default to patch size of the model."
+    )
+    parser.add_argument(
+        "--naflex-seq-lens",
+        type=int,
+        nargs='+',
+        default=None,
+        help="Sequence lengths to use for NaFlex training."
+    )
+    parser.add_argument(
+        "--naflex-max-image-tokens-per-batch",
+        type=int,
+        default=4096*4,
+        help="Maximum number of image tokens per batch for NaFlex training. This is used to dynamically adjust the batch size based on the sequence length and patch size."
     )
 
     args = parser.parse_args(args)
