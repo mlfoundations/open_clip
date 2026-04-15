@@ -25,6 +25,7 @@ from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander
 try:
     from timm.data.naflex_transforms import Patchify
     from timm.data.naflex_dataset import NaFlexCollator, calculate_naflex_batch_size, _resolve_patch_cfg
+    naflex_available = True
 except ImportError:
     naflex_available = False
 
@@ -451,7 +452,7 @@ class NaFlexBatching(wds.PipelineStage):
             # Calculate padding needed for even distribution
             if num_tokens % self.world_size != 0:
                  pad_size = self.world_size - (num_tokens % self.world_size)
-                 padded_num_tokens += pad_size
+                 padded_num_tokens = num_tokens + pad_size
             else:
                  pad_size = 0
                  padded_num_tokens = num_tokens
@@ -459,7 +460,7 @@ class NaFlexBatching(wds.PipelineStage):
                  # This should not happen with the padding logic, but safeguard
                  raise RuntimeError(f"Internal Error: Padded total length {padded_num_tokens} not divisible by world size {self.world_size}")
             num_tokens_per_rank = padded_num_tokens // self.world_size
-        elif self.distributed and self.world_size <= 1:
+        else:
              # Distributed flag set but world_size is 1, treat as non-distributed
              num_tokens_per_rank = num_tokens
         
@@ -674,6 +675,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             num_image_tokens = None
         else:
             num_samples, num_shards = get_dataset_size(input_shards)
+            num_image_tokens = None
             if not num_samples:
                 raise RuntimeError(
                     'Currently, the number of dataset samples must be specified for the training dataset. '
