@@ -254,6 +254,10 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         return metrics
     device = torch.device(args.device)
     model.eval()
+    # unwrap DDP once here so zero_shot_eval and the imagenet-val / imagenet-v2
+    # paths below all run on the bare module on rank 0 (completes #1134).
+    if args.distributed and not args.horovod and hasattr(model, "module"):
+        model = model.module
 
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
@@ -262,9 +266,6 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
-        # unwrap DDP for single process eval
-        if args.distributed and not args.horovod:
-            model = model.module
         dataloader = data['val'].dataloader
         num_samples = 0
         samples_per_val = dataloader.num_samples
