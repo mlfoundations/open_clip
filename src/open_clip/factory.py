@@ -160,10 +160,7 @@ def load_state_dict(
         from safetensors.torch import load_file
         checkpoint = load_file(checkpoint_path, device=device)
     else:
-        try:
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=weights_only)
-        except TypeError:
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=weights_only)
 
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
