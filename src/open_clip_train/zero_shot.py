@@ -49,7 +49,7 @@ def zero_shot_eval(model, data, epoch, args, tokenizer=None):
         return {}
     if (epoch % args.zeroshot_frequency) != 0 and epoch != args.epochs:
         return {}
-    if args.distributed and not args.horovod:
+    if args.distributed and not args.horovod and hasattr(model, 'module'):
         model = model.module
 
     logging.info('Starting zero-shot imagenet.')
