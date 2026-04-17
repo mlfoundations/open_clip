@@ -130,6 +130,23 @@ def test_inference_with_data(
         test_model = torch.jit.script(test_model)
         model_out = util_test.forward_model(test_model, model_name, preprocess_val, input_image, input_text)
         assert model_out["test_output"].shape[-1] == 2
+
+
+def test_text_global_pool_eos_fallback_to_last_position():
+    """When eos_token_id is absent from a row, pool_type='eos' should fall back
+    to the last position rather than silently returning x[:, 0] (the BOS/CLS
+    position). Guards against silent-wrong-result on truncated inputs.
+    """
+    from open_clip.transformer import text_global_pool
+    eos = 49407
+    x = torch.arange(2 * 8 * 4, dtype=torch.float32).reshape(2, 8, 4)
+    text = torch.tensor([
+        [1, 2, 3, eos, 0, 0, 0, 0],     # has EOS at position 3
+        [1, 2, 3, 4, 5, 6, 7, 8],       # no EOS anywhere
+    ])
+    pooled = text_global_pool(x, text, pool_type='eos', eos_token_id=eos)
+    assert torch.equal(pooled[0], x[0, 3])     # row with EOS -> position 3
+    assert torch.equal(pooled[1], x[1, -1])    # row without EOS -> last position, not BOS
         
     
 

@@ -936,7 +936,15 @@ def text_global_pool(
         # take features from tokenizer specific eos
         assert text is not None
         assert eos_token_id is not None
-        idx = (text == eos_token_id).int().argmax(dim=-1)
+        mask = (text == eos_token_id)
+        has_eos = mask.any(dim=-1)
+        # Fall back to the last position when EOS is absent (e.g. truncated input)
+        # so that we never silently pool from position 0 (BOS/CLS).
+        idx = torch.where(
+            has_eos,
+            mask.int().argmax(dim=-1),
+            torch.full((text.size(0),), text.size(1) - 1, dtype=torch.long, device=text.device),
+        )
         pooled = x[torch.arange(x.shape[0], device=x.device), idx]
     else:
         pooled = x
