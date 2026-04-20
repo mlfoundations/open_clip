@@ -727,6 +727,7 @@ def get_tokenizer(
         tokenizer_mode = text_config.get('tokenizer_mode', None)
 
         logging.info(f"Using HFTokenizer with source: '{tokenizer_source}', mode: '{tokenizer_mode}'")
+        tokenizer_kwargs.pop('trust_remote_code', False)
         tokenizer = HFTokenizer(
             tokenizer_source,
             context_length=context_length,
