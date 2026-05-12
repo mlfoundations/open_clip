@@ -1,0 +1,21 @@
+# train with hf dataset pixparse/cc3m-wds
+clip/bin/python -m open_clip_train.main \
+    --save-frequency 1 \
+    --report-to wandb \
+    --dataset-type hf \
+    --train-data=pixparse/cc3m-wds \
+    --val-data=pixparse/cc3m-wds  \
+    --csv-img-key jpg \
+    --csv-caption-key txt \
+    --imagenet-val=ILSVRC/imagenet-1k \
+    --warmup 2000 \
+    --batch-size=192 \
+    --lr=5e-4 \
+    --wd=0.1 \
+    --epochs=30 \
+    --workers=12 \
+    --torchcompile \
+    --precision pure_bf16 \
+    --model RN50 \
+    --val-frequency 5 \
+    --zeroshot-frequency 5 

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import torch
+
 from open_clip_train import zero_shot as zero_shot_module
 
 
@@ -15,6 +17,21 @@ class _WrappedModel:
 class _DataWrapper:
     def __init__(self):
         self.dataloader = object()
+
+
+def test_accuracy_returns_python_scalars():
+    logits = torch.tensor([
+        [0.1, 0.9, 0.0],
+        [0.8, 0.1, 0.2],
+    ])
+    target = torch.tensor([1, 2])
+
+    acc1, acc2 = zero_shot_module.accuracy(logits, target, topk=(1, 2))
+
+    assert acc1 == 1.0
+    assert acc2 == 2.0
+    assert isinstance(acc1, float)
+    assert isinstance(acc2, float)
 
 
 def test_zero_shot_eval_handles_already_unwrapped_model(monkeypatch):

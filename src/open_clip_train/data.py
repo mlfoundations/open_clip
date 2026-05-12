@@ -51,6 +51,52 @@ class CsvDataset(Dataset):
         return {"image": image, "text": text}
 
 
+class HFDataset(Dataset):
+    def __init__(self, dataset, transforms, img_key, caption_key, tokenizer=None):
+        self.dataset = dataset
+        self.transforms = transforms
+        self.img_key = img_key
+        self.caption_key = caption_key
+        self.tokenize = tokenizer
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        image = sample[self.img_key]
+        if isinstance(image, (str, os.PathLike)):
+            image = Image.open(image)
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(np.asarray(image))
+        image = self.transforms(image.convert("RGB"))
+
+        caption = sample[self.caption_key]
+        if isinstance(caption, (list, tuple)):
+            caption = random.choice(caption) if caption else ""
+        text = self.tokenize([str(caption)])[0]
+        return {"image": image, "text": text}
+
+
+class HFImageNetDataset(Dataset):
+    def __init__(self, dataset, transform):
+        self.dataset = dataset
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        image = sample["image"]
+        if isinstance(image, (str, os.PathLike)):
+            image = Image.open(image)
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(np.asarray(image))
+        image = self.transform(image.convert("RGB"))
+        return image, sample["label"]
+
+
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
         self.shared_epoch = Value('i', epoch)
@@ -134,9 +180,16 @@ def get_imagenet(args, preprocess_fns, split):
         else:
             data_path = args.imagenet_val
             preprocess_fn = preprocess_val
-        assert data_path
-
-        dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
+            
+        if data_path:
+            if data_path.startswith("hf:") or data_path == "ILSVRC/imagenet-1k":
+                from datasets import load_dataset
+                ds_name = data_path.replace("hf:", "") if data_path.startswith("hf:") else "ILSVRC/imagenet-1k"
+                hf_split = "train" if is_train else "validation"
+                hf_dataset = load_dataset(ds_name, split=hf_split)
+                dataset = HFImageNetDataset(hf_dataset, transform=preprocess_fn)
+            else:
+                dataset = datasets.ImageFolder(data_path, transform=preprocess_fn)
 
     if is_train:
         idxs = np.zeros(len(dataset.targets))
@@ -329,6 +382,39 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
+### Add huggingface dataset support
+def get_hf_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
+    from datasets import load_dataset
+    dataset_name = args.train_data if is_train else args.val_data
+    dataset = load_dataset(dataset_name, split="train" if is_train else "validation", )
+
+    hf_dataset = HFDataset(
+        dataset,
+        preprocess_img,
+        img_key=args.csv_img_key or "image",
+        caption_key=args.csv_caption_key or "text",
+        tokenizer=tokenizer,
+    )
+
+    num_samples = len(hf_dataset)
+    sampler = DistributedSampler(hf_dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        hf_dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -475,7 +561,6 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
 
     return DataInfo(dataloader, sampler)
 
-
 class SyntheticDataset(Dataset):
 
     def __init__(
@@ -529,6 +614,8 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
+    elif dataset_type == "hf":
+        return get_hf_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
     elif dataset_type == "synthetic":
