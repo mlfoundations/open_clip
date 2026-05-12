@@ -23,6 +23,7 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+from open_clip_train.naflex_data import NaFlexBatcher, require_naflex
 
 
 class CsvDataset(Dataset):
@@ -196,6 +197,8 @@ def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, h
     current_sample = None
     for filesample in data:
         assert isinstance(filesample, dict)
+        if "fname" not in filesample or "data" not in filesample:
+            continue
         fname, value = filesample["fname"], filesample["data"]
         prefix, suffix = keys(fname)
         if prefix is None:
@@ -333,10 +336,16 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
+    use_naflex = getattr(args, 'use_naflex', False) and is_train
 
     num_shards = None
     if is_train:
-        if args.train_num_samples is not None:
+        num_image_tokens = getattr(args, 'naflex_num_train_image_tokens', None)
+        if use_naflex and num_image_tokens is not None and args.train_num_samples is not None:
+            raise ValueError("Specify only one of `--train-num-samples` or `--naflex-num-train-image-tokens`.")
+        if use_naflex and num_image_tokens is not None:
+            num_samples = None
+        elif args.train_num_samples is not None:
             num_samples = args.train_num_samples
         else:
             num_samples, num_shards = get_dataset_size(input_shards)
@@ -346,13 +355,21 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                     'Please specify it via `--train-num-samples` if no dataset length info is present.')
     else:
         # Eval will just exhaust the iterator if the size is not specified.
-        num_samples = args.val_num_samples or 0 
+        num_samples = args.val_num_samples or 0
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
     if is_train and args.train_data_upsampling_factors is not None:
-        assert resampled, "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
-    
+        assert resampled, (
+            "--train_data_upsampling_factors is only supported when sampling with replacement "
+            "(with --dataset-resampled)."
+        )
+
+    if use_naflex:
+        require_naflex()
+        if not getattr(preprocess_img, 'is_naflex_transform_factory', False):
+            raise ValueError("NaFlex WebDataset training requires `--aug-cfg use_timm=True naflex=True`.")
+
     if resampled:
         pipeline = [ResampledShards2(
             input_shards,
@@ -394,13 +411,46 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt", keep=False),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-        wds.batched(args.batch_size, partial=not is_train, collation_fn=default_collate),
     ])
 
-    dataset = wds.DataPipeline(*pipeline)
+    if use_naflex:
+        naflex_patch_size = None
+        naflex_patch_size_choices = getattr(args, 'naflex_patch_sizes', None)
+        if naflex_patch_size_choices is not None and len(naflex_patch_size_choices) == 1:
+            naflex_patch_size = naflex_patch_size_choices[0]
+            naflex_patch_size_choices = None
+        pipeline.extend([
+            wds.map_dict(text=lambda text: tokenizer(text)[0]),
+            NaFlexBatcher(
+                train_num_samples=num_samples,
+                train_num_tokens=num_image_tokens,
+                patch_size=naflex_patch_size,
+                patch_size_choices=naflex_patch_size_choices,
+                patch_size_choice_probs=getattr(args, 'naflex_patch_size_probs', None),
+                seq_lens=getattr(args, 'naflex_seq_lens', None) or (128, 256, 576, 784, 1024),
+                max_tokens_per_batch=args.naflex_max_image_tokens_per_batch,
+                transform_factory=preprocess_img,
+                seed=args.seed,
+                shuffle=True,
+                distributed=args.distributed,
+                rank=args.rank,
+                world_size=args.world_size,
+                epoch=shared_epoch,
+                batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
+            ),
+        ])
+        naflex_batcher = pipeline[-1]
+        dataset = wds.DataPipeline(*pipeline)
+        num_batches = naflex_batcher.num_batches
+        num_samples = naflex_batcher.num_samples
+    else:
+        pipeline.extend([
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.batched(args.batch_size, partial=not is_train, collation_fn=default_collate),
+        ])
+        dataset = wds.DataPipeline(*pipeline)
 
-    if is_train:
+    if is_train and not use_naflex:
         if not resampled:
             num_shards = num_shards or len(expand_urls(input_shards)[0])
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
@@ -413,7 +463,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
-    else:
+    elif not is_train:
         # last batches are partial, eval is done on single (master) node
         num_batches = math.ceil(num_samples / args.batch_size)
 

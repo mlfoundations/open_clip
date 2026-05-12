@@ -59,6 +59,13 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
+def get_batch_size(batch):
+    image = batch["image"]
+    if isinstance(image, dict):
+        return image["patches"].shape[0]
+    return len(image)
+
+
 def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(
@@ -82,6 +89,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
+    num_samples = 0
     for i, batch in enumerate(dataloader):
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
@@ -186,6 +194,10 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                 )
             optimizer.step()
 
+        step_batch_size = get_batch_size(batch)
+        if args.accum_freq > 1:
+            step_batch_size = sum(get_batch_size(accum_batch) for accum_batch in accum_batches)
+
         # reset gradient accum, if enabled
         if args.accum_freq > 1:
             accum_batches, accum_features = [], {}
@@ -196,9 +208,8 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
+        num_samples += step_batch_size * args.world_size
         if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
-            batch_size = len(batch["image"])
-            num_samples = batch_count * batch_size * args.accum_freq * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
 
@@ -206,7 +217,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
             for key, val in losses.items():
                 if key not in losses_m:
                     losses_m[key] = AverageMeter()
-                losses_m[key].update(val.item(), batch_size)
+                losses_m[key].update(val.item(), step_batch_size)
 
             logit_scale = losses.get("logit_scale", None)
             logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
@@ -216,8 +227,8 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                     for loss_name, loss_m in losses_m.items()
                 ]
             )
-            samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
-            samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
+            samples_per_second = step_batch_size * args.world_size / batch_time_m.val
+            samples_per_second_per_gpu = step_batch_size / batch_time_m.val
             _logger.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
@@ -344,7 +355,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                     logits_per_image = logit_scale * image_features @ text_features.t()
                     logits_per_text = logits_per_image.t()
 
-                    batch_size = len(batch["image"])
+                    batch_size = get_batch_size(batch)
                     labels = torch.arange(batch_size, device=device).long()
                     total_loss = (
                         F.cross_entropy(logits_per_image, labels) +
