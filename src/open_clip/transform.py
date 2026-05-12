@@ -2,6 +2,7 @@ import numbers
 import random
 import warnings
 from dataclasses import dataclass, asdict
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -66,6 +67,7 @@ class AugmentationCfg:
     color_jitter: Optional[Union[float, Tuple[float, float, float], Tuple[float, float, float, float]]] = None
     re_prob: Optional[float] = None
     re_count: Optional[int] = None
+    naflex: bool = False
     use_timm: bool = False
 
     # params for simclr_jitter_gray
@@ -357,6 +359,7 @@ def image_transform(
     if is_train:
         aug_cfg_dict = {k: v for k, v in asdict(aug_cfg).items() if v is not None}
         use_timm = aug_cfg_dict.pop('use_timm', False)
+        use_naflex = aug_cfg_dict.pop('naflex', False)
         if use_timm:
             from timm.data import create_transform  # timm can still be optional
             if isinstance(image_size, (tuple, list)):
@@ -370,7 +373,7 @@ def image_transform(
             aug_cfg_dict.pop('color_jitter_prob', None)
             aug_cfg_dict.pop('gray_scale_prob', None)
 
-            train_transform = create_transform(
+            timm_transform_kwargs = dict(
                 input_size=input_size,
                 is_training=True,
                 hflip=0.,
@@ -380,7 +383,14 @@ def image_transform(
                 interpolation=interpolation,
                 **aug_cfg_dict,
             )
+            if use_naflex:
+                train_transform = partial(create_transform, naflex=True, **timm_transform_kwargs)
+                train_transform.is_naflex_transform_factory = True
+            else:
+                train_transform = create_transform(**timm_transform_kwargs)
         else:
+            if use_naflex:
+                raise ValueError("NaFlex training transforms require `use_timm=True` in `aug_cfg`.")
             train_transform = [
                 RandomResizedCrop(
                     image_size,

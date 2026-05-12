@@ -129,7 +129,7 @@ def parse_args(args):
         "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size per GPU."
+        "--batch-size", type=int, default=64, help="Batch size per GPU. Ignored for NaFlex WebDataset training."
     )
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
@@ -487,6 +487,54 @@ def parse_args(args):
         default=None,
         type=str,
         help='A string to specify a specific distributed loss implementation.'
+    )
+    parser.add_argument(
+        "--use-naflex",
+        default=False,
+        action="store_true",
+        help="Use NaFlex WebDataset batching for training."
+    )
+    parser.add_argument(
+        "--naflex-num-train-image-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Number of image tokens per training epoch for NaFlex schedule creation. "
+            "Use this instead of --train-num-samples to target a token budget."
+        ),
+    )
+    parser.add_argument(
+        "--naflex-patch-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Patch sizes to sample for NaFlex training. Defaults to 16 when omitted."
+    )
+    parser.add_argument(
+        "--naflex-patch-size-probs",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Sampling probabilities for --naflex-patch-sizes."
+    )
+    parser.add_argument(
+        "--naflex-seq-lens",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Sequence lengths to sample for NaFlex training."
+    )
+    parser.add_argument(
+        "--naflex-max-image-tokens-per-batch",
+        type=int,
+        default=4096 * 4,
+        help="Maximum image tokens per local NaFlex batch."
+    )
+    parser.add_argument(
+        "--naflex-batch-divisor",
+        type=int,
+        default=8,
+        help="Divisibility constraint for scheduled NaFlex batch sizes."
     )
 
     args = parser.parse_args(args)
