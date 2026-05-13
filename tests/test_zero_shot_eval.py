@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
+import torch
+
 from open_clip_train import zero_shot as zero_shot_module
+from open_clip_train.naflex_data import create_naflex_dummy_image
 
 
 class _BareModel:
@@ -111,3 +114,29 @@ def test_zero_shot_eval_unwraps_wrapped_model_once(monkeypatch):
     # get_model_from_task unwraps .module from the DDP-like wrapper
     assert build_models == [wrapped_model]  # build_zero_shot_classifier gets model_or_task
     assert run_models == [wrapped_model]  # run_zero_shot_classifier gets model_or_task
+
+
+def test_run_zero_shot_classifier_accepts_naflex_image_dict():
+    class _Model:
+        def __call__(self, image):
+            features = torch.zeros(image["patches"].shape[0], 2)
+            features[:, 0] = 1
+            return {"image_features": features}
+
+    classifier = torch.zeros(2, 5)
+    classifier[0, 0] = 1
+    images = create_naflex_dummy_image(2, max_seq_len=4, patch_size=16)
+    target = torch.zeros(2, dtype=torch.long)
+    args = SimpleNamespace(
+        device="cpu",
+        precision="fp32",
+        batch_size=2,
+        rank=0,
+        fsdp=False,
+        use_naflex=True,
+    )
+
+    top1, top5 = zero_shot_module.run_zero_shot_classifier(_Model(), classifier, [(images, target)], args)
+
+    assert top1 == 1.0
+    assert top5 == 1.0

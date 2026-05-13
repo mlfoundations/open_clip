@@ -19,7 +19,15 @@ from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
-from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
+from .transform import (
+    AugmentationCfg,
+    PreprocessCfg,
+    image_transform_v2,
+    is_naflex_aug_cfg,
+    merge_preprocess_dict,
+    merge_preprocess_kwargs,
+    naflex_eval_transform_v2,
+)
 from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, DEFAULT_CONTEXT_LENGTH
 
 HF_HUB_PREFIX = 'hf-hub:'
@@ -942,6 +950,8 @@ def create_model_and_transforms(
             - model: The created model instance
             - preprocess_train: Image preprocessing transform for training (includes augmentation)
             - preprocess_val: Image preprocessing transform for validation/inference (no augmentation)
+              When ``aug_cfg`` enables NaFlex, this is a factory that must be called with
+              ``max_seq_len`` and ``patch_size`` and returns image patch dictionaries.
 
     Example:
         >>> # Basic usage with built-in model
@@ -961,7 +971,8 @@ def create_model_and_transforms(
     Note:
         The training transform includes data augmentation based on `aug_cfg`, while the validation
         transform performs only the necessary preprocessing (resize, center crop, normalize) without
-        any random augmentation.
+        any random augmentation. NaFlex validation transforms are factory objects rather than direct
+        image callables; use the ``is_naflex_eval_transform_factory`` attribute to detect them.
     """
     force_preprocess_cfg = merge_preprocess_kwargs(
         {},
@@ -1000,10 +1011,13 @@ def create_model_and_transforms(
         is_train=True,
         aug_cfg=aug_cfg,
     )
-    preprocess_val = image_transform_v2(
-        pp_cfg,
-        is_train=False,
-    )
+    if is_naflex_aug_cfg(aug_cfg):
+        preprocess_val = naflex_eval_transform_v2(pp_cfg)
+    else:
+        preprocess_val = image_transform_v2(
+            pp_cfg,
+            is_train=False,
+        )
 
     return model, preprocess_train, preprocess_val
 

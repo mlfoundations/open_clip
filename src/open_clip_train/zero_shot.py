@@ -9,6 +9,7 @@ from tqdm import tqdm
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from open_clip.task import get_model_from_task
+from open_clip_train.naflex_data import create_naflex_dummy_image, resolve_naflex_eval_config
 from open_clip_train.precision import get_autocast
 
 
@@ -16,6 +17,22 @@ def accuracy(output, target, topk=(1,)):
     pred = output.topk(max(topk), 1, True, True)[1].t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) for k in topk]
+
+
+def _move_to_device(value, device, input_dtype=None):
+    if isinstance(value, torch.Tensor):
+        if value.is_floating_point():
+            return value.to(device=device, dtype=input_dtype, non_blocking=True)
+        return value.to(device=device, non_blocking=True)
+    if isinstance(value, dict):
+        return {key: _move_to_device(val, device, input_dtype) for key, val in value.items()}
+    return value
+
+
+def _image_batch_size(images) -> int:
+    if isinstance(images, dict):
+        return images["patches"].shape[0]
+    return images.size(0)
 
 
 def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False, image_size=None):
@@ -30,9 +47,19 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
 
     if use_fsdp_eval and not is_rank0:
         # Pre-allocate dummy image tensor for non-master ranks
-        if not isinstance(image_size, tuple):
-            image_size = (image_size, image_size)
-        dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
+        if getattr(args, 'use_naflex', False):
+            patch_size, max_seq_len = resolve_naflex_eval_config(args)
+            dummy_images = create_naflex_dummy_image(
+                1,
+                max_seq_len=max_seq_len,
+                patch_size=patch_size,
+                device=device,
+                dtype=input_dtype,
+            )
+        else:
+            if not isinstance(image_size, tuple):
+                image_size = (image_size, image_size)
+            dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
 
     with torch.inference_mode():
         top1, top5, n = 0., 0., 0.
@@ -52,8 +79,8 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
 
                 if is_rank0:
                     images, target = batch
-                    images = images.to(device=device, dtype=input_dtype)
-                    target = target.to(device)
+                    images = _move_to_device(images, device=device, input_dtype=input_dtype)
+                    target = target.to(device, non_blocking=True)
                 else:
                     images = dummy_images
 
@@ -66,11 +93,11 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
                     acc1, acc5 = accuracy(logits, target, topk=(1, 5))
                     top1 += acc1
                     top5 += acc5
-                    n += images.size(0)
+                    n += _image_batch_size(images)
         else:
             for images, target in tqdm(dataloader, unit_scale=args.batch_size):
-                images = images.to(device=device, dtype=input_dtype)
-                target = target.to(device)
+                images = _move_to_device(images, device=device, input_dtype=input_dtype)
+                target = target.to(device, non_blocking=True)
 
                 with autocast():
                     # predict
@@ -82,7 +109,7 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
                 acc1, acc5 = accuracy(logits, target, topk=(1, 5))
                 top1 += acc1
                 top5 += acc5
-                n += images.size(0)
+                n += _image_batch_size(images)
 
     top1 = (top1 / n) if n else 0.
     top5 = (top5 / n) if n else 0.
