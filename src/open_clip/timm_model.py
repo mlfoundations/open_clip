@@ -38,6 +38,7 @@ class TimmModel(nn.Module):
             drop_path: Optional[float] = None,
             patch_drop: Optional[float] = None,
             pretrained: bool = False,
+            model_kwargs: Optional[dict] = None,
     ):
         super().__init__()
         if timm is None:
@@ -50,6 +51,8 @@ class TimmModel(nn.Module):
             timm_kwargs['drop_path_rate'] = drop_path
         if patch_drop is not None:
             timm_kwargs['patch_drop_rate'] = patch_drop
+        if model_kwargs:
+            timm_kwargs.update(model_kwargs)
 
         custom_pool = pool in ('abs_attn', 'rot_attn')
         if proj:

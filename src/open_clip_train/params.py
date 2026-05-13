@@ -495,6 +495,15 @@ def parse_args(args):
         help="Use NaFlex WebDataset batching for training and NaFlex patchified validation / zero-shot loaders."
     )
     parser.add_argument(
+        "--force-naflex-vision",
+        default=False,
+        action="store_true",
+        help=(
+            "Convert compatible timm EVA/ViT vision towers to NaFlexViT without enabling the NaFlex data pipeline. "
+            "--use-naflex implies this."
+        ),
+    )
+    parser.add_argument(
         "--naflex-num-train-image-tokens",
         type=int,
         default=None,
@@ -538,6 +547,11 @@ def parse_args(args):
     )
 
     args = parser.parse_args(args)
+    if args.use_naflex:
+        args.force_naflex_vision = True
+        args.aug_cfg = dict(args.aug_cfg or {})
+        args.aug_cfg["use_timm"] = True
+        args.aug_cfg["naflex"] = True
 
     if 'timm' not in args.opt:
         # set default opt params based on model name (only if timm optimizer not used)
