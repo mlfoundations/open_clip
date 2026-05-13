@@ -27,6 +27,7 @@ from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander
 
 from open_clip_train.naflex_data import (
     NaFlexBatcher,
+    NaFlexMapDatasetWrapper,
     collate_naflex_dicts,
     collate_naflex_tuples,
     create_naflex_eval_transform,
@@ -55,7 +56,9 @@ class CsvDataset(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        image = self.transforms(Image.open(str(self.images.iloc[idx])))
+        image = Image.open(str(self.images.iloc[idx]))
+        if self.transforms is not None:
+            image = self.transforms(image)
         text = self.tokenize([str(self.captions.iloc[idx])])[0]
         return {"image": image, "text": text}
 
@@ -128,18 +131,18 @@ def get_dataset_size(shards):
     return total_size, num_shards
 
 
-def get_imagenet(args, preprocess_fns, split):
+def get_imagenet(args, preprocess_fns, split, naflex_data_config=None):
     assert split in ["train", "val", "v2"]
     is_train = split == "train"
     preprocess_train, preprocess_val = preprocess_fns
-    use_naflex_eval = getattr(args, 'use_naflex', False) and not is_train
+    use_naflex_eval = naflex_data_config is not None and not is_train
     collate_fn = None
 
-    if is_train and getattr(args, 'use_naflex', False):
+    if is_train and naflex_data_config is not None:
         raise ValueError("NaFlex is only wired for validation and zero-shot ImageNet loaders, not --imagenet-train.")
 
     if use_naflex_eval:
-        preprocess_val, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_val, args)
+        preprocess_val, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_val, naflex_data_config)
         collate_fn = partial(collate_naflex_tuples, max_seq_len=naflex_max_seq_len)
 
     if split == "v2":
@@ -364,16 +367,16 @@ class RepeatedShardList(IterableDataset):
                 yield dict(url=url)
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-    use_naflex_train = getattr(args, 'use_naflex', False) and is_train
-    use_naflex_eval = getattr(args, 'use_naflex', False) and not is_train
+    use_naflex_train = naflex_data_config is not None and is_train
+    use_naflex_eval = naflex_data_config is not None and not is_train
 
     num_shards = None
     if is_train:
-        num_image_tokens = getattr(args, 'naflex_num_train_image_tokens', None)
+        num_image_tokens = naflex_data_config.train_num_image_tokens if use_naflex_train else None
         if use_naflex_train and num_image_tokens is not None and args.train_num_samples is not None:
             raise ValueError("Specify only one of `--train-num-samples` or `--naflex-num-train-image-tokens`.")
         if use_naflex_train and num_image_tokens is not None:
@@ -403,9 +406,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         if not getattr(preprocess_img, 'is_naflex_transform_factory', False):
             raise ValueError("NaFlex WebDataset training requires `--aug-cfg use_timm=True naflex=True`.")
     elif use_naflex_eval:
-        preprocess_img, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_img, args)
-    elif is_train and getattr(args, 'naflex_num_train_image_tokens', None) is not None:
-        warnings.warn("`--naflex-num-train-image-tokens` is ignored unless `--use-naflex` is set.")
+        preprocess_img, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_img, naflex_data_config)
 
     if resampled:
         pipeline = [ResampledShards2(
@@ -456,8 +457,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     if use_naflex_train:
         naflex_patch_size = None
-        naflex_patch_size_choices = getattr(args, 'naflex_patch_sizes', None)
-        if naflex_patch_size_choices is not None and len(naflex_patch_size_choices) == 1:
+        naflex_patch_size_choices = naflex_data_config.train_patch_sizes
+        if not naflex_data_config.variable_patch_size:
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
         pipeline.extend([
@@ -467,9 +468,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                 train_num_tokens=num_image_tokens,
                 patch_size=naflex_patch_size,
                 patch_size_choices=naflex_patch_size_choices,
-                patch_size_choice_probs=getattr(args, 'naflex_patch_size_probs', None),
-                seq_lens=getattr(args, 'naflex_seq_lens', None) or (128, 256, 576, 784, 1024),
-                max_tokens_per_batch=args.naflex_max_image_tokens_per_batch,
+                patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
+                seq_lens=naflex_data_config.train_seq_lens,
+                max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
                 transform_factory=preprocess_img,
                 seed=args.seed,
                 shuffle=True,
@@ -477,7 +478,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                 rank=args.rank,
                 world_size=args.world_size,
                 epoch=shared_epoch,
-                batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
+                batch_divisor=naflex_data_config.batch_divisor,
             ),
         ])
         naflex_batcher = pipeline[-1]
@@ -548,17 +549,70 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
+    shared_epoch = SharedEpoch(epoch=epoch)
+    use_naflex_train = naflex_data_config is not None and is_train
+    use_naflex_eval = naflex_data_config is not None and not is_train
+    collate_fn = default_collate
+
+    if use_naflex_train:
+        require_naflex()
+        if not getattr(preprocess_fn, 'is_naflex_transform_factory', False):
+            raise ValueError("NaFlex CSV training requires `--aug-cfg use_timm=True naflex=True`.")
+        dataset_transform = None
+    elif use_naflex_eval:
+        dataset_transform, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_fn, naflex_data_config)
+        collate_fn = partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len)
+    else:
+        dataset_transform = preprocess_fn
+
     dataset = CsvDataset(
         input_filename,
-        preprocess_fn,
+        dataset_transform,
         img_key=args.csv_img_key,
         caption_key=args.csv_caption_key,
         sep=args.csv_separator,
         tokenizer=tokenizer
     )
+
+    if use_naflex_train:
+        naflex_patch_size = None
+        naflex_patch_size_choices = naflex_data_config.train_patch_sizes
+        if not naflex_data_config.variable_patch_size:
+            naflex_patch_size = naflex_patch_size_choices[0]
+            naflex_patch_size_choices = None
+        dataset = NaFlexMapDatasetWrapper(
+            dataset,
+            train_num_tokens=naflex_data_config.train_num_image_tokens,
+            patch_size=naflex_patch_size,
+            patch_size_choices=naflex_patch_size_choices,
+            patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
+            seq_lens=naflex_data_config.train_seq_lens,
+            max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+            transform_factory=preprocess_fn,
+            seed=args.seed,
+            shuffle=True,
+            distributed=args.distributed,
+            rank=args.rank,
+            world_size=args.world_size,
+            epoch=shared_epoch,
+            batch_divisor=naflex_data_config.batch_divisor,
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_size=None,
+            shuffle=False,
+            num_workers=args.workers,
+            pin_memory=True,
+            persistent_workers=args.workers > 0,
+        )
+        num_workers = max(1, args.workers)
+        dataloader.num_samples = dataset.num_samples_for_workers(num_workers)
+        dataloader.num_batches = dataset.num_batches_for_workers(num_workers)
+        return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -571,6 +625,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
+        collate_fn=collate_fn,
     )
     dataloader.num_samples = num_samples
     dataloader.num_batches = len(dataloader)
@@ -605,7 +660,7 @@ class SyntheticDataset(Dataset):
         return {"image": image, "text": self.preprocess_txt(self.caption)}
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
     image_size = preprocess_fn.transforms[0].size
     dataset = SyntheticDataset(
         transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
@@ -648,22 +703,48 @@ def get_dataset_fn(data_path, dataset_type):
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
     
 
-def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
+def get_data(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
+    if getattr(args, 'use_naflex', False) and naflex_data_config is None:
+        raise ValueError("NaFlex data loaders require a NaFlex data config.")
+    if not getattr(args, 'use_naflex', False) and getattr(args, 'naflex_num_train_image_tokens', None) is not None:
+        warnings.warn("`--naflex-num-train-image-tokens` is ignored unless `--use-naflex` is set.")
+
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
+            args,
+            preprocess_train,
+            is_train=True,
+            epoch=epoch,
+            tokenizer=tokenizer,
+            naflex_data_config=naflex_data_config,
+        )
 
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-            args, preprocess_val, is_train=False, tokenizer=tokenizer)
+            args,
+            preprocess_val,
+            is_train=False,
+            tokenizer=tokenizer,
+            naflex_data_config=naflex_data_config,
+        )
 
     if args.imagenet_val is not None:
-        data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")
+        data["imagenet-val"] = get_imagenet(
+            args,
+            preprocess_fns,
+            "val",
+            naflex_data_config=naflex_data_config,
+        )
 
     if args.imagenet_v2 is not None:
-        data["imagenet-v2"] = get_imagenet(args, preprocess_fns, "v2")
+        data["imagenet-v2"] = get_imagenet(
+            args,
+            preprocess_fns,
+            "v2",
+            naflex_data_config=naflex_data_config,
+        )
 
     return data

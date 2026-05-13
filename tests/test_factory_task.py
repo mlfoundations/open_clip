@@ -15,6 +15,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import open_clip
 from open_clip import create_task
+from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
 from open_clip.loss import ClipLoss, SigLipLoss, CoCaLoss, DistillClipLoss
 
@@ -139,3 +140,14 @@ def test_create_task_attaches_model_as_trainable_module():
     args = _make_args()
     task = create_task(args, model=model)
     assert task.trainable_module is model
+
+
+def test_create_task_configures_naflex_dummy_shape():
+    model = open_clip.create_model('RN50')
+    args = _make_args()
+    config = NaFlexDataConfig.resolve(patch_sizes=[16, 32], seq_lens=[4, 8])
+    task = create_task(args, model=model, naflex_data_config=config)
+    batch = task.create_dummy_batch(batch_size=2)
+
+    assert batch["image"]["patches"].shape == (2, 8, 16 * 16 * 3)
+    assert batch["text"].shape == (2, model.context_length)

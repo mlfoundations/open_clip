@@ -1,9 +1,12 @@
 import math
 import random
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
+from torch.utils.data import Dataset, IterableDataset
 from torch.utils.data.dataloader import default_collate
+
+from open_clip.naflex_config import NaFlexDataConfig, PatchSize, to_2tuple
 
 try:
     from timm.data.naflex_dataset import NaFlexCollator, calculate_naflex_batch_size
@@ -17,8 +20,21 @@ except ImportError:
     NAFLEX_AVAILABLE = False
 
 
-PatchSize = Union[int, Tuple[int, int]]
 Sample = Dict[str, Any]
+
+
+__all__ = [
+    "NAFLEX_AVAILABLE",
+    "NaFlexBatchScheduler",
+    "NaFlexBatcher",
+    "NaFlexMapDatasetWrapper",
+    "collate_naflex_dicts",
+    "collate_naflex_tuples",
+    "create_naflex_data_config_from_args",
+    "create_naflex_eval_transform",
+    "require_naflex",
+    "resolve_patch_cfg",
+]
 
 
 def require_naflex() -> None:
@@ -27,14 +43,6 @@ def require_naflex() -> None:
             "NaFlex requires a timm version with NaFlex data support, including eval patchify transforms. "
             "Install timm>=1.0.16 or a recent timm main checkout."
         )
-
-
-def _to_2tuple(value: PatchSize) -> Tuple[int, int]:
-    if isinstance(value, tuple):
-        if len(value) != 2:
-            raise ValueError("Patch size tuples must have exactly two values.")
-        return int(value[0]), int(value[1])
-    return int(value), int(value)
 
 
 def resolve_patch_cfg(
@@ -49,9 +57,9 @@ def resolve_patch_cfg(
         raise ValueError("Specify exactly one of `patch_size` or `patch_size_choices`.")
 
     if patch_size is not None:
-        return [_to_2tuple(patch_size)], [1.0], False
+        return [to_2tuple(patch_size)], [1.0], False
 
-    sizes = [_to_2tuple(size) for size in patch_size_choices]
+    sizes = [to_2tuple(size) for size in patch_size_choices]
     if not sizes:
         raise ValueError("`patch_size_choices` must contain at least one value.")
     if patch_size_choice_probs is None:
@@ -66,29 +74,26 @@ def resolve_patch_cfg(
     return sizes, probs, True
 
 
-def resolve_naflex_eval_config(args) -> Tuple[Tuple[int, int], int]:
-    # Eval follows timm's fixed-shape policy: use the first configured patch size
-    # and pad/crop all images to the largest configured sequence length.
-    patch_sizes = getattr(args, 'naflex_patch_sizes', None)
-    patch_size = patch_sizes[0] if patch_sizes else 16
-    patch_size = _to_2tuple(patch_size)
-    if patch_size[0] <= 0 or patch_size[1] <= 0:
-        raise ValueError("NaFlex eval patch size must be positive.")
-
-    seq_lens = getattr(args, 'naflex_seq_lens', None)
-    seq_lens = [int(seq_len) for seq_len in seq_lens] if seq_lens else [576]
-    if not all(seq_len > 0 for seq_len in seq_lens):
-        raise ValueError("NaFlex eval sequence lengths must be positive.")
-    max_seq_len = max(seq_lens)
-    return patch_size, max_seq_len
+def create_naflex_data_config_from_args(args) -> NaFlexDataConfig:
+    return NaFlexDataConfig.resolve(
+        patch_sizes=getattr(args, 'naflex_patch_sizes', None),
+        patch_size_probs=getattr(args, 'naflex_patch_size_probs', None),
+        seq_lens=getattr(args, 'naflex_seq_lens', None),
+        train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
+        max_tokens_per_batch=getattr(args, 'naflex_max_image_tokens_per_batch', 4096 * 4),
+        batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
+    )
 
 
-def create_naflex_eval_transform(transform_factory, args) -> Tuple[Callable, int, Tuple[int, int]]:
+def create_naflex_eval_transform(
+        transform_factory,
+        naflex_data_config: NaFlexDataConfig,
+) -> Tuple[Callable, int, Tuple[int, int]]:
     require_naflex()
     if not getattr(transform_factory, 'is_naflex_eval_transform_factory', False):
         raise ValueError("NaFlex eval requires `--aug-cfg use_timm=True naflex=True`.")
 
-    patch_size, max_seq_len = resolve_naflex_eval_config(args)
+    patch_size, max_seq_len = naflex_data_config.eval_config
     return transform_factory(max_seq_len=max_seq_len, patch_size=patch_size), max_seq_len, patch_size
 
 
@@ -116,32 +121,6 @@ def collate_naflex_dicts(
     }
 
 
-def create_naflex_dummy_image(
-        batch_size: int,
-        max_seq_len: int,
-        patch_size: PatchSize,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
-        num_channels: int = 3,
-) -> Dict[str, torch.Tensor]:
-    patch_size = _to_2tuple(patch_size)
-    patch_dim = patch_size[0] * patch_size[1] * num_channels
-    patches = torch.zeros(batch_size, max_seq_len, patch_dim, device=device, dtype=dtype)
-
-    width = math.ceil(math.sqrt(max_seq_len))
-    patch_idx = torch.arange(max_seq_len, device=device)
-    patch_coord = torch.stack((patch_idx // width, patch_idx % width), dim=-1).long()
-    patch_coord = patch_coord.unsqueeze(0).expand(batch_size, -1, -1).contiguous()
-    patch_valid = torch.ones(batch_size, max_seq_len, device=device, dtype=torch.bool)
-
-    return {
-        "patches": patches,
-        "patch_coord": patch_coord,
-        "patch_valid": patch_valid,
-        "seq_len": max_seq_len,
-    }
-
-
 def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     if total <= 0:
         raise ValueError("NaFlex schedule size must be positive.")
@@ -150,8 +129,8 @@ def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     return total
 
 
-class NaFlexBatcher:
-    """WebDataset stage that turns image/text samples into NaFlex dict batches."""
+class NaFlexBatchScheduler:
+    """Shared NaFlex schedule, patchify, and collation logic."""
 
     def __init__(
             self,
@@ -168,7 +147,6 @@ class NaFlexBatcher:
             distributed: bool = False,
             rank: int = 0,
             world_size: int = 1,
-            epoch=-1,
             batch_divisor: int = 8,
             image_key: str = "image",
             target_key: str = "text",
@@ -194,7 +172,6 @@ class NaFlexBatcher:
         self.distributed = bool(distributed)
         self.rank = int(rank) if distributed else 0
         self.world_size = int(world_size) if distributed else 1
-        self.epoch = epoch
         self.batch_divisor = int(batch_divisor)
         if self.batch_divisor <= 0:
             raise ValueError("`batch_divisor` must be positive.")
@@ -226,9 +203,6 @@ class NaFlexBatcher:
             self._create_schedule_from_num_samples(int(train_num_samples))
         else:
             self._create_schedule_from_num_tokens(int(train_num_tokens))
-
-    def __call__(self, src: Iterable[Sample]):
-        return self.run(src)
 
     def _next_seq_len(self, generator: torch.Generator) -> int:
         seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=generator).item()
@@ -294,14 +268,15 @@ class NaFlexBatcher:
     def __len__(self) -> int:
         return self.num_batches
 
-    def _epoch_schedule(self, epoch: int) -> List[Tuple[int, int]]:
+    def epoch_schedule(self, epoch: int, num_workers: int = 1) -> List[Tuple[int, int]]:
         schedule = list(self._canonical_batch_schedule)
         if self.shuffle:
             random.Random(self.seed + epoch).shuffle(schedule)
+        schedule = self.pad_schedule_for_workers(schedule, max(1, num_workers))
         return schedule
 
     @staticmethod
-    def _pad_schedule_for_workers(
+    def pad_schedule_for_workers(
             schedule: List[Tuple[int, int]],
             num_workers: int,
     ) -> List[Tuple[int, int]]:
@@ -314,25 +289,25 @@ class NaFlexBatcher:
             schedule = schedule + (schedule * repeats)[:pad_batches]
         return schedule
 
-    def _schedule_for_worker(self, epoch: int) -> List[Tuple[int, int]]:
+    def worker_schedule(self, epoch: int) -> List[Tuple[int, int]]:
         worker_info = torch.utils.data.get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        schedule = self._pad_schedule_for_workers(self._epoch_schedule(epoch), num_workers)
+        schedule = self.epoch_schedule(epoch, num_workers=num_workers)
         return schedule[worker_id::num_workers]
 
     def num_batches_for_workers(self, num_workers: int) -> int:
-        schedule = self._pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
+        schedule = self.pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
         return len(schedule)
 
     def num_samples_for_workers(self, num_workers: int) -> int:
-        schedule = self._pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
+        schedule = self.pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
         num_samples_per_rank = sum(batch_size for _, batch_size in schedule)
         if self.distributed:
             return num_samples_per_rank * self.world_size
         return num_samples_per_rank
 
-    def _sample_patch_idx(self, generator: torch.Generator) -> int:
+    def sample_patch_idx(self, generator: torch.Generator) -> int:
         if not self.variable_patch_size:
             return 0
         probs = torch.tensor(self.patch_size_probs, dtype=torch.float32)
@@ -361,7 +336,7 @@ class NaFlexBatcher:
             "seq_len": max_patches,
         }
 
-    def _collate_batch(
+    def collate_batch(
             self,
             samples: List[Sample],
             seq_len: int,
@@ -384,19 +359,84 @@ class NaFlexBatcher:
             self.target_key: default_collate(targets),
         }
 
-    def run(self, src: Iterable[Sample]):
-        if hasattr(self.epoch, "get_value"):
-            epoch = int(self.epoch.get_value())
-        else:
-            self.epoch += 1
-            epoch = int(self.epoch)
 
+class NaFlexBatcher:
+    """WebDataset stage that turns image/text samples into NaFlex dict batches."""
+
+    def __init__(
+            self,
+            train_num_samples: Optional[int] = None,
+            train_num_tokens: Optional[int] = None,
+            patch_size: Optional[PatchSize] = None,
+            patch_size_choices: Optional[Sequence[PatchSize]] = None,
+            patch_size_choice_probs: Optional[Sequence[float]] = None,
+            seq_lens: Sequence[int] = (128, 256, 576, 784, 1024),
+            max_tokens_per_batch: int = 4096 * 4,
+            transform_factory: Optional[Callable[..., Callable]] = None,
+            seed: int = 42,
+            shuffle: bool = True,
+            distributed: bool = False,
+            rank: int = 0,
+            world_size: int = 1,
+            epoch=-1,
+            batch_divisor: int = 8,
+            image_key: str = "image",
+            target_key: str = "text",
+    ) -> None:
+        self.epoch = epoch
+        self.scheduler = NaFlexBatchScheduler(
+            train_num_samples=train_num_samples,
+            train_num_tokens=train_num_tokens,
+            patch_size=patch_size,
+            patch_size_choices=patch_size_choices,
+            patch_size_choice_probs=patch_size_choice_probs,
+            seq_lens=seq_lens,
+            max_tokens_per_batch=max_tokens_per_batch,
+            transform_factory=transform_factory,
+            seed=seed,
+            shuffle=shuffle,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
+            batch_divisor=batch_divisor,
+            image_key=image_key,
+            target_key=target_key,
+        )
+
+    @property
+    def num_batches(self) -> int:
+        return self.scheduler.num_batches
+
+    @property
+    def num_samples(self) -> int:
+        return self.scheduler.num_samples
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __call__(self, src: Iterable[Sample]):
+        return self.run(src)
+
+    def num_batches_for_workers(self, num_workers: int) -> int:
+        return self.scheduler.num_batches_for_workers(num_workers)
+
+    def num_samples_for_workers(self, num_workers: int) -> int:
+        return self.scheduler.num_samples_for_workers(num_workers)
+
+    def _epoch(self) -> int:
+        if hasattr(self.epoch, "get_value"):
+            return int(self.epoch.get_value())
+        self.epoch += 1
+        return int(self.epoch)
+
+    def run(self, src: Iterable[Sample]):
+        epoch = self._epoch()
         generator = torch.Generator()
-        generator.manual_seed(self.seed + epoch)
+        generator.manual_seed(self.scheduler.seed + epoch)
         samples_iter = iter(src)
 
-        for seq_len, batch_size in self._schedule_for_worker(epoch):
-            patch_idx = self._sample_patch_idx(generator)
+        for seq_len, batch_size in self.scheduler.worker_schedule(epoch):
+            patch_idx = self.scheduler.sample_patch_idx(generator)
             samples = []
             for _ in range(batch_size):
                 sample = next(samples_iter)
@@ -404,4 +444,114 @@ class NaFlexBatcher:
                     raise TypeError("NaFlexBatcher expects dictionary samples from the data pipeline.")
                 samples.append(sample)
             if samples:
-                yield self._collate_batch(samples, seq_len, patch_idx)
+                yield self.scheduler.collate_batch(samples, seq_len, patch_idx)
+
+
+class NaFlexMapDatasetWrapper(IterableDataset):
+    """Map-style dataset wrapper that yields NaFlex dict batches."""
+
+    def __init__(
+            self,
+            base_dataset: Dataset,
+            train_num_tokens: Optional[int] = None,
+            patch_size: Optional[PatchSize] = None,
+            patch_size_choices: Optional[Sequence[PatchSize]] = None,
+            patch_size_choice_probs: Optional[Sequence[float]] = None,
+            seq_lens: Sequence[int] = (128, 256, 576, 784, 1024),
+            max_tokens_per_batch: int = 4096 * 4,
+            transform_factory: Optional[Callable[..., Callable]] = None,
+            seed: int = 42,
+            shuffle: bool = True,
+            distributed: bool = False,
+            rank: int = 0,
+            world_size: int = 1,
+            epoch=-1,
+            batch_divisor: int = 8,
+    ) -> None:
+        if not hasattr(base_dataset, '__len__') or not hasattr(base_dataset, '__getitem__'):
+            raise TypeError("NaFlex map batching requires a map-style dataset.")
+
+        self.base_dataset = base_dataset
+        self.seed = int(seed)
+        self.shuffle = bool(shuffle)
+        self.distributed = bool(distributed)
+        self.rank = int(rank) if distributed else 0
+        self.world_size = int(world_size) if distributed else 1
+        self.epoch = epoch
+
+        train_num_samples = None if train_num_tokens is not None else len(base_dataset)
+        self.scheduler = NaFlexBatchScheduler(
+            train_num_samples=train_num_samples,
+            train_num_tokens=train_num_tokens,
+            patch_size=patch_size,
+            patch_size_choices=patch_size_choices,
+            patch_size_choice_probs=patch_size_choice_probs,
+            seq_lens=seq_lens,
+            max_tokens_per_batch=max_tokens_per_batch,
+            transform_factory=transform_factory,
+            seed=seed,
+            shuffle=shuffle,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
+            batch_divisor=batch_divisor,
+        )
+
+    def __len__(self) -> int:
+        return self.scheduler.num_batches
+
+    def num_batches_for_workers(self, num_workers: int) -> int:
+        return self.scheduler.num_batches_for_workers(num_workers)
+
+    def num_samples_for_workers(self, num_workers: int) -> int:
+        return self.scheduler.num_samples_for_workers(num_workers)
+
+    def _epoch(self) -> int:
+        if hasattr(self.epoch, "get_value"):
+            return int(self.epoch.get_value())
+        self.epoch += 1
+        return int(self.epoch)
+
+    def _epoch_indices(self, epoch: int, samples_per_rank: int) -> List[int]:
+        dataset_len = len(self.base_dataset)
+        if dataset_len <= 0:
+            raise ValueError("NaFlex map batching requires at least one sample.")
+
+        total_samples = samples_per_rank * self.world_size if self.distributed else samples_per_rank
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + epoch)
+        indices = []
+        while len(indices) < total_samples:
+            if self.shuffle:
+                indices.extend(torch.randperm(dataset_len, generator=generator).tolist())
+            else:
+                indices.extend(range(dataset_len))
+        indices = indices[:total_samples]
+
+        if self.distributed:
+            return indices[self.rank::self.world_size]
+        return indices
+
+    def __iter__(self):
+        epoch = self._epoch()
+        worker_info = torch.utils.data.get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+
+        schedule = self.scheduler.epoch_schedule(epoch, num_workers=num_workers)
+        samples_per_rank = sum(batch_size for _, batch_size in schedule)
+        rank_indices = self._epoch_indices(epoch, samples_per_rank)
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + epoch)
+
+        index_offset = 0
+        for batch_idx, (seq_len, batch_size) in enumerate(schedule):
+            batch_indices = rank_indices[index_offset:index_offset + batch_size]
+            index_offset += batch_size
+            if batch_idx % num_workers != worker_id:
+                continue
+
+            patch_idx = self.scheduler.sample_patch_idx(generator)
+            samples = [self.base_dataset[idx] for idx in batch_indices]
+            yield self.scheduler.collate_batch(samples, seq_len, patch_idx)

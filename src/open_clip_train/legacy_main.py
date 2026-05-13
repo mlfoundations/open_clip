@@ -26,6 +26,7 @@ except ImportError:
 from open_clip import create_model_and_transforms, get_tokenizer, create_loss
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
+from open_clip_train.naflex_data import create_naflex_data_config_from_args
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
@@ -375,11 +376,13 @@ def main(args):
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
+    naflex_data_config = create_naflex_data_config_from_args(args) if args.use_naflex else None
     data = get_data(
         args,
         (preprocess_train, preprocess_val),
         epoch=start_epoch,
         tokenizer=tokenizer,
+        naflex_data_config=naflex_data_config,
     )
     assert len(data), 'At least one train or eval dataset must be specified.'
 

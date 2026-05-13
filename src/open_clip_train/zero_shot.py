@@ -9,7 +9,6 @@ from tqdm import tqdm
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from open_clip.task import get_model_from_task
-from open_clip_train.naflex_data import create_naflex_dummy_image, resolve_naflex_eval_config
 from open_clip_train.precision import get_autocast
 
 
@@ -35,7 +34,13 @@ def _image_batch_size(images) -> int:
     return images.size(0)
 
 
-def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False, image_size=None):
+def _get_dummy_batch_creator(model_or_task):
+    if hasattr(model_or_task, "create_dummy_batch"):
+        return model_or_task.create_dummy_batch
+    return None
+
+
+def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False):
     device = torch.device(args.device)
     autocast = get_autocast(
         args.precision,
@@ -46,17 +51,14 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
     is_rank0 = (args.rank == 0)
 
     if use_fsdp_eval and not is_rank0:
-        # Pre-allocate dummy image tensor for non-master ranks
-        if getattr(args, 'use_naflex', False):
-            patch_size, max_seq_len = resolve_naflex_eval_config(args)
-            dummy_images = create_naflex_dummy_image(
-                1,
-                max_seq_len=max_seq_len,
-                patch_size=patch_size,
-                device=device,
-                dtype=input_dtype,
-            )
+        dummy_batch_creator = _get_dummy_batch_creator(model)
+        if dummy_batch_creator is not None:
+            dummy_images = dummy_batch_creator(batch_size=1, device=device, dtype=input_dtype)["image"]
         else:
+            if getattr(args, 'use_naflex', False):
+                raise ValueError("NaFlex FSDP zero-shot eval requires an ImageTextTask dummy batch interface.")
+            raw_model = get_model_from_task(model)
+            image_size = raw_model.visual.image_size
             if not isinstance(image_size, tuple):
                 image_size = (image_size, image_size)
             dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
@@ -127,8 +129,6 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     use_fsdp_eval = getattr(args, 'fsdp', False) and getattr(args, 'distributed', False)
     is_rank0 = (args.rank == 0)
 
-    model = get_model_from_task(model_or_task)
-
     if is_rank0:
         _logger.info('Starting zero-shot imagenet.')
 
@@ -161,15 +161,11 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     if is_rank0:
         _logger.info('Using classifier')
 
-    # Extract image_size from raw model for FSDP dummy tensor allocation
-    image_size = model.visual.image_size if use_fsdp_eval else None
-
     results = {}
     if 'imagenet-val' in data:
         top1, top5 = run_zero_shot_classifier(
             model_or_task, classifier, data['imagenet-val'].dataloader, args,
             use_fsdp_eval=use_fsdp_eval,
-            image_size=image_size,
         )
         if is_rank0:
             results['imagenet-zeroshot-val-top1'] = top1
@@ -179,7 +175,6 @@ def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
         top1, top5 = run_zero_shot_classifier(
             model_or_task, classifier, data['imagenet-v2'].dataloader, args,
             use_fsdp_eval=use_fsdp_eval,
-            image_size=image_size,
         )
         if is_rank0:
             results['imagenetv2-zeroshot-val-top1'] = top1

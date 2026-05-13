@@ -832,7 +832,7 @@ def create_loss(args):
     )
 
 
-def create_task(args, model, dist_model=None):
+def create_task(args, model, dist_model=None, naflex_data_config=None):
     """Create a training task wrapping model + loss.
 
     The task constructs its own loss internally from the provided args.
@@ -842,6 +842,7 @@ def create_task(args, model, dist_model=None):
         args: Training arguments (must have model, distill, siglip, etc.).
         model: The CLIP model.
         dist_model: Optional teacher model for distillation.
+        naflex_data_config: Optional resolved NaFlex data policy.
 
     Returns:
         A TrainingTask subclass instance.
@@ -850,14 +851,14 @@ def create_task(args, model, dist_model=None):
 
     shared = dict(rank=args.rank, world_size=args.world_size)
     if args.distill:
-        return DistillCLIPTask(
+        task = DistillCLIPTask(
             model, dist_model,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             **shared,
         )
     elif "coca" in args.model.lower():
-        return CoCaTask(
+        task = CoCaTask(
             model,
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
@@ -866,18 +867,21 @@ def create_task(args, model, dist_model=None):
             **shared,
         )
     elif args.siglip:
-        return SigLIPTask(
+        task = SigLIPTask(
             model,
             dist_impl=args.loss_dist_impl,
             **shared,
         )
     else:
-        return CLIPTask(
+        task = CLIPTask(
             model,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             **shared,
         )
+    if naflex_data_config is not None:
+        task.set_naflex_data_config(naflex_data_config)
+    return task
 
 
 def create_model_and_transforms(

@@ -14,7 +14,7 @@ from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
     NaFlexBatcher,
     collate_naflex_tuples,
-    resolve_naflex_eval_config,
+    create_naflex_data_config_from_args,
 )
 from open_clip_train.params import parse_args
 
@@ -173,11 +173,11 @@ def test_parse_naflex_args():
 def test_naflex_eval_config_rejects_non_positive_values():
     args = types.SimpleNamespace(naflex_patch_sizes=[16], naflex_seq_lens=[0, 4])
     with pytest.raises(ValueError, match="sequence lengths"):
-        resolve_naflex_eval_config(args)
+        create_naflex_data_config_from_args(args)
 
     args = types.SimpleNamespace(naflex_patch_sizes=[0], naflex_seq_lens=[4])
     with pytest.raises(ValueError, match="patch size"):
-        resolve_naflex_eval_config(args)
+        create_naflex_data_config_from_args(args)
 
 
 def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
@@ -207,7 +207,13 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     )
     tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
 
-    info = get_wds_dataset(args, _transform_factory, is_train=True, tokenizer=tokenizer)
+    info = get_wds_dataset(
+        args,
+        _transform_factory,
+        is_train=True,
+        tokenizer=tokenizer,
+        naflex_data_config=create_naflex_data_config_from_args(args),
+    )
     batch = next(iter(info.dataloader))
 
     assert set(batch.keys()) == {"image", "text"}
@@ -242,7 +248,13 @@ def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
     )
     tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
 
-    info = get_wds_dataset(args, _transform_factory, is_train=True, tokenizer=tokenizer)
+    info = get_wds_dataset(
+        args,
+        _transform_factory,
+        is_train=True,
+        tokenizer=tokenizer,
+        naflex_data_config=create_naflex_data_config_from_args(args),
+    )
     batches = list(info.dataloader)
 
     assert len(batches) == 3
@@ -298,7 +310,13 @@ def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
     )
     tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
 
-    info = get_wds_dataset(args, preprocess_val, is_train=False, tokenizer=tokenizer)
+    info = get_wds_dataset(
+        args,
+        preprocess_val,
+        is_train=False,
+        tokenizer=tokenizer,
+        naflex_data_config=create_naflex_data_config_from_args(args),
+    )
     batch = next(iter(info.dataloader))
 
     assert set(batch.keys()) == {"image", "text"}
@@ -331,7 +349,12 @@ def test_get_imagenet_naflex_eval_outputs_patched_image_dict(tmp_path):
         workers=0,
     )
 
-    info = get_imagenet(args, (preprocess_train, preprocess_val), "val")
+    info = get_imagenet(
+        args,
+        (preprocess_train, preprocess_val),
+        "val",
+        naflex_data_config=create_naflex_data_config_from_args(args),
+    )
     images, targets = next(iter(info.dataloader))
 
     assert images["patches"].shape == (2, 4, 16 * 16 * 3)
@@ -344,7 +367,12 @@ def test_get_imagenet_naflex_train_raises_clear_error():
     args = types.SimpleNamespace(use_naflex=True)
 
     with pytest.raises(ValueError, match="--imagenet-train"):
-        get_imagenet(args, (_transform_factory, _transform_factory), "train")
+        get_imagenet(
+            args,
+            (_transform_factory, _transform_factory),
+            "train",
+            naflex_data_config=create_naflex_data_config_from_args(args),
+        )
 
 
 def test_naflex_model_forward_accepts_eval_transform_image_dict():
