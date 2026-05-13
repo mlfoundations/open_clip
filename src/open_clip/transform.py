@@ -2,7 +2,6 @@ import numbers
 import random
 import warnings
 from dataclasses import dataclass, asdict
-from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -73,6 +72,22 @@ class AugmentationCfg:
     # params for simclr_jitter_gray
     color_jitter_prob: float = None
     gray_scale_prob: float = None
+
+
+class NaFlexTransformFactory:
+    is_naflex_transform_factory = True
+
+    def __init__(self, **transform_kwargs) -> None:
+        self.transform_kwargs = transform_kwargs
+
+    def __call__(self, max_seq_len, patch_size):
+        from timm.data import create_transform  # timm can still be optional
+        return create_transform(
+            naflex=True,
+            max_seq_len=max_seq_len,
+            patch_size=patch_size,
+            **self.transform_kwargs,
+        )
 
 
 def _setup_size(size, error_msg):
@@ -384,8 +399,7 @@ def image_transform(
                 **aug_cfg_dict,
             )
             if use_naflex:
-                train_transform = partial(create_transform, naflex=True, **timm_transform_kwargs)
-                train_transform.is_naflex_transform_factory = True
+                train_transform = NaFlexTransformFactory(**timm_transform_kwargs)
             else:
                 train_transform = create_transform(**timm_transform_kwargs)
         else:
@@ -414,7 +428,9 @@ def image_transform(
             ])
             train_transform = Compose(train_transform)
             if aug_cfg_dict:
-                warnings.warn(f'Unused augmentation cfg items, specify `use_timm` to use ({list(aug_cfg_dict.keys())}).')
+                warnings.warn(
+                    f'Unused augmentation cfg items, specify `use_timm` to use ({list(aug_cfg_dict.keys())}).'
+                )
         return train_transform
     else:
         if resize_mode == 'longest':

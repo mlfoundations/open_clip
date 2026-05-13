@@ -194,9 +194,10 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                 )
             optimizer.step()
 
-        step_batch_size = get_batch_size(batch)
         if args.accum_freq > 1:
             step_batch_size = sum(get_batch_size(accum_batch) for accum_batch in accum_batches)
+        else:
+            step_batch_size = get_batch_size(batch)
 
         # reset gradient accum, if enabled
         if args.accum_freq > 1:
