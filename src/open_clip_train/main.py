@@ -29,6 +29,7 @@ from open_clip import create_model_and_transforms, get_tokenizer, create_task
 from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
+from open_clip_train.naflex_data import create_naflex_data_config_from_args
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
@@ -305,8 +306,10 @@ def main(args):
                 _logger.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
+    naflex_data_config = create_naflex_data_config_from_args(args) if args.use_naflex else None
+
     # Create task (wraps model + loss)
-    task = create_task(args, model=model, dist_model=dist_model)
+    task = create_task(args, model=model, dist_model=dist_model, naflex_data_config=naflex_data_config)
     # Keep reference to unwrapped task for checkpoint methods.
     # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
     original_task = task
@@ -452,6 +455,7 @@ def main(args):
         (preprocess_train, preprocess_val),
         epoch=start_epoch,
         tokenizer=tokenizer,
+        naflex_data_config=task.naflex_data_config,
     )
     assert len(data), 'At least one train or eval dataset must be specified.'
 

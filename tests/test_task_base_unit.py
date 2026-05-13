@@ -11,6 +11,7 @@ import types
 import torch
 import torch.nn as nn
 
+from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.task import CLIPTask
 
 
@@ -130,6 +131,20 @@ def test_create_dummy_batch_respects_dtype():
     batch = task.create_dummy_batch(image_size=8, context_length=5, dtype=torch.float16)
     assert batch["image"].dtype == torch.float16
     assert batch["text"].dtype == torch.long  # always long regardless of dtype
+
+
+def test_create_dummy_batch_uses_configured_naflex_shape():
+    task = CLIPTask(TinyModel(), loss=DummyLoss())
+    task.set_naflex_data_config(NaFlexDataConfig.resolve(patch_sizes=[16], seq_lens=[4]))
+
+    batch = task.create_dummy_batch(batch_size=2, dtype=torch.float16)
+
+    assert batch["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
+    assert batch["image"]["patches"].dtype == torch.float16
+    assert batch["image"]["patch_coord"].shape == (2, 4, 2)
+    assert batch["image"]["patch_valid"].shape == (2, 4)
+    assert batch["image"]["seq_len"] == 4
+    assert batch["text"].shape == (2, 5)
 
 
 # ---------------------------------------------------------------------------
