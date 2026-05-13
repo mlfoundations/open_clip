@@ -7,6 +7,7 @@ _logger = logging.getLogger(__name__)
 import os
 import random
 import sys
+import warnings
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
@@ -197,8 +198,6 @@ def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, h
     current_sample = None
     for filesample in data:
         assert isinstance(filesample, dict)
-        if "fname" not in filesample or "data" not in filesample:
-            continue
         fname, value = filesample["fname"], filesample["data"]
         prefix, suffix = keys(fname)
         if prefix is None:
@@ -332,6 +331,20 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
+class RepeatedShardList(IterableDataset):
+    """An iterable dataset that repeats a finite shard list."""
+
+    def __init__(self, urls):
+        super().__init__()
+        self.urls, _ = expand_urls(urls)
+        assert isinstance(self.urls[0], str)
+
+    def __iter__(self):
+        while True:
+            for url in self.urls:
+                yield dict(url=url)
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -369,6 +382,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         require_naflex()
         if not getattr(preprocess_img, 'is_naflex_transform_factory', False):
             raise ValueError("NaFlex WebDataset training requires `--aug-cfg use_timm=True naflex=True`.")
+    elif is_train and getattr(args, 'naflex_num_train_image_tokens', None) is not None:
+        warnings.warn("`--naflex-num-train-image-tokens` is ignored unless `--use-naflex` is set.")
 
     if resampled:
         pipeline = [ResampledShards2(
@@ -377,6 +392,10 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             deterministic=True,
             epoch=shared_epoch,
         )]
+    elif use_naflex:
+        num_shards = num_shards or len(expand_urls(input_shards)[0])
+        assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+        pipeline = [RepeatedShardList(input_shards)]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
 
@@ -441,8 +460,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         ])
         naflex_batcher = pipeline[-1]
         dataset = wds.DataPipeline(*pipeline)
-        num_batches = naflex_batcher.num_batches
-        num_samples = naflex_batcher.num_samples
+        num_workers = max(1, args.workers)
+        num_batches = naflex_batcher.num_batches_for_workers(num_workers)
+        num_samples = naflex_batcher.num_samples_for_workers(num_workers)
     else:
         pipeline.extend([
             wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),

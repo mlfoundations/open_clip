@@ -1,7 +1,6 @@
 import math
 import random
-import warnings
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import torch
 import webdataset as wds
@@ -19,7 +18,7 @@ except ImportError:
 
 
 PatchSize = Union[int, Tuple[int, int]]
-Sample = Dict[str, object]
+Sample = Dict[str, Any]
 
 
 def require_naflex() -> None:
@@ -43,6 +42,7 @@ def resolve_patch_cfg(
         patch_size_choices: Optional[Sequence[PatchSize]] = None,
         patch_size_choice_probs: Optional[Sequence[float]] = None,
 ) -> Tuple[List[Tuple[int, int]], List[float], bool]:
+    # Mirrors timm.data.naflex_dataset._resolve_patch_cfg without importing a private helper.
     if patch_size is None and patch_size_choices is None:
         patch_size = 16
     if (patch_size is None) == (patch_size_choices is None):
@@ -108,6 +108,8 @@ class NaFlexBatcher(wds.PipelineStage):
         self.seq_lens = sorted(set(int(seq_len) for seq_len in seq_lens))
         if not self.seq_lens:
             raise ValueError("NaFlex batching requires at least one sequence length.")
+        if not all(seq_len > 0 for seq_len in self.seq_lens):
+            raise ValueError("NaFlex sequence lengths must be positive.")
         self.max_tokens_per_batch = int(max_tokens_per_batch)
         if self.max_tokens_per_batch <= 0:
             raise ValueError("`max_tokens_per_batch` must be positive.")
@@ -214,15 +216,43 @@ class NaFlexBatcher(wds.PipelineStage):
     def __len__(self) -> int:
         return self.num_batches
 
-    def _schedule_for_worker(self, epoch: int) -> List[Tuple[int, int]]:
+    def _epoch_schedule(self, epoch: int) -> List[Tuple[int, int]]:
         schedule = list(self._canonical_batch_schedule)
         if self.shuffle:
             random.Random(self.seed + epoch).shuffle(schedule)
-
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:
-            schedule = schedule[worker_info.id::worker_info.num_workers]
         return schedule
+
+    @staticmethod
+    def _pad_schedule_for_workers(
+            schedule: List[Tuple[int, int]],
+            num_workers: int,
+    ) -> List[Tuple[int, int]]:
+        if num_workers <= 1 or not schedule:
+            return schedule
+        target_batches = math.ceil(len(schedule) / num_workers) * num_workers
+        pad_batches = target_batches - len(schedule)
+        if pad_batches > 0:
+            repeats = math.ceil(pad_batches / len(schedule))
+            schedule = schedule + (schedule * repeats)[:pad_batches]
+        return schedule
+
+    def _schedule_for_worker(self, epoch: int) -> List[Tuple[int, int]]:
+        worker_info = torch.utils.data.get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+        schedule = self._pad_schedule_for_workers(self._epoch_schedule(epoch), num_workers)
+        return schedule[worker_id::num_workers]
+
+    def num_batches_for_workers(self, num_workers: int) -> int:
+        schedule = self._pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
+        return len(schedule)
+
+    def num_samples_for_workers(self, num_workers: int) -> int:
+        schedule = self._pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
+        num_samples_per_rank = sum(batch_size for _, batch_size in schedule)
+        if self.distributed:
+            return num_samples_per_rank * self.world_size
+        return num_samples_per_rank
 
     def _sample_patch_idx(self, generator: torch.Generator) -> int:
         if not self.variable_patch_size:
@@ -258,7 +288,7 @@ class NaFlexBatcher(wds.PipelineStage):
             samples: List[Sample],
             seq_len: int,
             patch_idx: int,
-    ) -> Dict[str, object]:
+    ) -> Dict[str, Any]:
         transform = self.transforms[(seq_len, patch_idx)]
         patchify = self.patchifiers[patch_idx]
         patch_dicts = []
@@ -291,14 +321,7 @@ class NaFlexBatcher(wds.PipelineStage):
             patch_idx = self._sample_patch_idx(generator)
             samples = []
             for _ in range(batch_size):
-                try:
-                    sample = next(samples_iter)
-                except StopIteration:
-                    warnings.warn(
-                        f"Rank {self.rank}: reached the end of WebDataset samples while building a "
-                        f"NaFlex batch with seq_len={seq_len} and batch_size={batch_size}."
-                    )
-                    return
+                sample = next(samples_iter)
                 if not isinstance(sample, dict):
                     raise TypeError("NaFlexBatcher expects dictionary samples from the data pipeline.")
                 samples.append(sample)

@@ -7,6 +7,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
+import open_clip
 from open_clip.transform import image_transform
 from open_clip_train.data import get_wds_dataset
 from open_clip_train.naflex_data import NAFLEX_AVAILABLE, NaFlexBatcher
@@ -31,6 +32,23 @@ def _samples(num_samples=4):
         }
         for idx in range(num_samples)
     ]
+
+
+def _write_tar(path, num_samples=4):
+    with tarfile.open(path, "w") as tar:
+        for idx in range(num_samples):
+            image = Image.new("RGB", (32, 32), color=(idx, idx, idx))
+            image_file = io.BytesIO()
+            image.save(image_file, format="PNG")
+            image_file.seek(0)
+            image_info = tarfile.TarInfo(f"{idx}.png")
+            image_info.size = len(image_file.getbuffer())
+            tar.addfile(image_info, image_file)
+
+            text_file = io.BytesIO(str(idx).encode("utf-8"))
+            text_info = tarfile.TarInfo(f"{idx}.txt")
+            text_info.size = len(text_file.getbuffer())
+            tar.addfile(text_info, text_file)
 
 
 def test_naflex_batcher_returns_dict_batches():
@@ -72,6 +90,22 @@ def test_naflex_batcher_token_schedule_handles_distributed_padding():
 
     assert batcher.num_batches == 2
     assert batcher.num_samples == 6
+
+
+def test_naflex_batcher_pads_schedule_to_worker_count():
+    batcher = NaFlexBatcher(
+        train_num_samples=1,
+        patch_size=16,
+        seq_lens=(4,),
+        max_tokens_per_batch=8,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+
+    assert batcher.num_batches == 1
+    assert batcher.num_batches_for_workers(4) == 4
+    assert batcher.num_samples_for_workers(4) == 4
 
 
 def test_image_transform_naflex_returns_timm_transform_factory():
@@ -133,20 +167,7 @@ def test_parse_naflex_args():
 
 def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     tar_path = tmp_path / "samples.tar"
-    with tarfile.open(tar_path, "w") as tar:
-        for idx in range(4):
-            image = Image.new("RGB", (32, 32), color=(idx, idx, idx))
-            image_file = io.BytesIO()
-            image.save(image_file, format="PNG")
-            image_file.seek(0)
-            image_info = tarfile.TarInfo(f"{idx}.png")
-            image_info.size = len(image_file.getbuffer())
-            tar.addfile(image_info, image_file)
-
-            text_file = io.BytesIO(str(idx).encode("utf-8"))
-            text_info = tarfile.TarInfo(f"{idx}.txt")
-            text_info.size = len(text_file.getbuffer())
-            tar.addfile(text_info, text_file)
+    _write_tar(tar_path)
 
     args = types.SimpleNamespace(
         train_data=str(tar_path),
@@ -177,3 +198,76 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     assert set(batch.keys()) == {"image", "text"}
     assert batch["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
     assert batch["text"].shape == (2, 1)
+
+
+def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
+    tar_path = tmp_path / "samples.tar"
+    _write_tar(tar_path, num_samples=2)
+
+    args = types.SimpleNamespace(
+        train_data=str(tar_path),
+        val_data=None,
+        dataset_resampled=False,
+        train_data_upsampling_factors=None,
+        train_num_samples=6,
+        val_num_samples=None,
+        use_naflex=True,
+        naflex_num_train_image_tokens=None,
+        naflex_patch_sizes=[16],
+        naflex_patch_size_probs=None,
+        naflex_seq_lens=[4],
+        naflex_max_image_tokens_per_batch=8,
+        naflex_batch_divisor=1,
+        seed=0,
+        workers=0,
+        batch_size=2,
+        distributed=False,
+        rank=0,
+        world_size=1,
+    )
+    tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
+
+    info = get_wds_dataset(args, _transform_factory, is_train=True, tokenizer=tokenizer)
+    batches = list(info.dataloader)
+
+    assert len(batches) == 3
+    assert sum(batch["image"]["patches"].shape[0] for batch in batches) == 6
+
+
+def test_naflex_model_forward_accepts_batcher_image_dict():
+    samples = [
+        {
+            "image": Image.new("RGB", (32, 32), color=(idx, idx, idx)),
+            "text": torch.zeros(77, dtype=torch.long),
+        }
+        for idx in range(2)
+    ]
+    batcher = NaFlexBatcher(
+        train_num_samples=2,
+        patch_size=16,
+        seq_lens=(4,),
+        max_tokens_per_batch=8,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+    batch = next(iter(batcher.run(samples)))
+    model = open_clip.create_model("naflex_ViT-B-16", pretrained=None, device="cpu")
+
+    with torch.inference_mode():
+        image_features, text_features, _ = model(batch["image"], batch["text"])
+
+    assert image_features.shape == (2, 512)
+    assert text_features.shape == (2, 512)
+
+
+def test_naflex_model_forward_accepts_dense_image_tensor():
+    model = open_clip.create_model("naflex_ViT-B-16", pretrained=None, device="cpu")
+    image = torch.randn(2, 3, 32, 32)
+    text = torch.zeros(2, 77, dtype=torch.long)
+
+    with torch.inference_mode():
+        image_features, text_features, _ = model(image, text)
+
+    assert image_features.shape == (2, 512)
+    assert text_features.shape == (2, 512)
