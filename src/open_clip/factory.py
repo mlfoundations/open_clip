@@ -63,6 +63,9 @@ def _rescan_model_configs():
 _rescan_model_configs()  # initial populate of model config registry
 
 
+_NAFLEX_TIMM_CONVERT_PREFIXES = ('eva', 'vit_')
+
+
 def list_models():
     """ enumerate available model architectures based on config files """
     return list(_MODEL_CONFIGS.keys())
@@ -181,6 +184,66 @@ def load_state_dict(
     return state_dict
 
 
+def _is_naflex_timm_model_name(model_name: str) -> bool:
+    return model_name.startswith('naflexvit')
+
+
+def _can_convert_timm_model_to_naflex(model_name: str) -> bool:
+    return _is_naflex_timm_model_name(model_name) or model_name.startswith(_NAFLEX_TIMM_CONVERT_PREFIXES)
+
+
+def _force_naflex_timm_vision(vision_cfg: Dict[str, Any]) -> None:
+    timm_model_name = vision_cfg.get('timm_model_name')
+    if not timm_model_name:
+        raise RuntimeError("NaFlex vision mode requires a timm vision tower.")
+    if _is_naflex_timm_model_name(timm_model_name):
+        return
+    if not _can_convert_timm_model_to_naflex(timm_model_name):
+        raise RuntimeError(
+            f"NaFlex vision mode cannot convert timm model '{timm_model_name}'. "
+            "Use a timm EVA/ViT model or an explicit naflexvit model config."
+        )
+    timm_model_kwargs = deepcopy(vision_cfg.get('timm_model_kwargs') or {})
+    timm_model_kwargs['use_naflex'] = True
+    vision_cfg['timm_model_kwargs'] = timm_model_kwargs
+
+
+def _convert_naflex_timm_state_dict(
+        model: Union[CLIP, CustomTextCLIP],
+        state_dict: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    visual = getattr(model, 'visual', None)
+    trunk = getattr(visual, 'trunk', None)
+    if trunk is None or trunk.__class__.__name__ != 'NaFlexVit':
+        return state_dict
+
+    try:
+        from timm.models.naflexvit import checkpoint_filter_fn
+    except ImportError:
+        return state_dict
+
+    prefix = 'visual.trunk.'
+    trunk_state_dict = {
+        k[len(prefix):]: v
+        for k, v in state_dict.items()
+        if k.startswith(prefix)
+    }
+    if not trunk_state_dict:
+        return state_dict
+
+    converted_trunk_state_dict = checkpoint_filter_fn(dict(trunk_state_dict), trunk)
+    converted_state_dict = {
+        k: v
+        for k, v in state_dict.items()
+        if not k.startswith(prefix)
+    }
+    converted_state_dict.update({
+        prefix + k: v
+        for k, v in converted_trunk_state_dict.items()
+    })
+    return converted_state_dict
+
+
 def load_checkpoint(
         model: Union[CLIP, CustomTextCLIP],
         checkpoint_path: str,
@@ -198,6 +261,7 @@ def load_checkpoint(
 
     # Detect & convert 3rd party state_dicts -> open_clip
     state_dict = convert_state_dict(model, state_dict)
+    state_dict = _convert_naflex_timm_state_dict(model, state_dict)
 
     # Detect old format and make compatible with new format
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
@@ -263,6 +327,7 @@ def create_model(
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_preprocess_cfg: Optional[Dict[str, Any]] = None,
         force_context_length: Optional[int] = None,
+        force_naflex_vision: bool = False,
         pretrained_image: bool = False, # Load default base image weights (at creation, if no CLIP weights)
         pretrained_text: bool = True,  # Load default base text weights (at creation, if no CLIP weights) - NEW
         pretrained_image_path: Optional[str] = None, # Load specific image weights from file (after creation)
@@ -299,6 +364,7 @@ def create_model(
         force_image_size: Override image size in model config.
         force_preprocess_cfg: Dict to override specific FINAL preprocessing parameters.
         force_context_length: Override context length in model config.
+        force_naflex_vision: Convert compatible timm EVA/ViT vision towers to NaFlexVit.
         pretrained_image: Load default base weights for image tower at creation if no CLIP weights loaded.
         pretrained_text: Load default base weights for text tower at creation if no CLIP weights loaded (default: True).
         pretrained_image_path: Path to load weights specifically into image tower after creation.
@@ -440,6 +506,8 @@ def create_model(
         vision_cfg["image_size"] = force_image_size
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
+    if force_naflex_vision:
+        _force_naflex_timm_vision(vision_cfg)
 
     # Check compatibility (e.g., QuickGELU warning for tags)
     if schema is None and pretrained_cfg_for_tag:
@@ -895,6 +963,7 @@ def create_model_and_transforms(
         force_patch_dropout: Optional[float] = None,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_context_length: Optional[int] = None,
+        force_naflex_vision: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
@@ -934,6 +1003,7 @@ def create_model_and_transforms(
         force_patch_dropout: Override patch dropout value in model config.
         force_image_size: Override image size in model config.
         force_context_length: Override context length in model config.
+        force_naflex_vision: Convert compatible timm EVA/ViT vision towers to NaFlexVit.
         image_mean: Override default image normalization mean values (per channel).
         image_std: Override default image normalization std values (per channel).
         image_interpolation: Override default interpolation method for image resizing.
@@ -998,6 +1068,7 @@ def create_model_and_transforms(
         force_image_size=force_image_size,
         force_preprocess_cfg=force_preprocess_cfg,
         force_context_length=force_context_length,
+        force_naflex_vision=force_naflex_vision,
         pretrained_image=pretrained_image,
         pretrained_text=pretrained_text,
         pretrained_image_path=pretrained_image_path,
@@ -1035,6 +1106,7 @@ def create_model_from_pretrained(
         force_custom_text: bool = False,
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_context_length: Optional[int] = None,
+        force_naflex_vision: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
@@ -1069,6 +1141,7 @@ def create_model_from_pretrained(
         force_custom_text: Force use of custom text encoder architecture.
         force_image_size: Override image size in model config. Useful for using models at different resolutions.
         force_context_length: Override context length in model config.
+        force_naflex_vision: Convert compatible timm EVA/ViT vision towers to NaFlexVit.
         image_mean: Override default image normalization mean values (per channel).
         image_std: Override default image normalization std values (per channel).
         image_interpolation: Override default interpolation method for image resizing ('bicubic', 'bilinear', 'nearest').
@@ -1128,6 +1201,7 @@ def create_model_from_pretrained(
         force_image_size=force_image_size,
         force_preprocess_cfg=force_preprocess_cfg,
         force_context_length=force_context_length,
+        force_naflex_vision=force_naflex_vision,
         cache_dir=cache_dir,
         require_pretrained=True,
         weights_only=weights_only,

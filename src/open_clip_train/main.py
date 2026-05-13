@@ -29,7 +29,7 @@ from open_clip import create_model_and_transforms, get_tokenizer, create_task
 from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
-from open_clip_train.naflex_data import create_naflex_data_config_from_args
+from open_clip_train.naflex_data import create_naflex_data_config_from_args, get_naflex_model_patch_size
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
@@ -246,6 +246,7 @@ def main(args):
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        force_naflex_vision=args.force_naflex_vision,
         pretrained_image=args.pretrained_image,
         output_dict=True,
         cache_dir=args.cache_dir,
@@ -306,7 +307,11 @@ def main(args):
                 _logger.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
-    naflex_data_config = create_naflex_data_config_from_args(args) if args.use_naflex else None
+    naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
+    naflex_data_config = (
+        create_naflex_data_config_from_args(args, default_patch_size=naflex_patch_size)
+        if args.use_naflex else None
+    )
 
     # Create task (wraps model + loss)
     task = create_task(args, model=model, dist_model=dist_model, naflex_data_config=naflex_data_config)

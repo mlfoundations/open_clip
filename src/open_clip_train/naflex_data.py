@@ -32,6 +32,7 @@ __all__ = [
     "collate_naflex_tuples",
     "create_naflex_data_config_from_args",
     "create_naflex_eval_transform",
+    "get_naflex_model_patch_size",
     "require_naflex",
     "resolve_patch_cfg",
 ]
@@ -74,9 +75,23 @@ def resolve_patch_cfg(
     return sizes, probs, True
 
 
-def create_naflex_data_config_from_args(args) -> NaFlexDataConfig:
+def get_naflex_model_patch_size(model) -> Optional[Tuple[int, int]]:
+    visual = getattr(model, 'visual', None)
+    trunk = getattr(visual, 'trunk', visual)
+    if trunk is not None and hasattr(trunk, 'get_patch_size'):
+        return to_2tuple(trunk.get_patch_size())
+    return None
+
+
+def create_naflex_data_config_from_args(
+        args,
+        default_patch_size: Optional[PatchSize] = None,
+) -> NaFlexDataConfig:
+    patch_sizes = getattr(args, 'naflex_patch_sizes', None)
+    if patch_sizes is None and default_patch_size is not None:
+        patch_sizes = [default_patch_size]
     return NaFlexDataConfig.resolve(
-        patch_sizes=getattr(args, 'naflex_patch_sizes', None),
+        patch_sizes=patch_sizes,
         patch_size_probs=getattr(args, 'naflex_patch_size_probs', None),
         seq_lens=getattr(args, 'naflex_seq_lens', None),
         train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
