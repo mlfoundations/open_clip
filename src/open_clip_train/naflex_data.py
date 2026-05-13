@@ -3,15 +3,15 @@ import random
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import torch
-import webdataset as wds
 from torch.utils.data.dataloader import default_collate
 
 try:
-    from timm.data.naflex_dataset import calculate_naflex_batch_size
+    from timm.data.naflex_dataset import NaFlexCollator, calculate_naflex_batch_size
     from timm.data.naflex_transforms import Patchify
 
     NAFLEX_AVAILABLE = True
 except ImportError:
+    NaFlexCollator = None
     calculate_naflex_batch_size = None
     Patchify = None
     NAFLEX_AVAILABLE = False
@@ -24,7 +24,7 @@ Sample = Dict[str, Any]
 def require_naflex() -> None:
     if not NAFLEX_AVAILABLE:
         raise RuntimeError(
-            "NaFlex batching requires a timm version with NaFlex data support. "
+            "NaFlex requires a timm version with NaFlex data support, including eval patchify transforms. "
             "Install timm>=1.0.16 or a recent timm main checkout."
         )
 
@@ -66,6 +66,82 @@ def resolve_patch_cfg(
     return sizes, probs, True
 
 
+def resolve_naflex_eval_config(args) -> Tuple[Tuple[int, int], int]:
+    # Eval follows timm's fixed-shape policy: use the first configured patch size
+    # and pad/crop all images to the largest configured sequence length.
+    patch_sizes = getattr(args, 'naflex_patch_sizes', None)
+    patch_size = patch_sizes[0] if patch_sizes else 16
+    patch_size = _to_2tuple(patch_size)
+    if patch_size[0] <= 0 or patch_size[1] <= 0:
+        raise ValueError("NaFlex eval patch size must be positive.")
+
+    seq_lens = getattr(args, 'naflex_seq_lens', None)
+    seq_lens = [int(seq_len) for seq_len in seq_lens] if seq_lens else [576]
+    if not all(seq_len > 0 for seq_len in seq_lens):
+        raise ValueError("NaFlex eval sequence lengths must be positive.")
+    max_seq_len = max(seq_lens)
+    return patch_size, max_seq_len
+
+
+def create_naflex_eval_transform(transform_factory, args) -> Tuple[Callable, int, Tuple[int, int]]:
+    require_naflex()
+    if not getattr(transform_factory, 'is_naflex_eval_transform_factory', False):
+        raise ValueError("NaFlex eval requires `--aug-cfg use_timm=True naflex=True`.")
+
+    patch_size, max_seq_len = resolve_naflex_eval_config(args)
+    return transform_factory(max_seq_len=max_seq_len, patch_size=patch_size), max_seq_len, patch_size
+
+
+def collate_naflex_tuples(
+        batch: List[Tuple[Dict[str, torch.Tensor], Any]],
+        max_seq_len: Optional[int] = None,
+) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    require_naflex()
+    return NaFlexCollator(max_seq_len=max_seq_len)(batch)
+
+
+def collate_naflex_dicts(
+        batch: List[Sample],
+        image_key: str = "image",
+        target_key: str = "text",
+        max_seq_len: Optional[int] = None,
+) -> Dict[str, Any]:
+    images, targets = collate_naflex_tuples(
+        [(sample[image_key], sample[target_key]) for sample in batch],
+        max_seq_len=max_seq_len,
+    )
+    return {
+        image_key: images,
+        target_key: targets,
+    }
+
+
+def create_naflex_dummy_image(
+        batch_size: int,
+        max_seq_len: int,
+        patch_size: PatchSize,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+        num_channels: int = 3,
+) -> Dict[str, torch.Tensor]:
+    patch_size = _to_2tuple(patch_size)
+    patch_dim = patch_size[0] * patch_size[1] * num_channels
+    patches = torch.zeros(batch_size, max_seq_len, patch_dim, device=device, dtype=dtype)
+
+    width = math.ceil(math.sqrt(max_seq_len))
+    patch_idx = torch.arange(max_seq_len, device=device)
+    patch_coord = torch.stack((patch_idx // width, patch_idx % width), dim=-1).long()
+    patch_coord = patch_coord.unsqueeze(0).expand(batch_size, -1, -1).contiguous()
+    patch_valid = torch.ones(batch_size, max_seq_len, device=device, dtype=torch.bool)
+
+    return {
+        "patches": patches,
+        "patch_coord": patch_coord,
+        "patch_valid": patch_valid,
+        "seq_len": max_seq_len,
+    }
+
+
 def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     if total <= 0:
         raise ValueError("NaFlex schedule size must be positive.")
@@ -74,7 +150,7 @@ def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     return total
 
 
-class NaFlexBatcher(wds.PipelineStage):
+class NaFlexBatcher:
     """WebDataset stage that turns image/text samples into NaFlex dict batches."""
 
     def __init__(
@@ -97,7 +173,6 @@ class NaFlexBatcher(wds.PipelineStage):
             image_key: str = "image",
             target_key: str = "text",
     ) -> None:
-        super().__init__()
         require_naflex()
 
         if (train_num_samples is None) == (train_num_tokens is None):
@@ -151,6 +226,9 @@ class NaFlexBatcher(wds.PipelineStage):
             self._create_schedule_from_num_samples(int(train_num_samples))
         else:
             self._create_schedule_from_num_tokens(int(train_num_tokens))
+
+    def __call__(self, src: Iterable[Sample]):
+        return self.run(src)
 
     def _next_seq_len(self, generator: torch.Generator) -> int:
         seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=generator).item()

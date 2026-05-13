@@ -492,7 +492,7 @@ def parse_args(args):
         "--use-naflex",
         default=False,
         action="store_true",
-        help="Use NaFlex WebDataset batching for training."
+        help="Use NaFlex WebDataset batching for training and NaFlex patchified validation / zero-shot loaders."
     )
     parser.add_argument(
         "--naflex-num-train-image-tokens",
@@ -508,7 +508,7 @@ def parse_args(args):
         type=int,
         nargs="+",
         default=None,
-        help="Patch sizes to sample for NaFlex training. Defaults to 16 when omitted."
+        help="Patch sizes to sample for NaFlex training. Eval uses the first value. Defaults to 16 when omitted."
     )
     parser.add_argument(
         "--naflex-patch-size-probs",
@@ -522,7 +522,7 @@ def parse_args(args):
         type=int,
         nargs="+",
         default=None,
-        help="Sequence lengths to sample for NaFlex training."
+        help="Sequence lengths to sample for NaFlex training. Eval pads/crops to the largest value."
     )
     parser.add_argument(
         "--naflex-max-image-tokens-per-batch",

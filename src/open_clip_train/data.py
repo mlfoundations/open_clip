@@ -10,6 +10,7 @@ import sys
 import warnings
 import braceexpand
 from dataclasses import dataclass
+from functools import partial
 from multiprocessing import Value
 
 import numpy as np
@@ -24,7 +25,13 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
-from open_clip_train.naflex_data import NaFlexBatcher, require_naflex
+from open_clip_train.naflex_data import (
+    NaFlexBatcher,
+    collate_naflex_dicts,
+    collate_naflex_tuples,
+    create_naflex_eval_transform,
+    require_naflex,
+)
 
 
 class CsvDataset(Dataset):
@@ -125,6 +132,15 @@ def get_imagenet(args, preprocess_fns, split):
     assert split in ["train", "val", "v2"]
     is_train = split == "train"
     preprocess_train, preprocess_val = preprocess_fns
+    use_naflex_eval = getattr(args, 'use_naflex', False) and not is_train
+    collate_fn = None
+
+    if is_train and getattr(args, 'use_naflex', False):
+        raise ValueError("NaFlex is only wired for validation and zero-shot ImageNet loaders, not --imagenet-train.")
+
+    if use_naflex_eval:
+        preprocess_val, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_val, args)
+        collate_fn = partial(collate_naflex_tuples, max_seq_len=naflex_max_seq_len)
 
     if split == "v2":
         from imagenetv2_pytorch import ImageNetV2Dataset
@@ -162,6 +178,7 @@ def get_imagenet(args, preprocess_fns, split):
         batch_size=args.batch_size,
         num_workers=args.workers,
         sampler=sampler,
+        collate_fn=collate_fn,
     )
 
     return DataInfo(dataloader=dataloader, sampler=sampler)
@@ -172,8 +189,10 @@ def count_samples(dataloader):
     n_elements, n_batches = 0, 0
     for batch in dataloader:
         n_batches += 1
-        n_elements += len(batch["image"])
-        assert len(batch["image"]) == len(batch["text"])
+        image = batch["image"]
+        image_batch_size = image["patches"].shape[0] if isinstance(image, dict) else len(image)
+        n_elements += image_batch_size
+        assert image_batch_size == len(batch["text"])
     return n_elements, n_batches
 
 
@@ -349,14 +368,15 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-    use_naflex = getattr(args, 'use_naflex', False) and is_train
+    use_naflex_train = getattr(args, 'use_naflex', False) and is_train
+    use_naflex_eval = getattr(args, 'use_naflex', False) and not is_train
 
     num_shards = None
     if is_train:
         num_image_tokens = getattr(args, 'naflex_num_train_image_tokens', None)
-        if use_naflex and num_image_tokens is not None and args.train_num_samples is not None:
+        if use_naflex_train and num_image_tokens is not None and args.train_num_samples is not None:
             raise ValueError("Specify only one of `--train-num-samples` or `--naflex-num-train-image-tokens`.")
-        if use_naflex and num_image_tokens is not None:
+        if use_naflex_train and num_image_tokens is not None:
             num_samples = None
         elif args.train_num_samples is not None:
             num_samples = args.train_num_samples
@@ -378,10 +398,12 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             "(with --dataset-resampled)."
         )
 
-    if use_naflex:
+    if use_naflex_train:
         require_naflex()
         if not getattr(preprocess_img, 'is_naflex_transform_factory', False):
             raise ValueError("NaFlex WebDataset training requires `--aug-cfg use_timm=True naflex=True`.")
+    elif use_naflex_eval:
+        preprocess_img, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_img, args)
     elif is_train and getattr(args, 'naflex_num_train_image_tokens', None) is not None:
         warnings.warn("`--naflex-num-train-image-tokens` is ignored unless `--use-naflex` is set.")
 
@@ -392,7 +414,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             deterministic=True,
             epoch=shared_epoch,
         )]
-    elif use_naflex:
+    elif use_naflex_train:
         num_shards = num_shards or len(expand_urls(input_shards)[0])
         assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         pipeline = [RepeatedShardList(input_shards)]
@@ -432,7 +454,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.rename(image="jpg;png;jpeg;webp", text="txt", keep=False),
     ])
 
-    if use_naflex:
+    if use_naflex_train:
         naflex_patch_size = None
         naflex_patch_size_choices = getattr(args, 'naflex_patch_sizes', None)
         if naflex_patch_size_choices is not None and len(naflex_patch_size_choices) == 1:
@@ -463,6 +485,16 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_workers = max(1, args.workers)
         num_batches = naflex_batcher.num_batches_for_workers(num_workers)
         num_samples = naflex_batcher.num_samples_for_workers(num_workers)
+    elif use_naflex_eval:
+        pipeline.extend([
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.batched(
+                args.batch_size,
+                partial=True,
+                collation_fn=partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len),
+            ),
+        ])
+        dataset = wds.DataPipeline(*pipeline)
     else:
         pipeline.extend([
             wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
@@ -470,7 +502,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         ])
         dataset = wds.DataPipeline(*pipeline)
 
-    if is_train and not use_naflex:
+    if is_train and not use_naflex_train:
         if not resampled:
             num_shards = num_shards or len(expand_urls(input_shards)[0])
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'

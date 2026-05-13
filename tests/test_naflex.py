@@ -9,8 +9,13 @@ from torchvision import transforms
 
 import open_clip
 from open_clip.transform import image_transform
-from open_clip_train.data import get_wds_dataset
-from open_clip_train.naflex_data import NAFLEX_AVAILABLE, NaFlexBatcher
+from open_clip_train.data import get_imagenet, get_wds_dataset
+from open_clip_train.naflex_data import (
+    NAFLEX_AVAILABLE,
+    NaFlexBatcher,
+    collate_naflex_tuples,
+    resolve_naflex_eval_config,
+)
 from open_clip_train.params import parse_args
 
 
@@ -165,6 +170,16 @@ def test_parse_naflex_args():
     assert args.naflex_batch_divisor == 4
 
 
+def test_naflex_eval_config_rejects_non_positive_values():
+    args = types.SimpleNamespace(naflex_patch_sizes=[16], naflex_seq_lens=[0, 4])
+    with pytest.raises(ValueError, match="sequence lengths"):
+        resolve_naflex_eval_config(args)
+
+    args = types.SimpleNamespace(naflex_patch_sizes=[0], naflex_seq_lens=[4])
+    with pytest.raises(ValueError, match="patch size"):
+        resolve_naflex_eval_config(args)
+
+
 def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     tar_path = tmp_path / "samples.tar"
     _write_tar(tar_path)
@@ -232,6 +247,125 @@ def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
 
     assert len(batches) == 3
     assert sum(batch["image"]["patches"].shape[0] for batch in batches) == 6
+
+
+def test_create_model_and_transforms_returns_naflex_eval_factory():
+    _, _, preprocess_val = open_clip.create_model_and_transforms(
+        "naflex_ViT-B-16",
+        pretrained=None,
+        device="cpu",
+        aug_cfg={"use_timm": True, "naflex": True},
+    )
+
+    transform = preprocess_val(max_seq_len=4, patch_size=16)
+    image = transform(Image.new("RGB", (32, 32)))
+
+    assert getattr(preprocess_val, "is_naflex_eval_transform_factory")
+    assert set(image.keys()) == {"patches", "patch_coord", "patch_valid"}
+    assert image["patches"].shape == (4, 16 * 16 * 3)
+    assert image["patch_coord"].shape == (4, 2)
+    assert image["patch_valid"].all()
+
+
+def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
+    tar_path = tmp_path / "samples.tar"
+    _write_tar(tar_path)
+    _, _, preprocess_val = open_clip.create_model_and_transforms(
+        "naflex_ViT-B-16",
+        pretrained=None,
+        device="cpu",
+        aug_cfg={"use_timm": True, "naflex": True},
+    )
+    args = types.SimpleNamespace(
+        train_data=None,
+        val_data=str(tar_path),
+        dataset_resampled=False,
+        train_data_upsampling_factors=None,
+        train_num_samples=None,
+        val_num_samples=4,
+        use_naflex=True,
+        naflex_patch_sizes=[16],
+        naflex_patch_size_probs=None,
+        naflex_seq_lens=[4],
+        naflex_max_image_tokens_per_batch=8,
+        naflex_batch_divisor=1,
+        seed=0,
+        workers=0,
+        batch_size=2,
+        distributed=False,
+        rank=0,
+        world_size=1,
+    )
+    tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
+
+    info = get_wds_dataset(args, preprocess_val, is_train=False, tokenizer=tokenizer)
+    batch = next(iter(info.dataloader))
+
+    assert set(batch.keys()) == {"image", "text"}
+    assert batch["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
+    assert batch["image"]["patch_coord"].shape == (2, 4, 2)
+    assert batch["image"]["patch_valid"].all()
+    assert batch["text"].shape == (2, 1)
+
+
+def test_get_imagenet_naflex_eval_outputs_patched_image_dict(tmp_path):
+    class_dir = tmp_path / "imagenet" / "class0"
+    class_dir.mkdir(parents=True)
+    for idx in range(2):
+        Image.new("RGB", (32, 32), color=(idx, idx, idx)).save(class_dir / f"{idx}.png")
+
+    _, preprocess_train, preprocess_val = open_clip.create_model_and_transforms(
+        "naflex_ViT-B-16",
+        pretrained=None,
+        device="cpu",
+        aug_cfg={"use_timm": True, "naflex": True},
+    )
+    args = types.SimpleNamespace(
+        imagenet_train=None,
+        imagenet_val=str(tmp_path / "imagenet"),
+        imagenet_v2=None,
+        use_naflex=True,
+        naflex_patch_sizes=[16],
+        naflex_seq_lens=[4],
+        batch_size=2,
+        workers=0,
+    )
+
+    info = get_imagenet(args, (preprocess_train, preprocess_val), "val")
+    images, targets = next(iter(info.dataloader))
+
+    assert images["patches"].shape == (2, 4, 16 * 16 * 3)
+    assert images["patch_coord"].shape == (2, 4, 2)
+    assert images["patch_valid"].all()
+    assert targets.tolist() == [0, 0]
+
+
+def test_get_imagenet_naflex_train_raises_clear_error():
+    args = types.SimpleNamespace(use_naflex=True)
+
+    with pytest.raises(ValueError, match="--imagenet-train"):
+        get_imagenet(args, (_transform_factory, _transform_factory), "train")
+
+
+def test_naflex_model_forward_accepts_eval_transform_image_dict():
+    model, _, preprocess_val = open_clip.create_model_and_transforms(
+        "naflex_ViT-B-16",
+        pretrained=None,
+        device="cpu",
+        aug_cfg={"use_timm": True, "naflex": True},
+    )
+    transform = preprocess_val(max_seq_len=4, patch_size=16)
+    images, _ = collate_naflex_tuples(
+        [(transform(Image.new("RGB", (32, 32))), torch.tensor(0)) for _ in range(2)],
+        max_seq_len=4,
+    )
+    text = torch.zeros(2, 77, dtype=torch.long)
+
+    with torch.inference_mode():
+        image_features, text_features, _ = model(images, text)
+
+    assert image_features.shape == (2, 512)
+    assert text_features.shape == (2, 512)
 
 
 def test_naflex_model_forward_accepts_batcher_image_dict():

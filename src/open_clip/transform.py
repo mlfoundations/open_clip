@@ -90,6 +90,32 @@ class NaFlexTransformFactory:
         )
 
 
+class NaFlexEvalTransformFactory:
+    is_naflex_eval_transform_factory = True
+
+    def __init__(self, **transform_kwargs) -> None:
+        self.transform_kwargs = transform_kwargs
+
+    def __call__(self, max_seq_len, patch_size):
+        from timm.data import create_transform  # timm can still be optional
+        return create_transform(
+            is_training=False,
+            naflex=True,
+            patchify=True,
+            max_seq_len=max_seq_len,
+            patch_size=patch_size,
+            **self.transform_kwargs,
+        )
+
+
+def is_naflex_aug_cfg(aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]]) -> bool:
+    if isinstance(aug_cfg, dict):
+        return bool(aug_cfg.get("naflex", False))
+    if isinstance(aug_cfg, AugmentationCfg):
+        return bool(aug_cfg.naflex)
+    return False
+
+
 def _setup_size(size, error_msg):
     if isinstance(size, numbers.Number):
         return int(size), int(size)
@@ -480,4 +506,13 @@ def image_transform_v2(
         resize_mode=cfg.resize_mode,
         fill_color=cfg.fill_color,
         aug_cfg=aug_cfg,
+    )
+
+
+def naflex_eval_transform_v2(cfg: PreprocessCfg):
+    return NaFlexEvalTransformFactory(
+        input_size=cfg.input_size,
+        mean=cfg.mean,
+        std=cfg.std,
+        interpolation=cfg.interpolation,
     )

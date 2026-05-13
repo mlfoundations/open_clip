@@ -21,6 +21,7 @@ except ImportError:
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
 from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
+from open_clip_train.naflex_data import create_naflex_dummy_image, resolve_naflex_eval_config
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
 
@@ -306,13 +307,26 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
 
         if use_fsdp_eval:
             # Pre-allocate dummy batch for non-master ranks
-            dummy_batch = task.create_dummy_batch(
-                image_size=model.visual.image_size,
-                context_length=model.context_length,
-                batch_size=1,
-                device=device,
-                dtype=input_dtype,
-            )
+            if getattr(args, 'use_naflex', False):
+                patch_size, max_seq_len = resolve_naflex_eval_config(args)
+                dummy_batch = {
+                    "image": create_naflex_dummy_image(
+                        1,
+                        max_seq_len=max_seq_len,
+                        patch_size=patch_size,
+                        device=device,
+                        dtype=input_dtype,
+                    ),
+                    "text": torch.zeros(1, model.context_length, device=device, dtype=torch.long),
+                }
+            else:
+                dummy_batch = task.create_dummy_batch(
+                    image_size=model.visual.image_size,
+                    context_length=model.context_length,
+                    batch_size=1,
+                    device=device,
+                    dtype=input_dtype,
+                )
             signal = torch.zeros(1, device=device, dtype=torch.long)
 
         # FIXME this does not scale past small eval datasets
