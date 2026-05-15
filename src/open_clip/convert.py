@@ -36,38 +36,59 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
     interpolation = 'bilinear'
     antialias = False
 
-    def _convert_timm_img(module, prefix):
-        embed_conv_w = _n2p(w[f'{prefix}embedding/kernel'])
-        if embed_conv_w.shape[-2:] != module.patch_embed.proj.weight.shape[-2:]:
-            embed_conv_w = resample_patch_embed(
-                embed_conv_w,
-                module.patch_embed.proj.weight.shape[-2:],
+    def _linear_patch_embed_to_conv(embed_w, conv_weight_shape):
+        out_channels, in_channels, patch_height, patch_width = conv_weight_shape
+        if embed_w.shape != (out_channels, in_channels * patch_height * patch_width):
+            return embed_w
+        return embed_w.reshape(out_channels, patch_height, patch_width, in_channels).permute(0, 3, 1, 2)
+
+    def _reshape_grid_pos_embed(pos_embed_w, target_shape):
+        if pos_embed_w.ndim == 3:
+            pos_embed_w = pos_embed_w.unsqueeze(0)
+        if pos_embed_w.shape == target_shape:
+            return pos_embed_w
+
+        if pos_embed_w.ndim == 4 and len(target_shape) == 4:
+            old_size = pos_embed_w.shape[1:3]
+            new_size = target_shape[1:3]
+            pos_embed_w = resample_abs_pos_embed(
+                pos_embed_w.reshape(1, -1, pos_embed_w.shape[-1]),
+                new_size=new_size,
+                old_size=old_size,
+                num_prefix_tokens=0,
                 interpolation=interpolation,
                 antialias=antialias,
                 verbose=True,
             )
-        module.patch_embed.proj.weight.copy_(embed_conv_w)
-        module.patch_embed.proj.bias.copy_(_n2p(w[f'{prefix}embedding/bias']))
+            pos_embed_w = pos_embed_w.reshape(target_shape)
+        return pos_embed_w
 
-        if module.cls_token is not None:
-            module.cls_token.copy_(_n2p(w[f'{prefix}cls'], t=False))
+    def _copy_map_head(module, prefix):
+        if module.attn_pool is None:
+            return
 
-        pos_embed_w = _n2p(w[f'{prefix}pos_embedding'], t=False)
-        if pos_embed_w.shape != module.pos_embed.shape:
-            assert False, f'{pos_embed_w.shape}, {module.pos_embed.shape}'
-            num_prefix_tokens = 0 if getattr(module, 'no_embed_class', False) else getattr(module, 'num_prefix_tokens', 1)
-            pos_embed_w = resample_abs_pos_embed(  # resize pos embedding when different size from pretrained weights
-                pos_embed_w,
-                new_size=module.patch_embed.grid_size,
-                num_prefix_tokens=num_prefix_tokens,
-                interpolation=interpolation,
-                antialias=antialias,
-                verbose=True,
-            )
-        module.pos_embed.copy_(pos_embed_w)
+        block_prefix = f'{prefix}MAPHead_0/'
+        mha_prefix = block_prefix + f'MultiHeadDotProductAttention_0/'
+        module.attn_pool.latent.copy_(_n2p(w[f'{block_prefix}probe'], t=False))
+        module.attn_pool.q.weight.copy_(_n2p(w[f'{mha_prefix}query/kernel'], t=False).flatten(1).T)
+        module.attn_pool.q.bias.copy_(_n2p(w[f'{mha_prefix}query/bias'], t=False).reshape(-1))
+        module.attn_pool.kv.weight.copy_(torch.cat([
+            _n2p(w[f'{mha_prefix}{n}/kernel'], t=False).flatten(1).T for n in ('key', 'value')]))
+        module.attn_pool.kv.bias.copy_(torch.cat([
+            _n2p(w[f'{mha_prefix}{n}/bias'], t=False).reshape(-1) for n in ('key', 'value')]))
+        module.attn_pool.proj.weight.copy_(_n2p(w[f'{mha_prefix}out/kernel']).flatten(1))
+        module.attn_pool.proj.bias.copy_(_n2p(w[f'{mha_prefix}out/bias']))
+        module.attn_pool.norm.weight.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/scale']))
+        module.attn_pool.norm.bias.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/bias']))
+        for r in range(2):
+            getattr(module.attn_pool.mlp, f'fc{r + 1}').weight.copy_(
+                _n2p(w[f'{block_prefix}MlpBlock_0/Dense_{r}/kernel']))
+            getattr(module.attn_pool.mlp, f'fc{r + 1}').bias.copy_(
+                _n2p(w[f'{block_prefix}MlpBlock_0/Dense_{r}/bias']))
 
+    def _copy_timm_img_blocks(blocks, prefix):
         mha_sub, b_sub, ln1_sub = (0, 0, 1)
-        for i, block in enumerate(module.blocks.children()):
+        for i, block in enumerate(blocks.children()):
             if f'{prefix}Transformer/encoderblock/LayerNorm_0/scale' in w:
                 block_prefix = f'{prefix}Transformer/encoderblock/'
                 idx = i
@@ -91,26 +112,67 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
                 getattr(block.mlp, f'fc{r + 1}').bias.copy_(
                     _n2p(w[f'{block_prefix}MlpBlock_{b_sub}/Dense_{r}/bias'], idx=idx))
 
+    def _convert_timm_img(module, prefix):
+        embed_conv_w = _n2p(w[f'{prefix}embedding/kernel'])
+        if embed_conv_w.ndim == 2:
+            embed_conv_w = _linear_patch_embed_to_conv(embed_conv_w, module.patch_embed.proj.weight.shape)
+        if embed_conv_w.shape[-2:] != module.patch_embed.proj.weight.shape[-2:]:
+            embed_conv_w = resample_patch_embed(
+                embed_conv_w,
+                module.patch_embed.proj.weight.shape[-2:],
+                interpolation=interpolation,
+                antialias=antialias,
+                verbose=True,
+            )
+        module.patch_embed.proj.weight.copy_(embed_conv_w)
+        module.patch_embed.proj.bias.copy_(_n2p(w[f'{prefix}embedding/bias']))
+
+        if module.cls_token is not None:
+            module.cls_token.copy_(_n2p(w[f'{prefix}cls'], t=False))
+
+        pos_embed_w = _n2p(w[f'{prefix}pos_embedding'], t=False)
+        if pos_embed_w.ndim == 3:
+            pos_embed_w = pos_embed_w.reshape(1, -1, pos_embed_w.shape[-1])
+        if pos_embed_w.shape != module.pos_embed.shape:
+            num_prefix_tokens = (
+                0 if getattr(module, 'no_embed_class', False) else getattr(module, 'num_prefix_tokens', 1)
+            )
+            pos_embed_w = resample_abs_pos_embed(  # resize pos embedding when different size from pretrained weights
+                pos_embed_w,
+                new_size=module.patch_embed.grid_size,
+                num_prefix_tokens=num_prefix_tokens,
+                interpolation=interpolation,
+                antialias=antialias,
+                verbose=True,
+            )
+        module.pos_embed.copy_(pos_embed_w)
+
+        _copy_timm_img_blocks(module.blocks, prefix)
+
         module.norm.weight.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/scale']))
         module.norm.bias.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/bias']))
 
-        if module.attn_pool is not None:
-            block_prefix = f'{prefix}MAPHead_0/'
-            mha_prefix = block_prefix + f'MultiHeadDotProductAttention_0/'
-            module.attn_pool.latent.copy_(_n2p(w[f'{block_prefix}probe'], t=False))
-            module.attn_pool.q.weight.copy_(_n2p(w[f'{mha_prefix}query/kernel'], t=False).flatten(1).T)
-            module.attn_pool.q.bias.copy_(_n2p(w[f'{mha_prefix}query/bias'], t=False).reshape(-1))
-            module.attn_pool.kv.weight.copy_(torch.cat([
-                _n2p(w[f'{mha_prefix}{n}/kernel'], t=False).flatten(1).T for n in ('key', 'value')]))
-            module.attn_pool.kv.bias.copy_(torch.cat([
-                _n2p(w[f'{mha_prefix}{n}/bias'], t=False).reshape(-1) for n in ('key', 'value')]))
-            module.attn_pool.proj.weight.copy_(_n2p(w[f'{mha_prefix}out/kernel']).flatten(1))
-            module.attn_pool.proj.bias.copy_(_n2p(w[f'{mha_prefix}out/bias']))
-            module.attn_pool.norm.weight.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/scale']))
-            module.attn_pool.norm.bias.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/bias']))
-            for r in range(2):
-                getattr(module.attn_pool.mlp, f'fc{r + 1}').weight.copy_(_n2p(w[f'{block_prefix}MlpBlock_0/Dense_{r}/kernel']))
-                getattr(module.attn_pool.mlp, f'fc{r + 1}').bias.copy_(_n2p(w[f'{block_prefix}MlpBlock_0/Dense_{r}/bias']))
+        _copy_map_head(module, prefix)
+
+    def _convert_naflex_timm_img(module, prefix):
+        module.embeds.proj.weight.copy_(_n2p(w[f'{prefix}embedding/kernel']))
+        if module.embeds.proj.bias is not None:
+            module.embeds.proj.bias.copy_(_n2p(w[f'{prefix}embedding/bias']))
+
+        if module.embeds.cls_token is not None and f'{prefix}cls' in w:
+            module.embeds.cls_token.copy_(_n2p(w[f'{prefix}cls'], t=False))
+        if module.embeds.pos_embed is not None:
+            pos_embed_w = _reshape_grid_pos_embed(
+                _n2p(w[f'{prefix}pos_embedding'], t=False),
+                module.embeds.pos_embed.shape,
+            )
+            module.embeds.pos_embed.copy_(pos_embed_w)
+
+        _copy_timm_img_blocks(module.blocks, prefix)
+        if hasattr(module.norm, 'weight'):
+            module.norm.weight.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/scale']))
+            module.norm.bias.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/bias']))
+        _copy_map_head(module, prefix)
 
     def _convert_openclip_transformer(module: Transformer, prefix):
         for i, block in enumerate(module.resblocks.children()):
@@ -148,7 +210,10 @@ def load_big_vision_weights(model: CustomTextCLIP, checkpoint_path: str):
             module.text_projection.bias.copy_(_n2p(w[f'{prefix}head/bias']))
 
     root_prefix = 'params/' if 'params/b' in w else ''
-    _convert_timm_img(model.visual.trunk, f'{root_prefix}img/')
+    if model.visual.trunk.__class__.__name__ == 'NaFlexVit':
+        _convert_naflex_timm_img(model.visual.trunk, f'{root_prefix}img/')
+    else:
+        _convert_timm_img(model.visual.trunk, f'{root_prefix}img/')
     _convert_openclip_txt(model.text, f'{root_prefix}txt/')
     model.logit_bias.copy_(_n2p(w[f'{root_prefix}b'])[0])
     model.logit_scale.copy_(_n2p(w[f'{root_prefix}t'])[0])
