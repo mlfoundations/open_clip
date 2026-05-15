@@ -171,7 +171,7 @@ def test_force_naflex_vision_passes_use_naflex_to_timm(monkeypatch):
         captured.update(kwargs)
         return _DummyTimmTrunk()
 
-    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-eva-naflex", _tiny_timm_clip_config("eva02_test"))
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-eva-naflex", _tiny_timm_clip_config("eva02_base_patch16_clip_224"))
     monkeypatch.setattr("open_clip.timm_model.timm.create_model", _create_model)
 
     factory.create_model(
@@ -181,6 +181,25 @@ def test_force_naflex_vision_passes_use_naflex_to_timm(monkeypatch):
     )
 
     assert captured["use_naflex"] is True
+
+
+def test_force_naflex_vision_accepts_timm_models_by_module_membership():
+    assert naflex_convert._can_convert_timm_model_to_naflex("eva02_base_patch16_clip_224")
+    assert naflex_convert._can_convert_timm_model_to_naflex("vit_base_patch16_224")
+    assert naflex_convert._can_convert_timm_model_to_naflex("vit_pe_core_base_patch16_224")
+    assert not naflex_convert._can_convert_timm_model_to_naflex("vit_not_registered_patch16_224")
+
+
+def test_force_naflex_vision_configures_pe_core_timm_tower():
+    config = factory.get_model_config("PE-Core-B-16")
+    naflex_convert.apply_naflex_vision_config(config)
+
+    vision_cfg = config["vision_cfg"]
+    assert vision_cfg["timm_model_name"] == "vit_pe_core_base_patch16_224"
+    assert vision_cfg["timm_pool"] == "map"
+    assert vision_cfg["timm_proj"] is None
+    assert vision_cfg["timm_model_kwargs"]["use_naflex"] is True
+    assert vision_cfg["timm_model_kwargs"]["pool_include_prefix"] is True
 
 
 @pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")

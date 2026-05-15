@@ -1,11 +1,11 @@
 from copy import deepcopy
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import torch
 from torch import nn
 
 
-_NAFLEX_TIMM_CONVERT_PREFIXES = ('eva', 'vit_')
+_NAFLEX_TIMM_CONVERT_MODULES = ('eva', 'vision_transformer')
 _NAFLEX_NATIVE_TIMM_MODEL_NAME = 'vit_base_patch16_clip_224'
 
 
@@ -19,8 +19,19 @@ def _is_naflex_timm_model_name(model_name: str) -> bool:
     return model_name.startswith('naflexvit')
 
 
+def _is_timm_model_in_modules(model_name: str, module_names: Tuple[str, ...]) -> bool:
+    try:
+        from timm.models import is_model_in_modules
+    except ImportError:
+        return False
+    return is_model_in_modules(model_name, module_names)
+
+
 def _can_convert_timm_model_to_naflex(model_name: str) -> bool:
-    return _is_naflex_timm_model_name(model_name) or model_name.startswith(_NAFLEX_TIMM_CONVERT_PREFIXES)
+    return (
+        _is_naflex_timm_model_name(model_name) or
+        _is_timm_model_in_modules(model_name, _NAFLEX_TIMM_CONVERT_MODULES)
+    )
 
 
 def _is_standard_native_vit_cfg(vision_cfg: Dict[str, Any]) -> bool:
@@ -120,6 +131,8 @@ def _force_naflex_timm_vision(vision_cfg: Dict[str, Any]) -> None:
         )
     timm_model_kwargs = deepcopy(vision_cfg.get('timm_model_kwargs') or {})
     timm_model_kwargs['use_naflex'] = True
+    if vision_cfg.get('timm_pool') == 'map' and _is_timm_model_in_modules(timm_model_name, ('eva',)):
+        timm_model_kwargs.setdefault('pool_include_prefix', True)
     vision_cfg['timm_model_kwargs'] = timm_model_kwargs
 
 
