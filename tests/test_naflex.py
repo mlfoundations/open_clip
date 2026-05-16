@@ -180,6 +180,22 @@ def test_naflex_eval_config_rejects_non_positive_values():
         create_naflex_data_config_from_args(args)
 
 
+def test_naflex_data_config_uses_model_eval_seq_len_default():
+    args = types.SimpleNamespace(naflex_patch_sizes=[16], naflex_seq_lens=None)
+    config = create_naflex_data_config_from_args(args, default_eval_seq_len=576)
+
+    assert config.train_seq_lens == (128, 256, 576, 784, 1024)
+    assert config.eval_seq_len == 576
+
+
+def test_naflex_seq_lens_override_model_eval_seq_len_default():
+    args = types.SimpleNamespace(naflex_patch_sizes=[16], naflex_seq_lens=[64])
+    config = create_naflex_data_config_from_args(args, default_eval_seq_len=576)
+
+    assert config.train_seq_lens == (64,)
+    assert config.eval_seq_len == 64
+
+
 def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     tar_path = tmp_path / "samples.tar"
     _write_tar(tar_path)

@@ -41,6 +41,7 @@ class CLIPVisionCfg:
     mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
+    image_seq_len: Optional[int] = None
 
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
@@ -206,6 +207,9 @@ def _build_vision_tower(
             scale_attn=vision_cfg.scale_attn,
             scale_fc=vision_cfg.scale_fc,
         )
+
+    if vision_cfg.image_seq_len is not None:
+        visual.image_seq_len = int(vision_cfg.image_seq_len)
 
     return visual
 
