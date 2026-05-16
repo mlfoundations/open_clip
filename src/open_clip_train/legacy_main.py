@@ -26,7 +26,11 @@ except ImportError:
 from open_clip import create_model_and_transforms, get_tokenizer, create_loss
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
-from open_clip_train.naflex_data import create_naflex_data_config_from_args, get_naflex_model_patch_size
+from open_clip_train.naflex_data import (
+    create_naflex_data_config_from_args,
+    get_naflex_model_image_seq_len,
+    get_naflex_model_patch_size,
+)
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
@@ -378,8 +382,13 @@ def main(args):
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
     naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
+    naflex_eval_seq_len = get_naflex_model_image_seq_len(model) if args.use_naflex else None
     naflex_data_config = (
-        create_naflex_data_config_from_args(args, default_patch_size=naflex_patch_size)
+        create_naflex_data_config_from_args(
+            args,
+            default_patch_size=naflex_patch_size,
+            default_eval_seq_len=naflex_eval_seq_len,
+        )
         if args.use_naflex else None
     )
     data = get_data(

@@ -32,6 +32,7 @@ __all__ = [
     "collate_naflex_tuples",
     "create_naflex_data_config_from_args",
     "create_naflex_eval_transform",
+    "get_naflex_model_image_seq_len",
     "get_naflex_model_patch_size",
     "require_naflex",
     "resolve_patch_cfg",
@@ -83,20 +84,28 @@ def get_naflex_model_patch_size(model) -> Optional[Tuple[int, int]]:
     return None
 
 
+def get_naflex_model_image_seq_len(model) -> Optional[int]:
+    image_seq_len = getattr(getattr(model, 'visual', None), 'image_seq_len', None)
+    return int(image_seq_len) if image_seq_len is not None else None
+
+
 def create_naflex_data_config_from_args(
         args,
         default_patch_size: Optional[PatchSize] = None,
+        default_eval_seq_len: Optional[int] = None,
 ) -> NaFlexDataConfig:
     patch_sizes = getattr(args, 'naflex_patch_sizes', None)
     if patch_sizes is None and default_patch_size is not None:
         patch_sizes = [default_patch_size]
+    seq_lens = getattr(args, 'naflex_seq_lens', None)
     return NaFlexDataConfig.resolve(
         patch_sizes=patch_sizes,
         patch_size_probs=getattr(args, 'naflex_patch_size_probs', None),
-        seq_lens=getattr(args, 'naflex_seq_lens', None),
+        seq_lens=seq_lens,
         train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
         max_tokens_per_batch=getattr(args, 'naflex_max_image_tokens_per_batch', 4096 * 4),
         batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
+        eval_seq_len=default_eval_seq_len if seq_lens is None else None,
     )
 
 

@@ -541,6 +541,9 @@ _PRETRAINED = {
     "ViT-B-16-SigLIP2-512": dict(
         webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2-512/'),
     ),
+    "ViT-B-16-SigLIP2-naflex": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-B-16-SigLIP2-naflex/'),
+    ),
     "ViT-L-16-SigLIP2-256": dict(
         webli=_slpcfg(hf_hub='timm/ViT-L-16-SigLIP2-256/'),
     ),
@@ -564,6 +567,9 @@ _PRETRAINED = {
     ),
     "ViT-SO400M-16-SigLIP2-512": dict(
         webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP2-512/'),
+    ),
+    "ViT-SO400M-16-SigLIP2-naflex": dict(
+        webli=_slpcfg(hf_hub='timm/ViT-SO400M-16-SigLIP2-naflex/'),
     ),
     "ViT-gopt-16-SigLIP2-256": dict(
         webli=_slpcfg(hf_hub='timm/ViT-gopt-16-SigLIP2-256/'),

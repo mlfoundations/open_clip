@@ -3,7 +3,8 @@
     "init_logit_bias": -10,
     "custom_text": true,
     "vision_cfg": {
-        "image_size": 256,
+        "image_size": 384,
+        "image_seq_len": 576,
         "timm_model_name": "naflexvit_base_patch16_siglip",
         "timm_model_pretrained": false,
         "timm_pool": "map",
