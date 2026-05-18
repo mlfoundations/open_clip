@@ -545,6 +545,16 @@ def parse_args(args):
         default=8,
         help="Divisibility constraint for scheduled NaFlex batch sizes."
     )
+    parser.add_argument(
+        "--naflex-loss-scale",
+        type=str,
+        choices=("none", "linear", "sqrt"),
+        default="none",
+        help=(
+            "Scale NaFlex training loss by actual local batch size relative to --batch-size. "
+            "Defaults to no scaling."
+        ),
+    )
 
     args = parser.parse_args(args)
     if args.use_naflex:

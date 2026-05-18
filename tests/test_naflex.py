@@ -17,6 +17,7 @@ from open_clip_train.naflex_data import (
     create_naflex_data_config_from_args,
 )
 from open_clip_train.params import parse_args
+from open_clip_train.train import get_naflex_loss_scale
 
 
 pytestmark = pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
@@ -159,6 +160,8 @@ def test_parse_naflex_args():
         "4096",
         "--naflex-batch-divisor",
         "4",
+        "--naflex-loss-scale",
+        "sqrt",
     ])
 
     assert args.use_naflex
@@ -168,6 +171,27 @@ def test_parse_naflex_args():
     assert args.naflex_seq_lens == [128, 256]
     assert args.naflex_max_image_tokens_per_batch == 4096
     assert args.naflex_batch_divisor == 4
+    assert args.naflex_loss_scale == "sqrt"
+
+
+def test_naflex_loss_scale_defaults_to_none():
+    args = parse_args([])
+
+    assert args.naflex_loss_scale == "none"
+
+
+def test_naflex_loss_scale_uses_actual_batch_size():
+    batch = {"image": {"patches": torch.zeros(8, 4, 3)}, "text": torch.zeros(8, 1)}
+
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="none", batch_size=4)) == 1.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4)) == 2.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="sqrt", batch_size=2)) == 2.0
+
+
+def test_naflex_loss_scale_ignores_dense_batches():
+    batch = {"image": torch.zeros(8, 3, 32, 32), "text": torch.zeros(8, 1)}
+
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4)) == 1.0
 
 
 def test_naflex_eval_config_rejects_non_positive_values():

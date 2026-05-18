@@ -66,6 +66,29 @@ def get_batch_size(batch):
     return len(image)
 
 
+def is_naflex_batch(batch):
+    image = batch["image"]
+    return isinstance(image, dict) and "patches" in image
+
+
+def get_naflex_loss_scale(batch, args):
+    loss_scale = getattr(args, "naflex_loss_scale", "none")
+    if loss_scale in (None, "none") or not is_naflex_batch(batch):
+        return 1.0
+
+    batch_size = get_batch_size(batch)
+    reference_batch_size = getattr(args, "batch_size", None)
+    if reference_batch_size is None or reference_batch_size <= 0:
+        raise ValueError("NaFlex loss scaling requires a positive --batch-size reference.")
+
+    scale = batch_size / reference_batch_size
+    if loss_scale == "linear":
+        return scale
+    if loss_scale == "sqrt":
+        return math.sqrt(scale)
+    raise ValueError(f"Unsupported NaFlex loss scale: {loss_scale}")
+
+
 def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(
@@ -107,6 +130,9 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                 losses = task(batch)
                 total_loss = losses["loss"]
 
+            loss_scale = get_naflex_loss_scale(batch, args)
+            if loss_scale != 1.0:
+                total_loss = total_loss * loss_scale
             backward(total_loss, scaler)
         else:
             # First, cache the features without any gradient tracking.
@@ -174,6 +200,9 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                         losses["loss"] = total_loss
                         losses["logit_scale"] = logit_scale
 
+                    loss_scale = get_naflex_loss_scale(batch_j, args)
+                    if loss_scale != 1.0:
+                        total_loss = total_loss * loss_scale
                     backward(total_loss, scaler)
 
                 if use_fsdp_no_sync:
