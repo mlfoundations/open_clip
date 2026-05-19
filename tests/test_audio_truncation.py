@@ -1,5 +1,3 @@
-import importlib.util
-
 import pytest
 import torch
 
@@ -7,10 +5,7 @@ from open_clip.audio import AudioAugmentationCfg, CLIPAudioCfg, audio_transform_
 from open_clip.audio.transform import get_audio_frame_count, make_audio_preprocess
 
 
-pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("torchaudio") is None,
-    reason="audio preprocessing tests require torchaudio",
-)
+pytest.importorskip("torchaudio", reason="audio preprocessing tests require torchaudio")
 
 
 def _cfg():
