@@ -89,6 +89,14 @@ def _mccfg(url='', hf_hub='', **kwargs):
     }
 
 
+def _clapcfg(url='', hf_hub='', **kwargs):
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        **kwargs,
+    }
+
+
 def _mc2cfg(url='', hf_hub='', **kwargs):
     # MobileCLIP-2
     return {
@@ -430,6 +438,20 @@ _coca_VITL14 = dict(
     mscoco_finetuned_laion2b_s13b_b90k=_pcfg(hf_hub='laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k/')
 )
 
+_CLAP_HTSAT_TINY_ROBERTA = dict(
+    laion=_clapcfg(
+        hf_hub='laion/clap-htsat-unfused/pytorch_model.bin',
+        hf_transformers_clap=True,
+    ),
+)
+
+_CLAP_HTSAT_TINY_ROBERTA_FUSED = dict(
+    laion=_clapcfg(
+        hf_hub='laion/clap-htsat-fused/model.safetensors',
+        hf_transformers_clap=True,
+    ),
+)
+
 
 _PRETRAINED = {
     "RN50": _RN50,
@@ -462,6 +484,9 @@ _PRETRAINED = {
 
     "coca_ViT-B-32": _coca_VITB32,
     "coca_ViT-L-14": _coca_VITL14,
+
+    "CLAP-HTSAT-tiny-Roberta-base": _CLAP_HTSAT_TINY_ROBERTA,
+    "CLAP-HTSAT-tiny-Roberta-base-fused": _CLAP_HTSAT_TINY_ROBERTA_FUSED,
 
     "EVA01-g-14": dict(
         # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_psz14_s11B.pt

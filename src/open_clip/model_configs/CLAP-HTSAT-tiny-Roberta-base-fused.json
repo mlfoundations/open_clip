@@ -12,6 +12,7 @@
         "class_num": 527,
         "model_type": "HTSAT",
         "model_name": "tiny",
+        "enable_fusion": true,
         "proj_act": "relu"
     },
     "text_cfg": {

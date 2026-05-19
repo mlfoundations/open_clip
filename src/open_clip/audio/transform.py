@@ -11,7 +11,7 @@ from .config import CLIPAudioCfg
 @dataclass
 class AudioAugmentationCfg:
     data_truncating: str = "rand_trunc"
-    data_filling: str = "pad"
+    data_filling: str = "repeatpad"
     enable_fusion: bool = False
     int16_normalize: bool = False
 
@@ -48,7 +48,6 @@ def _get_mel(audio_data: torch.Tensor, audio_cfg: Dict[str, Any]) -> torch.Tenso
         pad_mode="reflect",
         power=2.0,
         norm=None,
-        onesided=True,
         n_mels=audio_cfg.get("mel_bins", 64),
         f_min=audio_cfg.get("fmin", 50),
         f_max=audio_cfg.get("fmax", 14000),
@@ -60,7 +59,7 @@ def _get_mel(audio_data: torch.Tensor, audio_cfg: Dict[str, Any]) -> torch.Tenso
 
 def make_audio_preprocess(
         audio_cfg: Union[CLIPAudioCfg, Dict[str, Any]],
-        data_filling: str = "pad",
+        data_filling: str = "repeatpad",
         data_truncating: str = "rand_trunc",
         int16_normalize: bool = False,
 ):
@@ -170,7 +169,8 @@ def audio_transform_v2(
 
     return make_audio_preprocess(
         cfg,
-        data_filling=audio_aug_cfg.data_filling if is_train else "pad",
+        # Eval and train now share the fill policy; eval previously hardcoded zero-padding.
+        data_filling=audio_aug_cfg.data_filling,
         data_truncating=data_truncating,
         int16_normalize=audio_aug_cfg.int16_normalize,
     )

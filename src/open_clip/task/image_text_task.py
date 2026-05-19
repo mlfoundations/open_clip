@@ -116,22 +116,3 @@ class ImageTextTask(TrainingTask):
         if hasattr(model, 'logit_scale'):
             with torch.no_grad():
                 model.logit_scale.clamp_(0, max_val)
-
-    def forward(self, *args, **kwargs):
-        """Accept dict, kwargs, positional ``(image, text)``, or mixed.
-
-        Normalizes all calling conventions to a single dict before delegating
-        to ``TrainingTask.forward(batch)``.
-        """
-        if len(args) == 1 and isinstance(args[0], dict):
-            batch = args[0]
-            if kwargs:
-                batch = {**batch, **kwargs}
-        elif args and kwargs:
-            batch = dict(zip(self.data_keys, args))
-            batch.update(kwargs)
-        elif args:
-            batch = dict(zip(self.data_keys, args))
-        else:
-            batch = kwargs
-        return super().forward(batch)

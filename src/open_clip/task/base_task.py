@@ -393,12 +393,20 @@ class TrainingTask(nn.Module):
         """
         return self.loss(**inputs, **inputs_no_accum, output_dict=True)
 
-    def forward(self, batch: Dict[str, torch.Tensor]):
-        """Run training_forward (train) or model.forward (eval) on a dict batch.
+    def forward(self, *args, **kwargs):
+        """Normalize task call conventions, then run train or eval forward."""
+        if len(args) == 1 and isinstance(args[0], dict):
+            batch = args[0]
+            if kwargs:
+                batch = {**batch, **kwargs}
+        elif args and kwargs:
+            batch = dict(zip(self.data_keys, args))
+            batch.update(kwargs)
+        elif args:
+            batch = dict(zip(self.data_keys, args))
+        else:
+            batch = kwargs
 
-        Subclasses with shape-specific calling conventions (e.g. positional
-        ``(image, text)`` for image+text tasks) should override this.
-        """
         if not self.training:
             return self.get_trainable_module(use_ema=True)(**batch)
         return self.training_forward(batch)

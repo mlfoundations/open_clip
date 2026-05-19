@@ -80,7 +80,7 @@ def parse_args(args):
     parser.add_argument(
         "--data-filling",
         type=str,
-        default="pad",
+        default="repeatpad",
         choices=["pad", "repeat", "repeatpad"],
         help="How to fill audio shorter than clip_samples."
     )
@@ -102,6 +102,43 @@ def parse_args(args):
         default=False,
         action="store_true",
         help="Apply int16 quantization normalization in audio preprocessing."
+    )
+    parser.add_argument(
+        "--audio-zeroshot-dataset",
+        type=str,
+        default=None,
+        help="Hugging Face audio classification dataset for CLAP zero-shot eval, e.g. ashraq/esc50.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-split",
+        type=str,
+        default="train",
+        help="Dataset split for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-audio-key",
+        type=str,
+        default="audio",
+        help="Audio column name for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-target-key",
+        type=str,
+        default="target",
+        help="Target column name for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-class-key",
+        type=str,
+        default="category",
+        help="Optional class-name column for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-template",
+        dest="audio_zeroshot_templates",
+        action="append",
+        default=None,
+        help="Prompt template for audio zero-shot eval. May be passed multiple times; must contain {}.",
     )
     parser.add_argument(
         "--dataset-resampled",
