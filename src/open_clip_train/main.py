@@ -26,7 +26,13 @@ except ImportError:
     tensorboard = None
 
 from open_clip import create_model_and_transforms, get_tokenizer, create_task
-from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
+from open_clip.task import (
+    load_checkpoint,
+    load_sharded_checkpoint,
+    save_checkpoint,
+    save_sharded_checkpoint,
+    unwrap_model,
+)
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.naflex_data import (
@@ -39,6 +45,7 @@ from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.train import train_one_epoch, evaluate
 from open_clip_train.file_utils import start_sync_process, remote_sync
+from open_clip_train.zero_shot import validate_imagenet_zeroshot_compatible
 
 _logger = logging.getLogger('open_clip_train.main')
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -235,6 +242,12 @@ def main(args):
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
+    audio_aug_cfg = dict(
+        data_truncating=args.data_truncating,
+        data_filling=args.data_filling,
+        enable_fusion=args.enable_fusion,
+        int16_normalize=args.int16_normalize,
+    )
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -250,8 +263,10 @@ def main(args):
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        audio_aug_cfg=audio_aug_cfg,
         force_naflex_vision=args.force_naflex_vision,
         pretrained_image=args.pretrained_image,
+        pretrained_audio_path=args.pretrained_audio,
         output_dict=True,
         cache_dir=args.cache_dir,
         **model_kwargs,
@@ -282,6 +297,8 @@ def main(args):
 
     if args.lock_image:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        if not hasattr(model, 'lock_image_tower'):
+            raise ValueError("--lock-image is only valid for image models.")
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
@@ -324,6 +341,9 @@ def main(args):
 
     # Create task (wraps model + loss)
     task = create_task(args, model=model, dist_model=dist_model, naflex_data_config=naflex_data_config)
+    if args.imagenet_val is not None or args.imagenet_v2 is not None:
+        validate_imagenet_zeroshot_compatible(model)
+
     # Keep reference to unwrapped task for checkpoint methods.
     # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
     original_task = task
@@ -376,13 +396,14 @@ def main(args):
             if args.ddp_static_graph:
                 # this doesn't exist in older PyTorch, arg only added if enabled
                 ddp_args['static_graph'] = True
+            ddp_args.update(task.ddp_extra_kwargs())
             task.prepare_distributed(device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
     scaler = None
 
-    if args.train_data or args.dataset_type == "synthetic":
+    if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         opt = getattr(args, 'opt', 'adamw').lower()
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2
@@ -469,7 +490,7 @@ def main(args):
         (preprocess_train, preprocess_val),
         epoch=start_epoch,
         tokenizer=tokenizer,
-        naflex_data_config=task.naflex_data_config,
+        naflex_data_config=getattr(task, 'naflex_data_config', None),
     )
     assert len(data), 'At least one train or eval dataset must be specified.'
 

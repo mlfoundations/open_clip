@@ -15,6 +15,7 @@ import torch
 from .convert import convert_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
+from .clap_model import CLAP
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
@@ -55,7 +56,9 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            has_vision = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
+            has_audio = all(a in model_cfg for a in ('embed_dim', 'audio_cfg', 'text_cfg'))
+            if has_vision or has_audio:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -270,6 +273,7 @@ def create_model(
         pretrained_text: bool = True,  # Load default base text weights (at creation, if no CLIP weights) - NEW
         pretrained_image_path: Optional[str] = None, # Load specific image weights from file (after creation)
         pretrained_text_path: Optional[str] = None, # Load specific text weights from file (after creation)
+        pretrained_audio_path: Optional[str] = None, # Load specific audio encoder weights from file (after creation)
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
@@ -288,7 +292,7 @@ def create_model(
     only effective if no full CLIP checkpoint (`pretrained` or schema source) is loaded.
 
     Tower-specific weights can be loaded *after* creation via `pretrained_image_path`
-    and `pretrained_text_path`.
+    and `pretrained_text_path` / `pretrained_audio_path`.
 
     Args:
         model_name: Model identifier, potentially with schema ('hf-hub:', 'local-dir:').
@@ -307,6 +311,7 @@ def create_model(
         pretrained_text: Load default base weights for text tower at creation if no CLIP weights loaded (default: True).
         pretrained_image_path: Path to load weights specifically into image tower after creation.
         pretrained_text_path: Path to load weights specifically into text tower after creation.
+        pretrained_audio_path: Path to load weights specifically into audio encoder after creation.
         cache_dir: Cache directory for downloads.
         output_dict: If True and model supports it, return dict output.
         require_pretrained: Raise error if no `pretrained` CLIP weights loaded when required.
@@ -435,17 +440,26 @@ def create_model(
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
     text_cfg = model_cfg['text_cfg']
-    vision_cfg = model_cfg['vision_cfg']
+    is_audio_model = 'audio_cfg' in model_cfg
+    vision_cfg = model_cfg.get('vision_cfg', {})
     if force_quick_gelu:
         model_cfg["quick_gelu"] = True
-    if force_patch_dropout is not None:
-        vision_cfg["patch_dropout"] = force_patch_dropout
-    if force_image_size is not None:
-        vision_cfg["image_size"] = force_image_size
+    if is_audio_model:
+        if force_patch_dropout is not None:
+            warnings.warn("force_patch_dropout is ignored for CLAP audio models.", UserWarning)
+        if force_image_size is not None:
+            warnings.warn("force_image_size is ignored for CLAP audio models.", UserWarning)
+        if force_naflex_vision:
+            raise ValueError("force_naflex_vision is only valid for image models.")
+    else:
+        if force_patch_dropout is not None:
+            vision_cfg["patch_dropout"] = force_patch_dropout
+        if force_image_size is not None:
+            vision_cfg["image_size"] = force_image_size
+        if force_naflex_vision:
+            apply_naflex_vision_config(model_cfg)
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
-    if force_naflex_vision:
-        apply_naflex_vision_config(model_cfg)
 
     # Check compatibility (e.g., QuickGELU warning for tags)
     if schema is None and pretrained_cfg_for_tag:
@@ -471,9 +485,11 @@ def create_model(
 
     # Set default base weight loading flags for image and text towers
     # Only load base pretrained weights if other weights will not be loaded into respective towers
-    enable_default_image_weights = pretrained_image and pretrained_image_path is None and checkpoint_path is None
+    enable_default_image_weights = (
+        pretrained_image and not is_audio_model and pretrained_image_path is None and checkpoint_path is None
+    )
     enable_default_text_weights = pretrained_text and pretrained_text_path is None and checkpoint_path is None
-    is_timm_model = 'timm_model_name' in model_cfg.get("vision_cfg", {})
+    is_timm_model = (not is_audio_model) and 'timm_model_name' in model_cfg.get("vision_cfg", {})
     is_hf_text_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
     if is_timm_model:
         vision_cfg['timm_model_pretrained'] = enable_default_image_weights
@@ -484,17 +500,18 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (CLIP, CustomTextCLIP, CoCa)
-    custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
-    if custom_text:
-        # Use CustomTextCLIP (or CoCa if multimodal_cfg is present)
-        if "multimodal_cfg" in model_cfg:
-            model_class = CoCa
-        else:
-            model_class = CustomTextCLIP
+    # Determine model class (CLIP, CustomTextCLIP, CoCa, CLAP)
+    if is_audio_model:
+        model_class = CLAP
     else:
-        # Default to standard CLIP
-        model_class = CLIP
+        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
+        if custom_text:
+            if "multimodal_cfg" in model_cfg:
+                model_class = CoCa
+            else:
+                model_class = CustomTextCLIP
+        else:
+            model_class = CLIP
 
     # Strip removed legacy kwargs that external callers may still pass
     if 'jit' in model_kwargs:
@@ -591,8 +608,32 @@ def create_model(
             # Path provided is not a valid file
             _logger.warning(f"Invalid file path specified for pretrained_text_path: {pretrained_text_path}")
 
+    pretrained_audio_loaded = False
+    if pretrained_audio_path:
+        if os.path.isfile(pretrained_audio_path):
+            if hasattr(model, 'audio') and hasattr(model.audio, 'load_pretrained_encoder'):
+                _logger.info(f"Attempting to load audio encoder weights from: {pretrained_audio_path}")
+                try:
+                    incompatible_keys = model.audio.load_pretrained_encoder(
+                        pretrained_audio_path,
+                        weights_only=weights_only,
+                    )
+                    _logger.info(
+                        f"Loaded audio encoder weights from {pretrained_audio_path}. "
+                        f"Incompatible keys: {incompatible_keys}"
+                    )
+                    pretrained_audio_loaded = True
+                except Exception as e:
+                    _logger.error(f"Error loading audio encoder weights from {pretrained_audio_path}: {e}")
+            else:
+                _logger.warning(
+                    f"Model does not have an audio encoder loader, cannot load {pretrained_audio_path}"
+                )
+        else:
+            _logger.warning(f"Invalid file path specified for pretrained_audio_path: {pretrained_audio_path}")
+
     partially_loaded = enable_default_text_weights or enable_default_image_weights \
-        or pretrained_image_loaded or pretrained_text_loaded
+        or pretrained_image_loaded or pretrained_text_loaded or pretrained_audio_loaded
     if require_pretrained and not pretrained_loaded:
          # If CLIP weights were required but failed to load, raise an error.
          # Loading tower-specific weights does not satisfy `require_pretrained`.
@@ -615,19 +656,15 @@ def create_model(
         _logger.info(f"Calling set_input_size({force_image_size}) on timm vision model.")
         model.visual.set_input_size(force_image_size)
 
-    # Prepare and set final preprocessing configuration on the model
-    final_preprocess_cfg = deepcopy(preprocess_cfg) # Start with config determined earlier
-    # Ensure image_size in preprocess config matches the actual model's visual component size, if possible
+    # Prepare and set final image preprocessing configuration on image models.
     visual_module = getattr(model, 'visual', None)
-    if visual_module is not None and hasattr(visual_module, 'image_size'):
-        # Update preprocess size from the instantiated visual module
-         final_preprocess_cfg['size'] = visual_module.image_size
-    # Apply force_preprocess_cfg overrides (highest priority for preprocessing)
-    final_preprocess_cfg = merge_preprocess_dict(final_preprocess_cfg, force_preprocess_cfg or {})
-
-    # Attach the final config to the model
-    set_model_preprocess_cfg(model, final_preprocess_cfg)
-    _logger.info(f"Final image preprocessing configuration set: {final_preprocess_cfg}")
+    if visual_module is not None:
+        final_preprocess_cfg = deepcopy(preprocess_cfg)
+        if hasattr(visual_module, 'image_size'):
+            final_preprocess_cfg['size'] = visual_module.image_size
+        final_preprocess_cfg = merge_preprocess_dict(final_preprocess_cfg, force_preprocess_cfg or {})
+        set_model_preprocess_cfg(model, final_preprocess_cfg)
+        _logger.info(f"Final image preprocessing configuration set: {final_preprocess_cfg}")
 
     # Log completion and return the configured model
     _logger.info(f"Model {model_name} creation process complete.")
@@ -853,10 +890,19 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     Returns:
         A TrainingTask subclass instance.
     """
-    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
+    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask, CLAPTask
 
     shared = dict(rank=args.rank, world_size=args.world_size)
-    if args.distill:
+    if isinstance(model, CLAP):
+        if args.distill:
+            raise ValueError("CLAP distillation is not supported in this integration.")
+        task = CLAPTask(
+            model,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            **shared,
+        )
+    elif args.distill:
         task = DistillCLIPTask(
             model, dist_model,
             local_loss=args.local_loss,
@@ -886,6 +932,8 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             **shared,
         )
     if naflex_data_config is not None:
+        if not hasattr(task, 'set_naflex_data_config'):
+            raise ValueError("NaFlex data config can only be used with image-text tasks.")
         task.set_naflex_data_config(naflex_data_config)
     return task
 
@@ -907,10 +955,12 @@ def create_model_and_transforms(
         image_interpolation: Optional[str] = None,
         image_resize_mode: Optional[str] = None,  # only effective for inference
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+        audio_aug_cfg: Optional[Any] = None,
         pretrained_image: bool = False,
         pretrained_text: bool = True,
         pretrained_image_path: Optional[str] = None,
         pretrained_text_path: Optional[str] = None,
+        pretrained_audio_path: Optional[str] = None,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
         weights_only: bool = True,
@@ -952,6 +1002,7 @@ def create_model_and_transforms(
         pretrained_text: Load default (hf) base weights for text tower at creation if no CLIP weights loaded.
         pretrained_image_path: Path to load weights specifically into image tower after creation.
         pretrained_text_path: Path to load weights specifically into text tower after creation.
+        pretrained_audio_path: Path to load weights specifically into audio encoder after creation.
         cache_dir: Cache directory for downloads.
         output_dict: If True and model supports it, return dict output.
         weights_only: Use weights_only=True for torch.load (safer).
@@ -1011,26 +1062,33 @@ def create_model_and_transforms(
         pretrained_text=pretrained_text,
         pretrained_image_path=pretrained_image_path,
         pretrained_text_path=pretrained_text_path,
+        pretrained_audio_path=pretrained_audio_path,
         cache_dir=cache_dir,
         output_dict=output_dict,
         weights_only=weights_only,
         **model_kwargs,
     )
 
-    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
+    if hasattr(model, 'audio'):
+        from .audio.transform import audio_transform_v2
 
-    preprocess_train = image_transform_v2(
-        pp_cfg,
-        is_train=True,
-        aug_cfg=aug_cfg,
-    )
-    if is_naflex_aug_cfg(aug_cfg):
-        preprocess_val = naflex_eval_transform_v2(pp_cfg)
+        preprocess_train = audio_transform_v2(model.audio.cfg, is_train=True, audio_aug_cfg=audio_aug_cfg)
+        preprocess_val = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
     else:
-        preprocess_val = image_transform_v2(
+        pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
+
+        preprocess_train = image_transform_v2(
             pp_cfg,
-            is_train=False,
+            is_train=True,
+            aug_cfg=aug_cfg,
         )
+        if is_naflex_aug_cfg(aug_cfg):
+            preprocess_val = naflex_eval_transform_v2(pp_cfg)
+        else:
+            preprocess_val = image_transform_v2(
+                pp_cfg,
+                is_train=False,
+            )
 
     return model, preprocess_train, preprocess_val
 
@@ -1051,6 +1109,7 @@ def create_model_from_pretrained(
         image_resize_mode: Optional[str] = None,  # only effective for inference
         return_transform: bool = True,
         cache_dir: Optional[str] = None,
+        audio_aug_cfg: Optional[Any] = None,
         weights_only: bool = True,
         **model_kwargs,
 ):
@@ -1149,9 +1208,14 @@ def create_model_from_pretrained(
     if not return_transform:
         return model
 
-    preprocess = image_transform_v2(
-        PreprocessCfg(**model.visual.preprocess_cfg),
-        is_train=False,
-    )
+    if hasattr(model, 'audio'):
+        from .audio.transform import audio_transform_v2
+
+        preprocess = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
+    else:
+        preprocess = image_transform_v2(
+            PreprocessCfg(**model.visual.preprocess_cfg),
+            is_train=False,
+        )
 
     return model, preprocess

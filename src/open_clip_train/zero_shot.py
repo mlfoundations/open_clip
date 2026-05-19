@@ -40,6 +40,17 @@ def _get_dummy_batch_creator(model_or_task):
     return None
 
 
+def is_imagenet_zeroshot_compatible(model_or_task) -> bool:
+    """Return True if the ImageNet zero-shot path can call ``model(image=...)``."""
+    model = get_model_from_task(model_or_task)
+    return hasattr(model, "visual") and hasattr(model, "encode_image")
+
+
+def validate_imagenet_zeroshot_compatible(model_or_task):
+    if not is_imagenet_zeroshot_compatible(model_or_task):
+        raise ValueError("ImageNet zero-shot evaluation is image-only and requires an image model.")
+
+
 def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False):
     device = torch.device(args.device)
     autocast = get_autocast(
@@ -121,6 +132,7 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
 def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
+    validate_imagenet_zeroshot_compatible(model_or_task)
     if args.zeroshot_frequency == 0:
         return {}
     if (epoch % args.zeroshot_frequency) != 0 and epoch != args.epochs:

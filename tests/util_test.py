@@ -183,6 +183,7 @@ def create_test_data(
             'timm-convnext_xlarge',
             'timm-vit_medium_patch16_gap_256'
     }).intersection(open_clip.list_models()))
+    models = [m for m in models if not (open_clip.get_model_config(m) or {}).get("audio_cfg")]
     models.sort()
     print(f"generating test data for:\n{models}")
     for model_name in models:

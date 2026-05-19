@@ -182,16 +182,18 @@ def test_naflex_loss_scale_defaults_to_none():
 
 def test_naflex_loss_scale_uses_actual_batch_size():
     batch = {"image": {"patches": torch.zeros(8, 4, 3)}, "text": torch.zeros(8, 1)}
+    task = types.SimpleNamespace(batch_size=lambda batch: batch["image"]["patches"].shape[0])
 
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="none", batch_size=4)) == 1.0
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4)) == 2.0
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="sqrt", batch_size=2)) == 2.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="none", batch_size=4), task) == 1.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4), task) == 2.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="sqrt", batch_size=2), task) == 2.0
 
 
 def test_naflex_loss_scale_ignores_dense_batches():
     batch = {"image": torch.zeros(8, 3, 32, 32), "text": torch.zeros(8, 1)}
+    task = types.SimpleNamespace(batch_size=lambda batch: len(batch["image"]))
 
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4)) == 1.0
+    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4), task) == 1.0
 
 
 def test_naflex_eval_config_rejects_non_positive_values():

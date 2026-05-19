@@ -1,12 +1,16 @@
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from open_clip_train import zero_shot as zero_shot_module
 
 
 class _BareModel:
-    pass
+    visual = object()
+
+    def encode_image(self, image, normalize=False):
+        raise NotImplementedError
 
 
 class _WrappedModel:
@@ -113,6 +117,27 @@ def test_zero_shot_eval_unwraps_wrapped_model_once(monkeypatch):
     # get_model_from_task unwraps .module from the DDP-like wrapper
     assert build_models == [wrapped_model]  # build_zero_shot_classifier gets model_or_task
     assert run_models == [wrapped_model]  # run_zero_shot_classifier gets model_or_task
+
+
+def test_zero_shot_eval_rejects_non_image_model():
+    class _AudioModel:
+        audio = object()
+
+    args = SimpleNamespace(
+        distributed=False,
+        zeroshot_frequency=1,
+        epochs=1,
+        model="CLAP-test",
+        device="cpu",
+        precision="fp32",
+        batch_size=1,
+        rank=0,
+        fsdp=False,
+    )
+    data = {"imagenet-val": _DataWrapper()}
+
+    with pytest.raises(ValueError, match="ImageNet zero-shot"):
+        zero_shot_module.zero_shot_eval(_AudioModel(), data, epoch=1, args=args)
 
 
 def test_run_zero_shot_classifier_accepts_naflex_image_dict():
