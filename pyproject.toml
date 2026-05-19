@@ -61,7 +61,7 @@ audio = [
 test = [
     'pytest-split',
     'pytest>=9.0.3',
-    'open_clip_torch[training]',
+    'open_clip_torch[training,audio]',
     'requests'
 ]
 
