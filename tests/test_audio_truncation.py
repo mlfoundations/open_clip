@@ -78,3 +78,15 @@ def test_audio_transform_eval_uses_fixed_truncation_policy():
     out = transform((_waveform(range(12)), 8))
 
     assert torch.equal(out["waveform"], torch.arange(8, dtype=torch.float32))
+
+
+def test_audio_transform_eval_respects_fill_policy():
+    cfg = _cfg()
+    transform = audio_transform_v2(
+        cfg,
+        is_train=False,
+        audio_aug_cfg=AudioAugmentationCfg(data_filling="repeatpad"),
+    )
+    out = transform((_waveform([1, 2, 3]), 8))
+
+    assert torch.equal(out["waveform"], torch.tensor([1, 2, 3, 1, 2, 3, 0, 0], dtype=torch.float32))

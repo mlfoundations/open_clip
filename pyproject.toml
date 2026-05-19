@@ -57,6 +57,7 @@ audio = [
     'torchaudio',
     'torchlibrosa',
     'openai-whisper',
+    'datasets[audio]',
 ]
 test = [
     'pytest-split',

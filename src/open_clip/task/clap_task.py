@@ -34,6 +34,7 @@ class CLAPTask(TrainingTask):
             self.loss = loss
         elif default_loss:
             from open_clip.loss import ClipLoss
+
             self.loss = ClipLoss(
                 local_loss=local_loss,
                 gather_with_grad=gather_with_grad,
@@ -57,7 +58,7 @@ class CLAPTask(TrainingTask):
         loss_inputs = self._loss_inputs(model_out)
         logit_scale = loss_inputs["logit_scale"]
         losses = self.loss(**loss_inputs, output_dict=True)
-        total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
+        total_loss = sum(v for k, v in losses.items() if k.endswith("_loss"))
         losses["loss"] = total_loss
         losses["logit_scale"] = logit_scale
         return losses
@@ -101,7 +102,7 @@ class CLAPTask(TrainingTask):
 
     def clamp_logit_scale(self, max_val: float = math.log(100)):
         model = unwrap_model(self.trainable_module)
-        if hasattr(model, 'logit_scale'):
+        if hasattr(model, "logit_scale"):
             with torch.no_grad():
                 model.logit_scale.clamp_(0, max_val)
 

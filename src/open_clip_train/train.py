@@ -287,6 +287,20 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
     # end for
 
 
+def zero_shot_eval_all(task, data, epoch, args, tokenizer=None):
+    """Run requested zero-shot evaluators based on entries in the data dict."""
+    zero_shot_metrics = {}
+    if "imagenet-val" in data or "imagenet-v2" in data:
+        zero_shot_metrics.update(zero_shot_eval(task, data, epoch, args, tokenizer=tokenizer))
+    if "audio-zeroshot" in data:
+        from open_clip_train.audio_zero_shot import audio_zero_shot_eval
+
+        zero_shot_metrics.update(
+            audio_zero_shot_eval(task, data["audio-zeroshot"], epoch, args, tokenizer=tokenizer)
+        )
+    return zero_shot_metrics
+
+
 def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
     """Run paired feature validation and supported zero-shot eval for a task."""
     metrics = {}
@@ -302,7 +316,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
     primary_key = task.primary_key
     primary_features_key = f"{primary_key}_features"
 
-    zero_shot_metrics = zero_shot_eval(task, data, epoch, args, tokenizer=tokenizer)
+    zero_shot_metrics = zero_shot_eval_all(task, data, epoch, args, tokenizer=tokenizer)
     if is_rank0:
         metrics.update(zero_shot_metrics)
 

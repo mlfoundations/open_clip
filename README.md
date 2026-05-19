@@ -505,6 +505,44 @@ python -m open_clip_train.main \
     --pretrained laion400m_e32
 ```
 
+### Evaluating CLAP audio models on zero-shot audio classification:
+
+Audio zero-shot evaluation uses Hugging Face audio classification datasets. Install the optional audio dependencies before running these examples.
+
+```bash
+pip install 'datasets[audio]' torchaudio torchlibrosa
+```
+
+ESC-50:
+
+```bash
+python -m open_clip_train.main \
+    --model CLAP-HTSAT-tiny-Roberta-base-fused \
+    --pretrained laion \
+    --audio-zeroshot-dataset ashraq/esc50 \
+    --audio-zeroshot-split train \
+    --batch-size 64 \
+    --workers 4 \
+    --device cuda \
+    --zeroshot-frequency 1
+```
+
+UrbanSound8K:
+
+```bash
+python -m open_clip_train.main \
+    --model CLAP-HTSAT-tiny-Roberta-base-fused \
+    --pretrained laion \
+    --audio-zeroshot-dataset mteb/urbansound8K \
+    --audio-zeroshot-split train \
+    --audio-zeroshot-target-key classID \
+    --audio-zeroshot-class-key class \
+    --batch-size 64 \
+    --workers 4 \
+    --device cuda \
+    --zeroshot-frequency 1
+```
+
 ### Model distillation
 
 You can distill from a pre-trained by using `--distill-model` and `--distill-pretrained` to specify the model you'd like to distill from.

@@ -492,7 +492,24 @@ def main(args):
         tokenizer=tokenizer,
         naflex_data_config=getattr(task, 'naflex_data_config', None),
     )
-    assert len(data), 'At least one train or eval dataset must be specified.'
+    if args.audio_zeroshot_dataset:
+        from open_clip_train.audio_zero_shot import (
+            AudioZeroShotData,
+            build_hf_audio_zero_shot_dataset,
+            validate_audio_zeroshot_compatible,
+        )
+
+        validate_audio_zeroshot_compatible(task)
+        if is_master(args):
+            _logger.info("Building audio zero-shot dataset.")
+            data["audio-zeroshot"] = build_hf_audio_zero_shot_dataset(args, task)
+        else:
+            data["audio-zeroshot"] = AudioZeroShotData(
+                dataloader=None,
+                classnames=[],
+                dataset_name=args.audio_zeroshot_dataset,
+            )
+    assert len(data), 'At least one train, validation, ImageNet, or audio zero-shot dataset must be specified.'
 
     # create scheduler if train
     scheduler = None
@@ -589,7 +606,7 @@ def main(args):
         train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'audio-zeroshot')):
             evaluate(task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
             # sync to avoid some processes advancing/exiting while rank 0 finishes eval
             if args.distributed:

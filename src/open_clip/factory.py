@@ -539,15 +539,25 @@ def create_model(
     pretrained_loaded = False
     if checkpoint_path:
         _logger.info(f'Loading full pretrained weights from: {checkpoint_path}')
-        # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
-        # Use strict=True by default for full model loading to catch mismatches.
-        load_checkpoint(
-            model,
-            checkpoint_path,
-            strict=True,
-            weights_only=weights_only,
-            device='cpu' # Load to CPU first
-        )
+        if pretrained_cfg_for_tag and pretrained_cfg_for_tag.get('hf_transformers_clap', False):
+            from .audio.convert import load_hf_clap_state_dict
+
+            state_dict = load_hf_clap_state_dict(checkpoint_path)
+            incompatible_keys = model.load_state_dict(state_dict, strict=False)
+            _logger.info(
+                f"Loaded Transformers CLAP checkpoint from {checkpoint_path}. "
+                f"Incompatible keys: {incompatible_keys}"
+            )
+        else:
+            # Use the load_checkpoint helper which handles state dict loading, conversions, etc.
+            # Use strict=True by default for full model loading to catch mismatches.
+            load_checkpoint(
+                model,
+                checkpoint_path,
+                strict=True,
+                weights_only=weights_only,
+                device='cpu' # Load to CPU first
+            )
         pretrained_loaded = True
 
     # Load tower-specific weights (image and text), after the full CLIP checkpoint, potentially overwriting parts.

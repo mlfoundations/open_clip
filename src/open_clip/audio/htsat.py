@@ -1045,8 +1045,10 @@ class HTSAT_Swin_Transformer(nn.Module):
 
         if not self.enable_fusion:
             x = x["waveform"].to(device=device, non_blocking=True)
-            x = self.spectrogram_extractor(x)  # (batch_size, 1, time_steps, freq_bins)
-            x = self.logmel_extractor(x)  # (batch_size, 1, time_steps, mel_bins)
+            # Keep the raw-waveform frontend in fp32 under AMP; fp16 log-mel extraction is numerically fragile.
+            with torch.amp.autocast(device_type=x.device.type, enabled=False):
+                x = self.spectrogram_extractor(x.float())  # (batch_size, 1, time_steps, freq_bins)
+                x = self.logmel_extractor(x)  # (batch_size, 1, time_steps, mel_bins)
             x = x.transpose(1, 3)
             x = self.bn0(x)
             x = x.transpose(1, 3)

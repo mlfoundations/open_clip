@@ -91,6 +91,14 @@ def test_clap_task_eval_forward_keeps_audio_features_key():
     assert "image_features" not in out
 
 
+def test_clap_task_eval_forward_accepts_text_kwargs():
+    task = CLAPTask(TinyCLAPLike())
+    task.eval()
+    out = task(text=torch.randint(0, 16, (2, 5)))
+    assert "text_features" in out
+    assert out["text_features"].shape == (2, 4)
+
+
 def test_clap_task_dummy_batch_and_batch_size():
     task = CLAPTask(TinyCLAPLike())
     dummy = task.create_dummy_batch(batch_size=3, device=torch.device("cpu"), dtype=torch.float32)
