@@ -53,6 +53,11 @@ training = [
     'timm>=1.0.17',
     'fsspec',
 ]
+audio = [
+    'torchaudio',
+    'torchlibrosa',
+    'openai-whisper',
+]
 test = [
     'pytest-split',
     'pytest>=9.0.3',

@@ -686,10 +686,16 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
+    elif dataset_type == "webdataset-audio":
+        from open_clip_train.audio_data import get_wds_audio_dataset
+        return get_wds_audio_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "synthetic-audio":
+        from open_clip_train.audio_data import get_synthetic_audio_dataset
+        return get_synthetic_audio_dataset
     elif dataset_type == "auto":
         ext = data_path.split('.')[-1]
         if ext in ['csv', 'tsv']:
@@ -712,7 +718,7 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=N
     if not getattr(args, 'use_naflex', False) and getattr(args, 'naflex_num_train_image_tokens', None) is not None:
         warnings.warn("`--naflex-num-train-image-tokens` is ignored unless `--use-naflex` is set.")
 
-    if args.train_data or args.dataset_type == "synthetic":
+    if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
             args,
             preprocess_train,

@@ -18,8 +18,7 @@ try:
 except ImportError:
     wandb = None
 
-from open_clip import get_input_dtype, CLIP, CustomTextCLIP
-from open_clip.task import get_model_from_task
+from open_clip import get_input_dtype
 from open_clip_train.distributed import is_master
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
@@ -59,24 +58,17 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def get_batch_size(batch):
-    image = batch["image"]
-    if isinstance(image, dict):
-        return image["patches"].shape[0]
-    return len(image)
-
-
 def is_naflex_batch(batch):
-    image = batch["image"]
+    image = batch.get("image")
     return isinstance(image, dict) and "patches" in image
 
 
-def get_naflex_loss_scale(batch, args):
+def get_naflex_loss_scale(batch, args, task):
     loss_scale = getattr(args, "naflex_loss_scale", "none")
     if loss_scale in (None, "none") or not is_naflex_batch(batch):
         return 1.0
 
-    batch_size = get_batch_size(batch)
+    batch_size = task.batch_size(batch)
     reference_batch_size = getattr(args, "batch_size", None)
     if reference_batch_size is None or reference_batch_size <= 0:
         raise ValueError("NaFlex loss scaling requires a positive --batch-size reference.")
@@ -130,7 +122,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                 losses = task(batch)
                 total_loss = losses["loss"]
 
-            loss_scale = get_naflex_loss_scale(batch, args)
+            loss_scale = get_naflex_loss_scale(batch, args, task)
             if loss_scale != 1.0:
                 total_loss = total_loss * loss_scale
             backward(total_loss, scaler)
@@ -200,7 +192,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
                         losses["loss"] = total_loss
                         losses["logit_scale"] = logit_scale
 
-                    loss_scale = get_naflex_loss_scale(batch_j, args)
+                    loss_scale = get_naflex_loss_scale(batch_j, args, task)
                     if loss_scale != 1.0:
                         total_loss = total_loss * loss_scale
                     backward(total_loss, scaler)
@@ -224,9 +216,9 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
             optimizer.step()
 
         if args.accum_freq > 1:
-            step_batch_size = sum(get_batch_size(accum_batch) for accum_batch in accum_batches)
+            step_batch_size = sum(task.batch_size(accum_batch) for accum_batch in accum_batches)
         else:
-            step_batch_size = get_batch_size(batch)
+            step_batch_size = task.batch_size(batch)
 
         # reset gradient accum, if enabled
         if args.accum_freq > 1:
@@ -296,11 +288,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
 
 
 def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
-    """Run validation + zero-shot eval. ``task`` must be a TrainingTask subclass.
-
-    The image+text-shaped val loop below assumes an ImageTextTask (or compiled
-    wrapper around one); other modalities will need their own eval entry point.
-    """
+    """Run paired feature validation and supported zero-shot eval for a task."""
     metrics = {}
     use_fsdp_eval = getattr(args, 'fsdp', False) and getattr(args, 'distributed', False)
     is_rank0 = is_master(args)
@@ -311,7 +299,8 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
     device = torch.device(args.device)
     task.eval()
 
-    model = get_model_from_task(task)
+    primary_key = task.primary_key
+    primary_features_key = f"{primary_key}_features"
 
     zero_shot_metrics = zero_shot_eval(task, data, epoch, args, tokenizer=tokenizer)
     if is_rank0:
@@ -343,10 +332,10 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
             signal = torch.zeros(1, device=device, dtype=torch.long)
 
         # FIXME this does not scale past small eval datasets
-        # all_image_features @ all_text_features will blow up memory and compute very quickly
+        # all feature pairs will blow up memory and compute very quickly
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
-        all_image_features, all_text_features = [], []
+        all_primary_features, all_text_features = [], []
         with torch.inference_mode():
             i = 0
             while True:
@@ -372,21 +361,21 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                     model_out = task(batch)
 
                 if is_rank0:
-                    image_features = model_out["image_features"]
+                    primary_features = model_out[primary_features_key]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
                     # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
                     # however, system RAM is easily exceeded and compute time becomes problematic
-                    all_image_features.append(image_features.cpu())
+                    all_primary_features.append(primary_features.cpu())
                     all_text_features.append(text_features.cpu())
                     logit_scale = logit_scale.mean()
-                    logits_per_image = logit_scale * image_features @ text_features.t()
-                    logits_per_text = logits_per_image.t()
+                    logits_per_primary = logit_scale * primary_features @ text_features.t()
+                    logits_per_text = logits_per_primary.t()
 
-                    batch_size = get_batch_size(batch)
+                    batch_size = task.batch_size(batch)
                     labels = torch.arange(batch_size, device=device).long()
                     total_loss = (
-                        F.cross_entropy(logits_per_image, labels) +
+                        F.cross_entropy(logits_per_primary, labels) +
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
@@ -409,13 +398,17 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
 
             if is_rank0 and num_samples > 0:
                 val_metrics = get_clip_metrics(
-                    image_features=torch.cat(all_image_features),
+                    image_features=torch.cat(all_primary_features),
                     text_features=torch.cat(all_text_features),
                     logit_scale=logit_scale.cpu(),
+                    image_key=primary_key,
+                    text_key="text",
                 )
                 loss = cumulative_loss / num_samples
+                # Preserve the legacy dashboard key for image-text validation.
+                loss_key = "clip_val_loss" if primary_key == "image" else f"{primary_key}_val_loss"
                 metrics.update(
-                    {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
+                    {**val_metrics, loss_key: loss.item(), "epoch": epoch, "num_samples": num_samples}
                 )
                 if gen_loss is not None:
                     gen_loss = cumulative_gen_loss / num_samples
@@ -457,12 +450,12 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
     return metrics
 
 
-def get_clip_metrics(image_features, text_features, logit_scale):
+def get_clip_metrics(image_features, text_features, logit_scale, image_key="image", text_key="text"):
     metrics = {}
     logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
     logits_per_text = logits_per_image.t().detach().cpu()
 
-    logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
+    logits = {f"{image_key}_to_{text_key}": logits_per_image, f"{text_key}_to_{image_key}": logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
 
     for name, logit in logits.items():

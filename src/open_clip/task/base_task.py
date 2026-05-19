@@ -121,6 +121,37 @@ class TrainingTask(nn.Module):
     def has_ema(self) -> bool:
         return self.trainable_module_ema is not None
 
+    @property
+    def primary_key(self) -> str:
+        """Primary non-text modality key.
+
+        Eval expects model output dicts to expose ``f"{primary_key}_features"``
+        plus ``"text_features"`` for paired retrieval metrics.
+        """
+        return self.data_keys[0]
+
+    def batch_size(self, batch: Dict[str, torch.Tensor]) -> int:
+        """Return local batch size for logging/accounting."""
+        data_keys = getattr(self, 'data_keys', None)
+        key = data_keys[0] if data_keys else next(iter(batch))
+        value = batch[key]
+        if isinstance(value, dict):
+            for preferred in ('patches', 'waveform'):
+                tensor = value.get(preferred)
+                if isinstance(tensor, torch.Tensor):
+                    return tensor.shape[0]
+            for tensor in value.values():
+                if isinstance(tensor, torch.Tensor):
+                    return tensor.shape[0]
+            raise ValueError(f"Cannot infer batch size from nested batch key {key!r}.")
+        if isinstance(value, torch.Tensor):
+            return value.shape[0]
+        return len(value)
+
+    def ddp_extra_kwargs(self) -> dict:
+        """Additional DistributedDataParallel kwargs required by this task."""
+        return {}
+
     def prepare_distributed(
             self,
             device_ids: Optional[list] = None,

@@ -61,9 +61,47 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "webdataset-audio", "csv", "synthetic", "synthetic-audio", "auto"],
         default="auto",
         help="Which type of dataset to process."
+    )
+    parser.add_argument(
+        "--audio-ext",
+        type=str,
+        default="flac",
+        help="Audio file extension in WebDataset shards (wav, flac, mp3, ogg)."
+    )
+    parser.add_argument(
+        "--pretrained-audio",
+        type=str,
+        default=None,
+        help="Path to pretrained audio encoder checkpoint."
+    )
+    parser.add_argument(
+        "--data-filling",
+        type=str,
+        default="pad",
+        choices=["pad", "repeat", "repeatpad"],
+        help="How to fill audio shorter than clip_samples."
+    )
+    parser.add_argument(
+        "--data-truncating",
+        type=str,
+        default="rand_trunc",
+        choices=["rand_trunc", "trunc", "fusion"],
+        help="How to truncate audio longer than clip_samples."
+    )
+    parser.add_argument(
+        "--enable-fusion",
+        default=False,
+        action="store_true",
+        help="Enable HTSAT fusion preprocessing for longer audio clips."
+    )
+    parser.add_argument(
+        "--int16-normalize",
+        default=False,
+        action="store_true",
+        help="Apply int16 quantization normalization in audio preprocessing."
     )
     parser.add_argument(
         "--dataset-resampled",
@@ -557,6 +595,7 @@ def parse_args(args):
     )
 
     args = parser.parse_args(args)
+
     if args.use_naflex:
         args.force_naflex_vision = True
         args.aug_cfg = dict(args.aug_cfg or {})
