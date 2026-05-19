@@ -49,12 +49,12 @@ class AudioTower(nn.Module):
         self._is_whisper = audio_cfg.model_type.lower() == "whisper"
 
         if audio_cfg.model_type == "HTSAT":
-            from .htsat import HTSAT_Swin_Transformer
+            from .htsat import HTSATEncoder
 
             if audio_cfg.model_name not in _HTSAT_CONFIGS:
                 raise ValueError(f"Unknown HTSAT variant: {audio_cfg.model_name}")
             htsat_cfg = _HTSAT_CONFIGS[audio_cfg.model_name]
-            self.encoder = HTSAT_Swin_Transformer(
+            self.encoder = HTSATEncoder(
                 spec_size=256,
                 patch_size=4,
                 patch_stride=(4, 4),

@@ -712,7 +712,7 @@ class BasicLayer(nn.Module):
 
 
 # The Core of HTSAT
-class HTSAT_Swin_Transformer(nn.Module):
+class HTSATEncoder(nn.Module):
     r"""HTSAT based on the Swin Transformer
     Args:
         spec_size (int | tuple(int)): Input Spectrogram size. Default 256
@@ -764,7 +764,7 @@ class HTSAT_Swin_Transformer(nn.Module):
             fusion_type="None",
             **kwargs,
     ):
-        super(HTSAT_Swin_Transformer, self).__init__()
+        super().__init__()
 
         self.config = config
         self.spec_size = spec_size
@@ -1158,7 +1158,7 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
     try:
         assert audio_cfg.model_name in ["tiny", "base", "large"], "model name for HTS-AT is wrong!"
         if audio_cfg.model_name == "tiny":
-            model = HTSAT_Swin_Transformer(
+            model = HTSATEncoder(
                 spec_size=256,
                 patch_size=4,
                 patch_stride=(4, 4),
@@ -1172,7 +1172,7 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 fusion_type=fusion_type,
             )
         elif audio_cfg.model_name == "base":
-            model = HTSAT_Swin_Transformer(
+            model = HTSATEncoder(
                 spec_size=256,
                 patch_size=4,
                 patch_stride=(4, 4),
@@ -1186,7 +1186,7 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 fusion_type=fusion_type,
             )
         elif audio_cfg.model_name == "large":
-            model = HTSAT_Swin_Transformer(
+            model = HTSATEncoder(
                 spec_size=256,
                 patch_size=4,
                 patch_stride=(4, 4),
