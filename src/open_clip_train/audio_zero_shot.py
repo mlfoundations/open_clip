@@ -229,10 +229,10 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
 
     model = get_model_from_task(model_or_task)
     audio_aug_cfg = {
-        "data_truncating": getattr(args, "data_truncating", "rand_trunc"),
-        "data_filling": getattr(args, "data_filling", "repeatpad"),
-        "enable_fusion": getattr(args, "enable_fusion", False),
-        "int16_normalize": getattr(args, "int16_normalize", False),
+        "data_trunc": getattr(args, "audio_trunc", "rand_trunc"),
+        "data_fill": getattr(args, "audio_fill", "repeatpad"),
+        "enable_fusion": getattr(args, "audio_fusion", False),
+        "int16_normalize": getattr(args, "audio_int16_normalize", False),
     }
     transform = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
     wrapped = HFAudioClassificationDataset(

@@ -25,7 +25,7 @@ def _waveform(values):
 
 
 def test_audio_preprocess_truncates_deterministically():
-    preprocess = make_audio_preprocess(_cfg(), data_truncating="trunc")
+    preprocess = make_audio_preprocess(_cfg(), data_trunc="trunc")
     out = preprocess((_waveform(range(12)), 8))
 
     assert out["longer"] is True
@@ -35,7 +35,7 @@ def test_audio_preprocess_truncates_deterministically():
 
 def test_audio_preprocess_random_truncation_uses_sampled_offset(monkeypatch):
     monkeypatch.setattr("open_clip.audio.transform.random.randint", lambda start, end: 2)
-    preprocess = make_audio_preprocess(_cfg(), data_truncating="rand_trunc")
+    preprocess = make_audio_preprocess(_cfg(), data_trunc="rand_trunc")
     out = preprocess((_waveform(range(12)), 8))
 
     assert out["longer"] is True
@@ -51,7 +51,7 @@ def test_audio_preprocess_random_truncation_uses_sampled_offset(monkeypatch):
     ],
 )
 def test_audio_preprocess_fill_modes(mode, expected):
-    preprocess = make_audio_preprocess(_cfg(), data_filling=mode)
+    preprocess = make_audio_preprocess(_cfg(), data_fill=mode)
     out = preprocess((_waveform([1, 2, 3]), 8))
 
     assert out["longer"] is False
@@ -60,7 +60,7 @@ def test_audio_preprocess_fill_modes(mode, expected):
 
 def test_audio_preprocess_fusion_shape_for_long_audio():
     cfg = _cfg()
-    preprocess = make_audio_preprocess(cfg, data_truncating="fusion")
+    preprocess = make_audio_preprocess(cfg, data_trunc="fusion")
     out = preprocess((_waveform(range(16)), 8))
 
     assert out["longer"] is True
@@ -73,7 +73,7 @@ def test_audio_transform_eval_uses_fixed_truncation_policy():
     transform = audio_transform_v2(
         cfg,
         is_train=False,
-        audio_aug_cfg=AudioAugmentationCfg(data_truncating="rand_trunc", data_filling="repeat"),
+        audio_aug_cfg=AudioAugmentationCfg(data_trunc="rand_trunc", data_fill="repeat"),
     )
     out = transform((_waveform(range(12)), 8))
 
@@ -85,7 +85,7 @@ def test_audio_transform_eval_respects_fill_policy():
     transform = audio_transform_v2(
         cfg,
         is_train=False,
-        audio_aug_cfg=AudioAugmentationCfg(data_filling="repeatpad"),
+        audio_aug_cfg=AudioAugmentationCfg(data_fill="repeatpad"),
     )
     out = transform((_waveform([1, 2, 3]), 8))
 

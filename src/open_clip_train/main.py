@@ -243,10 +243,10 @@ def main(args):
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
     audio_aug_cfg = dict(
-        data_truncating=args.data_truncating,
-        data_filling=args.data_filling,
-        enable_fusion=args.enable_fusion,
-        int16_normalize=args.int16_normalize,
+        data_trunc=args.audio_trunc,
+        data_fill=args.audio_fill,
+        enable_fusion=args.audio_fusion,
+        int16_normalize=args.audio_int16_normalize,
     )
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,

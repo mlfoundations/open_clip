@@ -78,27 +78,27 @@ def parse_args(args):
         help="Path to pretrained audio encoder checkpoint."
     )
     parser.add_argument(
-        "--data-filling",
+        "--audio-fill",
         type=str,
         default="repeatpad",
         choices=["pad", "repeat", "repeatpad"],
         help="How to fill audio shorter than clip_samples."
     )
     parser.add_argument(
-        "--data-truncating",
+        "--audio-trunc",
         type=str,
         default="rand_trunc",
         choices=["rand_trunc", "trunc", "fusion"],
         help="How to truncate audio longer than clip_samples."
     )
     parser.add_argument(
-        "--enable-fusion",
+        "--audio-fusion",
         default=False,
         action="store_true",
         help="Enable HTSAT fusion preprocessing for longer audio clips."
     )
     parser.add_argument(
-        "--int16-normalize",
+        "--audio-int16-normalize",
         default=False,
         action="store_true",
         help="Apply int16 quantization normalization in audio preprocessing."
