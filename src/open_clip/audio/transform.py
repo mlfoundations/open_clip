@@ -10,8 +10,8 @@ from .config import CLIPAudioCfg
 
 @dataclass
 class AudioAugmentationCfg:
-    data_truncating: str = "rand_trunc"
-    data_filling: str = "repeatpad"
+    data_trunc: str = "rand_trunc"
+    data_fill: str = "repeatpad"
     enable_fusion: bool = False
     int16_normalize: bool = False
 
@@ -59,8 +59,8 @@ def _get_mel(audio_data: torch.Tensor, audio_cfg: Dict[str, Any]) -> torch.Tenso
 
 def make_audio_preprocess(
         audio_cfg: Union[CLIPAudioCfg, Dict[str, Any]],
-        data_filling: str = "repeatpad",
-        data_truncating: str = "rand_trunc",
+        data_fill: str = "repeatpad",
+        data_trunc: str = "rand_trunc",
         int16_normalize: bool = False,
 ):
     import torchaudio
@@ -73,17 +73,17 @@ def make_audio_preprocess(
     def _fill_waveform(waveform):
         if len(waveform) >= clip_samples:
             return waveform[:clip_samples]
-        if data_filling == "repeat":
+        if data_fill == "repeat":
             repeats = int(np.ceil(clip_samples / len(waveform)))
             waveform = waveform.repeat(repeats)[:clip_samples]
-        elif data_filling == "repeatpad":
+        elif data_fill == "repeatpad":
             repeats = clip_samples // len(waveform)
             waveform = waveform.repeat(repeats)
             waveform = torch.nn.functional.pad(waveform, (0, clip_samples - len(waveform)))
-        elif data_filling == "pad":
+        elif data_fill == "pad":
             waveform = torch.nn.functional.pad(waveform, (0, clip_samples - len(waveform)))
         else:
-            raise ValueError(f"Unsupported audio filling mode: {data_filling}")
+            raise ValueError(f"Unsupported audio fill mode: {data_fill}")
         return waveform
 
     def preprocess(audio_data):
@@ -98,7 +98,7 @@ def make_audio_preprocess(
 
         result = {}
         if len(waveform) > clip_samples:
-            if data_truncating == "fusion":
+            if data_trunc == "fusion":
                 mel = _get_mel(waveform, cfg)
                 chunk_frames = clip_samples // hop_size + 1
                 total_frames = mel.shape[0]
@@ -127,20 +127,20 @@ def make_audio_preprocess(
                     longer = True
                 result["mel_fusion"] = mel_fusion
                 waveform = waveform[:clip_samples]
-            elif data_truncating == "rand_trunc":
+            elif data_trunc == "rand_trunc":
                 overflow = len(waveform) - clip_samples
                 idx = random.randint(0, overflow)
                 waveform = waveform[idx:idx + clip_samples]
                 longer = True
-            elif data_truncating == "trunc":
+            elif data_trunc == "trunc":
                 waveform = waveform[:clip_samples]
                 longer = True
             else:
-                raise ValueError(f"Unsupported audio truncation mode: {data_truncating}")
+                raise ValueError(f"Unsupported audio truncation mode: {data_trunc}")
         else:
             waveform = _fill_waveform(waveform)
             longer = False
-            if data_truncating == "fusion":
+            if data_trunc == "fusion":
                 mel = _get_mel(waveform, cfg)
                 result["mel_fusion"] = torch.stack([mel, mel, mel, mel], dim=0)
 
@@ -163,14 +163,14 @@ def audio_transform_v2(
         audio_aug_cfg = AudioAugmentationCfg()
 
     enable_fusion = bool(audio_aug_cfg.enable_fusion or cfg.get("enable_fusion", False))
-    data_truncating = audio_aug_cfg.data_truncating if is_train else "trunc"
+    data_trunc = audio_aug_cfg.data_trunc if is_train else "trunc"
     if enable_fusion:
-        data_truncating = "fusion"
+        data_trunc = "fusion"
 
     return make_audio_preprocess(
         cfg,
         # Eval and train now share the fill policy; eval previously hardcoded zero-padding.
-        data_filling=audio_aug_cfg.data_filling,
-        data_truncating=data_truncating,
+        data_fill=audio_aug_cfg.data_fill,
+        data_trunc=data_trunc,
         int16_normalize=audio_aug_cfg.int16_normalize,
     )
