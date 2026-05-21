@@ -13,6 +13,7 @@ from typing import Iterable, List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 from torch import Tensor, nn
 
 try:
@@ -283,6 +284,10 @@ class WhisperEncoder(nn.Module):
             self.audio_bos_eos_token = None
         self.output_dim = output_dim
         self.n_head = n_head
+        self.grad_checkpointing = False
+
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = "inline"):
+        self.grad_checkpointing = enable
 
     def forward(self, x, padding_mask=None, audio_lengths=None):
         """Forward pass.
@@ -340,7 +345,10 @@ class WhisperEncoder(nn.Module):
             padding_mask = new_padding_mask.masked_fill(key_padding_mask, float("-inf"))
 
         for block in self.blocks:
-            x = block(x, mask=padding_mask)
+            if self.grad_checkpointing and self.training:
+                x = checkpoint.checkpoint(block, x, None, padding_mask, None, use_reentrant=False)
+            else:
+                x = block(x, mask=padding_mask)
 
         if self.avg_pooler:
             x = x.permute(0, 2, 1)

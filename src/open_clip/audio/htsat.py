@@ -693,13 +693,14 @@ class BasicLayer(nn.Module):
 
     def forward(self, x):
         attns = []
+        attn = None
         for blk in self.blocks:
-            if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+            if self.use_checkpoint and self.training:
+                x, attn = checkpoint.checkpoint(blk, x, use_reentrant=False)
             else:
                 x, attn = blk(x)
-                if not self.training:
-                    attns.append(attn.unsqueeze(0))
+            if not self.training:
+                attns.append(attn.unsqueeze(0))
         if self.downsample is not None:
             x = self.downsample(x)
         if not self.training:
