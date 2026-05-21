@@ -8,10 +8,21 @@ try:
     import torch.distributed.nn
     from torch import distributed as dist
 
+    try:
+        from torch.distributed import _functional_collectives as dist_fcol
+    except ImportError:
+        dist_fcol = None
+
     has_distributed = True
 except ImportError:
     has_distributed = False
+    dist_fcol = None
 
+
+def _all_gather_with_grad(tensor):
+    if dist_fcol is not None and hasattr(dist_fcol, "all_gather_tensor_autograd"):
+        return dist_fcol.all_gather_tensor_autograd(tensor.contiguous(), gather_dim=0, group=dist.group.WORLD)
+    return torch.cat(torch.distributed.nn.all_gather(tensor), dim=0)
 
 
 def gather_features(
@@ -25,8 +36,8 @@ def gather_features(
     assert has_distributed, 'torch.distributed did not import correctly, please use a PyTorch version with support.'
     # We gather tensors from all gpus
     if gather_with_grad:
-        all_image_features = torch.cat(torch.distributed.nn.all_gather(image_features), dim=0)
-        all_text_features = torch.cat(torch.distributed.nn.all_gather(text_features), dim=0)
+        all_image_features = _all_gather_with_grad(image_features)
+        all_text_features = _all_gather_with_grad(text_features)
     else:
         gathered_image_features = [torch.zeros_like(image_features) for _ in range(world_size)]
         gathered_text_features = [torch.zeros_like(text_features) for _ in range(world_size)]
@@ -462,7 +473,7 @@ class SigLipLoss(nn.Module):
                         negative_only=True,
                     )
             elif self.dist_impl == "gather":
-                all_text = torch.distributed.nn.all_gather(text_features)
+                all_text = _all_gather_with_grad(text_features).chunk(self.world_size, dim=0)
                 for i in range(self.world_size):
                     loss += float(i != self.rank) * self._loss(
                         image_features,
