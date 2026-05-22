@@ -379,7 +379,31 @@ def parse_args(args):
         "--torchcompile",
         default=False,
         action='store_true',
-        help="torch.compile() the model, requires pytorch 2.0 or later.",
+        help="Enable torch.compile, requires pytorch 2.0 or later.",
+    )
+    parser.add_argument(
+        "--torchcompile-strategy",
+        type=str,
+        default="task",
+        choices=["model", "task", "step"],
+        help=(
+            "Compile strategy when --torchcompile is enabled: "
+            "'model' compiles trainable_module before distributed wrapping, "
+            "'task' compiles task train/eval forward callables, "
+            "'step' compiles the single-batch forward/backward/optimizer step."
+        ),
+    )
+    parser.add_argument(
+        "--torchcompile-backend",
+        type=str,
+        default=None,
+        help="Optional torch.compile backend, e.g. inductor or eager.",
+    )
+    parser.add_argument(
+        "--torchcompile-mode",
+        type=str,
+        default=None,
+        help="Optional torch.compile mode, e.g. default, reduce-overhead, or max-autotune.",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."

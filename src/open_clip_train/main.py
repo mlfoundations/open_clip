@@ -344,10 +344,6 @@ def main(args):
     if args.imagenet_val is not None or args.imagenet_v2 is not None:
         validate_imagenet_zeroshot_compatible(model)
 
-    # Keep reference to unwrapped task for checkpoint methods.
-    # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
-    original_task = task
-
     if args.fsdp and not args.distributed:
         _logger.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
         args.fsdp = False
@@ -355,6 +351,24 @@ def main(args):
     if args.fsdp_checkpoint == 'sharded' and not args.fsdp:
         _logger.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
         args.fsdp_checkpoint = 'full'
+
+    compile_kwargs = dict(
+        backend=args.torchcompile_backend,
+        mode=args.torchcompile_mode,
+    )
+    if args.torchcompile and args.grad_checkpointing and args.distributed and not args.fsdp:
+        _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+        torch._dynamo.config.optimize_ddp = False
+
+    if args.torchcompile and args.torchcompile_strategy == 'model':
+        if args.fsdp:
+            _logger.info(
+                'torch.compile strategy=model with FSDP uses prepare_fsdp() per-block compile; '
+                'skipping root trainable_module compile.'
+            )
+        else:
+            _logger.info('Compiling trainable_module before distributed wrapping.')
+            task.compile(target='model', **compile_kwargs)
 
     # Resolve FSDP mixed-precision from --precision.
     # Always create MixedPrecisionPolicy when FSDP is active (at minimum for fp32 reductions).
@@ -388,6 +402,7 @@ def main(args):
             )
             task.prepare_fsdp(
                 compile_blocks=bool(args.torchcompile),
+                compile_kwargs=compile_kwargs if args.torchcompile else None,
                 grad_checkpointing=bool(args.grad_checkpointing),
                 **fsdp_kwargs,
             )
@@ -473,12 +488,12 @@ def main(args):
             is_sharded = os.path.isdir(args.resume)
         if is_sharded:
             start_epoch = load_sharded_checkpoint(
-                original_task, args.resume,
+                task, args.resume,
                 optimizer=optimizer, scaler=scaler,
             )
         else:
             start_epoch = load_checkpoint(
-                original_task, args.resume,
+                task, args.resume,
                 optimizer=optimizer, scaler=scaler,
                 is_distributed=args.distributed,
             )
@@ -559,11 +574,8 @@ def main(args):
         wandb.save(params_file)
         _logger.debug('Finished loading wandb.')
 
-    # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
-    # For compatibility, we save state_dict() of the original model, which shares the
-    # weights without the prefix.
     if args.torchcompile:
-        _logger.info('Compiling model...')
+        _logger.info(f'Using torch.compile strategy={args.torchcompile_strategy}.')
 
         # Suppress noisy dynamo/inductor logs
         filter_prefixes = (
@@ -577,18 +589,12 @@ def main(args):
             if name.startswith(filter_prefixes):
                 logging.getLogger(name).setLevel(logging.WARNING)
 
-        if args.fsdp:
-            # Per-block compile for transformer blocks already applied inside
-            # prepare_fsdp(). Task-level compile captures the loss + model glue
-            # (embeddings, projections); per-block OptimizedModules are opaque to
-            # Dynamo so AC/FSDP hooks on blocks stay at module boundaries.
-            _logger.info('Compiling task (loss + model glue); blocks already per-block compiled.')
-            task = torch.compile(task)
-        else:
-            if args.grad_checkpointing and args.distributed:
-                _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
-                torch._dynamo.config.optimize_ddp = False
-            task = torch.compile(task)
+        if args.torchcompile_strategy == 'task':
+            _logger.info('Compiling task train/eval forward callables.')
+            task.compile(target='task', **compile_kwargs)
+        elif args.torchcompile_strategy == 'step':
+            _logger.info('Compiling task eval forward callable; train step compile happens in train_one_epoch().')
+            task.compile(target='task', compile_train=False, compile_eval=True, **compile_kwargs)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
@@ -622,7 +628,7 @@ def main(args):
             )
             if save_epoch:
                 save_sharded_checkpoint(
-                    original_task, optimizer,
+                    task, optimizer,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}"),
                     epoch=completed_epoch, scaler=scaler,
                     name=args.name, is_master=args.save_logs,
@@ -631,7 +637,7 @@ def main(args):
                 latest_dir = os.path.join(args.checkpoint_path, "epoch_latest")
                 tmp_dir = os.path.join(args.checkpoint_path, "_tmp_latest")
                 save_sharded_checkpoint(
-                    original_task, optimizer, tmp_dir,
+                    task, optimizer, tmp_dir,
                     epoch=completed_epoch, scaler=scaler,
                     name=args.name, is_master=args.save_logs,
                 )
@@ -660,9 +666,9 @@ def main(args):
             # With FSDP2, state dict gather is collective — all ranks must participate
             # even though only master writes to disk.
             # With DDP, only master needs to call state_dict() to avoid wasting memory.
-            if original_task._fsdp_enabled or args.save_logs:
+            if task._fsdp_enabled or args.save_logs:
                 checkpoint_dict = save_checkpoint(
-                    original_task, optimizer,
+                    task, optimizer,
                     epoch=completed_epoch, scaler=scaler, name=args.name,
                 )
 
