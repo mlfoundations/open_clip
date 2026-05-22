@@ -1,3 +1,5 @@
+import pickle
+
 import pytest
 import torch
 
@@ -31,6 +33,16 @@ def test_audio_preprocess_truncates_deterministically():
     assert out["longer"] is True
     assert torch.equal(out["waveform"], torch.arange(8, dtype=torch.float32))
     assert "mel_fusion" not in out
+
+
+def test_audio_preprocess_is_picklable():
+    preprocess = make_audio_preprocess(_cfg(), data_trunc="trunc")
+    restored = pickle.loads(pickle.dumps(preprocess))
+
+    out = restored((_waveform(range(12)), 8))
+
+    assert out["longer"] is True
+    assert torch.equal(out["waveform"], torch.arange(8, dtype=torch.float32))
 
 
 def test_audio_preprocess_random_truncation_uses_sampled_offset(monkeypatch):
