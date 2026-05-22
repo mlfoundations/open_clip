@@ -140,6 +140,23 @@ def test_zero_shot_eval_rejects_non_image_model():
         zero_shot_module.zero_shot_eval(_AudioModel(), data, epoch=1, args=args)
 
 
+def test_accuracy_returns_python_floats():
+    output = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 2.0],
+        ]
+    )
+    target = torch.tensor([0, 1])
+
+    top1, top2 = zero_shot_module.accuracy(output, target, topk=(1, 2))
+
+    assert isinstance(top1, float)
+    assert isinstance(top2, float)
+    assert top1 == 1.0
+    assert top2 == 2.0
+
+
 def test_run_zero_shot_classifier_accepts_naflex_image_dict():
     class _Model:
         def __call__(self, image):

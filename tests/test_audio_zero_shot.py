@@ -66,6 +66,24 @@ class _TinyAudioTask(nn.Module):
         return {"text_features": torch.empty(0)}
 
 
+class _TinyAudioCfg:
+    sample_rate = 2
+    clip_samples = 2
+
+
+class _TinyAudioTower:
+    cfg = _TinyAudioCfg()
+
+
+class _TinyCLAPTask(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.audio = _TinyAudioTower()
+
+    def forward(self, audio=None, text=None):
+        return {}
+
+
 def test_hf_audio_dataset_wrapper_and_classnames():
     dataset = _FeatureDataset()
     classnames = audio_zero_shot._get_classnames(dataset, target_key="target", class_key="category")
@@ -93,6 +111,79 @@ def test_hf_audio_dataset_wrapper_accepts_decoder_like_audio():
 
     assert sample["audio"]["waveform"].shape == (2,)
     assert sample["target"] == 0
+
+
+def test_build_hf_audio_zero_shot_dataset_defaults_to_no_workers(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(audio_zero_shot, "audio_transform_v2", lambda *_args, **_kwargs: lambda audio: {
+        "waveform": audio[0].squeeze(0),
+        "longer": False,
+    })
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "datasets",
+        type("_Datasets", (), {"load_dataset": staticmethod(lambda *_args, **_kwargs: _FeatureDataset())}),
+    )
+
+    class _DataLoader:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(audio_zero_shot, "DataLoader", _DataLoader)
+    args = SimpleNamespace(
+        audio_zeroshot_dataset="ashraq/esc50",
+        audio_zeroshot_split="train",
+        audio_zeroshot_audio_key="audio",
+        audio_zeroshot_target_key="target",
+        audio_zeroshot_class_key="category",
+        audio_zeroshot_workers=0,
+        batch_size=2,
+        device="cuda",
+    )
+
+    audio_zero_shot.build_hf_audio_zero_shot_dataset(args, _TinyCLAPTask())
+
+    assert captured["num_workers"] == 0
+    assert "multiprocessing_context" not in captured
+    assert "persistent_workers" not in captured
+
+
+def test_build_hf_audio_zero_shot_dataset_sets_worker_context(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(audio_zero_shot, "audio_transform_v2", lambda *_args, **_kwargs: lambda audio: {
+        "waveform": audio[0].squeeze(0),
+        "longer": False,
+    })
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "datasets",
+        type("_Datasets", (), {"load_dataset": staticmethod(lambda *_args, **_kwargs: _FeatureDataset())}),
+    )
+
+    class _DataLoader:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(audio_zero_shot, "DataLoader", _DataLoader)
+    args = SimpleNamespace(
+        audio_zeroshot_dataset="ashraq/esc50",
+        audio_zeroshot_split="train",
+        audio_zeroshot_audio_key="audio",
+        audio_zeroshot_target_key="target",
+        audio_zeroshot_class_key="category",
+        audio_zeroshot_workers=2,
+        audio_zeroshot_multiprocessing_context="spawn",
+        batch_size=2,
+        device="cuda",
+    )
+
+    audio_zero_shot.build_hf_audio_zero_shot_dataset(args, _TinyCLAPTask())
+
+    assert captured["num_workers"] == 2
+    assert captured["multiprocessing_context"] == "spawn"
+    assert captured["persistent_workers"] is True
 
 
 def test_run_audio_zero_shot_classifier():

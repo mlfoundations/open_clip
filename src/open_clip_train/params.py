@@ -141,6 +141,22 @@ def parse_args(args):
         help="Prompt template for audio zero-shot eval. May be passed multiple times; must contain {}.",
     )
     parser.add_argument(
+        "--audio-zeroshot-workers",
+        type=int,
+        default=0,
+        help=(
+            "DataLoader workers for Hugging Face audio zero-shot eval. Defaults to 0 until multiprocessing "
+            "contexts are tested more broadly."
+        ),
+    )
+    parser.add_argument(
+        "--audio-zeroshot-multiprocessing-context",
+        type=str,
+        default="forkserver",
+        choices=["fork", "forkserver", "spawn"],
+        help="Multiprocessing context for audio zero-shot DataLoader workers.",
+    )
+    parser.add_argument(
         "--dataset-resampled",
         default=False,
         action="store_true",

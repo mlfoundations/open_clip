@@ -242,13 +242,23 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
         target_key=target_key,
         target_map=target_map,
     )
+    num_workers = getattr(args, "audio_zeroshot_workers", 0)
+    loader_kwargs = {}
+    if num_workers > 0:
+        loader_kwargs["multiprocessing_context"] = getattr(
+            args,
+            "audio_zeroshot_multiprocessing_context",
+            "forkserver",
+        )
+        loader_kwargs["persistent_workers"] = True
     dataloader = DataLoader(
         wrapped,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=getattr(args, "workers", 0),
+        num_workers=num_workers,
         pin_memory=getattr(args, "device", "cpu") != "cpu",
         collate_fn=_collate_audio_zero_shot,
+        **loader_kwargs,
     )
     return AudioZeroShotData(dataloader=dataloader, classnames=classnames, dataset_name=dataset_name)
 
