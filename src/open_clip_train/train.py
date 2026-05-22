@@ -6,6 +6,8 @@ _logger = logging.getLogger(__name__)
 import os
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -22,6 +24,52 @@ from open_clip import get_input_dtype
 from open_clip_train.distributed import is_master
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
+
+
+@dataclass
+class TrainState:
+    """Runtime training state.
+
+    Checkpoint serialization remains owned by the existing task helpers.
+    ``global_step`` and ``samples_seen`` are optional checkpoint metadata;
+    ``compiled_train_step`` is runtime-only and is not saved.
+    """
+    task: Any
+    optimizer: Optional[torch.optim.Optimizer] = None
+    scaler: Optional[Any] = None
+    scheduler: Optional[Callable[[int], None]] = None
+    epoch: int = 0
+    global_step: int = 0
+    samples_seen: int = 0
+    compiled_train_step: Optional[Callable] = None
+
+
+def estimate_train_state_counters(epoch: int, data: dict, args) -> tuple[int, int]:
+    """Estimate train counters for legacy checkpoints without explicit counters."""
+    if epoch <= 0 or 'train' not in data:
+        return 0, 0
+
+    dataloader = data['train'].dataloader
+    global_step = (dataloader.num_batches // args.accum_freq) * epoch
+    samples_seen = dataloader.num_samples * epoch
+    return global_step, samples_seen
+
+
+def restore_train_state_counters(
+        state: TrainState,
+        metadata: Optional[dict],
+        data: dict,
+        args,
+) -> None:
+    """Restore counters from checkpoint metadata, estimating them for old checkpoints."""
+    estimated_global_step, estimated_samples_seen = estimate_train_state_counters(state.epoch, data, args)
+    state.global_step = estimated_global_step
+    state.samples_seen = estimated_samples_seen
+    if metadata is not None:
+        if "global_step" in metadata:
+            state.global_step = int(metadata["global_step"])
+        if "samples_seen" in metadata:
+            state.samples_seen = int(metadata["samples_seen"])
 
 
 class AverageMeter(object):
@@ -93,20 +141,17 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
     return train_step
 
 
-def _get_compiled_train_step(task, optimizer, autocast, args):
-    # TODO: move this cross-epoch cache to explicit train-loop state.
-    # The compiled closure captures optimizer/autocast/args, so task is not
-    # the right long-term owner; this avoids recompiling once per epoch for now.
-    compiled_train_step = getattr(task, "_compiled_train_step", None)
-    if compiled_train_step is not None:
-        return compiled_train_step
+def _get_compiled_train_step(state: TrainState, autocast, args):
+    assert state.optimizer is not None, "_get_compiled_train_step requires state.optimizer."
+    if state.compiled_train_step is not None:
+        return state.compiled_train_step
 
     compiled_train_step = torch.compile(
-        _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args),
+        _make_train_step_no_accum_no_scaler(state.task, state.optimizer, autocast, args),
         **_torch_compile_kwargs(args),
     )
-    task._compiled_train_step = compiled_train_step
-    return compiled_train_step
+    state.compiled_train_step = compiled_train_step
+    return state.compiled_train_step
 
 
 def _finish_eager_train_step(task, optimizer, scaler, args):
@@ -246,7 +291,16 @@ def get_naflex_loss_scale(batch, args, task):
     raise ValueError(f"Unsupported NaFlex loss scale: {loss_scale}")
 
 
-def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
+def train_one_epoch(state: TrainState, data, args, tb_writer=None):
+    task = state.task
+    optimizer = state.optimizer
+    scaler = state.scaler
+    scheduler = state.scheduler
+    epoch = state.epoch
+    assert optimizer is not None, "train_one_epoch requires state.optimizer."
+    if not args.skip_scheduler:
+        assert scheduler is not None, "train_one_epoch requires state.scheduler unless --skip-scheduler is set."
+
     device = torch.device(args.device)
     autocast = get_autocast(
         args.precision,
@@ -266,7 +320,7 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
     if eager_step:
         train_step = None
     elif compile_step:
-        train_step = _get_compiled_train_step(task, optimizer, autocast, args)
+        train_step = _get_compiled_train_step(state, autocast, args)
     else:
         train_step = _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args)
 
@@ -315,6 +369,8 @@ def train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_wr
         end = time.time()
         batch_count = i_accum + 1
         num_samples += step_batch_size * args.world_size
+        state.global_step = step + 1
+        state.samples_seen += step_batch_size * args.world_size
         if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch

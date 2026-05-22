@@ -83,6 +83,41 @@ def test_save_load_roundtrip_restores_optimizer_state(tmp_path):
             )
 
 
+def test_save_load_roundtrip_preserves_train_counters(tmp_path):
+    task_a = _make_task()
+    optim_a = torch.optim.SGD(task_a.parameters(), lr=0.01)
+    ckpt = save_checkpoint(
+        task_a,
+        optim_a,
+        epoch=4,
+        global_step=123,
+        samples_seen=4567,
+    )
+    path = tmp_path / 'ckpt.pt'
+    torch.save(ckpt, path)
+
+    task_b = _make_task()
+    metadata = {}
+    start_epoch = load_checkpoint(task_b, str(path), metadata=metadata)
+
+    assert start_epoch == 4
+    assert metadata == {"global_step": 123, "samples_seen": 4567}
+
+
+def test_load_checkpoint_ignores_unknown_top_level_metadata(tmp_path):
+    task_a = _make_task()
+    optim_a = torch.optim.SGD(task_a.parameters(), lr=0.01)
+    ckpt = save_checkpoint(task_a, optim_a, epoch=1)
+    ckpt["future_counter"] = 99
+    path = tmp_path / 'ckpt.pt'
+    torch.save(ckpt, path)
+
+    task_b = _make_task()
+    start_epoch = load_checkpoint(task_b, str(path))
+
+    assert start_epoch == 1
+
+
 def test_save_load_roundtrip_restores_scaler_state(tmp_path):
     task_a = _make_task()
     optim_a = torch.optim.SGD(task_a.parameters(), lr=0.01)

@@ -43,7 +43,12 @@ from open_clip_train.naflex_data import (
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
-from open_clip_train.train import train_one_epoch, evaluate
+from open_clip_train.train import (
+    TrainState,
+    evaluate,
+    restore_train_state_counters,
+    train_one_epoch,
+)
 from open_clip_train.file_utils import start_sync_process, remote_sync
 from open_clip_train.zero_shot import validate_imagenet_zeroshot_compatible
 
@@ -480,6 +485,7 @@ def main(args):
 
     # optionally resume from a checkpoint
     start_epoch = 0
+    resume_metadata = {}
     if args.resume is not None:
         # Use master-determined flag when available (resume latest); fall back
         # to local isdir check for explicit --resume <path> from CLI.
@@ -490,12 +496,14 @@ def main(args):
             start_epoch = load_sharded_checkpoint(
                 task, args.resume,
                 optimizer=optimizer, scaler=scaler,
+                metadata=resume_metadata,
             )
         else:
             start_epoch = load_checkpoint(
                 task, args.resume,
                 optimizer=optimizer, scaler=scaler,
                 is_distributed=args.distributed,
+                metadata=resume_metadata,
             )
 
     # initialize datasets
@@ -546,6 +554,15 @@ def main(args):
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
 
+    train_state = TrainState(
+        task=task,
+        optimizer=optimizer,
+        scaler=scaler,
+        scheduler=scheduler,
+        epoch=start_epoch,
+    )
+    restore_train_state_counters(train_state, resume_metadata if args.resume is not None else None, data, args)
+
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
     writer = None
@@ -570,7 +587,7 @@ def main(args):
             config=vars(args),
         )
         if args.debug:
-            wandb.watch(task.trainable_module, log='all')
+            wandb.watch(train_state.task.trainable_module, log='all')
         wandb.save(params_file)
         _logger.debug('Finished loading wandb.')
 
@@ -591,29 +608,30 @@ def main(args):
 
         if args.torchcompile_strategy == 'task':
             _logger.info('Compiling task train/eval forward callables.')
-            task.compile(target='task', **compile_kwargs)
+            train_state.task.compile(target='task', **compile_kwargs)
         elif args.torchcompile_strategy == 'step':
             _logger.info('Compiling task eval forward callable; train step compile happens in train_one_epoch().')
-            task.compile(target='task', compile_train=False, compile_eval=True, **compile_kwargs)
+            train_state.task.compile(target='task', compile_train=False, compile_eval=True, **compile_kwargs)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
             from open_clip.utils import convert_int8_model_to_inference_mode
-            convert_int8_model_to_inference_mode(unwrap_model(task.trainable_module))
+            convert_int8_model_to_inference_mode(unwrap_model(train_state.task.trainable_module))
         # Evaluate.
-        evaluate(task, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        evaluate(train_state.task, data, train_state.epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
 
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(train_state.epoch, args.epochs):
+        train_state.epoch = epoch
         if is_master(args):
             _logger.info(f'Start epoch {epoch}')
 
-        train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
+        train_one_epoch(train_state, data, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'audio-zeroshot')):
-            evaluate(task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+            evaluate(train_state.task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
             # sync to avoid some processes advancing/exiting while rank 0 finishes eval
             if args.distributed:
                 torch.distributed.barrier()
@@ -628,18 +646,22 @@ def main(args):
             )
             if save_epoch:
                 save_sharded_checkpoint(
-                    task, optimizer,
+                    train_state.task, train_state.optimizer,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}"),
-                    epoch=completed_epoch, scaler=scaler,
+                    epoch=completed_epoch, scaler=train_state.scaler,
                     name=args.name, is_master=args.save_logs,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
             if args.save_most_recent:
                 latest_dir = os.path.join(args.checkpoint_path, "epoch_latest")
                 tmp_dir = os.path.join(args.checkpoint_path, "_tmp_latest")
                 save_sharded_checkpoint(
-                    task, optimizer, tmp_dir,
-                    epoch=completed_epoch, scaler=scaler,
+                    train_state.task, train_state.optimizer, tmp_dir,
+                    epoch=completed_epoch, scaler=train_state.scaler,
                     name=args.name, is_master=args.save_logs,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
                 torch.distributed.barrier()
                 if args.save_logs:
@@ -666,10 +688,12 @@ def main(args):
             # With FSDP2, state dict gather is collective — all ranks must participate
             # even though only master writes to disk.
             # With DDP, only master needs to call state_dict() to avoid wasting memory.
-            if task._fsdp_enabled or args.save_logs:
+            if train_state.task._fsdp_enabled or args.save_logs:
                 checkpoint_dict = save_checkpoint(
-                    task, optimizer,
-                    epoch=completed_epoch, scaler=scaler, name=args.name,
+                    train_state.task, train_state.optimizer,
+                    epoch=completed_epoch, scaler=train_state.scaler, name=args.name,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
 
             if args.save_logs:

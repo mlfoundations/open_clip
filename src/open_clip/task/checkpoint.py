@@ -59,6 +59,8 @@ def save_checkpoint(
         epoch: int,
         scaler: Optional[torch.amp.GradScaler] = None,
         name: Optional[str] = None,
+        global_step: Optional[int] = None,
+        samples_seen: Optional[int] = None,
 ) -> dict:
     """Save full checkpoint as a single .pt file.
 
@@ -80,6 +82,10 @@ def save_checkpoint(
         checkpoint_dict["state_dict_ema"] = task_sd["state_dict_ema"]
     if scaler is not None:
         checkpoint_dict["scaler"] = scaler.state_dict()
+    if global_step is not None:
+        checkpoint_dict["global_step"] = int(global_step)
+    if samples_seen is not None:
+        checkpoint_dict["samples_seen"] = int(samples_seen)
     return checkpoint_dict
 
 
@@ -89,6 +95,7 @@ def load_checkpoint(
         optimizer: Optional[torch.optim.Optimizer] = None,
         scaler: Optional[torch.amp.GradScaler] = None,
         is_distributed: bool = False,
+        metadata: Optional[dict] = None,
 ) -> int:
     """Load full checkpoint from a .pt file. Returns start_epoch.
 
@@ -96,6 +103,11 @@ def load_checkpoint(
     """
     from open_clip_train.file_utils import pt_load
     checkpoint = pt_load(path, map_location='cpu')
+    if metadata is not None:
+        if "global_step" in checkpoint:
+            metadata["global_step"] = int(checkpoint["global_step"])
+        if "samples_seen" in checkpoint:
+            metadata["samples_seen"] = int(checkpoint["samples_seen"])
 
     if 'epoch' in checkpoint:
         start_epoch = checkpoint["epoch"]
@@ -128,6 +140,8 @@ def save_sharded_checkpoint(
         scaler: Optional[torch.amp.GradScaler] = None,
         name: Optional[str] = None,
         is_master: bool = True,
+        global_step: Optional[int] = None,
+        samples_seen: Optional[int] = None,
 ) -> None:
     """Save sharded DCP checkpoint to a directory. All ranks must call.
 
@@ -146,6 +160,10 @@ def save_sharded_checkpoint(
         metadata = {"epoch": epoch, "name": name}
         if scaler is not None:
             metadata["scaler"] = scaler.state_dict()
+        if global_step is not None:
+            metadata["global_step"] = int(global_step)
+        if samples_seen is not None:
+            metadata["samples_seen"] = int(samples_seen)
         torch.save(metadata, os.path.join(checkpoint_dir, "_metadata_extra.pt"))
 
 
@@ -154,6 +172,7 @@ def load_sharded_checkpoint(
         checkpoint_dir: str,
         optimizer: Optional[torch.optim.Optimizer] = None,
         scaler: Optional[torch.amp.GradScaler] = None,
+        metadata: Optional[dict] = None,
 ) -> int:
     """Load sharded DCP checkpoint from a directory. All ranks must call.
 
@@ -183,10 +202,15 @@ def load_sharded_checkpoint(
     start_epoch = 0
     metadata_path = os.path.join(checkpoint_dir, "_metadata_extra.pt")
     if os.path.exists(metadata_path):
-        metadata = torch.load(metadata_path, map_location='cpu', weights_only=True)
-        start_epoch = metadata.get("epoch", 0)
-        if scaler is not None and "scaler" in metadata:
-            scaler.load_state_dict(metadata["scaler"])
+        loaded_metadata = torch.load(metadata_path, map_location='cpu', weights_only=True)
+        start_epoch = loaded_metadata.get("epoch", 0)
+        if scaler is not None and "scaler" in loaded_metadata:
+            scaler.load_state_dict(loaded_metadata["scaler"])
+        if metadata is not None:
+            if "global_step" in loaded_metadata:
+                metadata["global_step"] = int(loaded_metadata["global_step"])
+            if "samples_seen" in loaded_metadata:
+                metadata["samples_seen"] = int(loaded_metadata["samples_seen"])
 
     _logger.info(f"=> resuming sharded checkpoint '{checkpoint_dir}' (epoch {start_epoch})")
     return start_epoch
