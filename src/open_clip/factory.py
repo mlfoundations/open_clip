@@ -844,6 +844,15 @@ def _set_model_device_and_precision(
         model.to(device=device)
 
 
+def _use_loss_label_cache(args):
+    # Task/step compile captures the loss module. Avoid mutable label-cache
+    # state inside compiled regions; arange is cheap enough.
+    return not (
+        getattr(args, "torchcompile", False)
+        and getattr(args, "torchcompile_strategy", "task") in ("task", "step")
+    )
+
+
 def create_loss(args):
     """Construct a loss module from training args.
 
@@ -851,11 +860,12 @@ def create_loss(args):
     training pipeline in this repo uses ``create_task()`` instead, which
     wraps model + loss and handles EMA/FSDP/checkpointing.
     """
+    cache_labels = _use_loss_label_cache(args)
     if args.distill:
         return DistillClipLoss(
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
-            cache_labels=True,
+            cache_labels=cache_labels,
             rank=args.rank,
             world_size=args.world_size,
         )
@@ -865,12 +875,13 @@ def create_loss(args):
             clip_loss_weight=args.coca_contrastive_loss_weight,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
-            cache_labels=True,
+            cache_labels=cache_labels,
             rank=args.rank,
             world_size=args.world_size,
         )
     elif args.siglip:
         return SigLipLoss(
+            cache_labels=cache_labels,
             rank=args.rank,
             world_size=args.world_size,
             dist_impl=args.loss_dist_impl,
@@ -879,7 +890,7 @@ def create_loss(args):
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
-        cache_labels=True,
+        cache_labels=cache_labels,
         rank=args.rank,
         world_size=args.world_size,
     )
@@ -902,6 +913,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     """
     from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask, CLAPTask
 
+    cache_labels = _use_loss_label_cache(args)
     shared = dict(rank=args.rank, world_size=args.world_size)
     if isinstance(model, CLAP):
         if args.distill:
@@ -910,6 +922,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             model,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
+            cache_labels=cache_labels,
             **shared,
         )
     elif args.distill:
@@ -917,6 +930,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             model, dist_model,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
+            cache_labels=cache_labels,
             **shared,
         )
     elif "coca" in args.model.lower():
@@ -926,6 +940,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             clip_loss_weight=args.coca_contrastive_loss_weight,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
+            cache_labels=cache_labels,
             **shared,
         )
     elif args.siglip:
@@ -939,6 +954,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             model,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
+            cache_labels=cache_labels,
             **shared,
         )
     if naflex_data_config is not None:

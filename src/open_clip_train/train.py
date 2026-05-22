@@ -22,6 +22,7 @@ except ImportError:
 
 from open_clip import get_input_dtype
 from open_clip_train.distributed import is_master
+from open_clip_train.scheduler import get_learning_rate
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
 
@@ -391,11 +392,12 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
             )
             samples_per_second = step_batch_size * args.world_size / batch_time_m.val
             samples_per_second_per_gpu = step_batch_size / batch_time_m.val
+            learning_rate = get_learning_rate(optimizer)
             _logger.info(
                 f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
-                f"LR: {optimizer.param_groups[0]['lr']:5f} "
+                f"LR: {learning_rate:5f} "
                 f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
             )
 
@@ -406,7 +408,7 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                 "samples_per_second": samples_per_second,
                 "samples_per_second_per_gpu": samples_per_second_per_gpu,
                 "scale": logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
+                "lr": learning_rate,
             }
             log_data.update({name:val.val for name,val in losses_m.items()})
 

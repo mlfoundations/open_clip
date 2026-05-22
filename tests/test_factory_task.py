@@ -126,6 +126,39 @@ def test_create_task_plumbs_local_loss_and_gather():
     assert task.loss.gather_with_grad is True
 
 
+@pytest.mark.parametrize(
+    ("torchcompile", "strategy", "expected_cache"),
+    [
+        (False, "task", True),
+        (True, "model", True),
+        (True, "task", False),
+        (True, "step", False),
+    ],
+)
+def test_create_task_sets_cache_labels_for_compile_strategy(torchcompile, strategy, expected_cache):
+    model = open_clip.create_model('RN50')
+    args = _make_args(torchcompile=torchcompile, torchcompile_strategy=strategy)
+    task = create_task(args, model=model)
+
+    assert task.loss.cache_labels is expected_cache
+
+
+@pytest.mark.parametrize(
+    ("torchcompile", "strategy", "expected_cache"),
+    [
+        (False, "task", True),
+        (True, "model", True),
+        (True, "task", False),
+        (True, "step", False),
+    ],
+)
+def test_create_loss_sets_cache_labels_for_compile_strategy(torchcompile, strategy, expected_cache):
+    args = _make_args(torchcompile=torchcompile, torchcompile_strategy=strategy)
+    loss = open_clip.create_loss(args)
+
+    assert loss.cache_labels is expected_cache
+
+
 def test_create_task_siglip_plumbs_dist_impl():
     model = open_clip.create_model('RN50')
     args = _make_args(siglip=True, loss_dist_impl='gather')

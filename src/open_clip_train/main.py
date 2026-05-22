@@ -42,7 +42,7 @@ from open_clip_train.naflex_data import (
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
-from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
+from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown, tensorize_learning_rate
 from open_clip_train.train import (
     TrainState,
     evaluate,
@@ -425,6 +425,12 @@ def main(args):
 
     if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         opt = getattr(args, 'opt', 'adamw').lower()
+        use_tensor_learning_rate = (
+            args.torchcompile
+            and args.torchcompile_strategy == 'step'
+            and opt == 'adamw'
+            and device.type == 'cuda'
+        )
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2
             timm_opt = opt.split('timm/')[-1]
@@ -461,9 +467,17 @@ def main(args):
                     lr=args.lr,
                     betas=(args.beta1, args.beta2),
                     eps=args.eps,
+                    capturable=use_tensor_learning_rate,
                 )
+                if use_tensor_learning_rate:
+                    tensorize_learning_rate(optimizer, device)
             else:
                 assert False, f'Unknown optimizer {opt}'
+
+        if use_tensor_learning_rate:
+            _logger.info(
+                'Using tensor learning rate for native AdamW step compile to avoid optimizer-step recompiles.'
+            )
 
         if is_master(args):
             defaults = copy.deepcopy(optimizer.defaults)
@@ -505,6 +519,9 @@ def main(args):
                 is_distributed=args.distributed,
                 metadata=resume_metadata,
             )
+        if optimizer is not None and use_tensor_learning_rate:
+            # Optimizer checkpoints may restore LR tensors on CPU or legacy float LRs.
+            tensorize_learning_rate(optimizer, device)
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)

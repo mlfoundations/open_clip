@@ -159,3 +159,21 @@ def test_train_state_counter_restore_estimates_legacy_checkpoint_values():
 
     assert state.global_step == 15
     assert state.samples_seen == 240
+
+
+def test_tensor_learning_rate_updates_in_place():
+    from open_clip_train.scheduler import assign_learning_rate, get_learning_rate, tensorize_learning_rate
+
+    model = nn.Linear(2, 1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.1)
+
+    tensorize_learning_rate(optimizer, torch.device("cpu"))
+    lr = optimizer.param_groups[0]["lr"]
+
+    assert isinstance(lr, torch.Tensor)
+    assert get_learning_rate(optimizer) == pytest.approx(0.1)
+
+    assign_learning_rate(optimizer, 0.025)
+
+    assert optimizer.param_groups[0]["lr"] is lr
+    assert get_learning_rate(optimizer) == pytest.approx(0.025)
