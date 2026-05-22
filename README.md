@@ -227,6 +227,10 @@ python -m open_clip_train.main \
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it does not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
 
+### torch.compile
+
+Training supports `torch.compile` via `--torchcompile`. Use `--torchcompile-strategy task` for the common case: it compiles the task train/eval forward callables while keeping the `TrainingTask` object itself unwrapped for checkpointing, batch preparation, eval, and zero-shot helpers. Use `--torchcompile-strategy model` when you want the lower-risk pre-DDP behavior of compiling only the underlying trainable module, especially for fp16 AMP runs that need a `GradScaler`. Use `--torchcompile-strategy step` for the most aggressive single-batch path: it compiles forward, loss, backward, optional grad clipping, optimizer step, and logit-scale clamp, but requires `--accum-freq 1` and a precision mode without `GradScaler` such as the default `amp_bf16` or `fp32`. `--torchcompile-backend` and `--torchcompile-mode` are passed through to `torch.compile`.
+
 ### Multi-GPU and Beyond
 
 This code has been battle tested up to 1024 A100s and offers a variety of solutions
