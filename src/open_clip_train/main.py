@@ -610,7 +610,7 @@ def main(args):
             _logger.info('Compiling task train/eval forward callables.')
             train_state.task.compile(target='task', **compile_kwargs)
         elif args.torchcompile_strategy == 'step':
-            _logger.info('Compiling task eval forward callable; train step compile happens in train_one_epoch().')
+            _logger.info('Compiling task eval forward callable; train step compile is cached in TrainState.')
             train_state.task.compile(target='task', compile_train=False, compile_eval=True, **compile_kwargs)
 
     if 'train' not in data:
