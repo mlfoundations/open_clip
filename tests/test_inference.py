@@ -10,7 +10,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 torch.serialization.add_safe_globals([PIL.Image.Image])
 
-models_to_test = set(open_clip.list_models())
+models_to_test = {m for m in open_clip.list_models() if not (open_clip.get_model_config(m) or {}).get("audio_cfg")}
 
 # testing excemptions
 models_to_test = models_to_test.difference({

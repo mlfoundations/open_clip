@@ -41,6 +41,7 @@ class CLIPVisionCfg:
     mlp_ratio: float = 4.0
     patch_size: int = 16
     image_size: Union[Tuple[int, int], int] = 224
+    image_seq_len: Optional[int] = None
 
     ls_init_value: Optional[float] = None  # layer scale initial value
     patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
@@ -71,6 +72,7 @@ class CLIPVisionCfg:
     timm_proj_bias: bool = False  # enable bias final projection
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
+    timm_model_kwargs: Optional[dict] = None  # additional kwargs forwarded to timm.create_model()
 
 
 @dataclass
@@ -158,6 +160,7 @@ def _build_vision_tower(
             patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
+            model_kwargs=vision_cfg.timm_model_kwargs,
         )
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
@@ -204,6 +207,9 @@ def _build_vision_tower(
             scale_attn=vision_cfg.scale_attn,
             scale_fc=vision_cfg.scale_fc,
         )
+
+    if vision_cfg.image_seq_len is not None:
+        visual.image_seq_len = int(vision_cfg.image_seq_len)
 
     return visual
 

@@ -23,9 +23,14 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, get_model_config, get_tokenizer, create_loss
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
+from open_clip_train.naflex_data import (
+    create_naflex_data_config_from_args,
+    get_naflex_model_image_seq_len,
+    get_naflex_model_patch_size,
+)
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
@@ -65,6 +70,9 @@ def get_latest_checkpoint(path: str, remote : bool):
 
 def main(args):
     args = parse_args(args)
+    model_cfg = get_model_config(args.model) or {}
+    if args.dataset_type in ("webdataset-audio", "synthetic-audio") or "audio_cfg" in model_cfg:
+        raise NotImplementedError("CLAP audio training is only supported by open_clip_train.main.")
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -226,6 +234,7 @@ def main(args):
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        force_naflex_vision=args.force_naflex_vision,
         pretrained_image=args.pretrained_image,
         output_dict=True,
         cache_dir=args.cache_dir,
@@ -375,11 +384,22 @@ def main(args):
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
+    naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
+    naflex_eval_seq_len = get_naflex_model_image_seq_len(model) if args.use_naflex else None
+    naflex_data_config = (
+        create_naflex_data_config_from_args(
+            args,
+            default_patch_size=naflex_patch_size,
+            default_eval_seq_len=naflex_eval_seq_len,
+        )
+        if args.use_naflex else None
+    )
     data = get_data(
         args,
         (preprocess_train, preprocess_val),
         epoch=start_epoch,
         tokenizer=tokenizer,
+        naflex_data_config=naflex_data_config,
     )
     assert len(data), 'At least one train or eval dataset must be specified.'
 

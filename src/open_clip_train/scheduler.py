@@ -1,9 +1,30 @@
 import math
 
+import torch
+
 
 def assign_learning_rate(optimizer, new_lr):
     for param_group in optimizer.param_groups:
-        param_group["lr"] = new_lr
+        lr = param_group["lr"]
+        if isinstance(lr, torch.Tensor):
+            lr.fill_(new_lr)
+        else:
+            param_group["lr"] = new_lr
+
+
+def get_learning_rate(optimizer):
+    lr = optimizer.param_groups[0]["lr"]
+    return lr.item() if isinstance(lr, torch.Tensor) else lr
+
+
+def tensorize_learning_rate(optimizer, device):
+    for param_group in optimizer.param_groups:
+        lr = param_group["lr"]
+        if isinstance(lr, torch.Tensor):
+            lr = lr.detach().to(device=device)
+        else:
+            lr = torch.tensor(float(lr), device=device)
+        param_group["lr"] = lr
 
 
 def _warmup_lr(base_lr, warmup_length, step):
@@ -54,4 +75,3 @@ def cosine_lr(optimizer, base_lr, warmup_length, steps):
         return lr
 
     return _lr_adjuster
-

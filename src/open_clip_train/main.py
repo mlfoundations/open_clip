@@ -26,14 +26,31 @@ except ImportError:
     tensorboard = None
 
 from open_clip import create_model_and_transforms, get_tokenizer, create_task
-from open_clip.task import unwrap_model, save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
+from open_clip.task import (
+    load_checkpoint,
+    load_sharded_checkpoint,
+    save_checkpoint,
+    save_sharded_checkpoint,
+    unwrap_model,
+)
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
+from open_clip_train.naflex_data import (
+    create_naflex_data_config_from_args,
+    get_naflex_model_image_seq_len,
+    get_naflex_model_patch_size,
+)
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
-from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
-from open_clip_train.train import train_one_epoch, evaluate
+from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown, tensorize_learning_rate
+from open_clip_train.train import (
+    TrainState,
+    evaluate,
+    restore_train_state_counters,
+    train_one_epoch,
+)
 from open_clip_train.file_utils import start_sync_process, remote_sync
+from open_clip_train.zero_shot import validate_imagenet_zeroshot_compatible
 
 _logger = logging.getLogger('open_clip_train.main')
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -230,6 +247,12 @@ def main(args):
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
+    audio_aug_cfg = dict(
+        data_trunc=args.audio_trunc,
+        data_fill=args.audio_fill,
+        enable_fusion=args.audio_fusion,
+        int16_normalize=args.audio_int16_normalize,
+    )
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -245,7 +268,10 @@ def main(args):
         image_interpolation=args.image_interpolation,
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        audio_aug_cfg=audio_aug_cfg,
+        force_naflex_vision=args.force_naflex_vision,
         pretrained_image=args.pretrained_image,
+        pretrained_audio_path=args.pretrained_audio,
         output_dict=True,
         cache_dir=args.cache_dir,
         **model_kwargs,
@@ -276,6 +302,8 @@ def main(args):
 
     if args.lock_image:
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        if not hasattr(model, 'lock_image_tower'):
+            raise ValueError("--lock-image is only valid for image models.")
         model.lock_image_tower(
             unlocked_groups=args.lock_image_unlocked_groups,
             freeze_bn_stats=args.lock_image_freeze_bn_stats)
@@ -305,11 +333,21 @@ def main(args):
                 _logger.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
 
+    naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
+    naflex_eval_seq_len = get_naflex_model_image_seq_len(model) if args.use_naflex else None
+    naflex_data_config = (
+        create_naflex_data_config_from_args(
+            args,
+            default_patch_size=naflex_patch_size,
+            default_eval_seq_len=naflex_eval_seq_len,
+        )
+        if args.use_naflex else None
+    )
+
     # Create task (wraps model + loss)
-    task = create_task(args, model=model, dist_model=dist_model)
-    # Keep reference to unwrapped task for checkpoint methods.
-    # torch.compile wraps in OptimizedModule which shadows our state_dict() override.
-    original_task = task
+    task = create_task(args, model=model, dist_model=dist_model, naflex_data_config=naflex_data_config)
+    if args.imagenet_val is not None or args.imagenet_v2 is not None:
+        validate_imagenet_zeroshot_compatible(model)
 
     if args.fsdp and not args.distributed:
         _logger.warning('--fsdp requires distributed mode. Ignoring --fsdp for single-process training.')
@@ -318,6 +356,24 @@ def main(args):
     if args.fsdp_checkpoint == 'sharded' and not args.fsdp:
         _logger.warning("--fsdp-checkpoint sharded requires --fsdp. Falling back to 'full'.")
         args.fsdp_checkpoint = 'full'
+
+    compile_kwargs = dict(
+        backend=args.torchcompile_backend,
+        mode=args.torchcompile_mode,
+    )
+    if args.torchcompile and args.grad_checkpointing and args.distributed and not args.fsdp:
+        _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+        torch._dynamo.config.optimize_ddp = False
+
+    if args.torchcompile and args.torchcompile_strategy == 'model':
+        if args.fsdp:
+            _logger.info(
+                'torch.compile strategy=model with FSDP uses prepare_fsdp() per-block compile; '
+                'skipping root trainable_module compile.'
+            )
+        else:
+            _logger.info('Compiling trainable_module before distributed wrapping.')
+            task.compile(target='model', **compile_kwargs)
 
     # Resolve FSDP mixed-precision from --precision.
     # Always create MixedPrecisionPolicy when FSDP is active (at minimum for fp32 reductions).
@@ -351,6 +407,7 @@ def main(args):
             )
             task.prepare_fsdp(
                 compile_blocks=bool(args.torchcompile),
+                compile_kwargs=compile_kwargs if args.torchcompile else None,
                 grad_checkpointing=bool(args.grad_checkpointing),
                 **fsdp_kwargs,
             )
@@ -359,14 +416,21 @@ def main(args):
             if args.ddp_static_graph:
                 # this doesn't exist in older PyTorch, arg only added if enabled
                 ddp_args['static_graph'] = True
+            ddp_args.update(task.ddp_extra_kwargs())
             task.prepare_distributed(device_ids=[device], **ddp_args)
 
     # create optimizer and scaler
     optimizer = None
     scaler = None
 
-    if args.train_data or args.dataset_type == "synthetic":
+    if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         opt = getattr(args, 'opt', 'adamw').lower()
+        use_tensor_learning_rate = (
+            args.torchcompile
+            and args.torchcompile_strategy == 'step'
+            and opt == 'adamw'
+            and device.type == 'cuda'
+        )
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2
             timm_opt = opt.split('timm/')[-1]
@@ -403,9 +467,17 @@ def main(args):
                     lr=args.lr,
                     betas=(args.beta1, args.beta2),
                     eps=args.eps,
+                    capturable=use_tensor_learning_rate,
                 )
+                if use_tensor_learning_rate:
+                    tensorize_learning_rate(optimizer, device)
             else:
                 assert False, f'Unknown optimizer {opt}'
+
+        if use_tensor_learning_rate:
+            _logger.info(
+                'Using tensor learning rate for native AdamW step compile to avoid optimizer-step recompiles.'
+            )
 
         if is_master(args):
             defaults = copy.deepcopy(optimizer.defaults)
@@ -427,6 +499,7 @@ def main(args):
 
     # optionally resume from a checkpoint
     start_epoch = 0
+    resume_metadata = {}
     if args.resume is not None:
         # Use master-determined flag when available (resume latest); fall back
         # to local isdir check for explicit --resume <path> from CLI.
@@ -435,15 +508,20 @@ def main(args):
             is_sharded = os.path.isdir(args.resume)
         if is_sharded:
             start_epoch = load_sharded_checkpoint(
-                original_task, args.resume,
+                task, args.resume,
                 optimizer=optimizer, scaler=scaler,
+                metadata=resume_metadata,
             )
         else:
             start_epoch = load_checkpoint(
-                original_task, args.resume,
+                task, args.resume,
                 optimizer=optimizer, scaler=scaler,
                 is_distributed=args.distributed,
+                metadata=resume_metadata,
             )
+        if optimizer is not None and use_tensor_learning_rate:
+            # Optimizer checkpoints may restore LR tensors on CPU or legacy float LRs.
+            tensorize_learning_rate(optimizer, device)
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
@@ -452,8 +530,26 @@ def main(args):
         (preprocess_train, preprocess_val),
         epoch=start_epoch,
         tokenizer=tokenizer,
+        naflex_data_config=getattr(task, 'naflex_data_config', None),
     )
-    assert len(data), 'At least one train or eval dataset must be specified.'
+    if args.audio_zeroshot_dataset:
+        from open_clip_train.audio_zero_shot import (
+            AudioZeroShotData,
+            build_hf_audio_zero_shot_dataset,
+            validate_audio_zeroshot_compatible,
+        )
+
+        validate_audio_zeroshot_compatible(task)
+        if is_master(args):
+            _logger.info("Building audio zero-shot dataset.")
+            data["audio-zeroshot"] = build_hf_audio_zero_shot_dataset(args, task)
+        else:
+            data["audio-zeroshot"] = AudioZeroShotData(
+                dataloader=None,
+                classnames=[],
+                dataset_name=args.audio_zeroshot_dataset,
+            )
+    assert len(data), 'At least one train, validation, ImageNet, or audio zero-shot dataset must be specified.'
 
     # create scheduler if train
     scheduler = None
@@ -474,6 +570,15 @@ def main(args):
             _logger.error(
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
+
+    train_state = TrainState(
+        task=task,
+        optimizer=optimizer,
+        scaler=scaler,
+        scheduler=scheduler,
+        epoch=start_epoch,
+    )
+    restore_train_state_counters(train_state, resume_metadata if args.resume is not None else None, data, args)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
@@ -499,15 +604,12 @@ def main(args):
             config=vars(args),
         )
         if args.debug:
-            wandb.watch(task.trainable_module, log='all')
+            wandb.watch(train_state.task.trainable_module, log='all')
         wandb.save(params_file)
         _logger.debug('Finished loading wandb.')
 
-    # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
-    # For compatibility, we save state_dict() of the original model, which shares the
-    # weights without the prefix.
     if args.torchcompile:
-        _logger.info('Compiling model...')
+        _logger.info(f'Using torch.compile strategy={args.torchcompile_strategy}.')
 
         # Suppress noisy dynamo/inductor logs
         filter_prefixes = (
@@ -521,37 +623,32 @@ def main(args):
             if name.startswith(filter_prefixes):
                 logging.getLogger(name).setLevel(logging.WARNING)
 
-        if args.fsdp:
-            # Per-block compile for transformer blocks already applied inside
-            # prepare_fsdp(). Task-level compile captures the loss + model glue
-            # (embeddings, projections); per-block OptimizedModules are opaque to
-            # Dynamo so AC/FSDP hooks on blocks stay at module boundaries.
-            _logger.info('Compiling task (loss + model glue); blocks already per-block compiled.')
-            task = torch.compile(task)
-        else:
-            if args.grad_checkpointing and args.distributed:
-                _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
-                torch._dynamo.config.optimize_ddp = False
-            task = torch.compile(task)
+        if args.torchcompile_strategy == 'task':
+            _logger.info('Compiling task train/eval forward callables.')
+            train_state.task.compile(target='task', **compile_kwargs)
+        elif args.torchcompile_strategy == 'step':
+            _logger.info('Compiling task eval forward callable; train step compile is cached in TrainState.')
+            train_state.task.compile(target='task', compile_train=False, compile_eval=True, **compile_kwargs)
 
     if 'train' not in data:
         # If using int8, convert to inference mode.
         if args.use_bnb_linear is not None:
             from open_clip.utils import convert_int8_model_to_inference_mode
-            convert_int8_model_to_inference_mode(unwrap_model(task.trainable_module))
+            convert_int8_model_to_inference_mode(unwrap_model(train_state.task.trainable_module))
         # Evaluate.
-        evaluate(task, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        evaluate(train_state.task, data, train_state.epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
 
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(train_state.epoch, args.epochs):
+        train_state.epoch = epoch
         if is_master(args):
             _logger.info(f'Start epoch {epoch}')
 
-        train_one_epoch(task, data, epoch, optimizer, scaler, scheduler, args, tb_writer=writer)
+        train_one_epoch(train_state, data, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2', 'audio-zeroshot')):
+            evaluate(train_state.task, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
             # sync to avoid some processes advancing/exiting while rank 0 finishes eval
             if args.distributed:
                 torch.distributed.barrier()
@@ -566,18 +663,22 @@ def main(args):
             )
             if save_epoch:
                 save_sharded_checkpoint(
-                    original_task, optimizer,
+                    train_state.task, train_state.optimizer,
                     os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}"),
-                    epoch=completed_epoch, scaler=scaler,
+                    epoch=completed_epoch, scaler=train_state.scaler,
                     name=args.name, is_master=args.save_logs,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
             if args.save_most_recent:
                 latest_dir = os.path.join(args.checkpoint_path, "epoch_latest")
                 tmp_dir = os.path.join(args.checkpoint_path, "_tmp_latest")
                 save_sharded_checkpoint(
-                    original_task, optimizer, tmp_dir,
-                    epoch=completed_epoch, scaler=scaler,
+                    train_state.task, train_state.optimizer, tmp_dir,
+                    epoch=completed_epoch, scaler=train_state.scaler,
                     name=args.name, is_master=args.save_logs,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
                 torch.distributed.barrier()
                 if args.save_logs:
@@ -604,10 +705,12 @@ def main(args):
             # With FSDP2, state dict gather is collective — all ranks must participate
             # even though only master writes to disk.
             # With DDP, only master needs to call state_dict() to avoid wasting memory.
-            if original_task._fsdp_enabled or args.save_logs:
+            if train_state.task._fsdp_enabled or args.save_logs:
                 checkpoint_dict = save_checkpoint(
-                    original_task, optimizer,
-                    epoch=completed_epoch, scaler=scaler, name=args.name,
+                    train_state.task, train_state.optimizer,
+                    epoch=completed_epoch, scaler=train_state.scaler, name=args.name,
+                    global_step=train_state.global_step,
+                    samples_seen=train_state.samples_seen,
                 )
 
             if args.save_logs:

@@ -61,9 +61,100 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "hf", "auto"],
+        choices=["webdataset", "webdataset-audio", "csv", "synthetic", "synthetic-audio", "auto"],
         default="auto",
         help="Which type of dataset to process."
+    )
+    parser.add_argument(
+        "--audio-ext",
+        type=str,
+        default="flac",
+        help="Audio file extension in WebDataset shards (wav, flac, mp3, ogg)."
+    )
+    parser.add_argument(
+        "--pretrained-audio",
+        type=str,
+        default=None,
+        help="Path to pretrained audio encoder checkpoint."
+    )
+    parser.add_argument(
+        "--audio-fill",
+        type=str,
+        default="repeatpad",
+        choices=["pad", "repeat", "repeatpad"],
+        help="How to fill audio shorter than clip_samples."
+    )
+    parser.add_argument(
+        "--audio-trunc",
+        type=str,
+        default="rand_trunc",
+        choices=["rand_trunc", "trunc", "fusion"],
+        help="How to truncate audio longer than clip_samples."
+    )
+    parser.add_argument(
+        "--audio-fusion",
+        default=False,
+        action="store_true",
+        help="Enable HTSAT fusion preprocessing for longer audio clips."
+    )
+    parser.add_argument(
+        "--audio-int16-normalize",
+        default=False,
+        action="store_true",
+        help="Apply int16 quantization normalization in audio preprocessing."
+    )
+    parser.add_argument(
+        "--audio-zeroshot-dataset",
+        type=str,
+        default=None,
+        help="Hugging Face audio classification dataset for CLAP zero-shot eval, e.g. ashraq/esc50.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-split",
+        type=str,
+        default="train",
+        help="Dataset split for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-audio-key",
+        type=str,
+        default="audio",
+        help="Audio column name for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-target-key",
+        type=str,
+        default="target",
+        help="Target column name for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-class-key",
+        type=str,
+        default="category",
+        help="Optional class-name column for audio zero-shot eval.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-template",
+        dest="audio_zeroshot_templates",
+        action="append",
+        default=None,
+        help="Prompt template for audio zero-shot eval. May be passed multiple times; must contain {}.",
+    )
+    parser.add_argument(
+        "--audio-zeroshot-workers",
+        type=int,
+        default=0,
+        help=(
+            "DataLoader workers for Hugging Face audio zero-shot eval. Defaults to 0 until multiprocessing "
+            "contexts are tested more broadly."
+        ),
+    )
+    parser.add_argument(
+        "--audio-zeroshot-multiprocessing-context",
+        type=str,
+        default="forkserver",
+        choices=["fork", "forkserver", "spawn"],
+        help="Multiprocessing context for audio zero-shot DataLoader workers.",
     )
     parser.add_argument(
         "--dataset-resampled",
@@ -129,7 +220,7 @@ def parse_args(args):
         "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size per GPU."
+        "--batch-size", type=int, default=64, help="Batch size per GPU. Ignored for NaFlex WebDataset training."
     )
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
@@ -304,7 +395,31 @@ def parse_args(args):
         "--torchcompile",
         default=False,
         action='store_true',
-        help="torch.compile() the model, requires pytorch 2.0 or later.",
+        help="Enable torch.compile, requires pytorch 2.0 or later.",
+    )
+    parser.add_argument(
+        "--torchcompile-strategy",
+        type=str,
+        default="task",
+        choices=["model", "task", "step"],
+        help=(
+            "Compile strategy when --torchcompile is enabled: "
+            "'model' compiles trainable_module before distributed wrapping, "
+            "'task' compiles task train/eval forward callables, "
+            "'step' compiles the single-batch forward/backward/optimizer step."
+        ),
+    )
+    parser.add_argument(
+        "--torchcompile-backend",
+        type=str,
+        default=None,
+        help="Optional torch.compile backend, e.g. inductor or eager.",
+    )
+    parser.add_argument(
+        "--torchcompile-mode",
+        type=str,
+        default=None,
+        help="Optional torch.compile mode, e.g. default, reduce-overhead, or max-autotune.",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
@@ -488,8 +603,81 @@ def parse_args(args):
         type=str,
         help='A string to specify a specific distributed loss implementation.'
     )
+    parser.add_argument(
+        "--use-naflex",
+        default=False,
+        action="store_true",
+        help="Use NaFlex WebDataset batching for training and NaFlex patchified validation / zero-shot loaders."
+    )
+    parser.add_argument(
+        "--force-naflex-vision",
+        default=False,
+        action="store_true",
+        help=(
+            "Convert compatible timm EVA/ViT vision towers to NaFlexViT without enabling the NaFlex data pipeline. "
+            "--use-naflex implies this."
+        ),
+    )
+    parser.add_argument(
+        "--naflex-num-train-image-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Number of image tokens per training epoch for NaFlex schedule creation. "
+            "Use this instead of --train-num-samples to target a token budget."
+        ),
+    )
+    parser.add_argument(
+        "--naflex-patch-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Patch sizes to sample for NaFlex training. Eval uses the first value. Defaults to 16 when omitted."
+    )
+    parser.add_argument(
+        "--naflex-patch-size-probs",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Sampling probabilities for --naflex-patch-sizes."
+    )
+    parser.add_argument(
+        "--naflex-seq-lens",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Sequence lengths to sample for NaFlex training. Eval pads/crops to the largest value."
+    )
+    parser.add_argument(
+        "--naflex-max-image-tokens-per-batch",
+        type=int,
+        default=4096 * 4,
+        help="Maximum image tokens per local NaFlex batch."
+    )
+    parser.add_argument(
+        "--naflex-batch-divisor",
+        type=int,
+        default=8,
+        help="Divisibility constraint for scheduled NaFlex batch sizes."
+    )
+    parser.add_argument(
+        "--naflex-loss-scale",
+        type=str,
+        choices=("none", "linear", "sqrt"),
+        default="none",
+        help=(
+            "Scale NaFlex training loss by actual local batch size relative to --batch-size. "
+            "Defaults to no scaling."
+        ),
+    )
 
     args = parser.parse_args(args)
+
+    if args.use_naflex:
+        args.force_naflex_vision = True
+        args.aug_cfg = dict(args.aug_cfg or {})
+        args.aug_cfg["use_timm"] = True
+        args.aug_cfg["naflex"] = True
 
     if 'timm' not in args.opt:
         # set default opt params based on model name (only if timm optimizer not used)

@@ -1,0 +1,16 @@
+{
+    "embed_dim": 512,
+    "custom_text": true,
+    "vision_cfg": {
+        "image_size": 224,
+        "timm_model_name": "naflexvit_base_patch16_gap",
+        "timm_model_pretrained": false
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12
+    }
+}

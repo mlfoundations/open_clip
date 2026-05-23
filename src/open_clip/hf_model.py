@@ -149,6 +149,13 @@ class HFTextEncoder(nn.Module):
                 nn.GELU(),
                 nn.Linear(hidden_size, output_dim, bias=False),
             )
+        elif proj_type == 'clap_mlp':
+            # Matches the HF Transformers CLAP text projection checkpoint layout.
+            self.proj = nn.Sequential(
+                nn.Linear(d_model, output_dim, bias=True),
+                nn.ReLU(),
+                nn.Linear(output_dim, output_dim, bias=True),
+            )
 
     def forward(self, x: TensorType):
         attn_mask = (x != self.config.pad_token_id).long()

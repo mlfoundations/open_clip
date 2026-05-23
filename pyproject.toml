@@ -53,10 +53,16 @@ training = [
     'timm>=1.0.17',
     'fsspec',
 ]
+audio = [
+    'torchaudio',
+    'torchlibrosa',
+    'openai-whisper',
+    'datasets[audio]',
+]
 test = [
     'pytest-split',
     'pytest>=9.0.3',
-    'open_clip_torch[training]',
+    'open_clip_torch[training,audio]',
     'requests'
 ]
 

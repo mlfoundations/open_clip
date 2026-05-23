@@ -3,9 +3,9 @@
 [[Paper]](https://arxiv.org/abs/2212.07143) [[Citations]](#citing) [[Clip Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_clip.ipynb) [[Coca Colab]](https://colab.research.google.com/github/mlfoundations/open_clip/blob/master/docs/Interacting_with_open_coca.ipynb)
 [![pypi](https://img.shields.io/pypi/v/open_clip_torch.svg)](https://pypi.python.org/pypi/open_clip_torch)
 
-> ⚠️ **Development branch notice (WIP)**
+> ⚠️ **Main branch training stack notice**
 >
-> This branch contains an in-progress refactor of the training stack around a new `TrainingTask` abstraction, FSDP2 support, and dict-based batch flow. **For stable training use, pin to the [`v3` branch](https://github.com/mlfoundations/open_clip/tree/v3) (or the latest 3.x release on PyPI).** Inference usage of pretrained models on `main` is unchanged, but the training pipeline has a number of breaking changes — if you have scripts or downstream code that drives `open_clip_train` / imports from `open_clip`, please review the list below before upgrading.
+> `main` now uses the post-refactor training stack by default. Training is organized around `TrainingTask` wrappers, dict-based batches, FSDP2 support, NaFlex image pipelines, CLAP audio models, and multiple `torch.compile` strategies. **For the older release-stable training API, pin to the [`v3` branch](https://github.com/mlfoundations/open_clip/tree/v3) or the latest 3.x release on PyPI.** Inference usage of pretrained image/text models is still intended to be compatible, but training scripts and downstream integrations should review the changes below before upgrading.
 >
 > **Breaking changes — training CLI:**
 > - `--horovod` removed (Horovod support deleted; DDP/FSDP2 only)
@@ -16,19 +16,22 @@
 > - `--fsdp` — use FSDP2 (`fully_shard`) instead of DDP
 > - `--fsdp-no-reshard-after-forward`, `--fsdp-offload-cpu`
 > - `--fsdp-checkpoint {full,sharded}` — full gathers to rank-0 as a single `.pt`; `sharded` uses DCP per-rank shards (faster, lower memory)
+> - `--torchcompile-strategy {task,model,step}` — choose whether `torch.compile` captures task forward/loss, the underlying model, or the full single-batch train step
+> - `--use-naflex` and `--naflex-*` flags — enable NaFlex variable-aspect image pipelines for compatible timm/OpenCLIP ViT-family models
+> - `--audio-*` and `--audio-zeroshot-*` flags — enable CLAP audio preprocessing/training and Hugging Face audio zero-shot evaluation
 >
 > **Breaking changes — Python API:**
 > - `trace_model` removed from the top-level `open_clip` namespace
 > - `load_openai_model`, `list_openai_models`, and `build_model_from_openai_state_dict` removed. Original-OpenAI weights are still loadable through the standard `create_model_from_pretrained(..., pretrained='openai')` path, which now routes through HuggingFace Hub (`timm/*_clip.openai`) instead of `torch.jit.load` on `openaipublic.azureedge.net` archives. Removing the JIT path closes an arbitrary-code-execution surface (JIT archives can ship pickled code).
-> - Training pipeline now wraps `model + loss` in a `TrainingTask` subclass (`CLIPTask`, `SigLIPTask`, `CoCaTask`, `DistillCLIPTask`). Any code that previously called `train_one_epoch(model, loss, ...)` or `evaluate(model, ...)` directly will need to switch to passing a task. `create_loss(args)` is still available as a standalone loss factory for non-task training loops.
-> - Data pipeline (`CsvDataset`, `SyntheticDataset`, the webdataset pipeline) now emits `{"image": ..., "text": ...}` dicts instead of `(image, text)` tuples. Tuple-style calls through `task(images, texts)` still work via a backward-compat path, but downstream code that iterates a dataloader directly will need `batch["image"]` / `batch["text"]`.
+> - Training pipeline wraps `model + loss` in a `TrainingTask` subclass (`CLIPTask`, `SigLIPTask`, `CoCaTask`, `DistillCLIPTask`, `CLAPTask`). Code that previously called `train_one_epoch(model, loss, ...)` or `evaluate(model, ...)` directly should switch to passing a task. `create_loss(args)` remains available as a standalone loss factory for non-task training loops.
+> - Data pipelines emit dict batches instead of tuples. Image/text loaders use `{"image": ..., "text": ...}`; CLAP audio loaders use `{"audio": ..., "text": ...}`. Tuple-style image/text calls through `task(images, texts)` still work via a backward-compat path, but downstream code that iterates a dataloader directly should read the named keys.
 > - CoCa's autoregressive label shift moved out of `coca_model.py` and into `CoCaTask`. `coca_model.forward()` no longer performs the `[:, :-1]` / `[:, 1:]` slicing — callers that relied on that behavior outside training should handle labels themselves.
 >
 > **Dependency bump:** Minimum `torch>=2.6` (was `>=2.0`). This is the version where `torch.load(weights_only=True)` became the default — all checkpoint loads in this repo now pass `weights_only=True` explicitly with no `weights_only=False` fallback. If you're resuming training with a custom optimizer that pickles non-allowlisted Python types, register them via `torch.serialization.add_safe_globals([...])` before calling `load_checkpoint`.
 >
-> **Checkpoint compatibility:** Existing pretrained `.pt` checkpoints load without changes. Training checkpoints saved on this branch include a `state_dict` key that's compatible with prior versions (EMA and optimizer state are also preserved). `0-D` vs `1-D` scalar reshape from the FSDP path is reconciled on load, so you can resume a DDP-trained checkpoint under FSDP2 and vice versa.
+> **Checkpoint compatibility:** Existing pretrained `.pt` checkpoints load without changes. Training checkpoints saved on `main` include a `state_dict` key that's compatible with prior versions; EMA, optimizer state, and optional training counters are also preserved. `0-D` vs `1-D` scalar reshape from the FSDP path is reconciled on load, so you can resume a DDP-trained checkpoint under FSDP2 and vice versa.
 >
-> **Legacy training entry point:** If you'd rather stay on `main` for the model/factory side but skip the task abstraction (e.g. an existing training script that drives `train_one_epoch(model, loss, ...)` directly), `python -m open_clip_train.legacy_main` runs the pre-task training loop with no `TrainingTask` wrapping, no FSDP, no EMA. It uses the same `params.py` (and ignores the new FSDP flags), the same `data.py`, `zero_shot.py`, etc. Provided as a transitional shim — likely to be removed once the task pipeline lands as default.
+> **Legacy training entry point:** `python -m open_clip_train.legacy_main` remains available for older image/text training scripts that need the pre-task loop. It does not support the full task-era feature set (for example FSDP2, EMA, CLAP audio training, or the task/step `torch.compile` integration), and should be treated as a compatibility shim rather than the path for new training work.
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
@@ -226,6 +229,10 @@ python -m open_clip_train.main \
 
 Note: `imagenet-val` is the path to the *validation* set of ImageNet for zero-shot evaluation, not the training set!
 You can remove this argument if you do not want to perform zero-shot evaluation on ImageNet throughout training. Note that the `val` folder should contain subfolders. If it does not, please use [this script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh).
+
+### torch.compile
+
+Training supports `torch.compile` via `--torchcompile`. Use `--torchcompile-strategy task` for the common case: it compiles the task train/eval forward callables while keeping the `TrainingTask` object itself unwrapped for checkpointing, batch preparation, eval, and zero-shot helpers. Use `--torchcompile-strategy model` when you want the lower-risk pre-DDP behavior of compiling only the underlying trainable module, especially for fp16 AMP runs that need a `GradScaler`. Use `--torchcompile-strategy step` for the most aggressive single-batch path: it compiles forward, loss, backward, optional grad clipping, optimizer step, and logit-scale clamp, but requires `--accum-freq 1` and a precision mode without `GradScaler` such as the default `amp_bf16` or `fp32`. `--torchcompile-backend` and `--torchcompile-mode` are passed through to `torch.compile`.
 
 ### Multi-GPU and Beyond
 
@@ -503,6 +510,44 @@ python -m open_clip_train.main \
     --imagenet-val /path/to/imagenet/validation \
     --model ViT-B-32-quickgelu \
     --pretrained laion400m_e32
+```
+
+### Evaluating CLAP audio models on zero-shot audio classification:
+
+Audio zero-shot evaluation uses Hugging Face audio classification datasets. Install the optional audio dependencies before running these examples.
+
+```bash
+pip install 'datasets[audio]' torchaudio torchlibrosa
+```
+
+ESC-50:
+
+```bash
+python -m open_clip_train.main \
+    --model CLAP-HTSAT-tiny-Roberta-base-fused \
+    --pretrained laion \
+    --audio-zeroshot-dataset ashraq/esc50 \
+    --audio-zeroshot-split train \
+    --batch-size 64 \
+    --workers 4 \
+    --device cuda \
+    --zeroshot-frequency 1
+```
+
+UrbanSound8K:
+
+```bash
+python -m open_clip_train.main \
+    --model CLAP-HTSAT-tiny-Roberta-base-fused \
+    --pretrained laion \
+    --audio-zeroshot-dataset mteb/urbansound8K \
+    --audio-zeroshot-split train \
+    --audio-zeroshot-target-key classID \
+    --audio-zeroshot-class-key class \
+    --batch-size 64 \
+    --workers 4 \
+    --device cuda \
+    --zeroshot-frequency 1
 ```
 
 ### Model distillation

@@ -67,6 +67,50 @@ class TrainingTask(nn.Module):
         # When True, state dicts squeeze [1] scalars back to 0-D for checkpoint
         # compatibility with non-FSDP models (e.g. logit_scale, logit_bias).
         self.normalize_checkpoint_scalars = True
+        self._compiled_training_forward = None
+        self._compiled_eval_forward = None
+
+    @staticmethod
+    def _compile_kwargs(
+            backend: Optional[str] = None,
+            mode: Optional[str] = None,
+            **compile_kwargs,
+    ) -> dict:
+        kwargs = {k: v for k, v in compile_kwargs.items() if v is not None}
+        if backend is not None:
+            kwargs['backend'] = backend
+        if mode is not None:
+            kwargs['mode'] = mode
+        return kwargs
+
+    def compile(
+            self,
+            *,
+            target: str = 'task',
+            backend: Optional[str] = None,
+            mode: Optional[str] = None,
+            compile_train: bool = True,
+            compile_eval: bool = True,
+            **compile_kwargs,
+    ) -> 'TrainingTask':
+        """Compile task-owned hot paths without replacing the task object.
+
+        ``target="model"`` compiles only ``trainable_module`` and is intended
+        for pre-DDP use. ``target="task"`` compiles the task training/eval
+        forward callables so model + loss can be captured while the task's
+        public methods remain available to training, eval, and checkpoint code.
+        """
+        kwargs = self._compile_kwargs(backend=backend, mode=mode, **compile_kwargs)
+        if target == 'model':
+            self.trainable_module = torch.compile(self.trainable_module, **kwargs)
+        elif target == 'task':
+            if compile_train:
+                self._compiled_training_forward = torch.compile(self.training_forward, **kwargs)
+            if compile_eval:
+                self._compiled_eval_forward = torch.compile(self.eval_forward, **kwargs)
+        else:
+            raise ValueError(f"Unsupported task compile target: {target}")
+        return self
 
     def prepare_batch(
             self,
@@ -121,6 +165,37 @@ class TrainingTask(nn.Module):
     def has_ema(self) -> bool:
         return self.trainable_module_ema is not None
 
+    @property
+    def primary_key(self) -> str:
+        """Primary non-text modality key.
+
+        Eval expects model output dicts to expose ``f"{primary_key}_features"``
+        plus ``"text_features"`` for paired retrieval metrics.
+        """
+        return self.data_keys[0]
+
+    def batch_size(self, batch: Dict[str, torch.Tensor]) -> int:
+        """Return local batch size for logging/accounting."""
+        data_keys = getattr(self, 'data_keys', None)
+        key = data_keys[0] if data_keys else next(iter(batch))
+        value = batch[key]
+        if isinstance(value, dict):
+            for preferred in ('patches', 'waveform'):
+                tensor = value.get(preferred)
+                if isinstance(tensor, torch.Tensor):
+                    return tensor.shape[0]
+            for tensor in value.values():
+                if isinstance(tensor, torch.Tensor):
+                    return tensor.shape[0]
+            raise ValueError(f"Cannot infer batch size from nested batch key {key!r}.")
+        if isinstance(value, torch.Tensor):
+            return value.shape[0]
+        return len(value)
+
+    def ddp_extra_kwargs(self) -> dict:
+        """Additional DistributedDataParallel kwargs required by this task."""
+        return {}
+
     def prepare_distributed(
             self,
             device_ids: Optional[list] = None,
@@ -165,6 +240,7 @@ class TrainingTask(nn.Module):
             mp_policy: Optional['MixedPrecisionPolicy'] = None,
             offload_policy: Optional['CPUOffloadPolicy'] = None,
             compile_blocks: bool = False,
+            compile_kwargs: Optional[dict] = None,
             grad_checkpointing: bool = False,
     ) -> 'TrainingTask':
         """Apply FSDP2 sharding to trainable module.
@@ -231,9 +307,10 @@ class TrainingTask(nn.Module):
                 _logger.info(f'FSDP2: compiling {len(shard_modules)} blocks with torch.compile')
             if grad_checkpointing:
                 from torch.distributed._composable import checkpoint as composable_checkpoint
+            compile_kwargs = compile_kwargs or {}
             compiled_modules = []
             for name, mod in shard_modules:
-                compiled_mod = torch.compile(mod)
+                compiled_mod = torch.compile(mod, **compile_kwargs)
                 # Re-register compiled module in parent so FSDP sees it
                 parts = name.rsplit('.', 1)
                 parent_name, child_name = (parts[0], parts[1]) if len(parts) == 2 else ('', name)
@@ -362,15 +439,28 @@ class TrainingTask(nn.Module):
         """
         return self.loss(**inputs, **inputs_no_accum, output_dict=True)
 
-    def forward(self, batch: Dict[str, torch.Tensor]):
-        """Run training_forward (train) or model.forward (eval) on a dict batch.
+    def eval_forward(self, batch: Dict[str, torch.Tensor]):
+        return self.get_trainable_module(use_ema=True)(**batch)
 
-        Subclasses with shape-specific calling conventions (e.g. positional
-        ``(image, text)`` for image+text tasks) should override this.
-        """
+    def forward(self, *args, **kwargs):
+        """Normalize task call conventions, then run train or eval forward."""
+        if len(args) == 1 and isinstance(args[0], dict):
+            batch = args[0]
+            if kwargs:
+                batch = {**batch, **kwargs}
+        elif args and kwargs:
+            batch = dict(zip(self.data_keys, args))
+            batch.update(kwargs)
+        elif args:
+            batch = dict(zip(self.data_keys, args))
+        else:
+            batch = kwargs
+
         if not self.training:
-            return self.get_trainable_module(use_ema=True)(**batch)
-        return self.training_forward(batch)
+            forward_fn = self._compiled_eval_forward or self.eval_forward
+        else:
+            forward_fn = self._compiled_training_forward or self.training_forward
+        return forward_fn(batch)
 
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
