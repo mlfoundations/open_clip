@@ -15,6 +15,8 @@ class ParseKwargs(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         kw = {}
         for value in values:
+            if not value:
+                continue
             key, value = value.split('=')
             try:
                 kw[key] = ast.literal_eval(value)
@@ -241,6 +243,13 @@ def parse_args(args):
     parser.add_argument(
         "--opt", type=str, default='adamw',
         help="Which optimizer to use. Choices are ['adamw', or any timm optimizer 'timm/{opt_name}']."
+    )
+    parser.add_argument(
+        "--opt-kwargs",
+        nargs="*",
+        default={},
+        action=ParseKwargs,
+        help="Additional optimizer keyword arguments, passed as key=value pairs.",
     )
     parser.add_argument(
         "--use-bn-sync",

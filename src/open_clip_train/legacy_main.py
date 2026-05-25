@@ -314,14 +314,16 @@ def main(args):
                 'When using timm optimizer, BOTH beta1 and beta2 must be specified (or not specified).'
             if args.beta1 is not None:
                 opt_kwargs['betas'] = (args.beta1, args.beta2)
+            if args.eps is not None:
+                opt_kwargs['eps'] = args.eps
             if args.momentum is not None:
                 opt_kwargs['momentum'] = args.momentum
+            opt_kwargs.update(args.opt_kwargs or {})
             optimizer = create_optimizer_v2(
                 model,
                 timm_opt,
                 lr=args.lr,
                 weight_decay=args.wd,
-                eps=args.eps,
                 **opt_kwargs,
             )
         else:
@@ -334,14 +336,18 @@ def main(args):
             rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
             if opt == 'adamw':
+                opt_kwargs = dict(
+                    lr=args.lr,
+                    betas=(args.beta1, args.beta2),
+                    eps=args.eps,
+                )
+                opt_kwargs.update(args.opt_kwargs or {})
                 optimizer = optim.AdamW(
                     [
                         {"params": gain_or_bias_params, "weight_decay": 0.},
                         {"params": rest_params, "weight_decay": args.wd},
                     ],
-                    lr=args.lr,
-                    betas=(args.beta1, args.beta2),
-                    eps=args.eps,
+                    **opt_kwargs,
                 )
             else:
                 assert False, f'Unknown optimizer {opt}'
