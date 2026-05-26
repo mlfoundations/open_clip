@@ -425,12 +425,7 @@ def main(args):
 
     if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
         opt = getattr(args, 'opt', 'adamw').lower()
-        use_tensor_learning_rate = (
-            args.torchcompile
-            and args.torchcompile_strategy == 'step'
-            and opt == 'adamw'
-            and device.type == 'cuda'
-        )
+        use_tensor_learning_rate = args.torchcompile and args.torchcompile_strategy == 'step'
         if opt.startswith('timm/'):
             from timm.optim import create_optimizer_v2
             timm_opt = opt.split('timm/')[-1]
@@ -465,11 +460,8 @@ def main(args):
                     lr=args.lr,
                     betas=(args.beta1, args.beta2),
                     eps=args.eps,
-                    capturable=use_tensor_learning_rate,
                 )
                 opt_kwargs.update(args.opt_kwargs or {})
-                if use_tensor_learning_rate:
-                    opt_kwargs['capturable'] = True
                 optimizer = optim.AdamW(
                     [
                         {"params": gain_or_bias_params, "weight_decay": 0.},
@@ -477,14 +469,13 @@ def main(args):
                     ],
                     **opt_kwargs,
                 )
-                if use_tensor_learning_rate:
-                    tensorize_learning_rate(optimizer, device)
             else:
                 assert False, f'Unknown optimizer {opt}'
 
         if use_tensor_learning_rate:
+            tensorize_learning_rate(optimizer, device)
             _logger.info(
-                'Using tensor learning rate for native AdamW step compile to avoid optimizer-step recompiles.'
+                'Using tensor learning rate for step compile to avoid optimizer-step recompiles.'
             )
 
         if is_master(args):
