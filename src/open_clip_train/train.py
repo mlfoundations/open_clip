@@ -125,8 +125,10 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
     clip_params = tuple(task.trainable_module.parameters()) if grad_clip_norm is not None else ()
 
     def train_step(batch):
+        # Keep zero_grad and logit-scale clamp outside this compiled closure.
+        # Dynamo intentionally graph-breaks on optimizer.zero_grad(), and the
+        # clamp is tiny eager bookkeeping after the optimizer update.
         loss_scale = get_naflex_loss_scale(batch, args, task)
-        optimizer.zero_grad()
         with autocast():
             losses = task(batch)
             total_loss = losses["loss"]
@@ -136,7 +138,6 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
         if grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(clip_params, grad_clip_norm, norm_type=2.0)
         optimizer.step()
-        task.clamp_logit_scale()
         return losses
 
     return train_step
@@ -350,7 +351,9 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
 
         data_time_m.update(time.time() - end)
         if train_step is not None:
+            optimizer.zero_grad()
             losses = train_step(batch)
+            task.clamp_logit_scale()
             step_batch_size = task.batch_size(batch)
         else:
             result = _train_step_eager(
