@@ -25,6 +25,17 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+
+class TokenizeText:
+    # Module-level callable replaces inline lambdas in webdataset pipelines so
+    # they survive pickling — required under forkserver multiprocessing
+    # (Python 3.14+ default on POSIX).
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def __call__(self, text):
+        return self.tokenizer(text)[0]
+
 from open_clip_train.naflex_data import (
     NaFlexBatcher,
     NaFlexMapDatasetWrapper,
@@ -455,6 +466,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         wds.rename(image="jpg;png;jpeg;webp", text="txt", keep=False),
     ])
 
+    tokenize_text = TokenizeText(tokenizer)
+
     if use_naflex_train:
         naflex_patch_size = None
         naflex_patch_size_choices = naflex_data_config.train_patch_sizes
@@ -462,7 +475,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
         pipeline.extend([
-            wds.map_dict(text=lambda text: tokenizer(text)[0]),
+            wds.map_dict(text=tokenize_text),
             NaFlexBatcher(
                 train_num_samples=num_samples,
                 train_num_tokens=num_image_tokens,
@@ -488,7 +501,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         num_samples = naflex_batcher.num_samples_for_workers(num_workers)
     elif use_naflex_eval:
         pipeline.extend([
-            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.map_dict(image=preprocess_img, text=tokenize_text),
             wds.batched(
                 args.batch_size,
                 partial=True,
@@ -498,7 +511,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         dataset = wds.DataPipeline(*pipeline)
     else:
         pipeline.extend([
-            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.map_dict(image=preprocess_img, text=tokenize_text),
             wds.batched(args.batch_size, partial=not is_train, collation_fn=default_collate),
         ])
         dataset = wds.DataPipeline(*pipeline)
@@ -649,7 +662,7 @@ class SyntheticDataset(Dataset):
         self.image = Image.new('RGB', image_size)
         self.dataset_size = dataset_size
 
-        self.preprocess_txt = lambda text: tokenizer(text)[0]
+        self.preprocess_txt = TokenizeText(tokenizer)
 
     def __len__(self):
         return self.dataset_size

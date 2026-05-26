@@ -14,6 +14,7 @@ from open_clip_train.data import (
     DataInfo,
     ResampledShards2,
     SharedEpoch,
+    TokenizeText,
     _SAMPLE_SHUFFLE_INITIAL,
     _SAMPLE_SHUFFLE_SIZE,
     _SHARD_SHUFFLE_INITIAL,
@@ -39,6 +40,19 @@ def _decode_audio(key, data):
     if ext not in ("wav", "flac", "mp3", "ogg"):
         return None
     return torchaudio.load(io.BytesIO(data))
+
+
+class _TokenizeAudioCaption:
+    # Module-level callable (picklable for forkserver workers).
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def __call__(self, text):
+        return self.tokenizer(_extract_caption(text))[0]
+
+
+def _keep_audio_text(sample):
+    return {"audio": sample["audio"], "text": sample["text"]}
 
 
 def _extract_caption(text_data):
@@ -156,9 +170,9 @@ def get_wds_audio_dataset(
             wds.rename(audio=audio_ext, text="json;txt;cls", keep=False),
             wds.map_dict(
                 audio=preprocess_audio,
-                text=lambda text: tokenizer(_extract_caption(text))[0],
+                text=_TokenizeAudioCaption(tokenizer),
             ),
-            wds.map(lambda sample: {"audio": sample["audio"], "text": sample["text"]}),
+            wds.map(_keep_audio_text),
             wds.batched(args.batch_size, partial=not is_train, collation_fn=_audio_collate),
         ]
     )
@@ -198,7 +212,7 @@ class SyntheticAudioDataset(Dataset):
         self.clip_samples = audio_cfg.get("clip_samples", 480000)
         self.sample_rate = audio_cfg.get("sample_rate", 48000)
         self.dataset_size = dataset_size
-        self.preprocess_txt = lambda text: tokenizer(text)[0]
+        self.preprocess_txt = TokenizeText(tokenizer)
         self.caption = "Dummy caption"
 
     def __len__(self):
