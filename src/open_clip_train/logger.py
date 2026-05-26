@@ -13,6 +13,8 @@ def setup_logging(log_file, level, include_host=False):
     logging.root.setLevel(level)
     loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
     for logger in loggers:
+        if logger.name.startswith(("torch", "triton")):
+            continue
         logger.setLevel(level)
 
     stream_handler = logging.StreamHandler()
@@ -23,4 +25,3 @@ def setup_logging(log_file, level, include_host=False):
         file_handler = logging.FileHandler(filename=log_file)
         file_handler.setFormatter(formatter)
         logging.root.addHandler(file_handler)
-
