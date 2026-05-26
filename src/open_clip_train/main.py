@@ -619,17 +619,19 @@ def main(args):
     if args.torchcompile:
         _logger.info(f'Using torch.compile strategy={args.torchcompile_strategy}.')
 
-        # Suppress noisy dynamo/inductor logs
-        filter_prefixes = (
-            "torch._dynamo",
-            "torch._inductor",
-            "torch._functorch",
-            "torch._utils_internal",
-            "torch.fx",
-        )
-        for name in logging.root.manager.loggerDict:
-            if name.startswith(filter_prefixes):
-                logging.getLogger(name).setLevel(logging.WARNING)
+        if not os.environ.get("TORCH_LOGS"):
+            # Suppress noisy dynamo/inductor logs by default. If TORCH_LOGS is
+            # set, leave PyTorch's selected compile diagnostics intact.
+            filter_prefixes = (
+                "torch._dynamo",
+                "torch._inductor",
+                "torch._functorch",
+                "torch._utils_internal",
+                "torch.fx",
+            )
+            for name in logging.root.manager.loggerDict:
+                if name.startswith(filter_prefixes):
+                    logging.getLogger(name).setLevel(logging.WARNING)
 
         if args.torchcompile_strategy == 'task':
             _logger.info('Compiling task train/eval forward callables.')
