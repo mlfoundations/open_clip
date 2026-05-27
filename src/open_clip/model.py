@@ -92,11 +92,16 @@ class CLIPTextCfg:
     pad_id: int = 0
     eos_id: int = 2  # only used for when pool_type == 'eos', must match tokenizer eos
     no_causal_mask: bool = False  # disable causal masking
+    use_pad_mask: bool = False  # mask padding tokens in bidirectional attention
+    correct_cls_mask: bool = False  # legacy CoCa compatibility for appended CLS mask ordering
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
+    pos_embed_type: str = 'learnable'
+    scale_sqrt_depth: bool = False
     proj_bias: bool = False
     proj_type: str = 'linear'  # control final text projection, 'none' forces no projection
     output_tokens: bool = False
+    act_layer: Optional[str] = None
     act_kwargs: dict = None
     norm_kwargs: dict = None
 
@@ -233,7 +238,17 @@ def _build_text_tower(
             output_tokens=text_cfg.output_tokens,
         )
     else:
-        act_layer = QuickGELU if quick_gelu else nn.GELU
+        if text_cfg.act_layer:
+            if text_cfg.act_layer == 'relu':
+                act_layer = nn.ReLU
+            elif text_cfg.act_layer == 'gelu':
+                act_layer = nn.GELU
+            elif text_cfg.act_layer == 'quick_gelu':
+                act_layer = QuickGELU
+            else:
+                raise ValueError(f'Unsupported text activation layer: {text_cfg.act_layer}')
+        else:
+            act_layer = QuickGELU if quick_gelu else nn.GELU
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         if text_cfg.norm_kwargs:
             norm_layer = partial(norm_layer, **text_cfg.norm_kwargs)
@@ -251,9 +266,13 @@ def _build_text_tower(
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
             no_causal_mask=text_cfg.no_causal_mask,
+            use_pad_mask=text_cfg.use_pad_mask,
+            correct_cls_mask=text_cfg.correct_cls_mask,
             pad_id=text_cfg.pad_id,
             eos_id=text_cfg.eos_id,
             pool_type=text_cfg.pool_type,
+            pos_embed_type=text_cfg.pos_embed_type,
+            scale_sqrt_depth=text_cfg.scale_sqrt_depth,
             proj_type=text_cfg.proj_type,
             proj_bias=text_cfg.proj_bias,
             output_tokens=text_cfg.output_tokens,

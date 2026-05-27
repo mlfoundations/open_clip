@@ -960,11 +960,16 @@ def text_global_pool(
         text: Optional[torch.Tensor] = None,
         pool_type: str = 'argmax',
         eos_token_id: Optional[int] = None,
+        pad_id: int = 0,
 ) -> torch.Tensor:
     if pool_type == 'first':
         pooled = x[:, 0]
     elif pool_type == 'last':
         pooled = x[:, -1]
+    elif pool_type == 'mean':
+        assert text is not None
+        valid = (text != pad_id).to(dtype=x.dtype).unsqueeze(-1)
+        pooled = (x * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1)
     elif pool_type == 'argmax':
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         assert text is not None
@@ -979,6 +984,25 @@ def text_global_pool(
         pooled = x
 
     return pooled
+
+
+def _build_text_sinusoidal_pos_embed(
+        seq_len: int,
+        width: int,
+        device: torch.device,
+        dtype: torch.dtype,
+) -> torch.Tensor:
+    position = torch.arange(seq_len, dtype=torch.float32, device=device)[None, :]
+    num_timescales = width // 2
+    log_timescale_increment = math.log(10000.0) / max(num_timescales - 1, 1)
+    inv_timescales = torch.exp(
+        torch.arange(num_timescales, dtype=torch.float32, device=device) * -log_timescale_increment
+    )
+    scaled_time = position[:, :, None] * inv_timescales[None, None, :]
+    signal = torch.cat((torch.sin(scaled_time), torch.cos(scaled_time)), dim=2)
+    if width % 2:
+        signal = F.pad(signal, (0, 1, 0, 0, 0, 0))
+    return signal.to(dtype=dtype)
 
 
 class TextTransformer(nn.Module):
@@ -1000,6 +1024,8 @@ class TextTransformer(nn.Module):
             pad_id: int = 0,
             eos_id: int = 2,
             pool_type: str = 'argmax',
+            pos_embed_type: str = 'learnable',
+            scale_sqrt_depth: bool = False,
             proj_type: str = 'linear',
             proj_bias: bool = False,
             act_layer: Type[nn.Module] = nn.GELU,
@@ -1014,7 +1040,8 @@ class TextTransformer(nn.Module):
             scale_fc: bool = False,
     ):
         super().__init__()
-        assert pool_type in ('first', 'last', 'argmax', 'eos', 'none')
+        assert pool_type in ('first', 'last', 'argmax', 'eos', 'mean', 'none')
+        assert pos_embed_type in ('learnable', 'sinusoidal', 'none')
         self.output_tokens = output_tokens
         self.num_pos = self.context_length = context_length
         self.vocab_size = vocab_size
@@ -1024,6 +1051,8 @@ class TextTransformer(nn.Module):
         self.pad_id = pad_id
         self.eos_id = eos_id
         self.pool_type = pool_type
+        self.pos_embed_type = pos_embed_type
+        self.scale_sqrt_depth = scale_sqrt_depth
         self.use_pad_mask = use_pad_mask and no_causal_mask  # only use in bi‑dir mode
         self.correct_cls_mask = correct_cls_mask  # use the correct cls mask for CoCa (original is wrong)
 
@@ -1033,7 +1062,10 @@ class TextTransformer(nn.Module):
             self.num_pos += 1
         else:
             self.cls_emb = None
-        self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
+        if pos_embed_type == 'learnable':
+            self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
+        else:
+            self.positional_embedding = None
         self.transformer = Transformer(
             width=width,
             layers=layers,
@@ -1069,7 +1101,8 @@ class TextTransformer(nn.Module):
 
     def init_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
-        nn.init.normal_(self.positional_embedding, std=0.01)
+        if self.positional_embedding is not None:
+            nn.init.normal_(self.positional_embedding, std=0.01)
         if self.cls_emb is not None:
             nn.init.normal_(self.cls_emb, std=0.01)
 
@@ -1106,7 +1139,7 @@ class TextTransformer(nn.Module):
 
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
-        no_wd = {'positional_embedding'}
+        no_wd = {'positional_embedding'} if self.positional_embedding is not None else set()
         if self.cls_emb is not None:
             no_wd.add('cls_emb')
         return no_wd
@@ -1148,6 +1181,8 @@ class TextTransformer(nn.Module):
         B, seq_len = text.shape
 
         x = self.token_embedding(text).to(cast_dtype)
+        if self.scale_sqrt_depth:
+            x = x * (self.width ** 0.5)
 
         # Optional class token (always appended ala CoCa)
         if self.cls_emb is not None:
@@ -1165,7 +1200,10 @@ class TextTransformer(nn.Module):
             else:
                 attn_mask = add_mask
 
-        x = x + self.positional_embedding[:seq_len].to(cast_dtype)
+        if self.pos_embed_type == 'learnable':
+            x = x + self.positional_embedding[:seq_len].to(cast_dtype)
+        elif self.pos_embed_type == 'sinusoidal':
+            x = x + _build_text_sinusoidal_pos_embed(seq_len, self.width, x.device, cast_dtype)
         return x, attn_mask
 
     def forward_intermediates(
@@ -1226,7 +1264,13 @@ class TextTransformer(nn.Module):
             pooled = self.ln_final(pooled)  # final LN applied after pooling in this case
         else:
             x = self.ln_final(x)
-            pooled = text_global_pool(x, text, pool_type=self.pool_type, eos_token_id=getattr(self, "eos_id", None))
+            pooled = text_global_pool(
+                x,
+                text,
+                pool_type=self.pool_type,
+                eos_token_id=getattr(self, "eos_id", None),
+                pad_id=self.pad_id,
+            )
 
         if self.text_projection is not None:
             if isinstance(self.text_projection, nn.Linear):
@@ -1266,7 +1310,13 @@ class TextTransformer(nn.Module):
             tokens = x[:, :-1]
         else:
             x = self.ln_final(x)
-            pooled = text_global_pool(x, text, pool_type=self.pool_type, eos_token_id=getattr(self, "eos_id", None))
+            pooled = text_global_pool(
+                x,
+                text,
+                pool_type=self.pool_type,
+                eos_token_id=getattr(self, "eos_id", None),
+                pad_id=self.pad_id,
+            )
             tokens = x
 
         if self.text_projection is not None:
