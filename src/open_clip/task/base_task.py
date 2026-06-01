@@ -332,8 +332,11 @@ class TrainingTask(nn.Module):
         # the same all-gather/reshard hooks as __call__. Without this, direct calls
         # like build_zero_shot_classifier → model.encode_text() fail with DTensor errors.
         from torch.distributed.fsdp import register_fsdp_forward_method
-        register_fsdp_forward_method(self.trainable_module, "encode_text")
-        register_fsdp_forward_method(self.trainable_module, "encode_image")
+        # Only register methods the model actually defines (e.g. GenLIP has encode_image but no encode_text).
+        unwrapped = unwrap_model(self.trainable_module)
+        for method_name in ("encode_text", "encode_image"):
+            if hasattr(unwrapped, method_name):
+                register_fsdp_forward_method(self.trainable_module, method_name)
 
         self._fsdp_enabled = True
         return self

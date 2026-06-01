@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 try:
     import torch.distributed.nn
@@ -486,3 +487,75 @@ class SigLipLoss(nn.Module):
                 assert False
 
         return {"contrastive_loss": loss} if output_dict else loss
+
+
+def _chunk_linear_ce(hidden, weight, bias, target, ignore_index):
+    logits = F.linear(hidden, weight, bias).float()
+    return F.cross_entropy(logits, target, ignore_index=ignore_index, reduction="sum")
+
+
+@torch.compiler.disable
+def fused_linear_cross_entropy(
+        hidden: torch.Tensor,
+        weight: torch.Tensor,
+        target: torch.Tensor,
+        bias: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        chunk_size: int = 1024,
+        reduction: str = "mean",
+) -> torch.Tensor:
+    """Memory-efficient linear projection + cross-entropy without materializing full logits.
+
+    Computes ``cross_entropy(linear(hidden, weight, bias), target)`` in chunks over the token dimension,
+    upcasting only one ``[chunk_size, vocab]`` block to fp32 at a time. Under autograd each chunk is
+    gradient-checkpointed so the logits are recomputed in backward, bounding peak memory to one chunk
+    regardless of batch/sequence length. This mirrors the fused linear cross-entropy used by the GenLIP
+    reference (Liger kernel) and is essential for large vocabularies (~100k).
+
+    Args:
+        hidden: ``[N, D]`` features (already flattened over batch/sequence).
+        weight: ``[vocab, D]`` projection (e.g. an untied LM head weight).
+        target: ``[N]`` token ids; positions equal to ``ignore_index`` are skipped.
+        bias: Optional ``[vocab]`` bias.
+        chunk_size: Number of tokens per chunk.
+        reduction: ``"mean"`` (over non-ignored tokens) or ``"sum"``.
+    """
+    n_tokens = hidden.shape[0]
+    use_ckpt = torch.is_grad_enabled() and hidden.requires_grad
+    total = hidden.new_zeros(())
+    for start in range(0, n_tokens, chunk_size):
+        h_chunk = hidden[start:start + chunk_size]
+        t_chunk = target[start:start + chunk_size]
+        if use_ckpt:
+            loss_chunk = checkpoint(
+                _chunk_linear_ce, h_chunk, weight, bias, t_chunk, ignore_index, use_reentrant=False,
+            )
+        else:
+            loss_chunk = _chunk_linear_ce(h_chunk, weight, bias, t_chunk, ignore_index)
+        total = total + loss_chunk
+    if reduction == "mean":
+        n_valid = (target != ignore_index).sum().clamp(min=1)
+        return total / n_valid
+    return total
+
+
+class GenLipLoss(nn.Module):
+    """Pure autoregressive language-modeling loss for GenLIP.
+
+    Next-token cross-entropy over the (already shifted) caption logits/labels. Image patch positions and
+    padding tokens are expected to be masked with ``ignore_index`` in the labels by the task. For training,
+    prefer the model's built-in fused loss path (see :func:`fused_linear_cross_entropy`) which avoids
+    materializing full-vocabulary logits; this module is the simple logits-based variant for standalone use.
+    """
+
+    def __init__(self, ignore_index: int = -100):
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.caption_loss = nn.CrossEntropyLoss(ignore_index=ignore_index)
+
+    def forward(self, logits, labels, output_dict: bool = False):
+        loss = self.caption_loss(
+            logits.reshape(-1, logits.shape[-1]),
+            labels.reshape(-1),
+        )
+        return {"caption_loss": loss} if output_dict else loss

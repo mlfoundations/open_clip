@@ -361,8 +361,16 @@ def main(args):
         backend=args.torchcompile_backend,
         mode=args.torchcompile_mode,
     )
-    if args.torchcompile and args.grad_checkpointing and args.distributed and not args.fsdp:
-        _logger.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+    if args.torchcompile and args.distributed and not args.fsdp and (
+            args.grad_checkpointing or getattr(args, 'genlip', False)
+    ):
+        # The DDP dynamo optimizer splits the graph into submodules at gradient-bucket boundaries. That
+        # breaks under (a) grad checkpointing and (b) GenLIP's dynamic sequence length (image patches +
+        # variable caption length = `const + symbol`): a submodule receives the concatenated tensor but
+        # not the input that binds the symbol, so Inductor can't recover it ("expected [sN] to have been
+        # codegen-ed"). Disable the split so the whole forward compiles as one symbol-consistent graph.
+        reason = 'grad checkpointing' if args.grad_checkpointing else 'genlip dynamic shapes'
+        _logger.info(f'Disabling DDP dynamo optimizer ({reason}).')
         torch._dynamo.config.optimize_ddp = False
 
     if args.torchcompile and args.torchcompile_strategy == 'model':
@@ -523,7 +531,10 @@ def main(args):
             tensorize_learning_rate(optimizer, device)
 
     # initialize datasets
-    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
+    # GenLIP caption cap: --naflex-max-text-tokens takes precedence, else --force-context-length, else the
+    # model's text_cfg.context_length. This single value also feeds the total-token batch budget (in data.py).
+    text_context_length = getattr(args, 'naflex_max_text_tokens', None) or args.force_context_length
+    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=text_context_length)
     data = get_data(
         args,
         (preprocess_train, preprocess_val),

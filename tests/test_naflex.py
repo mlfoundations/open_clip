@@ -156,7 +156,7 @@ def test_parse_naflex_args():
         "--naflex-seq-lens",
         "128",
         "256",
-        "--naflex-max-image-tokens-per-batch",
+        "--naflex-max-tokens-per-batch",
         "4096",
         "--naflex-batch-divisor",
         "4",
@@ -169,7 +169,7 @@ def test_parse_naflex_args():
     assert args.naflex_patch_sizes == [16, 32]
     assert args.naflex_patch_size_probs == [0.25, 0.75]
     assert args.naflex_seq_lens == [128, 256]
-    assert args.naflex_max_image_tokens_per_batch == 4096
+    assert args.naflex_max_tokens_per_batch == 4096
     assert args.naflex_batch_divisor == 4
     assert args.naflex_loss_scale == "sqrt"
 
@@ -238,7 +238,7 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
         naflex_patch_sizes=[16],
         naflex_patch_size_probs=None,
         naflex_seq_lens=[4],
-        naflex_max_image_tokens_per_batch=8,
+        naflex_max_tokens_per_batch=8,
         naflex_batch_divisor=1,
         seed=0,
         workers=0,
@@ -279,7 +279,7 @@ def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
         naflex_patch_sizes=[16],
         naflex_patch_size_probs=None,
         naflex_seq_lens=[4],
-        naflex_max_image_tokens_per_batch=8,
+        naflex_max_tokens_per_batch=8,
         naflex_batch_divisor=1,
         seed=0,
         workers=0,
@@ -341,7 +341,7 @@ def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
         naflex_patch_sizes=[16],
         naflex_patch_size_probs=None,
         naflex_seq_lens=[4],
-        naflex_max_image_tokens_per_batch=8,
+        naflex_max_tokens_per_batch=8,
         naflex_batch_divisor=1,
         seed=0,
         workers=0,

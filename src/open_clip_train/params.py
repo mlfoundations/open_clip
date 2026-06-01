@@ -183,6 +183,20 @@ def parse_args(args):
         help="For csv-like datasets, the name of the key for the captions."
     )
     parser.add_argument(
+        "--text-key",
+        type=str,
+        default="txt",
+        help="For WebDataset datasets, the tar member suffix holding the caption text (default 'txt'). "
+             "Accepts ';'-separated alternatives, e.g. 'txt;caption'. Ignored when --json-text-key is set."
+    )
+    parser.add_argument(
+        "--json-text-key",
+        type=str,
+        default=None,
+        help="For WebDataset datasets, read the caption from this field of each sample's .json member instead "
+             "of a text file (e.g. 'caption_sharegpt4v-7b'). Takes precedence over --text-key."
+    )
+    parser.add_argument(
         "--imagenet-val",
         type=str,
         default=None,
@@ -676,10 +690,19 @@ def parse_args(args):
         help="Sequence lengths to sample for NaFlex training. Eval pads/crops to the largest value."
     )
     parser.add_argument(
-        "--naflex-max-image-tokens-per-batch",
+        "--naflex-max-tokens-per-batch",
         type=int,
         default=4096 * 4,
-        help="Maximum image tokens per local NaFlex batch."
+        help="Maximum tokens per local NaFlex batch. For GenLIP each row costs image_seq_len + "
+             "--naflex-max-text-tokens, so this is a total (image+text) token budget; for image-only "
+             "models it counts image tokens."
+    )
+    parser.add_argument(
+        "--naflex-max-text-tokens",
+        type=int,
+        default=None,
+        help="GenLIP caption token cap: truncates captions to this length AND is added to the per-row token "
+             "cost for batch sizing. Defaults to the model's text_cfg.context_length when unset."
     )
     parser.add_argument(
         "--naflex-batch-divisor",
@@ -697,11 +720,37 @@ def parse_args(args):
             "Defaults to no scaling."
         ),
     )
+    parser.add_argument(
+        "--naflex-length-bucketing",
+        action="store_true",
+        help="GenLIP: reorder samples so similar caption lengths share a batch, reducing per-batch-max text "
+             "padding. Reorder-only (schedule/num_batches/DDP unaffected); train-only."
+    )
+    parser.add_argument(
+        "--naflex-bucket-pool",
+        type=int,
+        default=2048,
+        help="Per-worker sample pool size to sort for --naflex-length-bucketing (bucketing breadth vs randomness)."
+    )
+    parser.add_argument(
+        "--naflex-bucket-chunk",
+        type=int,
+        default=128,
+        help="Run length within a sorted pool for --naflex-length-bucketing (~ a typical batch size)."
+    )
 
     args = parser.parse_args(args)
 
+    # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
+    # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).
+    args.genlip = 'genlip' in args.model.lower()
+    if args.genlip:
+        args.use_naflex = True
+        if args.accum_freq > 1:
+            raise ValueError("GenLIP does not support --accum-freq > 1 (no contrastive feature caching).")
+
     if args.use_naflex:
-        args.force_naflex_vision = True
+        args.force_naflex_vision = not args.genlip
         args.aug_cfg = dict(args.aug_cfg or {})
         args.aug_cfg["use_timm"] = True
         args.aug_cfg["naflex"] = True

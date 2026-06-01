@@ -103,7 +103,7 @@ def create_naflex_data_config_from_args(
         patch_size_probs=getattr(args, 'naflex_patch_size_probs', None),
         seq_lens=seq_lens,
         train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
-        max_tokens_per_batch=getattr(args, 'naflex_max_image_tokens_per_batch', 4096 * 4),
+        max_tokens_per_batch=getattr(args, 'naflex_max_tokens_per_batch', 4096 * 4),
         batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
         eval_seq_len=default_eval_seq_len if seq_lens is None else None,
     )
@@ -129,12 +129,46 @@ def collate_naflex_tuples(
     return NaFlexCollator(max_seq_len=max_seq_len)(batch)
 
 
+def collate_variable_text(
+        targets: List[Any],
+        pad_id: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Pad a list of variable-length token id sequences into a batch.
+
+    Args:
+        targets: List of 1-D token id tensors (or sequences) of differing lengths.
+        pad_id: Padding token id used to fill, and to derive the validity mask.
+
+    Returns:
+        Tuple ``(text, text_valid)`` of shape ``[B, Lmax]``; ``text_valid`` is ``text != pad_id``.
+    """
+    tensors = [t if torch.is_tensor(t) else torch.as_tensor(t, dtype=torch.long) for t in targets]
+    max_len = max((t.shape[0] for t in tensors), default=0)
+    text = torch.full((len(tensors), max_len), pad_id, dtype=torch.long)
+    for i, tokens in enumerate(tensors):
+        text[i, :tokens.shape[0]] = tokens
+    return text, text != pad_id
+
+
 def collate_naflex_dicts(
         batch: List[Sample],
         image_key: str = "image",
         target_key: str = "text",
         max_seq_len: Optional[int] = None,
+        pad_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    if pad_id is not None:
+        # Generative (GenLIP) path: variable-length captions padded within the batch.
+        images = NaFlexBatchScheduler._collate_images(
+            [sample[image_key] for sample in batch], max_seq_len,
+        )
+        text, text_valid = collate_variable_text([sample[target_key] for sample in batch], pad_id)
+        return {
+            image_key: images,
+            target_key: text,
+            f"{target_key}_valid": text_valid,
+        }
+
     images, targets = collate_naflex_tuples(
         [(sample[image_key], sample[target_key]) for sample in batch],
         max_seq_len=max_seq_len,
@@ -151,6 +185,61 @@ def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     if distributed and world_size > 1:
         return math.ceil(total / world_size)
     return total
+
+
+class LengthBucketer:
+    """WebDataset stage that reorders samples so similar caption lengths are adjacent.
+
+    Buffers ``pool`` samples, sorts each pool by caption token length, splits it into contiguous ``chunk``-size
+    runs, shuffles the run order (seeded), and yields. The downstream NaFlex batcher then pulls
+    length-homogeneous batches, which tightens per-batch-max text padding. It only reorders -- every sample is
+    yielded exactly once -- so the batch schedule, ``num_batches``, and DDP step counts are unaffected.
+
+    Module-level and picklable (no closures) for forkserver-safe DataLoader workers, mirroring ``TokenizeText``.
+    """
+
+    def __init__(
+            self,
+            pool: int = 2048,
+            chunk: int = 128,
+            key: str = "text",
+            seed: int = 42,
+            epoch=-1,
+    ):
+        self.pool = max(1, int(pool))
+        self.chunk = max(1, int(chunk))
+        self.key = key
+        self.seed = int(seed)
+        self.epoch = epoch
+
+    def _epoch(self) -> int:
+        if hasattr(self.epoch, "get_value"):
+            return int(self.epoch.get_value())
+        return int(self.epoch)
+
+    def _length(self, sample: Sample) -> int:
+        value = sample[self.key]
+        return value.shape[0] if hasattr(value, "shape") else len(value)
+
+    def _flush(self, buffer: List[Sample], rng: random.Random):
+        buffer.sort(key=self._length)
+        chunks = [buffer[i:i + self.chunk] for i in range(0, len(buffer), self.chunk)]
+        rng.shuffle(chunks)
+        for chunk in chunks:
+            yield from chunk
+
+    def __call__(self, src: Iterable[Sample]):
+        worker = torch.utils.data.get_worker_info()
+        worker_id = worker.id if worker is not None else 0
+        rng = random.Random(self.seed + self._epoch() * 131 + worker_id)
+        buffer: List[Sample] = []
+        for sample in src:
+            buffer.append(sample)
+            if len(buffer) >= self.pool:
+                yield from self._flush(buffer, rng)
+                buffer = []
+        if buffer:
+            yield from self._flush(buffer, rng)
 
 
 class NaFlexBatchScheduler:
@@ -174,6 +263,8 @@ class NaFlexBatchScheduler:
             batch_divisor: int = 8,
             image_key: str = "image",
             target_key: str = "text",
+            pad_id: Optional[int] = None,
+            per_row_text_tokens: int = 0,
     ) -> None:
         require_naflex()
 
@@ -201,6 +292,12 @@ class NaFlexBatchScheduler:
             raise ValueError("`batch_divisor` must be positive.")
         self.image_key = image_key
         self.target_key = target_key
+        self.pad_id = pad_id
+        # Per-row text token cost added when sizing batches so the token budget counts image + text (the
+        # worst-case caption length, i.e. the tokenizer context-length cap). 0 = image-only batch sizing
+        # (default; preserves CLIP/SigLIP behavior). GenLIP sets this to the caption cap so the budget bounds
+        # total (image+text) tokens per batch. It does NOT change the image bucket used for patchify/collation.
+        self.per_row_text_tokens = int(per_row_text_tokens or 0)
 
         self.patch_sizes, self.patch_size_probs, self.variable_patch_size = resolve_patch_cfg(
             patch_size=patch_size,
@@ -243,7 +340,7 @@ class NaFlexBatchScheduler:
             seq_len = self._next_seq_len(generator)
             batch_size = calculate_naflex_batch_size(
                 tokens_per_batch=self.max_tokens_per_batch,
-                seq_len=seq_len,
+                seq_len=seq_len + self.per_row_text_tokens,  # row cost = image bucket + text cap
                 max_size=remaining_samples,
                 divisor=self.batch_divisor,
                 rounding="floor",
@@ -267,7 +364,7 @@ class NaFlexBatchScheduler:
             seq_len = self._next_seq_len(generator)
             batch_size = calculate_naflex_batch_size(
                 tokens_per_batch=min(self.max_tokens_per_batch, remaining_tokens),
-                seq_len=seq_len,
+                seq_len=seq_len + self.per_row_text_tokens,  # row cost = image bucket + text cap
                 divisor=self.batch_divisor,
                 rounding="floor",
             )
@@ -378,6 +475,15 @@ class NaFlexBatchScheduler:
             patch_dicts.append(patch_dict)
             targets.append(sample[self.target_key])
 
+        if self.pad_id is not None:
+            # Generative (GenLIP) path: variable-length captions padded within the batch.
+            text, text_valid = collate_variable_text(targets, self.pad_id)
+            return {
+                self.image_key: self._collate_images(patch_dicts, seq_len),
+                self.target_key: text,
+                f"{self.target_key}_valid": text_valid,
+            }
+
         return {
             self.image_key: self._collate_images(patch_dicts, seq_len),
             self.target_key: default_collate(targets),
@@ -406,6 +512,8 @@ class NaFlexBatcher:
             batch_divisor: int = 8,
             image_key: str = "image",
             target_key: str = "text",
+            pad_id: Optional[int] = None,
+            per_row_text_tokens: int = 0,
     ) -> None:
         self.epoch = epoch
         self.scheduler = NaFlexBatchScheduler(
@@ -425,6 +533,8 @@ class NaFlexBatcher:
             batch_divisor=batch_divisor,
             image_key=image_key,
             target_key=target_key,
+            pad_id=pad_id,
+            per_row_text_tokens=per_row_text_tokens,
         )
 
     @property
@@ -491,6 +601,8 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             world_size: int = 1,
             epoch=-1,
             batch_divisor: int = 8,
+            pad_id: Optional[int] = None,
+            per_row_text_tokens: int = 0,
     ) -> None:
         if not hasattr(base_dataset, '__len__') or not hasattr(base_dataset, '__getitem__'):
             raise TypeError("NaFlex map batching requires a map-style dataset.")
@@ -519,6 +631,8 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             rank=rank,
             world_size=world_size,
             batch_divisor=batch_divisor,
+            pad_id=pad_id,
+            per_row_text_tokens=per_row_text_tokens,
         )
 
     def __len__(self) -> int:

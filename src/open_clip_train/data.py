@@ -8,6 +8,8 @@ import os
 import random
 import sys
 import warnings
+from typing import Optional
+
 import braceexpand
 from dataclasses import dataclass
 from functools import partial
@@ -30,13 +32,19 @@ class TokenizeText:
     # Module-level callable replaces inline lambdas in webdataset pipelines so
     # they survive pickling — required under forkserver multiprocessing
     # (Python 3.14+ default on POSIX).
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer, variable: bool = False):
         self.tokenizer = tokenizer
+        self.variable = variable
 
     def __call__(self, text):
+        # `variable=True` returns a per-sample 1-D tensor (no fixed-length padding); the NaFlex
+        # collator pads captions to the per-batch max. Used by generative (GenLIP) models.
+        if self.variable:
+            return self.tokenizer(text, pad=False)[0]
         return self.tokenizer(text)[0]
 
 from open_clip_train.naflex_data import (
+    LengthBucketer,
     NaFlexBatcher,
     NaFlexMapDatasetWrapper,
     collate_naflex_dicts,
@@ -214,6 +222,54 @@ def filter_no_caption_or_no_image(sample):
     has_caption = ('txt' in sample)
     has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
     return has_caption and has_image
+
+
+def _has_image(sample):
+    return ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
+
+
+class FilterValidSample:
+    """WebDataset filter keeping samples that have an image and a caption source.
+
+    Module-level + picklable (forkserver-safe). Two mutually-exclusive caption sources:
+      - ``json_text_key`` set  -> require a ``.json`` member (caption read from a field of it).
+      - otherwise              -> require one of the ``text_key`` member suffixes (``;``-separated alternatives).
+    """
+
+    def __init__(self, text_key: str = "txt", json_text_key: Optional[str] = None):
+        self.json_text_key = json_text_key
+        self.text_keys = None if json_text_key else tuple(text_key.split(";"))
+
+    def __call__(self, sample):
+        if not _has_image(sample):
+            return False
+        if self.json_text_key is not None:
+            return 'json' in sample
+        return any(key in sample for key in self.text_keys)
+
+
+class JsonCaptionExtractor:
+    """Set ``sample['text']`` from a field of the sample's JSON metadata (datasets without a ``.txt`` member).
+
+    Robust to the JSON being either a parsed dict or raw bytes/str (depending on the decoder), and drops the
+    raw metadata afterwards. Module-level + picklable, mirroring ``TokenizeText``.
+    """
+
+    def __init__(self, caption_key: str, json_key: str = "json"):
+        self.caption_key = caption_key
+        self.json_key = json_key
+
+    def __call__(self, sample):
+        meta = sample.get(self.json_key)
+        if isinstance(meta, (bytes, bytearray, str)):
+            try:
+                meta = json.loads(meta)
+            except (ValueError, TypeError):
+                meta = {}
+        caption = meta.get(self.caption_key) if isinstance(meta, dict) else None
+        sample["text"] = caption if isinstance(caption, str) else ""
+        sample.pop(self.json_key, None)
+        return sample
 
 
 def log_and_continue(exn):
@@ -460,13 +516,30 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
-    pipeline.extend([
-        wds.select(filter_no_caption_or_no_image),
-        wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt", keep=False),
-    ])
+    text_key = getattr(args, 'text_key', 'txt') or 'txt'
+    json_text_key = getattr(args, 'json_text_key', None)
+    if json_text_key:
+        # Read the caption from a field of each sample's .json (datasets without a text member, e.g. monet).
+        pipeline.extend([
+            wds.select(FilterValidSample(json_text_key=json_text_key)),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", json="json", keep=False),
+            wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),
+        ])
+    else:
+        # Read the caption from a tar member (default 'txt'; --text-key allows alternatives like 'txt;caption').
+        pipeline.extend([
+            wds.select(FilterValidSample(text_key=text_key)),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", text=text_key, keep=False),
+        ])
 
-    tokenize_text = TokenizeText(tokenizer)
+    # Generative (GenLIP) models use variable-length captions padded within the NaFlex batch. The caption cap
+    # (tokenizer.context_length) is added to each row's token cost so the batch budget bounds total tokens.
+    genlip_text = getattr(args, 'genlip', False)
+    naflex_pad_id = getattr(tokenizer, 'pad_token_id', None) if genlip_text else None
+    naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
+    tokenize_text = TokenizeText(tokenizer, variable=genlip_text)
 
     if use_naflex_train:
         naflex_patch_size = None
@@ -474,26 +547,41 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         if not naflex_data_config.variable_patch_size:
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
-        pipeline.extend([
-            wds.map_dict(text=tokenize_text),
-            NaFlexBatcher(
-                train_num_samples=num_samples,
-                train_num_tokens=num_image_tokens,
-                patch_size=naflex_patch_size,
-                patch_size_choices=naflex_patch_size_choices,
-                patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
-                seq_lens=naflex_data_config.train_seq_lens,
-                max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
-                transform_factory=preprocess_img,
+        naflex_stages = [wds.map_dict(text=tokenize_text)]
+        if genlip_text and getattr(args, 'naflex_length_bucketing', False):
+            # Reorder (tokenized) samples so similar caption lengths batch together, tightening text padding.
+            naflex_stages.append(LengthBucketer(
+                pool=args.naflex_bucket_pool,
+                chunk=args.naflex_bucket_chunk,
                 seed=args.seed,
-                shuffle=True,
-                distributed=args.distributed,
-                rank=args.rank,
-                world_size=args.world_size,
                 epoch=shared_epoch,
-                batch_divisor=naflex_data_config.batch_divisor,
-            ),
-        ])
+            ))
+        naflex_stages.append(NaFlexBatcher(
+            train_num_samples=num_samples,
+            train_num_tokens=num_image_tokens,
+            patch_size=naflex_patch_size,
+            patch_size_choices=naflex_patch_size_choices,
+            patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
+            seq_lens=naflex_data_config.train_seq_lens,
+            max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+            transform_factory=preprocess_img,
+            seed=args.seed,
+            shuffle=True,
+            distributed=args.distributed,
+            rank=args.rank,
+            world_size=args.world_size,
+            epoch=shared_epoch,
+            batch_divisor=naflex_data_config.batch_divisor,
+            pad_id=naflex_pad_id,
+            per_row_text_tokens=naflex_text_cost,
+        ))
+        if genlip_text:
+            _logger.info(
+                f"GenLIP NaFlex batch budget = {naflex_data_config.max_tokens_per_batch} total tokens/row-batch "
+                f"(image bucket + text cap {naflex_text_cost})"
+                + ("; length bucketing ON" if getattr(args, 'naflex_length_bucketing', False) else "")
+            )
+        pipeline.extend(naflex_stages)
         naflex_batcher = pipeline[-1]
         dataset = wds.DataPipeline(*pipeline)
         num_workers = max(1, args.workers)
@@ -505,7 +593,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.batched(
                 args.batch_size,
                 partial=True,
-                collation_fn=partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len),
+                collation_fn=partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len, pad_id=naflex_pad_id),
             ),
         ])
         dataset = wds.DataPipeline(*pipeline)
@@ -596,6 +684,11 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         if not naflex_data_config.variable_patch_size:
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
+        # GenLIP: include the caption-token cap in the batch budget (else this path overbatches by counting
+        # image tokens only) and pad variable-length text within the batch. Matches the WebDataset path.
+        genlip_text = getattr(args, 'genlip', False)
+        naflex_pad_id = getattr(tokenizer, 'pad_token_id', None) if genlip_text else None
+        naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
         dataset = NaFlexMapDatasetWrapper(
             dataset,
             train_num_tokens=naflex_data_config.train_num_image_tokens,
@@ -612,6 +705,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
             world_size=args.world_size,
             epoch=shared_epoch,
             batch_divisor=naflex_data_config.batch_divisor,
+            pad_id=naflex_pad_id,
+            per_row_text_tokens=naflex_text_cost,
         )
         dataloader = DataLoader(
             dataset,
