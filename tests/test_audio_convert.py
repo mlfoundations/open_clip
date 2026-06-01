@@ -108,6 +108,15 @@ def test_random_transformers_clap_state_dict_loads_into_native(monkeypatch):
     sys.modules["torchlibrosa.stft"].LogmelFilterBank = DummyAudioModule
     sys.modules["torchlibrosa.augmentation"].SpecAugmentation = DummyAudioModule
 
+    # htsat binds these names at import time (`from torchlibrosa.stft import ...`), so the sys.modules swap
+    # above only shadows a *fresh* import. If an earlier test in the same worker already imported htsat with
+    # the real torchlibrosa, rebind the names on the module itself so the dummies take effect regardless of
+    # import order (avoids leaking real Spectrogram/LogmelFilterBank buffers into the model). Auto-reverted.
+    import open_clip.audio.htsat as htsat
+    monkeypatch.setattr(htsat, "Spectrogram", DummyAudioModule)
+    monkeypatch.setattr(htsat, "LogmelFilterBank", DummyAudioModule)
+    monkeypatch.setattr(htsat, "SpecAugmentation", DummyAudioModule)
+
     hf_model = transformers.ClapModel(transformers.ClapConfig())
     converted = convert_hf_clap_state_dict(hf_model.state_dict())
     native = open_clip.create_model(
