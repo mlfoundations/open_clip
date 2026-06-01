@@ -17,7 +17,8 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .clap_model import CLAP
 from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .naflex_genlip_model import NaFlexGenLip
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -30,7 +31,7 @@ from .transform import (
     merge_preprocess_kwargs,
     naflex_eval_transform_v2,
 )
-from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, DEFAULT_CONTEXT_LENGTH
+from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, TikTokenTokenizer, DEFAULT_CONTEXT_LENGTH
 
 HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
@@ -500,8 +501,11 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (CLIP, CustomTextCLIP, CoCa, CLAP)
-    if is_audio_model:
+    # Determine model class (NaFlexGenLip, CLIP, CustomTextCLIP, CoCa, CLAP)
+    if 'genlip_cfg' in model_cfg:
+        model_cfg.pop('custom_text', None)
+        model_class = NaFlexGenLip
+    elif is_audio_model:
         model_class = CLAP
     else:
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
@@ -772,7 +776,17 @@ def get_tokenizer(
     if not hf_tokenizer_name and hf_fallback_id:
         hf_tokenizer_name = hf_fallback_id
 
-    if hf_tokenizer_name:
+    if text_config.get('tokenizer_type', '') == 'tiktoken':
+        # tiktoken-based tokenizer for generative (GenLIP) models.
+        encoding_name = text_config.get('tiktoken_name', 'cl100k_base')
+        _logger.info(f"Using TikTokenTokenizer with encoding: '{encoding_name}'")
+        tokenizer = TikTokenTokenizer(
+            encoding_name=encoding_name,
+            context_length=context_length,
+            **{k: v for k, v in tokenizer_kwargs.items() if k in ('add_bos', 'add_eos')},
+        )
+
+    elif hf_tokenizer_name:
         # If 'hf_tokenizer_name' key exists in text_cfg (even if empty string): Use HFTokenizer.
         if schema == 'local-dir':
             # If config came from local-dir, ALWAYS use the local dir path for HFTokenizer.
@@ -879,6 +893,8 @@ def create_loss(args):
             rank=args.rank,
             world_size=args.world_size,
         )
+    elif "genlip" in args.model.lower():
+        return GenLipLoss()
     elif args.siglip:
         return SigLipLoss(
             cache_labels=cache_labels,
@@ -911,7 +927,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     Returns:
         A TrainingTask subclass instance.
     """
-    from .task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask, CLAPTask
+    from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, DistillCLIPTask, CLAPTask
 
     cache_labels = _use_loss_label_cache(args)
     shared = dict(rank=args.rank, world_size=args.world_size)
@@ -943,6 +959,8 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             cache_labels=cache_labels,
             **shared,
         )
+    elif "genlip" in args.model.lower():
+        task = GenLipTask(model)
     elif args.siglip:
         task = SigLIPTask(
             model,

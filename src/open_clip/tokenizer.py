@@ -619,3 +619,97 @@ class SigLipTokenizer:
             truncation=True,
         )
         return output.input_ids
+
+
+class TikTokenTokenizer:
+    """tiktoken-based tokenizer for generative (autoregressive) captioning.
+
+    Wraps an OpenAI ``tiktoken`` BPE encoding (default ``cl100k_base``) for English-priority, fast tokenization.
+    tiktoken handles only the caption body; the control ids (EOS, PAD, BOS) are reserved *above* the base
+    vocabulary so they never collide with body tokens. Two output modes are supported:
+
+    - ``pad=True`` (default): a fixed ``[N, context_length]`` tensor padded with ``pad_id`` (CLIP-style contract).
+    - ``pad=False``: a list of variable-length 1-D tensors ``[BOS] + body + [EOS]`` for per-sample batching
+      (used by the NaFlex GenLIP "rows" data path, which pads within the batch).
+    """
+
+    def __init__(
+            self,
+            encoding_name: str = 'cl100k_base',
+            context_length: Optional[int] = 256,
+            add_bos: bool = True,
+            add_eos: bool = True,
+    ):
+        try:
+            import tiktoken
+        except ImportError as e:
+            raise ImportError("Please install tiktoken to use TikTokenTokenizer (`pip install tiktoken`).") from e
+
+        self.encoding_name = encoding_name
+        self.enc = tiktoken.get_encoding(encoding_name)
+        self.context_length = context_length
+        self.add_bos = add_bos
+        self.add_eos = add_eos
+
+        # Reserve control ids above the base vocabulary so they never collide with body tokens.
+        base = self.enc.n_vocab
+        self.eot_token_id = base  # end-of-text / EOS
+        self.pad_token_id = base + 1
+        self.bos_token_id = base + 2
+        self.sot_token_id = self.bos_token_id  # alias for CLIP-style callers
+        self.all_special_ids = [self.eot_token_id, self.pad_token_id, self.bos_token_id]
+        self.vocab_size = base + 3
+
+    def encode(self, text: str) -> List[int]:
+        # encode_ordinary ignores any special-token markup in the text, treating it as plain bytes.
+        return self.enc.encode_ordinary(text)
+
+    def decode(self, tokens: List[int]) -> str:
+        body = [t for t in tokens if t < self.enc.n_vocab]
+        return self.enc.decode(body)
+
+    def _wrap(self, ids: List[int]) -> List[int]:
+        if self.add_bos:
+            ids = [self.bos_token_id] + ids
+        if self.add_eos:
+            ids = ids + [self.eot_token_id]
+        return ids
+
+    def __call__(
+            self,
+            texts: Union[str, List[str]],
+            context_length: Optional[int] = None,
+            pad: bool = True,
+    ) -> Union[torch.LongTensor, List[torch.LongTensor]]:
+        """Tokenize text(s).
+
+        Args:
+            texts: A string or list of strings.
+            context_length: Max length (including control tokens). Defaults to ``self.context_length``.
+                Used for truncation in both modes and for padding in fixed mode.
+            pad: When True return a padded ``[N, context_length]`` tensor; when False return a list of
+                variable-length 1-D tensors.
+        """
+        if isinstance(texts, str):
+            texts = [texts]
+        context_length = context_length or self.context_length
+
+        all_tokens = [self._wrap(self.encode(text)) for text in texts]
+        if context_length is not None:
+            truncated = []
+            for tokens in all_tokens:
+                if len(tokens) > context_length:
+                    tokens = tokens[:context_length]
+                    if self.add_eos:
+                        tokens[-1] = self.eot_token_id
+                truncated.append(tokens)
+            all_tokens = truncated
+
+        if not pad:
+            return [torch.tensor(tokens, dtype=torch.long) for tokens in all_tokens]
+
+        assert context_length, 'A context_length is required for padded (pad=True) tokenization.'
+        result = torch.full((len(all_tokens), context_length), self.pad_token_id, dtype=torch.long)
+        for i, tokens in enumerate(all_tokens):
+            result[i, :len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+        return result

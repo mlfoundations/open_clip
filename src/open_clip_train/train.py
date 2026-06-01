@@ -522,35 +522,38 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                     model_out = task(batch)
 
                 if is_rank0:
-                    primary_features = model_out[primary_features_key]
-                    text_features = model_out["text_features"]
-                    logit_scale = model_out["logit_scale"]
-                    # Features are accumulated as CPU tensors to keep GPU memory
-                    # bounded; this remains O(N * D) system RAM.
-                    all_primary_features.append(primary_features.cpu())
-                    all_text_features.append(text_features.cpu())
-                    logit_scale = logit_scale.mean()
-                    logits_per_primary = logit_scale * primary_features @ text_features.t()
-                    logits_per_text = logits_per_primary.t()
-
                     batch_size = task.batch_size(batch)
-                    labels = torch.arange(batch_size, device=device).long()
-                    total_loss = (
-                        F.cross_entropy(logits_per_primary, labels) +
-                        F.cross_entropy(logits_per_text, labels)
-                    ) / 2
+                    # Contrastive tasks expose paired features for retrieval; generative-only tasks (e.g. GenLIP)
+                    # return just an LM/caption loss. Branch so generative eval doesn't KeyError on features.
+                    paired = (primary_features_key in model_out) and ("text_features" in model_out)
+                    if paired:
+                        primary_features = model_out[primary_features_key]
+                        text_features = model_out["text_features"]
+                        logit_scale = model_out["logit_scale"].mean()
+                        # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
+                        # however, system RAM is easily exceeded and compute time becomes problematic
+                        all_primary_features.append(primary_features.cpu())
+                        all_text_features.append(text_features.cpu())
+                        logits_per_primary = logit_scale * primary_features @ text_features.t()
+                        logits_per_text = logits_per_primary.t()
+                        labels = torch.arange(batch_size, device=device).long()
+                        total_loss = (
+                            F.cross_entropy(logits_per_primary, labels) +
+                            F.cross_entropy(logits_per_text, labels)
+                        ) / 2
+                        cumulative_loss += total_loss * batch_size
+                        gen_loss = maybe_compute_generative_loss(model_out, texts=batch.get("text"))
+                    else:
+                        gen_loss = model_out.get("caption_loss", model_out.get("loss"))
 
-                    gen_loss = maybe_compute_generative_loss(model_out, texts=batch.get("text"))
-
-                    cumulative_loss += total_loss * batch_size
                     if gen_loss is not None:
                         cumulative_gen_loss += gen_loss * batch_size
                     num_samples += batch_size
                     if (i % 100) == 0:
-                        _logger.info(
-                            f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                            f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
-
+                        if paired:
+                            _logger.info(
+                                f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
+                                f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
                         if gen_loss is not None:
                             _logger.info(
                                 f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
@@ -558,32 +561,35 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                 i += 1
 
             if is_rank0 and num_samples > 0:
-                retrieval_chunk_size = getattr(
-                    args,
-                    "val_retrieval_chunk_size",
-                    DEFAULT_RETRIEVAL_CHUNK_SIZE,
-                )
-                retrieval_precision = getattr(args, "val_retrieval_precision", "fp32")
-                retrieval_device = device if retrieval_chunk_size and retrieval_chunk_size > 0 else None
-                val_metrics = get_clip_metrics(
-                    image_features=all_primary_features,
-                    text_features=all_text_features,
-                    logit_scale=logit_scale.cpu(),
-                    image_key=primary_key,
-                    text_key="text",
-                    retrieval_chunk_size=retrieval_chunk_size,
-                    retrieval_device=retrieval_device,
-                    retrieval_dtype="model" if retrieval_precision == "model" else torch.float32,
-                )
-                loss = cumulative_loss / num_samples
-                # Preserve the legacy dashboard key for image-text validation.
-                loss_key = "clip_val_loss" if primary_key == "image" else f"{primary_key}_val_loss"
-                metrics.update(
-                    {**val_metrics, loss_key: loss.item(), "epoch": epoch, "num_samples": num_samples}
-                )
-                if gen_loss is not None:
-                    gen_loss = cumulative_gen_loss / num_samples
-                    metrics.update({"val_generative_loss": gen_loss.item()})
+                if all_primary_features:
+                    retrieval_chunk_size = getattr(
+                        args,
+                        "val_retrieval_chunk_size",
+                        DEFAULT_RETRIEVAL_CHUNK_SIZE,
+                    )
+                    retrieval_precision = getattr(args, "val_retrieval_precision", "fp32")
+                    retrieval_device = device if retrieval_chunk_size and retrieval_chunk_size > 0 else None
+                    val_metrics = get_clip_metrics(
+                        image_features=all_primary_features,
+                        text_features=all_text_features,
+                        logit_scale=logit_scale.cpu(),
+                        image_key=primary_key,
+                        text_key="text",
+                        retrieval_chunk_size=retrieval_chunk_size,
+                        retrieval_device=retrieval_device,
+                        retrieval_dtype="model" if retrieval_precision == "model" else torch.float32,
+                    )
+                    loss = cumulative_loss / num_samples
+                    # Preserve the legacy dashboard key for image-text validation.
+                    loss_key = "clip_val_loss" if primary_key == "image" else f"{primary_key}_val_loss"
+                    metrics.update(
+                        {**val_metrics, loss_key: loss.item(), "epoch": epoch, "num_samples": num_samples}
+                    )
+                else:
+                    # Generative-only task (e.g. GenLIP): no retrieval metrics, just the LM/caption loss.
+                    metrics.update({"epoch": epoch, "num_samples": num_samples})
+                if isinstance(cumulative_gen_loss, torch.Tensor):
+                    metrics.update({"val_generative_loss": (cumulative_gen_loss / num_samples).item()})
 
     if not is_rank0:
         return metrics
