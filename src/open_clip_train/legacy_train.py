@@ -4,7 +4,6 @@ import math
 import os
 import time
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel.distributed import DistributedDataParallel
@@ -16,6 +15,8 @@ except ImportError:
 
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
 from open_clip_train.distributed import is_master
+from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
+from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
 
@@ -280,8 +281,9 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         num_samples = 0
         samples_per_val = dataloader.num_samples
 
-        # FIXME this does not scale past small eval datasets
-        # all_image_features @ all_text_features will blow up memory and compute very quickly
+        # Retrieval metrics are computed in score chunks below, but feature
+        # accumulation and exact pair scoring remain O(N * D) memory and O(N^2)
+        # compute respectively.
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
         all_image_features, all_text_features = [], []
@@ -296,8 +298,8 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                     image_features = model_out["image_features"]
                     text_features = model_out["text_features"]
                     logit_scale = model_out["logit_scale"]
-                    # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
-                    # however, system RAM is easily exceeded and compute time becomes problematic
+                    # Features are accumulated as CPU tensors to keep GPU memory
+                    # bounded; this remains O(N * D) system RAM.
                     all_image_features.append(image_features.cpu())
                     all_text_features.append(text_features.cpu())
                     logit_scale = logit_scale.mean()
@@ -326,9 +328,15 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                             f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 
             val_metrics = get_clip_metrics(
-                image_features=torch.cat(all_image_features),
-                text_features=torch.cat(all_text_features),
+                image_features=all_image_features,
+                text_features=all_text_features,
                 logit_scale=logit_scale.cpu(),
+                retrieval_chunk_size=getattr(
+                    args,
+                    "val_retrieval_chunk_size",
+                    DEFAULT_RETRIEVAL_CHUNK_SIZE,
+                ),
+                retrieval_device=device,
             )
             loss = cumulative_loss / num_samples
             metrics.update(
@@ -369,27 +377,6 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         wandb.log(log_data, step=step)
 
     return metrics
-
-
-def get_clip_metrics(image_features, text_features, logit_scale):
-    metrics = {}
-    logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
-    logits_per_text = logits_per_image.t().detach().cpu()
-
-    logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
-    ground_truth = torch.arange(len(text_features)).view(-1, 1)
-
-    for name, logit in logits.items():
-        ranking = torch.argsort(logit, descending=True)
-        preds = torch.where(ranking == ground_truth)[1]
-        preds = preds.detach().cpu().numpy()
-        metrics[f"{name}_mean_rank"] = preds.mean() + 1
-        metrics[f"{name}_median_rank"] = np.floor(np.median(preds)) + 1
-        for k in [1, 5, 10]:
-            metrics[f"{name}_R@{k}"] = np.mean(preds < k)
-
-    return metrics
-
 
 def maybe_compute_generative_loss(model_out, texts=None, pad_id=0):
     # CoCa is the only model that emits "logits" in its output dict. The model
