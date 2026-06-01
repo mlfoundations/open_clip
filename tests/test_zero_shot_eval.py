@@ -12,6 +12,9 @@ class _BareModel:
     def encode_image(self, image, normalize=False):
         raise NotImplementedError
 
+    def encode_text(self, text, normalize=False):
+        raise NotImplementedError
+
 
 class _WrappedModel:
     def __init__(self, module):
@@ -117,6 +120,33 @@ def test_zero_shot_eval_unwraps_wrapped_model_once(monkeypatch):
     # get_model_from_task unwraps .module from the DDP-like wrapper
     assert build_models == [wrapped_model]  # build_zero_shot_classifier gets model_or_task
     assert run_models == [wrapped_model]  # run_zero_shot_classifier gets model_or_task
+
+
+def test_zero_shot_eval_skips_generative_model_without_text_tower():
+    """A generative VLM (image tower, but no encode_text) skips the contrastive zero-shot path."""
+    class _GenerativeModel:
+        visual = object()
+
+        def encode_image(self, image, normalize=False):
+            raise NotImplementedError
+        # no encode_text -> no contrastive text tower (e.g. GenLIP)
+
+    args = SimpleNamespace(
+        distributed=False,
+        zeroshot_frequency=1,
+        epochs=1,
+        model="naflexgenlip_b16_224",
+        device="cpu",
+        precision="fp32",
+        batch_size=1,
+        rank=0,
+        fsdp=False,
+    )
+    data = {"imagenet-val": _DataWrapper()}
+
+    results = zero_shot_module.zero_shot_eval(_GenerativeModel(), data, epoch=1, args=args)
+
+    assert results == {}
 
 
 def test_zero_shot_eval_rejects_non_image_model():

@@ -132,13 +132,15 @@ def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=
 def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):
     if 'imagenet-val' not in data and 'imagenet-v2' not in data:
         return {}
+    # Reject non-image models (e.g. audio) first, then skip image models that lack a contrastive text
+    # tower (generative VLMs such as GenLIP): the text-classifier zero-shot path requires encode_text.
+    validate_imagenet_zeroshot_compatible(model_or_task)
     if not hasattr(get_model_from_task(model_or_task), 'encode_text'):
         _logger.warning(
             "Skipping zero-shot ImageNet eval: model has no `encode_text` "
             "(generative models such as GenLIP have no contrastive text tower)."
         )
         return {}
-    validate_imagenet_zeroshot_compatible(model_or_task)
     if args.zeroshot_frequency == 0:
         return {}
     if (epoch % args.zeroshot_frequency) != 0 and epoch != args.epochs:
