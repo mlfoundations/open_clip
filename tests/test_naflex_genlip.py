@@ -228,6 +228,32 @@ def test_fused_loss_matches_naive_logits_loss():
     assert torch.allclose(fused, naive, atol=1e-4), f"{fused.item()} != {naive.item()}"
 
 
+def test_task_fused_loss_flag():
+    """fused_loss=True (default) uses the model's in-forward fused loss and builds NO loss module;
+    fused_loss=False drives the model as a logits producer + external GenLipLoss for the same result."""
+    from open_clip.task import GenLipTask
+
+    torch.manual_seed(0)
+    model, _, _ = open_clip.create_model_and_transforms(TEST_MODEL)
+    model.eval()
+    batch = _make_batch(model.pad_id)
+
+    fused_task = GenLipTask(model)
+    assert fused_task.fused_loss is True
+    assert not hasattr(fused_task, 'loss')  # default carries no would-be-unused loss module
+
+    ext_task = GenLipTask(model, fused_loss=False)
+    assert ext_task.fused_loss is False
+    assert type(ext_task.loss).__name__ == 'GenLipLoss'
+
+    fused = fused_task._loss_forward(model, batch)
+    ext = ext_task._loss_forward(model, batch)
+    for out in (fused, ext):
+        assert 'caption_loss' in out and 'loss' in out and torch.isfinite(out['loss'])
+    assert torch.allclose(fused['loss'], ext['loss'], atol=1e-4), \
+        f"{fused['loss'].item()} != {ext['loss'].item()}"
+
+
 def test_grad_checkpointing_toggle_and_parity():
     """set_grad_checkpointing accepts impl=, toggles, and is numerically transparent."""
     import copy
