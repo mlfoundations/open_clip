@@ -292,6 +292,15 @@ def parse_args(args):
         "--val-frequency", type=int, default=1, help="How often to run evaluation with val data."
     )
     parser.add_argument(
+        "--val-retrieval-chunk-size",
+        type=int,
+        default=4096,
+        help=(
+            "Chunk size for exact validation retrieval metrics. Smaller values reduce peak "
+            "score-matrix memory; set 0 to score the full matrix in one block."
+        ),
+    )
+    parser.add_argument(
         "--resume",
         default=None,
         type=str,
