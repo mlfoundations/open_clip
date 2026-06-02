@@ -228,6 +228,33 @@ def test_fused_loss_matches_naive_logits_loss():
     assert torch.allclose(fused, naive, atol=1e-4), f"{fused.item()} != {naive.item()}"
 
 
+def test_pack_prefix_defaults_off_and_parity_full_prefix():
+    """pack_prefix defaults OFF (existing runs unchanged); when on it's loss-identical to the block layout
+    for a full prefix (every patch valid, k == Na)."""
+    torch.manual_seed(0)
+    model = open_clip.create_model(TEST_MODEL).eval()
+    assert model.pack_prefix is False  # toggle defaults off -> ongoing runs untouched
+
+    batch = _make_batch(model.pad_id)
+    batch['image']['patch_valid'][:] = True  # full prefix: all patches valid -> block == packed
+    image, text, tv = batch['image'], batch['text'], batch['text_valid']
+
+    model.pack_prefix = False
+    block = model(image=image, text=text, text_valid=tv, compute_loss=True)['loss']
+    model.pack_prefix = True
+    packed = model(image=image, text=text, text_valid=tv, compute_loss=True)['loss']
+    assert torch.allclose(block, packed, atol=1e-5), f"{block.item()} != {packed.item()}"
+
+
+def test_pack_prefix_variable_prefix_runs():
+    """pack_prefix runs on a variable-length prefix (k < Na) and yields a finite loss."""
+    model = open_clip.create_model(TEST_MODEL).eval()
+    model.pack_prefix = True
+    batch = _make_batch(model.pad_id)  # last sample has fewer valid patches (k < Na)
+    loss = model(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True)['loss']
+    assert loss.ndim == 0 and torch.isfinite(loss)
+
+
 def test_task_fused_loss_flag():
     """fused_loss=True (default) uses the model's in-forward fused loss and builds NO loss module;
     fused_loss=False drives the model as a logits producer + external GenLipLoss for the same result."""

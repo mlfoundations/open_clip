@@ -202,8 +202,11 @@ class AudioNaFlexTransformFactory:
     is_naflex_transform_factory = True
     is_naflex_eval_transform_factory = True
 
-    def __init__(self, cfg: AudioNaFlexCfg):
+    def __init__(self, cfg: AudioNaFlexCfg, pack_prefix: bool = False):
         self.cfg = cfg
+        # GenLAP's packed-row layout (resolved from the actual model, not a config-name lookup) so the data path
+        # can pick the right length-bucketing key off the transform it already receives -- see AudioLengthBucketer.
+        self.pack_prefix = pack_prefix
 
     def __call__(self, max_seq_len: Optional[int] = None, patch_size: Any = None) -> AudioNaFlexPatchify:
         return AudioNaFlexPatchify(self.cfg, max_audio_tokens=max_seq_len)

@@ -1004,7 +1004,7 @@ def _build_preprocess(model, *, aug_cfg=None, audio_aug_cfg=None):
     if isinstance(model, NaFlexGenLap):
         from .audio.naflex_audio import AudioNaFlexTransformFactory
 
-        factory = AudioNaFlexTransformFactory(model.audio_cfg)
+        factory = AudioNaFlexTransformFactory(model.audio_cfg, pack_prefix=getattr(model, 'pack_prefix', False))
         return factory, factory
     if hasattr(model, 'audio') and getattr(model.audio.cfg, 'model_type', '').lower() == 'naflexvit':
         # NaFlexClap: CLAP with a NaFlex spectrogram-ViT audio tower -> NaFlex patchify transform (not HTSAT).

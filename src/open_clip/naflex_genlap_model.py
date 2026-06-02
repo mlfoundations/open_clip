@@ -34,6 +34,7 @@ from .naflex_genlip_model import (
     build_image_attn_mask,
     build_prefix_lm_mask,
     init_genlm_weights,
+    packed_caption_loss,
 )
 
 
@@ -111,6 +112,7 @@ class NaFlexGenLap(nn.Module):
         self.audio_cfg = audio_naflex_cfg
         self.text_cfg = text_cfg
         self.trunk_cfg = genlap_cfg
+        self.pack_prefix = genlap_cfg.pack_prefix
         self.output_dict = output_dict
         self.embed_dim = embed_dim
         # 1-D time vs 2-D axial rope; default derives from patch geometry (full-height strips -> 1-D).
@@ -206,6 +208,17 @@ class NaFlexGenLap(nn.Module):
         """
         if text_valid is None:
             text_valid = text != self.pad_id
+
+        if compute_loss and self.pack_prefix:
+            # Packed layout: compact [valid audio ; valid text ; PAD] per row (no padding between the two);
+            # the first caption token is then predicted from the last *valid* audio token, not a padding slot.
+            return {'loss': packed_caption_loss(
+                self,
+                self.audio_embed(audio['patches']), audio['patch_valid'],
+                build_audio_position_ids(audio['patch_coord'], audio['patch_valid'], text_valid,
+                                         rope_1d=self.rope_1d),
+                text, text_valid,
+            )}
 
         hidden, ni = self._encode(audio, text, text_valid)  # (B, S, D), Ni
 

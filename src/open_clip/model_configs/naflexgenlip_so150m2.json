@@ -15,7 +15,8 @@
         "mrope_interleaved": true,
         "hidden_act": "silu",
         "layer_norm_eps": 1e-6,
-        "max_position_embeddings": 16384
+        "max_position_embeddings": 16384,
+        "pack_prefix": true
     },
     "vision_cfg": {
         "image_size": 256,

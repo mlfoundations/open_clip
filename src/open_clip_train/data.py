@@ -463,6 +463,7 @@ def append_naflex_train_stages(
         shared_epoch,
         pad_id,
         per_row_text_tokens,
+        bucketer=None,
 ):
     """Append the modality-agnostic NaFlex train stages to ``pipeline`` and return the ``NaFlexBatcher``.
 
@@ -479,14 +480,11 @@ def append_naflex_train_stages(
         patch_size_choices = None
 
     stages = [wds.map_dict(text=tokenize_text)]
-    if pad_id is not None and getattr(args, 'naflex_length_bucketing', False):
-        # Reorder (tokenized) samples so similar caption lengths batch together, tightening text padding.
-        stages.append(LengthBucketer(
-            pool=args.naflex_bucket_pool,
-            chunk=args.naflex_bucket_chunk,
-            seed=args.seed,
-            epoch=shared_epoch,
-        ))
+    if bucketer is not None:
+        # Reorder samples so similar lengths batch together (text for image, (duration, caption) for audio),
+        # tightening per-batch-max padding. Reorder-only -> schedule / num_batches / DDP unchanged. The caller
+        # owns the bucketer choice + policy (image: text-length; audio: AudioLengthBucketer).
+        stages.append(bucketer)
     stages.append(NaFlexBatcher(
         train_num_samples=num_samples,
         train_num_tokens=num_tokens,
@@ -511,7 +509,7 @@ def append_naflex_train_stages(
         _logger.info(
             f"NaFlex generative batch budget = {naflex_data_config.max_tokens_per_batch} total tokens/row-batch "
             f"({modality_key} bucket + text cap {per_row_text_tokens})"
-            + ("; length bucketing ON" if getattr(args, 'naflex_length_bucketing', False) else "")
+            + ("; length bucketing ON" if bucketer is not None else "")
         )
     pipeline.extend(stages)
     return pipeline[-1]
@@ -632,6 +630,16 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     tokenize_text = TokenizeText(tokenizer, variable=genlip_text)
 
     if use_naflex_train:
+        # Image bucketing reorders by caption length, and only helps the generative (variable-text) case
+        # (naflex_pad_id is set iff genlip). NaFlex resizes images to ~fill the bucket, so only text varies.
+        image_bucketer = None
+        if naflex_pad_id is not None and getattr(args, 'naflex_length_bucketing', False):
+            image_bucketer = LengthBucketer(
+                pool=args.naflex_bucket_pool,
+                chunk=args.naflex_bucket_chunk,
+                seed=args.seed,
+                epoch=shared_epoch,
+            )
         naflex_batcher = append_naflex_train_stages(
             pipeline,
             naflex_data_config=naflex_data_config,
@@ -644,6 +652,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             shared_epoch=shared_epoch,
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
+            bucketer=image_bucketer,
         )
         dataset = wds.DataPipeline(*pipeline)
         num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
