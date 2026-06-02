@@ -18,7 +18,7 @@
         "max_position_embeddings": 16384
     },
     "vision_cfg": {
-        "image_size": 224,
+        "image_size": 256,
         "patch_size": 16,
         "in_chans": 3
     },
