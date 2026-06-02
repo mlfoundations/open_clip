@@ -334,6 +334,22 @@ _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
+def wds_shuffle_sizes():
+    """WebDataset shuffle buffer sizes ``(shard_size, shard_initial, sample_size, sample_initial)``.
+
+    Read at pipeline-build time so the ``OPENCLIP_WDS_*`` env vars can override the module defaults — e.g. set
+    tiny values when iterating a small test shard so the first batch doesn't wait on a multi-thousand-sample
+    buffer fill. Unset env vars preserve prior behavior.
+    """
+    env = os.environ.get
+    return (
+        int(env("OPENCLIP_WDS_SHARD_SHUFFLE_SIZE", _SHARD_SHUFFLE_SIZE)),
+        int(env("OPENCLIP_WDS_SHARD_SHUFFLE_INITIAL", _SHARD_SHUFFLE_INITIAL)),
+        int(env("OPENCLIP_WDS_SAMPLE_SHUFFLE_SIZE", _SAMPLE_SHUFFLE_SIZE)),
+        int(env("OPENCLIP_WDS_SAMPLE_SHUFFLE_INITIAL", _SAMPLE_SHUFFLE_INITIAL)),
+    )
+
+
 class detshuffle2(wds.PipelineStage):
     def __init__(
             self,
@@ -564,11 +580,12 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     # at this point we have an iterator over all the shards
     if is_train:
+        shard_shuffle_size, shard_shuffle_initial, sample_shuffle_size, sample_shuffle_initial = wds_shuffle_sizes()
         if not resampled:
             pipeline.extend([
                 detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
+                    bufsize=shard_shuffle_size,
+                    initial=shard_shuffle_initial,
                     seed=args.seed,
                     epoch=shared_epoch,
                 ),
@@ -579,8 +596,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker at each node
             tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
             wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
+                bufsize=sample_shuffle_size,
+                initial=sample_shuffle_initial,
             ),
         ])
     else:

@@ -159,6 +159,14 @@ def parse_args(args):
         help="Multiprocessing context for audio zero-shot DataLoader workers.",
     )
     parser.add_argument(
+        "--audio-multiprocessing-context",
+        type=str,
+        default="forkserver",
+        choices=["fork", "forkserver", "spawn"],
+        help="Multiprocessing context for the (training/eval) audio DataLoader workers. forkserver avoids the "
+             "fork-after-torchaudio-threads deadlock; only applied when --workers > 0.",
+    )
+    parser.add_argument(
         "--dataset-resampled",
         default=False,
         action="store_true",

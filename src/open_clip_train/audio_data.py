@@ -17,10 +17,6 @@ from open_clip_train.data import (
     ResampledShards2,
     SharedEpoch,
     TokenizeText,
-    _SAMPLE_SHUFFLE_INITIAL,
-    _SAMPLE_SHUFFLE_SIZE,
-    _SHARD_SHUFFLE_INITIAL,
-    _SHARD_SHUFFLE_SIZE,
     append_naflex_train_stages,
     detshuffle2,
     expand_urls,
@@ -28,8 +24,20 @@ from open_clip_train.data import (
     log_and_continue,
     naflex_loader_counts,
     tarfile_to_samples_nothrow,
+    wds_shuffle_sizes,
 )
 from open_clip_train.naflex_data import collate_naflex_dicts, create_naflex_eval_transform
+
+
+def _audio_loader_kwargs(args):
+    """Extra DataLoader kwargs for audio loaders: a forkserver multiprocessing context (only when workers > 0).
+
+    Audio decode/mel work in the workers pulls in torchaudio, which spawns threads; the default ``fork`` start
+    method then deadlocks the child. forkserver (configurable via --audio-multiprocessing-context) avoids it.
+    """
+    if getattr(args, "workers", 0) and args.workers > 0:
+        return {"multiprocessing_context": getattr(args, "audio_multiprocessing_context", "forkserver")}
+    return {}
 
 
 def filter_no_caption_or_no_audio(sample):
@@ -173,12 +181,13 @@ def get_wds_audio_dataset(
         pipeline = [wds.SimpleShardList(expanded_shards)]
 
     if is_train:
+        shard_shuffle_size, shard_shuffle_initial, sample_shuffle_size, sample_shuffle_initial = wds_shuffle_sizes()
         if not resampled:
             pipeline.extend(
                 [
                     detshuffle2(
-                        bufsize=_SHARD_SHUFFLE_SIZE,
-                        initial=_SHARD_SHUFFLE_INITIAL,
+                        bufsize=shard_shuffle_size,
+                        initial=shard_shuffle_initial,
                         seed=args.seed,
                         epoch=shared_epoch,
                     ),
@@ -189,7 +198,7 @@ def get_wds_audio_dataset(
         pipeline.extend(
             [
                 tarfile_to_samples_nothrow,
-                wds.shuffle(bufsize=_SAMPLE_SHUFFLE_SIZE, initial=_SAMPLE_SHUFFLE_INITIAL),
+                wds.shuffle(bufsize=sample_shuffle_size, initial=sample_shuffle_initial),
             ]
         )
     else:
@@ -289,6 +298,7 @@ def get_wds_audio_dataset(
         shuffle=False,
         num_workers=args.workers,
         persistent_workers=args.workers > 0,
+        **_audio_loader_kwargs(args),
     )
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
@@ -338,6 +348,7 @@ def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenize
         sampler=sampler,
         drop_last=is_train,
         collate_fn=_audio_collate,
+        **_audio_loader_kwargs(args),
     )
     dataloader.num_samples = num_samples
     dataloader.num_batches = len(dataloader)
