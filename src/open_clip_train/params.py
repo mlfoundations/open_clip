@@ -749,8 +749,22 @@ def parse_args(args):
         if args.accum_freq > 1:
             raise ValueError("GenLIP does not support --accum-freq > 1 (no contrastive feature caching).")
 
+    # GenLAP is the audio sibling (generative LM over a NaFlex spectrogram prefix). It consumes the NaFlex
+    # *audio* data pipeline (--dataset-type webdataset-audio) and, like GenLIP, has no vision tower to convert.
+    args.genlap = 'genlap' in args.model.lower()
+    if args.genlap:
+        args.use_naflex = True
+        if args.accum_freq > 1:
+            raise ValueError("GenLAP does not support --accum-freq > 1 (no contrastive feature caching).")
+
+    # NaFlexClap: contrastive CLAP with a NaFlex spectrogram-ViT audio tower. Consumes the NaFlex audio data
+    # path (fixed-length text), routes to CLAP/CLAPTask via is_audio_model. Contrastive => accum_freq>1 is fine.
+    args.naflexclap = 'naflexclap' in args.model.lower()
+    if args.naflexclap:
+        args.use_naflex = True
+
     if args.use_naflex:
-        args.force_naflex_vision = not args.genlip
+        args.force_naflex_vision = not (args.genlip or args.genlap or args.naflexclap)
         args.aug_cfg = dict(args.aug_cfg or {})
         args.aug_cfg["use_timm"] = True
         args.aug_cfg["naflex"] = True

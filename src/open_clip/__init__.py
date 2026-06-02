@@ -2,6 +2,7 @@ from .version import __version__
 
 from .coca_model import CoCa
 from .naflex_genlip_model import NaFlexGenLip
+from .naflex_genlap_model import NaFlexGenLap
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .factory import (
     create_model,
@@ -20,6 +21,7 @@ from .task import (
     SigLIPTask,
     CoCaTask,
     GenLipTask,
+    GenLapTask,
     DistillCLIPTask,
     get_model_from_task,
 )

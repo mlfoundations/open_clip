@@ -41,7 +41,7 @@ from .loss import fused_linear_cross_entropy
 
 @dataclass
 class NaFlexGenLipVisionCfg:
-    image_size: int = 224
+    image_size: int = 256
     patch_size: int = 16
     in_chans: int = 3
     proj_bias: bool = True
@@ -440,6 +440,45 @@ def build_mrope_position_ids(
 # ---------------------------------------------------------------------------------------------------------------------
 # Vision-encoder-only adapter + top-level model
 # ---------------------------------------------------------------------------------------------------------------------
+@torch.no_grad()
+def init_genlm_weights(model: nn.Module, std: float = 0.02) -> None:
+    """Initialize GenLIP/GenLAP trunk weights (modality-agnostic; shared by the image and audio models)."""
+    def _init(module: nn.Module):
+        if isinstance(module, GenLipAttention):
+            nn.init.xavier_uniform_(module.q_proj.weight)
+            nn.init.xavier_uniform_(module.k_proj.weight)
+            nn.init.xavier_uniform_(module.v_proj.weight)
+            nn.init.xavier_uniform_(module.out_proj.weight)
+            for lin in (module.q_proj, module.k_proj, module.v_proj, module.out_proj):
+                if lin.bias is not None:
+                    nn.init.zeros_(lin.bias)
+        elif isinstance(module, (GenLipSwiGLUFFN, GenLipMLP)):
+            for name, lin in module.named_children():
+                if isinstance(lin, nn.Linear):
+                    nn.init.xavier_uniform_(lin.weight)
+                    if lin.bias is not None:
+                        nn.init.normal_(lin.bias, std=1e-6)
+        elif isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
+    # apply generic init first, then specialize attention/ffn (so nn.Linear default doesn't clobber them)
+    for module in model.modules():
+        if isinstance(module, (nn.Linear, nn.Embedding, nn.LayerNorm)):
+            _init(module)
+    for module in model.modules():
+        if isinstance(module, (GenLipAttention, GenLipSwiGLUFFN, GenLipMLP)):
+            _init(module)
+
+
 class NaFlexGenLipVisualAdapter(nn.Module):
     """Vision-encoder face of the model: runs image patches through the shared trunk and pools features.
 
@@ -546,40 +585,7 @@ class NaFlexGenLip(nn.Module):
     @torch.no_grad()
     def init_weights(self, std: float = 0.02):
         """Initialize weights following the GenLIP reference scheme."""
-        def _init(module: nn.Module):
-            if isinstance(module, GenLipAttention):
-                nn.init.xavier_uniform_(module.q_proj.weight)
-                nn.init.xavier_uniform_(module.k_proj.weight)
-                nn.init.xavier_uniform_(module.v_proj.weight)
-                nn.init.xavier_uniform_(module.out_proj.weight)
-                for lin in (module.q_proj, module.k_proj, module.v_proj, module.out_proj):
-                    if lin.bias is not None:
-                        nn.init.zeros_(lin.bias)
-            elif isinstance(module, (GenLipSwiGLUFFN, GenLipMLP)):
-                for name, lin in module.named_children():
-                    if isinstance(lin, nn.Linear):
-                        nn.init.xavier_uniform_(lin.weight)
-                        if lin.bias is not None:
-                            nn.init.normal_(lin.bias, std=1e-6)
-            elif isinstance(module, nn.Linear):
-                module.weight.data.normal_(mean=0.0, std=std)
-                if module.bias is not None:
-                    module.bias.data.zero_()
-            elif isinstance(module, nn.Embedding):
-                module.weight.data.normal_(mean=0.0, std=std)
-                if module.padding_idx is not None:
-                    module.weight.data[module.padding_idx].zero_()
-            elif isinstance(module, nn.LayerNorm):
-                module.bias.data.zero_()
-                module.weight.data.fill_(1.0)
-
-        # apply generic init first, then specialize attention/ffn (so nn.Linear default doesn't clobber them)
-        for module in self.modules():
-            if isinstance(module, (nn.Linear, nn.Embedding, nn.LayerNorm)):
-                _init(module)
-        for module in self.modules():
-            if isinstance(module, (GenLipAttention, GenLipSwiGLUFFN, GenLipMLP)):
-                _init(module)
+        init_genlm_weights(self, std)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):

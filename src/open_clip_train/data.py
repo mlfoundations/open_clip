@@ -434,6 +434,79 @@ class RepeatedShardList(IterableDataset):
                 yield dict(url=url)
 
 
+def append_naflex_train_stages(
+        pipeline,
+        *,
+        naflex_data_config,
+        transform_factory,
+        tokenize_text,
+        modality_key,
+        num_samples,
+        num_tokens,
+        args,
+        shared_epoch,
+        pad_id,
+        per_row_text_tokens,
+):
+    """Append the modality-agnostic NaFlex train stages to ``pipeline`` and return the ``NaFlexBatcher``.
+
+    Shared by the image (``get_wds_dataset``) and audio (``get_wds_audio_dataset``) pipelines: tokenize text ->
+    optional length bucketing (when captions are variable-length, i.e. ``pad_id`` set) -> ``NaFlexBatcher``.
+    The batcher reads ``sample[modality_key]`` (``"image"`` or ``"audio"``) plus ``sample['text']`` and applies
+    ``transform_factory`` to produce the ``{patches, patch_coord, patch_valid}`` rows -- so audio reuses the
+    whole batching/scheduling/collation path unchanged via ``modality_key="audio"``.
+    """
+    patch_size = None
+    patch_size_choices = naflex_data_config.train_patch_sizes
+    if not naflex_data_config.variable_patch_size:
+        patch_size = patch_size_choices[0]
+        patch_size_choices = None
+
+    stages = [wds.map_dict(text=tokenize_text)]
+    if pad_id is not None and getattr(args, 'naflex_length_bucketing', False):
+        # Reorder (tokenized) samples so similar caption lengths batch together, tightening text padding.
+        stages.append(LengthBucketer(
+            pool=args.naflex_bucket_pool,
+            chunk=args.naflex_bucket_chunk,
+            seed=args.seed,
+            epoch=shared_epoch,
+        ))
+    stages.append(NaFlexBatcher(
+        train_num_samples=num_samples,
+        train_num_tokens=num_tokens,
+        patch_size=patch_size,
+        patch_size_choices=patch_size_choices,
+        patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
+        seq_lens=naflex_data_config.train_seq_lens,
+        max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+        transform_factory=transform_factory,
+        seed=args.seed,
+        shuffle=True,
+        distributed=args.distributed,
+        rank=args.rank,
+        world_size=args.world_size,
+        epoch=shared_epoch,
+        batch_divisor=naflex_data_config.batch_divisor,
+        image_key=modality_key,
+        pad_id=pad_id,
+        per_row_text_tokens=per_row_text_tokens,
+    ))
+    if pad_id is not None:
+        _logger.info(
+            f"NaFlex generative batch budget = {naflex_data_config.max_tokens_per_batch} total tokens/row-batch "
+            f"({modality_key} bucket + text cap {per_row_text_tokens})"
+            + ("; length bucketing ON" if getattr(args, 'naflex_length_bucketing', False) else "")
+        )
+    pipeline.extend(stages)
+    return pipeline[-1]
+
+
+def naflex_loader_counts(batcher, args):
+    """NaFlex epoch counts come from the batcher's deterministic schedule (no with_epoch / fixed-batch math)."""
+    num_workers = max(1, args.workers)
+    return batcher.num_batches_for_workers(num_workers), batcher.num_samples_for_workers(num_workers)
+
+
 def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -542,51 +615,21 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     tokenize_text = TokenizeText(tokenizer, variable=genlip_text)
 
     if use_naflex_train:
-        naflex_patch_size = None
-        naflex_patch_size_choices = naflex_data_config.train_patch_sizes
-        if not naflex_data_config.variable_patch_size:
-            naflex_patch_size = naflex_patch_size_choices[0]
-            naflex_patch_size_choices = None
-        naflex_stages = [wds.map_dict(text=tokenize_text)]
-        if genlip_text and getattr(args, 'naflex_length_bucketing', False):
-            # Reorder (tokenized) samples so similar caption lengths batch together, tightening text padding.
-            naflex_stages.append(LengthBucketer(
-                pool=args.naflex_bucket_pool,
-                chunk=args.naflex_bucket_chunk,
-                seed=args.seed,
-                epoch=shared_epoch,
-            ))
-        naflex_stages.append(NaFlexBatcher(
-            train_num_samples=num_samples,
-            train_num_tokens=num_image_tokens,
-            patch_size=naflex_patch_size,
-            patch_size_choices=naflex_patch_size_choices,
-            patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
-            seq_lens=naflex_data_config.train_seq_lens,
-            max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+        naflex_batcher = append_naflex_train_stages(
+            pipeline,
+            naflex_data_config=naflex_data_config,
             transform_factory=preprocess_img,
-            seed=args.seed,
-            shuffle=True,
-            distributed=args.distributed,
-            rank=args.rank,
-            world_size=args.world_size,
-            epoch=shared_epoch,
-            batch_divisor=naflex_data_config.batch_divisor,
+            tokenize_text=tokenize_text,
+            modality_key="image",
+            num_samples=num_samples,
+            num_tokens=num_image_tokens,
+            args=args,
+            shared_epoch=shared_epoch,
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
-        ))
-        if genlip_text:
-            _logger.info(
-                f"GenLIP NaFlex batch budget = {naflex_data_config.max_tokens_per_batch} total tokens/row-batch "
-                f"(image bucket + text cap {naflex_text_cost})"
-                + ("; length bucketing ON" if getattr(args, 'naflex_length_bucketing', False) else "")
-            )
-        pipeline.extend(naflex_stages)
-        naflex_batcher = pipeline[-1]
+        )
         dataset = wds.DataPipeline(*pipeline)
-        num_workers = max(1, args.workers)
-        num_batches = naflex_batcher.num_batches_for_workers(num_workers)
-        num_samples = naflex_batcher.num_samples_for_workers(num_workers)
+        num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
     elif use_naflex_eval:
         pipeline.extend([
             wds.map_dict(image=preprocess_img, text=tokenize_text),

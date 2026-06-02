@@ -1,6 +1,13 @@
 import importlib.util
 
 from .config import CLIPAudioCfg
+from .naflex_audio import (
+    AudioNaFlexCfg,
+    AudioNaFlexPatchify,
+    AudioNaFlexTransformFactory,
+    MelPatchEmbed,
+    mel_to_patches,
+)
 from .tower import AudioTower
 from .transform import AudioAugmentationCfg, audio_transform_v2
 
@@ -23,8 +30,13 @@ def require_audio():
 __all__ = [
     "AUDIO_AVAILABLE",
     "AudioAugmentationCfg",
+    "AudioNaFlexCfg",
+    "AudioNaFlexPatchify",
+    "AudioNaFlexTransformFactory",
     "AudioTower",
     "CLIPAudioCfg",
+    "MelPatchEmbed",
     "audio_transform_v2",
+    "mel_to_patches",
     "require_audio",
 ]

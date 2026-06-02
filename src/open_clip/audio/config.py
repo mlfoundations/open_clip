@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Dict
 
 
 @dataclass
@@ -20,3 +21,10 @@ class CLIPAudioCfg:
     proj_act: str = "gelu"
     training_head: bool = False
     pretrained: bool = False
+
+    # NaFlexClap (model_type == "naflexvit"): spectrogram-ViT encoder geometry. Mel fields above are reused.
+    patch_freq: int = 64   # p_f: freq bins per patch (== mel_bins -> full-height strips)
+    patch_time: int = 4    # p_t: time frames per patch
+    in_chans: int = 1
+    rope_type: str = "axial"  # 2-D (freq, time) RoPE; 'mrope'/'' overridable (MRoPE needs naflexvit_cfg section)
+    naflexvit_cfg: Dict[str, Any] = field(default_factory=dict)  # NaFlexVitCfg overrides (embed_dim/depth/...)

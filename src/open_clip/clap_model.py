@@ -38,6 +38,7 @@ class CLAP(nn.Module):
     ):
         super().__init__()
         self.output_dict = output_dict
+        self.embed_dim = embed_dim
         self.audio = _build_audio_tower(embed_dim, audio_cfg)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.context_length = self.text.context_length

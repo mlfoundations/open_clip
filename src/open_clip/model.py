@@ -286,6 +286,7 @@ class CLIP(nn.Module):
     ):
         super().__init__()
         self.output_dict = output_dict
+        self.embed_dim = embed_dim
 
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
@@ -506,6 +507,7 @@ class CustomTextCLIP(nn.Module):
     ):
         super().__init__()
         self.output_dict = output_dict
+        self.embed_dim = embed_dim
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.context_length = self.text.context_length

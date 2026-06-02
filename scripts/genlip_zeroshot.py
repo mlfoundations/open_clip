@@ -121,7 +121,7 @@ def score_image(model, image_row, chunks, num_classes, device, autocast):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model", default="naflexgenlip_b16_224", help="open_clip model name (a genlip config).")
+    parser.add_argument("--model", default="naflexgenlip_b16", help="open_clip model name (a genlip config).")
     parser.add_argument("--checkpoint", default=None, help="Path to trained weights (raw or task checkpoint).")
     parser.add_argument("--use-ema", action="store_true", help="Prefer EMA weights if present in the checkpoint.")
     parser.add_argument("--imagenet-val", required=True, help="ImageFolder val dir (class subdirs, standard order).")

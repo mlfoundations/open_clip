@@ -68,6 +68,7 @@ class CoCa(nn.Module):
             pad_id: int = 0,
     ):
         super().__init__()
+        self.embed_dim = embed_dim
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
