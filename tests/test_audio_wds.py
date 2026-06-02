@@ -118,7 +118,9 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
 
     args = _base_args(shard)
     args.genlap = True  # triggers the NaFlex audio branch (generative: variable text + pad_id)
-    args.naflex_length_bucketing = False
+    args.naflex_length_bucketing = True  # exercise AudioLengthBucketer in the pipeline
+    args.naflex_bucket_pool = 4          # tiny pool so the bucketer flushes fast over the test shard
+    args.naflex_bucket_chunk = 2
     preprocess_audio = AudioNaFlexTransformFactory(model.audio_cfg)  # genlap audio_cfg is already AudioNaFlexCfg
     naflex_data_config = NaFlexDataConfig.resolve(
         patch_sizes=[16], seq_lens=(256,), max_tokens_per_batch=2560, batch_divisor=1,

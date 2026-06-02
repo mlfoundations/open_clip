@@ -2,6 +2,7 @@ import io
 import json
 import math
 import random
+from dataclasses import asdict, is_dataclass
 from functools import partial
 from typing import Dict, List
 
@@ -10,7 +11,6 @@ import webdataset as wds
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 
-from open_clip import get_model_config
 from open_clip_train.data import (
     DataInfo,
     RepeatedShardList,
@@ -26,7 +26,7 @@ from open_clip_train.data import (
     tarfile_to_samples_nothrow,
     wds_shuffle_sizes,
 )
-from open_clip_train.naflex_data import collate_naflex_dicts, create_naflex_eval_transform
+from open_clip_train.naflex_data import AudioLengthBucketer, collate_naflex_dicts, create_naflex_eval_transform
 
 
 def _audio_loader_kwargs(args):
@@ -228,6 +228,33 @@ def get_wds_audio_dataset(
 
     naflex_batcher = None
     if naflex_train:
+        # Audio is variable-length (no waveform repeat/pad), so bucket whenever enabled -- for BOTH generative
+        # (genlap) and contrastive (naflexclap). The key is mode-aware: caption length for the block layout, and
+        # the audio+caption token SUM when GenLAP packs each row (pack_prefix) so the compacted T = max(k+m) is
+        # tight. pack_prefix + the mel geometry come off the AudioNaFlexTransformFactory we already received
+        # (set from the resolved model in _build_preprocess), which is robust to local-dir:/hf-hub:/override
+        # config sources that a get_model_config(args.model) name lookup would miss.
+        audio_bucketer = None
+        if getattr(args, "naflex_length_bucketing", False):
+            packed = bool(getattr(preprocess_audio, "pack_prefix", False))
+            bucket_geom = {}
+            audio_naflex_cfg = getattr(preprocess_audio, "cfg", None)
+            if packed and audio_naflex_cfg is not None:
+                bucket_geom = dict(
+                    packed=True,
+                    freq_tokens=audio_naflex_cfg.freq_tokens,
+                    patch_time=audio_naflex_cfg.patch_time,
+                    hop_size=audio_naflex_cfg.hop_size,
+                    sample_rate=audio_naflex_cfg.sample_rate,
+                    max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp: clips truncate to this bucket
+                )
+            audio_bucketer = AudioLengthBucketer(
+                pool=args.naflex_bucket_pool,
+                chunk=args.naflex_bucket_chunk,
+                seed=args.seed,
+                epoch=shared_epoch,
+                **bucket_geom,
+            )
         # Reuse the modality-agnostic NaFlex tail; the batcher applies preprocess_audio (an
         # AudioNaFlexTransformFactory) to sample["audio"] and reads sample["text"]. Epoch by num_samples
         # (the --naflex-num-train-image-tokens token-budget mode stays image-only for now).
@@ -243,6 +270,7 @@ def get_wds_audio_dataset(
             shared_epoch=shared_epoch,
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
+            bucketer=audio_bucketer,
         )
     elif naflex_eval:
         eval_transform, eval_seq_len, _ = create_naflex_eval_transform(preprocess_audio, naflex_data_config)
@@ -309,8 +337,11 @@ class SyntheticAudioDataset(Dataset):
     def __init__(self, audio_cfg, transform=None, dataset_size=100, tokenizer=None):
         self.audio_cfg = audio_cfg
         self.transform = transform
-        self.clip_samples = audio_cfg.get("clip_samples", 480000)
-        self.sample_rate = audio_cfg.get("sample_rate", 48000)
+        self.sample_rate = int(audio_cfg.get("sample_rate", 48000))
+        # NaFlex audio configs are variable-duration and do not define clip_samples. If they do provide a
+        # resolved sample_rate, default synthetic clips to one second at that rate; preserve the legacy 10s/48k
+        # fallback when no resolved audio config was available at all.
+        self.clip_samples = int(audio_cfg.get("clip_samples", self.sample_rate if "sample_rate" in audio_cfg else 480000))
         self.dataset_size = dataset_size
         self.preprocess_txt = TokenizeText(tokenizer)
         self.caption = "Dummy caption"
@@ -328,8 +359,32 @@ class SyntheticAudioDataset(Dataset):
 
 
 def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
-    model_cfg = get_model_config(args.model) or {}
-    audio_cfg = model_cfg.get("audio_cfg", {})
+    # NOT YET supported for NaFlex audio models (GenLAP / NaFlexClap): SyntheticAudioDataset feeds the transform a
+    # (waveform, sample_rate) tuple, but the NaFlex audio transform is a factory that patchifies on demand
+    # (__call__(max_seq_len, patch_size)) -- so it would mis-handle the tuple and fail downstream in the collate.
+    # Fail loudly with guidance rather than producing a confusing error. Use webdataset-audio for these models.
+    if getattr(preprocess_fn, "is_naflex_transform_factory", False):
+        raise NotImplementedError(
+            "synthetic-audio is not supported for NaFlex audio models (GenLAP / NaFlexClap) yet; the synthetic "
+            "dataset emits raw (waveform, sample_rate) but the NaFlex transform expects to patchify on demand. "
+            "Use --dataset-type webdataset-audio for these models."
+        )
+    # Source the audio cfg (dummy clip length / sample rate) from the resolved preprocess transform, which is
+    # built from the actual instantiated model. get_model_config(args.model) resolves *built-in* config names
+    # ONLY -- it would miss hf-hub:/local-dir: models and any runtime config overrides. AudioPreprocess.cfg is
+    # exactly the audio-cfg dict; NaFlex audio factories carry an AudioNaFlexCfg dataclass.
+    audio_cfg = getattr(preprocess_fn, "cfg", None)
+    if isinstance(audio_cfg, dict):
+        audio_cfg = dict(audio_cfg)
+    elif is_dataclass(audio_cfg):
+        audio_cfg = asdict(audio_cfg)
+    elif audio_cfg is not None and hasattr(audio_cfg, "__dict__"):
+        audio_cfg = {
+            key: value for key, value in vars(audio_cfg).items()
+            if not key.startswith("_") and isinstance(value, (str, int, float, bool, tuple, list, dict, type(None)))
+        }
+    else:
+        audio_cfg = {}
     dataset = SyntheticAudioDataset(
         audio_cfg=audio_cfg,
         transform=preprocess_fn,

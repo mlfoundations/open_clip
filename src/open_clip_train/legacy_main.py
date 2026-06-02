@@ -23,7 +23,7 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, get_model_config, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, get_tokenizer, create_loss
 from open_clip_train.data import get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.naflex_data import (
@@ -70,9 +70,8 @@ def get_latest_checkpoint(path: str, remote : bool):
 
 def main(args):
     args = parse_args(args)
-    model_cfg = get_model_config(args.model) or {}
-    if args.dataset_type in ("webdataset-audio", "synthetic-audio") or "audio_cfg" in model_cfg:
-        raise NotImplementedError("CLAP audio training is only supported by open_clip_train.main.")
+    if args.dataset_type in ("webdataset-audio", "synthetic-audio"):
+        raise NotImplementedError("Audio training is only supported by open_clip_train.main.")
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -240,6 +239,8 @@ def main(args):
         cache_dir=args.cache_dir,
         **model_kwargs,
     )
+    if hasattr(model, 'audio') or hasattr(model, 'audio_cfg'):
+        raise NotImplementedError("Audio training is only supported by open_clip_train.main.")
     if args.distill:
         # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(

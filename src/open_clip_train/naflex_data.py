@@ -242,6 +242,80 @@ class LengthBucketer:
             yield from self._flush(buffer, rng)
 
 
+class AudioLengthBucketer(LengthBucketer):
+    """NaFlex *audio* length bucketer with a **mode-aware** sort key.
+
+    NaFlex audio is genuinely variable-length (the spectrogram is patchified at native duration, no waveform
+    repeat/pad), so unlike the image path both the audio-patch count AND the caption length vary per row. Which
+    of those actually drives per-batch padding -- and therefore the right thing to bucket on -- depends on the
+    GenLAP model's sequence layout:
+
+      * **block layout** (``pack_prefix`` off): audio patches pad to the fixed seq-len bucket, so clip duration
+        is irrelevant to padding -- only caption length matters (text pads to batch-max). Key = caption length
+        (the base-class behaviour). This is also the right key for the contrastive (fixed-text) NaFlexClap case,
+        where it degenerates to a constant (no reordering).
+      * **packed layout** (``pack_prefix`` on): each row is compacted to ``[valid audio ; valid text ; PAD]`` of
+        length ``k + m`` and the batch pads to ``T = max_i(k_i + m_i)``, so the TOTAL token count drives padding.
+        Key = estimated audio tokens ``k`` + caption length ``m``. ``k`` is estimated from the waveform + mel
+        geometry (``freq_tokens * (frames // patch_time)``), available because ``sample[audio_key]`` is still the
+        decoded ``(waveform, sr)`` tuple at this stage (the patchify happens later, in the batcher's collate).
+
+    Reorder-only and picklable, like the base class, so ``num_batches`` / DDP step counts are unchanged. Subclass
+    for any future audio-specific bucketing concerns (fusion views, multi-rate, etc.).
+    """
+
+    def __init__(
+            self,
+            *args,
+            audio_key: str = "audio",
+            packed: bool = False,
+            freq_tokens: int = 1,
+            patch_time: int = 1,
+            hop_size: int = 1,
+            sample_rate: int = 0,
+            max_audio_tokens: int = 0,
+            **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.audio_key = audio_key
+        self.packed = bool(packed)
+        self.freq_tokens = max(1, int(freq_tokens))
+        self.patch_time = max(1, int(patch_time))
+        self.hop_size = max(1, int(hop_size))
+        self.sample_rate = int(sample_rate)
+        self.max_audio_tokens = max(0, int(max_audio_tokens))  # cap (== max seq-len bucket); 0 = uncapped
+
+    def _audio_tokens(self, sample: Sample) -> int:
+        """Estimate the NaFlex audio-patch count ``k`` from the decoded ``(waveform, sr)`` and mel geometry.
+
+        Clamped to ``max_audio_tokens`` (the largest seq-len bucket): the transform truncates clips to the
+        sampled bucket, so two clips that both overflow the largest bucket are indistinguishable after
+        truncation -- without the clamp a very long outlier would be over-weighted in the sort.
+        """
+        audio = sample.get(self.audio_key)
+        if not (isinstance(audio, (tuple, list)) and audio and hasattr(audio[0], "shape")):
+            return 0
+        waveform, sr = audio[0], (audio[1] if len(audio) > 1 else 0)
+        num_samples = waveform.shape[-1]
+        if self.sample_rate and sr and sr != self.sample_rate:
+            num_samples = num_samples * self.sample_rate / sr  # mel runs at sample_rate -> count resampled frames
+        frames = int(num_samples // self.hop_size) + 1
+        tokens = self.freq_tokens * (frames // self.patch_time)
+        return min(tokens, self.max_audio_tokens) if self.max_audio_tokens else tokens
+
+    def _caption_len(self, sample: Sample) -> int:
+        text = sample.get(self.key)
+        if text is None:
+            return 0
+        return text.shape[0] if hasattr(text, "shape") else len(text)
+
+    def _length(self, sample: Sample) -> int:
+        caption = self._caption_len(sample)
+        if not self.packed:
+            return caption  # block layout: audio pads to the bucket -> only caption padding varies
+        return self._audio_tokens(sample) + caption  # packed layout: row length is k + m -> bucket by the sum
+
+
 class NaFlexBatchScheduler:
     """Shared NaFlex schedule, patchify, and collation logic."""
 

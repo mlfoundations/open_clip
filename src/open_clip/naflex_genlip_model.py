@@ -77,6 +77,10 @@ class NaFlexGenLipTrunkCfg:
     hidden_act: str = 'silu'
     layer_norm_eps: float = 1e-6
     max_position_embeddings: int = 16384
+    # When True, the generative (compute_loss) path compacts each row to [valid prefix ; valid text ; PAD]
+    # instead of the fixed [prefix-block ; text-block] layout -- removes wasted padding between the prefix and
+    # text (big win for variable-length audio). Default False = current block layout (existing runs unchanged).
+    pack_prefix: bool = False
 
 
 _ACT_FN = {
@@ -388,6 +392,102 @@ def build_prefix_lm_mask(patch_valid: torch.Tensor, text_valid: torch.Tensor) ->
     return allowed.unsqueeze(1)
 
 
+def build_packed_prefix_lm_mask(prefix_pos: torch.Tensor, text_pos: torch.Tensor) -> torch.Tensor:
+    """Prefix-LM mask for the packed ``[valid prefix ; valid text ; PAD]`` layout, shape ``(B, 1, T, T)``.
+
+    Same allowed pairs as :func:`build_prefix_lm_mask` (prefix<->prefix bidirectional, text->text causal,
+    text->prefix), but the prefix/text split is per-row (``prefix_pos``/``text_pos`` are ``(B, T)`` boolean
+    masks marking each row's prefix and text positions); trailing PAD positions are masked, diagonal forced.
+    """
+    b, t = prefix_pos.shape
+    device = prefix_pos.device
+    valid = prefix_pos | text_pos
+    causal = torch.tril(torch.ones(t, t, dtype=torch.bool, device=device))
+    allowed = (
+        (prefix_pos[:, :, None] & prefix_pos[:, None, :])
+        | (text_pos[:, :, None] & text_pos[:, None, :] & causal[None])
+        | (text_pos[:, :, None] & prefix_pos[:, None, :])
+    )
+    allowed = allowed & valid[:, None, :]  # remove padding keys
+    idx = torch.arange(t, device=device)
+    allowed[:, idx, idx] = True  # guard against all-masked query rows (the trailing PAD)
+    return allowed.unsqueeze(1)
+
+
+def pack_prefix_sequence(
+        prefix_emb: torch.Tensor,
+        prefix_valid: torch.Tensor,
+        block_pos: torch.Tensor,
+        text_emb: torch.Tensor,
+        text_valid: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compact each row to ``[valid prefix ; valid text ; PAD]`` (drops the padding between prefix and text).
+
+    Assumes valid tokens are front-contiguous (the NaFlex collate / variable-text collate pad at the end).
+
+    Args:
+        prefix_emb: ``(B, Np, W)`` embedded prefix (image/audio) tokens.
+        prefix_valid: ``(B, Np)`` bool.
+        block_pos: ``(3, B, Np + Nt)`` MRoPE position ids from the standard block builder (prefix positions
+            then continuing text positions) -- compacted here rather than recomputed.
+        text_emb: ``(B, Nt, W)`` embedded caption tokens.
+        text_valid: ``(B, Nt)`` bool.
+
+    Returns:
+        ``(combined_emb (B,T,W), combined_pos (3,B,T), attn_mask (B,1,T,T), prefix_lens (B,), text_lens (B,))``
+        with ``T = max_i(k_i + m_i)``.
+    """
+    b, n_prefix, width = prefix_emb.shape
+    n_text = text_emb.shape[1]
+    device = prefix_emb.device
+    k = prefix_valid.bool().sum(dim=1)  # (B,) valid prefix lengths
+    m = text_valid.bool().sum(dim=1)    # (B,) valid text lengths
+    seq_t = int((k + m).amax().item())
+
+    cols = torch.arange(seq_t, device=device)
+    prefix_dst = cols[None, :] < k[:, None]                                          # (B, T)
+    text_dst = (cols[None, :] >= k[:, None]) & (cols[None, :] < (k + m)[:, None])     # (B, T)
+    prefix_src = torch.arange(n_prefix, device=device)[None, :] < k[:, None]          # (B, Np) front-valid
+    text_src = torch.arange(n_text, device=device)[None, :] < m[:, None]              # (B, Nt) front-valid
+
+    combined = prefix_emb.new_zeros(b, seq_t, width)
+    combined[prefix_dst] = prefix_emb[prefix_src]
+    combined[text_dst] = text_emb[text_src]
+
+    pos = block_pos.new_zeros(3, b, seq_t)
+    pos[:, prefix_dst] = block_pos[:, :, :n_prefix][:, prefix_src]
+    pos[:, text_dst] = block_pos[:, :, n_prefix:][:, text_src]
+
+    attn_mask = build_packed_prefix_lm_mask(prefix_dst, text_dst)
+    return combined, pos, attn_mask, k, m
+
+
+def packed_caption_loss(model, prefix_emb, prefix_valid, block_pos, text, text_valid):
+    """Fused autoregressive caption CE over the packed ``[valid prefix ; valid text ; PAD]`` layout.
+
+    Shared by GenLIP and GenLAP (``model`` supplies ``in_proj``/``text_embed``/``rotary``/``trunk``/``out_proj``/
+    ``lm_head``). ``prefix_emb`` is the embedded image/audio tokens; ``block_pos`` is the standard block MRoPE
+    position ids ``(3, B, Np+Nt)``. The trunk runs on the compacted sequence (length ``max_i(k_i+m_i)``), and
+    the loss gathers each row's text-predicting window ``[k_i-1, k_i+m_i-1)`` -- so the first caption token is
+    predicted from the last *valid* prefix token (not a padding slot, as the fixed-block layout would).
+    """
+    text_emb = model.in_proj(model.text_embed(text))
+    combined, pos, attn_mask, k, m = pack_prefix_sequence(
+        prefix_emb, prefix_valid, block_pos, text_emb, text_valid,
+    )
+    cos, sin = model.rotary(combined, pos)
+    hidden = model.out_proj(model.trunk(combined, attn_mask, cos, sin))  # (B, T, text_embed_dim)
+
+    cols = torch.arange(hidden.shape[1], device=hidden.device)
+    pred_dst = (cols[None, :] >= (k - 1)[:, None]) & (cols[None, :] < (k + m - 1)[:, None])  # (B, T)
+    text_src = torch.arange(text.shape[1], device=text.device)[None, :] < m[:, None]         # (B, Nt)
+    pred = hidden[pred_dst]   # (sum(m), D) row-major
+    target = text[text_src]   # (sum(m),) valid caption tokens, row-major aligned (all valid -> no ignore)
+    return fused_linear_cross_entropy(
+        pred, model.lm_head.weight, target, bias=model.lm_head.bias, ignore_index=-100,
+    )
+
+
 def build_image_attn_mask(patch_valid: torch.Tensor) -> torch.Tensor:
     """Full bidirectional mask over valid image patches (vision-encoder-only mode), ``(B, 1, Ni, Ni)``."""
     pv = patch_valid.bool()
@@ -556,6 +656,7 @@ class NaFlexGenLip(nn.Module):
         self.trunk_cfg = genlip_cfg
         self.output_dict = output_dict
         self.embed_dim = embed_dim
+        self.pack_prefix = genlip_cfg.pack_prefix
 
         width = genlip_cfg.width
         text_embed_dim = genlip_cfg.text_embed_dim
@@ -654,6 +755,15 @@ class NaFlexGenLip(nn.Module):
         """
         if text_valid is None:
             text_valid = text != self.pad_id
+
+        if compute_loss and self.pack_prefix:
+            # Packed layout: compact [valid image ; valid text ; PAD] per row (no padding between the two).
+            return {'loss': packed_caption_loss(
+                self,
+                self.patch_embed(image['patches']), image['patch_valid'],
+                build_mrope_position_ids(image['patch_coord'], image['patch_valid'], text_valid),
+                text, text_valid,
+            )}
 
         hidden, ni = self._encode(image, text, text_valid)  # (B, S, D), Ni
 

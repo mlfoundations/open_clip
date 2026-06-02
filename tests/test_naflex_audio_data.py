@@ -66,6 +66,91 @@ def test_audio_naflex_2d_token_cap_preserves_freq_rows():
     assert out["patch_coord"][:, 0].max().item() == 1    # BOTH freq rows present (no dropped row)
 
 
+def test_audio_length_bucketer_caption_only_when_block():
+    """pack_prefix OFF (block layout): audio pads to the seq-len bucket, so the key is caption length only."""
+    from open_clip_train.naflex_data import AudioLengthBucketer
+
+    sr = 16000
+    durs = [3, 1, 2, 1]   # seconds (waveform length / sr) -- must NOT influence the key here
+    caps = [5, 9, 2, 3]   # caption token counts
+    samples = [
+        {"audio": (torch.randn(1, sr * d), sr), "text": torch.zeros(c, dtype=torch.long)}
+        for d, c in zip(durs, caps)
+    ]
+    bucketer = AudioLengthBucketer(pool=10, chunk=10, seed=0, epoch=0)  # packed defaults off
+    assert bucketer._length(samples[0]) == 5  # caption length; duration ignored in block mode
+
+    out = list(bucketer(iter(samples)))
+    assert len(out) == len(samples)  # permutation, nothing dropped/duplicated
+    assert [s["text"].shape[0] for s in out] == sorted(caps)  # sorted by caption length
+
+
+def test_audio_length_bucketer_token_sum_when_packed():
+    """pack_prefix ON (packed layout): bucket by the compacted row length = est. audio tokens + caption."""
+    from open_clip_train.naflex_data import AudioLengthBucketer
+
+    sr = 16000
+    durs = [3, 1, 2, 1]
+    caps = [5, 9, 2, 4]
+    samples = [
+        {"audio": (torch.randn(1, sr * d), sr), "text": torch.zeros(c, dtype=torch.long)}
+        for d, c in zip(durs, caps)
+    ]
+    # freq_tokens=1, patch_time=1, hop_size=sr -> audio_tokens = (samples // sr) + 1 = duration_sec + 1
+    bucketer = AudioLengthBucketer(
+        pool=10, chunk=10, seed=0, epoch=0,
+        packed=True, freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr,
+    )
+    assert bucketer._length(samples[0]) == (3 + 1) + 5  # audio_tokens (dur+1) + caption
+
+    sums = [(d + 1) + c for d, c in zip(durs, caps)]  # [9, 11, 5, 6]
+    out = list(bucketer(iter(samples)))
+    assert len(out) == len(samples)
+    assert [bucketer._length(s) for s in out] == sorted(sums)  # sorted by the token sum
+
+
+def test_audio_length_bucketer_clamps_long_clips_when_packed():
+    """The estimate is clamped to max_audio_tokens (the largest bucket): clips that both overflow it are
+    indistinguishable after the transform truncates them, so they sort by caption -- no outlier over-weighting."""
+    from open_clip_train.naflex_data import AudioLengthBucketer
+
+    sr = 16000
+    bucketer = AudioLengthBucketer(
+        pool=10, chunk=10, seed=0, epoch=0,
+        packed=True, freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr, max_audio_tokens=5,
+    )
+    long_short_cap = {"audio": (torch.randn(1, sr * 100), sr), "text": torch.zeros(2, dtype=torch.long)}
+    long_long_cap = {"audio": (torch.randn(1, sr * 50), sr), "text": torch.zeros(4, dtype=torch.long)}
+    # both audio estimates (101, 51) clamp to 5 -> keys are 5+2 and 5+4, NOT 103 vs 55
+    assert bucketer._length(long_short_cap) == 5 + 2
+    assert bucketer._length(long_long_cap) == 5 + 4
+
+
+def test_audio_transform_factory_carries_pack_prefix():
+    """Concern 1: pack_prefix rides on the transform factory (resolved from the model in _build_preprocess), so
+    the data path reads it off the transform it already gets -- robust to local-dir:/hf-hub:/override configs."""
+    cfg = AudioNaFlexCfg(n_mels=64, patch_freq=64, patch_time=4)
+    assert AudioNaFlexTransformFactory(cfg).pack_prefix is False                  # default off
+    assert AudioNaFlexTransformFactory(cfg, pack_prefix=True).pack_prefix is True
+
+    from open_clip.factory import _build_preprocess
+    model = open_clip.create_model(CONFIG_1D)
+    model.pack_prefix = True  # a packed GenLAP, regardless of how its config was sourced
+    train, val = _build_preprocess(model)
+    assert train.pack_prefix is True and val.pack_prefix is True
+
+
+def test_synthetic_audio_rejects_naflex_transform():
+    """synthetic-audio is NOT supported for NaFlex audio models (GenLAP/NaFlexClap) -> fail loudly, not with a
+    confusing 'AudioNaFlexPatchify object is not subscriptable' collate error."""
+    from open_clip_train.audio_data import get_synthetic_audio_dataset
+
+    factory = AudioNaFlexTransformFactory(AudioNaFlexCfg(n_mels=64, patch_freq=64, patch_time=4))
+    args = SimpleNamespace(model=CONFIG_1D, train_num_samples=4, batch_size=2, workers=0, distributed=False)
+    with pytest.raises(NotImplementedError, match="NaFlex"):
+        get_synthetic_audio_dataset(args, factory, is_train=True)
+
+
 def test_create_model_and_transforms_returns_audio_naflex_factory():
     """GenLAP must not crash create_model_and_transforms (no .audio/.visual) and gets the audio factory."""
     model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms(CONFIG_1D)

@@ -58,6 +58,35 @@ def test_genlap_forward_logits_and_loss(config):
     assert loss.ndim == 0 and torch.isfinite(loss)
 
 
+@pytest.mark.parametrize("config", [CONFIG_1D, CONFIG_2D])
+def test_genlap_pack_prefix_parity_full_prefix(config):
+    """pack_prefix defaults off; on, it's loss-identical to the block layout for a full prefix (all valid)."""
+    torch.manual_seed(0)
+    model = open_clip.create_model(config).eval()
+    assert model.pack_prefix is False  # toggle defaults off
+
+    cfg = model.audio_cfg
+    d = [mel_to_patches(_mel(t=64), cfg.patch_freq, cfg.patch_time, cfg.in_chans) for _ in range(3)]  # all same len
+    audio = {k: torch.stack([x[k] for x in d]) for k in ("patches", "patch_coord", "patch_valid")}
+    text, text_valid = _text(model.pad_id)
+
+    model.pack_prefix = False
+    block = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    model.pack_prefix = True
+    packed = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    assert torch.allclose(block, packed, atol=1e-5), f"{block.item()} != {packed.item()}"
+
+
+def test_genlap_pack_prefix_variable_runs():
+    """pack_prefix on a variable-length audio batch (k < Na) -> finite loss (block would mispredict tok 0)."""
+    model = open_clip.create_model(CONFIG_1D).eval()
+    model.pack_prefix = True
+    audio = _audio_batch(model)  # last sample shorter -> variable prefix
+    text, text_valid = _text(model.pad_id)
+    loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    assert loss.ndim == 0 and torch.isfinite(loss)
+
+
 def test_genlap_1d_vs_2d_rope_mode():
     model_1d = open_clip.create_model(CONFIG_1D)
     model_2d = open_clip.create_model(CONFIG_2D)
