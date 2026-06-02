@@ -1,0 +1,29 @@
+{
+    "embed_dim": 64,
+    "audio_cfg": {
+        "model_type": "naflexvit",
+        "sample_rate": 48000,
+        "mel_bins": 64,
+        "window_size": 1024,
+        "hop_size": 480,
+        "fmin": 50,
+        "fmax": 14000,
+        "patch_freq": 64,
+        "patch_time": 4,
+        "in_chans": 1,
+        "rope_type": "axial",
+        "naflexvit_cfg": {
+            "embed_dim": 96,
+            "depth": 2,
+            "num_heads": 6,
+            "mlp_ratio": 4.0
+        }
+    },
+    "text_cfg": {
+        "context_length": 32,
+        "vocab_size": 49408,
+        "width": 64,
+        "heads": 4,
+        "layers": 2
+    }
+}

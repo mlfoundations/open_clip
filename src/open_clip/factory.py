@@ -18,6 +18,7 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
 from .clap_model import CLAP
 from .coca_model import CoCa
 from .naflex_genlip_model import NaFlexGenLip
+from .naflex_genlap_model import NaFlexGenLap
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
@@ -59,7 +60,10 @@ def _rescan_model_configs():
             model_cfg = json.load(f)
             has_vision = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
             has_audio = all(a in model_cfg for a in ('embed_dim', 'audio_cfg', 'text_cfg'))
-            if has_vision or has_audio:
+            # GenLAP: generative audio model with a NaFlex spectrogram prefix (front-end key is
+            # 'audio_naflex_cfg', NOT 'audio_cfg' which is the CLAP key).
+            has_genlap = all(a in model_cfg for a in ('embed_dim', 'genlap_cfg', 'text_cfg'))
+            if has_vision or has_audio or has_genlap:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -505,6 +509,11 @@ def create_model(
     if 'genlip_cfg' in model_cfg:
         model_cfg.pop('custom_text', None)
         model_class = NaFlexGenLip
+    elif 'genlap_cfg' in model_cfg:
+        # GenLAP: generative audio-language model (NaFlex spectrogram prefix). Its front-end config key is
+        # 'audio_naflex_cfg' (NOT 'audio_cfg', which would trip is_audio_model -> CLAP routing).
+        model_cfg.pop('custom_text', None)
+        model_class = NaFlexGenLap
     elif is_audio_model:
         model_class = CLAP
     else:
@@ -893,7 +902,7 @@ def create_loss(args):
             rank=args.rank,
             world_size=args.world_size,
         )
-    elif "genlip" in args.model.lower():
+    elif "genlip" in args.model.lower() or "genlap" in args.model.lower():
         return GenLipLoss()
     elif args.siglip:
         return SigLipLoss(
@@ -927,7 +936,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     Returns:
         A TrainingTask subclass instance.
     """
-    from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, DistillCLIPTask, CLAPTask
+    from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, GenLapTask, DistillCLIPTask, CLAPTask
 
     cache_labels = _use_loss_label_cache(args)
     shared = dict(rank=args.rank, world_size=args.world_size)
@@ -959,6 +968,8 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             cache_labels=cache_labels,
             **shared,
         )
+    elif "genlap" in args.model.lower():
+        task = GenLapTask(model)
     elif "genlip" in args.model.lower():
         task = GenLipTask(model)
     elif args.siglip:
@@ -980,6 +991,41 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             raise ValueError("NaFlex data config can only be used with image-text tasks.")
         task.set_naflex_data_config(naflex_data_config)
     return task
+
+
+def _build_preprocess(model, *, aug_cfg=None, audio_aug_cfg=None):
+    """Return ``(preprocess_train, preprocess_val)`` for the model's modality.
+
+    Three branches: GenLAP (NaFlex spectrogram → ``AudioNaFlexTransformFactory``), CLAP (``audio_transform_v2``),
+    and image (``image_transform_v2`` + the NaFlex-eval val nuance). GenLAP must come first: it has neither
+    ``.audio`` nor ``.visual``, so it would otherwise crash the image branch. Shared by
+    ``create_model_and_transforms`` and ``create_model_from_pretrained``.
+    """
+    if isinstance(model, NaFlexGenLap):
+        from .audio.naflex_audio import AudioNaFlexTransformFactory
+
+        factory = AudioNaFlexTransformFactory(model.audio_cfg)
+        return factory, factory
+    if hasattr(model, 'audio') and getattr(model.audio.cfg, 'model_type', '').lower() == 'naflexvit':
+        # NaFlexClap: CLAP with a NaFlex spectrogram-ViT audio tower -> NaFlex patchify transform (not HTSAT).
+        from .audio.naflex_audio import AudioNaFlexCfg, AudioNaFlexTransformFactory
+
+        factory = AudioNaFlexTransformFactory(AudioNaFlexCfg.from_clip_audio_cfg(model.audio.cfg))
+        return factory, factory
+    if hasattr(model, 'audio'):
+        from .audio.transform import audio_transform_v2
+
+        return (
+            audio_transform_v2(model.audio.cfg, is_train=True, audio_aug_cfg=audio_aug_cfg),
+            audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg),
+        )
+    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
+    preprocess_train = image_transform_v2(pp_cfg, is_train=True, aug_cfg=aug_cfg)
+    if is_naflex_aug_cfg(aug_cfg):
+        preprocess_val = naflex_eval_transform_v2(pp_cfg)
+    else:
+        preprocess_val = image_transform_v2(pp_cfg, is_train=False)
+    return preprocess_train, preprocess_val
 
 
 def create_model_and_transforms(
@@ -1113,26 +1159,7 @@ def create_model_and_transforms(
         **model_kwargs,
     )
 
-    if hasattr(model, 'audio'):
-        from .audio.transform import audio_transform_v2
-
-        preprocess_train = audio_transform_v2(model.audio.cfg, is_train=True, audio_aug_cfg=audio_aug_cfg)
-        preprocess_val = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
-    else:
-        pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
-
-        preprocess_train = image_transform_v2(
-            pp_cfg,
-            is_train=True,
-            aug_cfg=aug_cfg,
-        )
-        if is_naflex_aug_cfg(aug_cfg):
-            preprocess_val = naflex_eval_transform_v2(pp_cfg)
-        else:
-            preprocess_val = image_transform_v2(
-                pp_cfg,
-                is_train=False,
-            )
+    preprocess_train, preprocess_val = _build_preprocess(model, aug_cfg=aug_cfg, audio_aug_cfg=audio_aug_cfg)
 
     return model, preprocess_train, preprocess_val
 
@@ -1252,14 +1279,6 @@ def create_model_from_pretrained(
     if not return_transform:
         return model
 
-    if hasattr(model, 'audio'):
-        from .audio.transform import audio_transform_v2
-
-        preprocess = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
-    else:
-        preprocess = image_transform_v2(
-            PreprocessCfg(**model.visual.preprocess_cfg),
-            is_train=False,
-        )
+    _, preprocess = _build_preprocess(model, audio_aug_cfg=audio_aug_cfg)
 
     return model, preprocess

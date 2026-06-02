@@ -2,6 +2,7 @@ import io
 import json
 import math
 import random
+from functools import partial
 from typing import Dict, List
 
 import torch
@@ -12,6 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 from open_clip import get_model_config
 from open_clip_train.data import (
     DataInfo,
+    RepeatedShardList,
     ResampledShards2,
     SharedEpoch,
     TokenizeText,
@@ -19,12 +21,15 @@ from open_clip_train.data import (
     _SAMPLE_SHUFFLE_SIZE,
     _SHARD_SHUFFLE_INITIAL,
     _SHARD_SHUFFLE_SIZE,
+    append_naflex_train_stages,
     detshuffle2,
     expand_urls,
     get_dataset_size,
     log_and_continue,
+    naflex_loader_counts,
     tarfile_to_samples_nothrow,
 )
+from open_clip_train.naflex_data import collate_naflex_dicts, create_naflex_eval_transform
 
 
 def filter_no_caption_or_no_audio(sample):
@@ -49,6 +54,24 @@ class _TokenizeAudioCaption:
 
     def __call__(self, text):
         return self.tokenizer(_extract_caption(text))[0]
+
+
+class AudioCaptionTokenizer:
+    """Picklable caption-member -> token tensor for the NaFlex audio path.
+
+    Reuses ``_extract_caption`` (json/txt/cls + multi-caption handling); ``variable=True`` returns a 1-D
+    unpadded sequence (the generative contract the NaFlex collator pads per-batch), mirroring ``TokenizeText``.
+    """
+
+    def __init__(self, tokenizer, variable: bool = False):
+        self.tokenizer = tokenizer
+        self.variable = variable
+
+    def __call__(self, text):
+        caption = _extract_caption(text)
+        if self.variable:
+            return self.tokenizer(caption, pad=False)[0]
+        return self.tokenizer(caption)[0]
 
 
 def _keep_audio_text(sample):
@@ -121,6 +144,17 @@ def get_wds_audio_dataset(
             "(with --dataset-resampled)."
         )
 
+    # NaFlex audio path (GenLAP generative + NaFlexClap contrastive) mirrors the image NaFlex path
+    # (RepeatedShardList head + batcher-derived epoch); otherwise fall through to the standard CLAP fixed-batch
+    # loader. `generative` (GenLAP) => variable-length caption concatenated to audio (pad_id, text budget);
+    # contrastive (NaFlexClap) => fixed-length text in a separate tower (pad_id=None, no text budget).
+    naflex_audio = naflex_data_config is not None and (
+        getattr(args, "genlap", False) or getattr(args, "naflexclap", False)
+    )
+    generative = getattr(args, "genlap", False)
+    naflex_train = naflex_audio and is_train
+    naflex_eval = naflex_audio and not is_train
+
     if resampled:
         pipeline = [
             ResampledShards2(
@@ -130,6 +164,10 @@ def get_wds_audio_dataset(
                 epoch=shared_epoch,
             )
         ]
+    elif naflex_train:
+        num_shards = num_shards or len(expand_urls(input_shards)[0])
+        assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"
+        pipeline = [RepeatedShardList(input_shards)]
     else:
         expanded_shards, _ = expand_urls(input_shards)
         pipeline = [wds.SimpleShardList(expanded_shards)]
@@ -163,22 +201,74 @@ def get_wds_audio_dataset(
         )
 
     audio_ext = getattr(args, "audio_ext", "flac")
+    # Shared decode/filter/rename head (sample -> {audio: (waveform, sr), text: <raw caption member>}).
     pipeline.extend(
         [
             wds.select(filter_no_caption_or_no_audio),
             wds.decode(_decode_audio, handler=log_and_continue),
             wds.rename(audio=audio_ext, text="json;txt;cls", keep=False),
-            wds.map_dict(
-                audio=preprocess_audio,
-                text=_TokenizeAudioCaption(tokenizer),
-            ),
-            wds.map(_keep_audio_text),
-            wds.batched(args.batch_size, partial=not is_train, collation_fn=_audio_collate),
         ]
     )
 
+    # Generative (GenLAP) concatenates a variable-length caption to the audio (needs pad_id + a per-row text
+    # budget); contrastive (NaFlexClap) uses fixed-length text in a separate tower (pad_id=None -> NaFlexBatcher
+    # fixed-text collate; no text in the audio token budget).
+    naflex_pad_id = getattr(tokenizer, "pad_token_id", None) if generative else None
+    naflex_text_cost = (getattr(tokenizer, "context_length", 0) or 0) if generative else 0
+    naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=generative)
+
+    naflex_batcher = None
+    if naflex_train:
+        # Reuse the modality-agnostic NaFlex tail; the batcher applies preprocess_audio (an
+        # AudioNaFlexTransformFactory) to sample["audio"] and reads sample["text"]. Epoch by num_samples
+        # (the --naflex-num-train-image-tokens token-budget mode stays image-only for now).
+        naflex_batcher = append_naflex_train_stages(
+            pipeline,
+            naflex_data_config=naflex_data_config,
+            transform_factory=preprocess_audio,
+            tokenize_text=naflex_tokenize,
+            modality_key="audio",
+            num_samples=num_samples,
+            num_tokens=None,
+            args=args,
+            shared_epoch=shared_epoch,
+            pad_id=naflex_pad_id,
+            per_row_text_tokens=naflex_text_cost,
+        )
+    elif naflex_eval:
+        eval_transform, eval_seq_len, _ = create_naflex_eval_transform(preprocess_audio, naflex_data_config)
+        pipeline.extend(
+            [
+                wds.map_dict(audio=eval_transform, text=naflex_tokenize),
+                wds.batched(
+                    args.batch_size,
+                    partial=True,
+                    collation_fn=partial(
+                        collate_naflex_dicts,
+                        image_key="audio",
+                        max_seq_len=eval_seq_len,
+                        pad_id=naflex_pad_id,
+                    ),
+                ),
+            ]
+        )
+    else:
+        pipeline.extend(
+            [
+                wds.map_dict(
+                    audio=preprocess_audio,
+                    text=_TokenizeAudioCaption(tokenizer),
+                ),
+                wds.map(_keep_audio_text),
+                wds.batched(args.batch_size, partial=not is_train, collation_fn=_audio_collate),
+            ]
+        )
+
     dataset = wds.DataPipeline(*pipeline)
-    if is_train:
+    if naflex_train:
+        # NaFlex epoch length comes from the batcher's deterministic schedule (no with_epoch / fixed batch).
+        num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
+    elif is_train:
         if not resampled:
             num_shards = num_shards or len(expand_urls(input_shards)[0])
             assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"

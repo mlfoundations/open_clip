@@ -135,7 +135,7 @@ def test_zero_shot_eval_skips_generative_model_without_text_tower():
         distributed=False,
         zeroshot_frequency=1,
         epochs=1,
-        model="naflexgenlip_b16_224",
+        model="naflexgenlip_b16",
         device="cpu",
         precision="fp32",
         batch_size=1,

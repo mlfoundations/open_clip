@@ -71,6 +71,11 @@ class AudioTower(nn.Module):
 
             self.encoder = create_whisper_model(audio_cfg, output_dim=embed_dim)
             audio_width = embed_dim
+        elif getattr(audio_cfg, "model_type", "").lower() == "naflexvit":
+            from .naflex_tower import NaFlexAudioEncoder
+
+            self.encoder = NaFlexAudioEncoder(audio_cfg)
+            audio_width = self.encoder.embed_dim
         else:
             raise ValueError(f"Unsupported audio model type: {audio_cfg.model_type}")
 

@@ -1,0 +1,36 @@
+{
+    "embed_dim": 832,
+    "genlap_cfg": {
+        "width": 832,
+        "depth": 21,
+        "num_heads": 13,
+        "intermediate_size": 1408,
+        "text_embed_dim": 832,
+        "mrope_section": [8, 12, 12],
+        "rope_theta": 10000.0,
+        "ls_init_value": 0.1,
+        "drop_path_rate": 0.1,
+        "gated_attention": true,
+        "use_swiglu_ffn": true,
+        "mrope_interleaved": true,
+        "hidden_act": "silu",
+        "layer_norm_eps": 1e-6,
+        "max_position_embeddings": 16384
+    },
+    "audio_naflex_cfg": {
+        "n_mels": 64,
+        "patch_freq": 64,
+        "patch_time": 16,
+        "in_chans": 1,
+        "input_norm": false
+    },
+    "text_cfg": {
+        "vocab_size": 100280,
+        "context_length": 256,
+        "pad_id": 100278,
+        "bos_id": 100279,
+        "eos_id": 100277,
+        "tokenizer_type": "tiktoken",
+        "tiktoken_name": "cl100k_base"
+    }
+}

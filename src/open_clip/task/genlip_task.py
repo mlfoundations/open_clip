@@ -5,7 +5,7 @@ over the concatenated ``[image_patches ; caption_tokens]`` sequence and is train
 This task therefore derives from :class:`ImageTextTask` only to reuse its NaFlex data-config plumbing and
 dummy-batch scaffolding -- it overrides the forward/loss path entirely and never touches logit scale.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -16,6 +16,15 @@ from .image_text_task import ImageTextTask
 
 class GenLipTask(ImageTextTask):
     """GenLIP training task wrapping model + GenLipLoss (autoregressive caption loss)."""
+
+    # Modality wiring: which batch key holds the (NaFlex) prefix dict and which kwarg the model forward
+    # expects. Defaults keep GenLIP behaviour ("image"); GenLAP overrides both to "audio".
+    _modality_key: str = "image"
+    _modality_kwarg: str = "image"
+
+    @property
+    def data_keys(self) -> Tuple[str, ...]:
+        return (self._modality_key, "text")
 
     def __init__(
             self,
@@ -60,15 +69,16 @@ class GenLipTask(ImageTextTask):
             self.fused_loss = False
 
     def _loss_forward(self, module: nn.Module, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        modality = batch[self._modality_key]
         if self.fused_loss:
             # The model computes the autoregressive caption loss internally via a memory-efficient fused
             # linear cross-entropy (over text positions only). Doing it inside the single module forward keeps
             # it DDP-safe (gradient sync hooks fire) and avoids materializing full-vocabulary logits.
             out = module(
-                image=batch["image"],
                 text=batch["text"],
                 text_valid=batch.get("text_valid"),
                 compute_loss=True,
+                **{self._modality_kwarg: modality},
             )
             return {"caption_loss": out["loss"], "loss": out["loss"]}
 
@@ -81,12 +91,12 @@ class GenLipTask(ImageTextTask):
         if text_valid is None:
             text_valid = text != self.pad_id
         out = module(
-            image=batch["image"],
             text=text,
             text_valid=text_valid,
             compute_loss=False,
+            **{self._modality_kwarg: modality},
         )
-        ni = batch["image"]["patches"].shape[1]
+        ni = modality["patches"].shape[1]
         # Caption token text[:, j] (sequence position ni+j) is predicted by the logits at position ni-1+j,
         # so the text-predicting window is logits[:, ni-1:-1] -> (B, Lt, vocab).
         logits = out["logits"][:, ni - 1:-1]
