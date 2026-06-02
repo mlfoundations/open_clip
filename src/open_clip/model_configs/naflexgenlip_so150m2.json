@@ -1,11 +1,11 @@
 {
-    "embed_dim": 768,
+    "embed_dim": 832,
     "genlip_cfg": {
-        "width": 768,
-        "depth": 12,
-        "num_heads": 12,
-        "intermediate_size": 2048,
-        "text_embed_dim": 768,
+        "width": 832,
+        "depth": 21,
+        "num_heads": 13,
+        "intermediate_size": 1408,
+        "text_embed_dim": 832,
         "mrope_section": [8, 12, 12],
         "rope_theta": 10000.0,
         "ls_init_value": 0.1,
@@ -18,7 +18,7 @@
         "max_position_embeddings": 16384
     },
     "vision_cfg": {
-        "image_size": 224,
+        "image_size": 256,
         "patch_size": 16,
         "in_chans": 3
     },
