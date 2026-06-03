@@ -13,7 +13,7 @@ from typing import Optional
 import braceexpand
 from dataclasses import dataclass
 from functools import partial
-from multiprocessing import Value
+from multiprocessing import Value, get_context
 
 import numpy as np
 import pandas as pd
@@ -83,8 +83,12 @@ class CsvDataset(Dataset):
 
 
 class SharedEpoch:
-    def __init__(self, epoch: int = 0):
-        self.shared_epoch = Value('i', epoch)
+    def __init__(self, epoch: int = 0, mp_context: Optional[str] = None):
+        # Create the shared counter in the SAME multiprocessing context as the DataLoader workers. A fork-context
+        # SemLock can't be shipped to forkserver/spawn workers ("A SemLock created in a fork context is being
+        # shared with a process in a spawn context"), which bites the audio loader (forkserver) once this rides
+        # inside ResampledShards2 and is pickled to a worker. mp_context=None -> default context (fork on Linux).
+        self.shared_epoch = get_context(mp_context).Value('i', epoch)
 
     def set_value(self, epoch):
         self.shared_epoch.value = epoch
