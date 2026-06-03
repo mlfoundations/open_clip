@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from ..naflex_config import NaFlexDataConfig
 from .base_task import TrainingTask, unwrap_model
 
 
@@ -30,22 +29,6 @@ class ImageTextTask(TrainingTask):
     def data_keys(self) -> Tuple[str, ...]:
         """Keys expected in the batch dict from the data pipeline."""
         return ("image", "text")
-
-    @property
-    def naflex_data_config(self) -> Optional[NaFlexDataConfig]:
-        return self._naflex_data_config
-
-    @property
-    def naflex_eval_config(self) -> Optional[Tuple[Tuple[int, int], int]]:
-        return self._naflex_data_config.eval_config if self._naflex_data_config is not None else None
-
-    def set_naflex_data_config(
-            self,
-            naflex_data_config: Optional[NaFlexDataConfig],
-    ) -> 'ImageTextTask':
-        """Configure NaFlex train/eval data policy shared by data loaders and dummy batches."""
-        self._naflex_data_config = naflex_data_config
-        return self
 
     def create_dummy_batch(
             self,
