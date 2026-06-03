@@ -41,13 +41,44 @@ def test_mel_to_patches_multi_row_is_2d_grid():
     assert coord[:25, 1].tolist() == list(range(25))
 
 
-def test_mel_to_patches_truncates_time_remainder_and_validates():
-    out = mel_to_patches(_mel(t=103, n_mels=64), patch_freq=64, patch_time=4)
-    assert out["patches"].shape[0] == 25  # 103 // 4 == 25, remainder dropped
+def test_mel_to_patches_pads_time_remainder_not_truncated():
+    """Audio pads the time axis UP to a whole patch (no dropped tail) -- unlike the image crop."""
+    m = _mel(t=103, n_mels=64)
+    out = mel_to_patches(m, patch_freq=64, patch_time=4)
+    assert out["patches"].shape[0] == 26       # ceil(103/4) == 26 (was 25 truncated)
+    assert out["patch_valid"].all()            # padded frames are patch-internal -> patch stays valid
+    assert torch.equal(out["patches"][-1].reshape(4, 64)[:3], m[100:103])  # real frames front-contiguous
+    # n_mels not divisible by patch_freq is a real config error and still raises
     with pytest.raises(ValueError):
-        mel_to_patches(_mel(t=100, n_mels=64), patch_freq=24, patch_time=4)  # 64 % 24 != 0
+        mel_to_patches(_mel(t=100, n_mels=64), patch_freq=24, patch_time=4)
+
+
+def test_mel_to_patches_subpatch_clip_yields_one_valid_patch():
+    """A clip shorter than one time patch is padded up to a single valid patch (no longer raises)."""
+    m = _mel(t=2, n_mels=64)
+    out = mel_to_patches(m, patch_freq=64, patch_time=4)     # ceil(2/4) == 1
+    assert out["patches"].shape == (1, 1 * 64 * 4) and out["patch_valid"].all()
+    patch = out["patches"][0].reshape(4, 64)
+    assert torch.equal(patch[:2], m)                          # real frames front-contiguous
+    assert torch.equal(patch[2:], m.new_full((2, 64), m.amin().item()))  # silence floor (not 0 in dB-mel space)
+
+
+def test_mel_to_patches_pad_modes():
+    """floor = per-clip amin; silence = absolute -100 dB floor; repeat = last real frame (all distinct here)."""
+    from open_clip.audio.naflex_audio import _MEL_SILENCE_DB
+
+    m = _mel(t=3, n_mels=64)                                  # ceil(3/4) == 1 -> pad 1 frame; ramp amin == 0.0
+    fl = mel_to_patches(m, patch_freq=64, patch_time=4, pad_mode="floor")["patches"][0].reshape(4, 64)
+    si = mel_to_patches(m, patch_freq=64, patch_time=4, pad_mode="silence")["patches"][0].reshape(4, 64)
+    rp = mel_to_patches(m, patch_freq=64, patch_time=4, pad_mode="repeat")["patches"][0].reshape(4, 64)
+    for out in (fl, si, rp):
+        assert torch.equal(out[:3], m)                        # real frames front-contiguous in every mode
+    assert torch.equal(fl[3], m.new_full((64,), m.amin().item()))  # floor == per-clip amin (== 0.0 for the ramp)
+    assert torch.equal(si[3], m.new_full((64,), _MEL_SILENCE_DB))  # silence == absolute -100, NOT the clip amin
+    assert si[3].min().item() == -100.0 and fl[3].min().item() == 0.0  # floor and silence are genuinely different
+    assert torch.equal(rp[3], m[2])                               # repeat == last real frame
     with pytest.raises(ValueError):
-        mel_to_patches(_mel(t=2, n_mels=64), patch_freq=64, patch_time=4)  # T < patch_time
+        mel_to_patches(m, patch_freq=64, patch_time=4, pad_mode="reflect")  # unsupported mode
 
 
 def test_mel_patch_embed_forward():
