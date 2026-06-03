@@ -301,15 +301,6 @@ def parse_args(args):
         ),
     )
     parser.add_argument(
-        "--val-retrieval-device",
-        choices=["cpu", "device"],
-        default="cpu",
-        help=(
-            "Device for chunked validation retrieval scoring. 'cpu' preserves historical "
-            "CPU scoring behavior; 'device' scores positive-sized chunks on the eval device."
-        ),
-    )
-    parser.add_argument(
         "--val-retrieval-precision",
         choices=["fp32", "model"],
         default="fp32",
