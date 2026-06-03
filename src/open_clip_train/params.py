@@ -297,7 +297,25 @@ def parse_args(args):
         default=4096,
         help=(
             "Chunk size for exact validation retrieval metrics. Smaller values reduce peak "
-            "score-matrix memory; set 0 to score the full matrix in one block."
+            "score-matrix memory; set 0 to score the full matrix in one CPU block."
+        ),
+    )
+    parser.add_argument(
+        "--val-retrieval-device",
+        choices=["cpu", "device"],
+        default="cpu",
+        help=(
+            "Device for chunked validation retrieval scoring. 'cpu' preserves historical "
+            "CPU scoring behavior; 'device' scores positive-sized chunks on the eval device."
+        ),
+    )
+    parser.add_argument(
+        "--val-retrieval-precision",
+        choices=["fp32", "model"],
+        default="fp32",
+        help=(
+            "Precision for validation retrieval scoring. 'fp32' casts score chunks to float32; "
+            "'model' keeps the feature tensor dtype."
         ),
     )
     parser.add_argument(

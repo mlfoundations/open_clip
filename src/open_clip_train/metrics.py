@@ -11,10 +11,20 @@ def _resolve_chunk_size(chunk_size, num_items):
     return min(int(chunk_size), num_items)
 
 
-def _to_device(tensor, device):
-    if tensor.device == device:
+def _resolve_retrieval_dtype(retrieval_dtype, feature_dtype):
+    if retrieval_dtype is None or retrieval_dtype == "model":
+        return feature_dtype
+    if retrieval_dtype == "fp32":
+        return torch.float32
+    if isinstance(retrieval_dtype, torch.dtype):
+        return retrieval_dtype
+    raise ValueError(f"Unsupported retrieval dtype: {retrieval_dtype!r}")
+
+
+def _to_device(tensor, device, dtype):
+    if tensor.device == device and tensor.dtype == dtype:
         return tensor
-    return tensor.to(device=device, non_blocking=True)
+    return tensor.to(device=device, dtype=dtype, non_blocking=True)
 
 
 def _feature_shape(features):
@@ -82,7 +92,14 @@ def _iter_feature_chunks(features, chunk_size):
         yield chunk_start, chunk_start + part_size, _cat_chunk(parts)
 
 
-def _paired_retrieval_ranks(image_features, text_features, logit_scale, chunk_size, device=None):
+def _paired_retrieval_ranks(
+        image_features,
+        text_features,
+        logit_scale,
+        chunk_size,
+        device=None,
+        retrieval_dtype=torch.float32,
+):
     image_shape = _feature_shape(image_features)
     text_shape = _feature_shape(text_features)
     if image_shape != text_shape:
@@ -101,6 +118,7 @@ def _paired_retrieval_ranks(image_features, text_features, logit_scale, chunk_si
         device = first_feature.device
     else:
         device = torch.device(device)
+    retrieval_dtype = _resolve_retrieval_dtype(retrieval_dtype, first_feature.dtype)
     chunk_size = _resolve_chunk_size(chunk_size, num_items)
     image_to_text_ranks = torch.empty(num_items, dtype=torch.long)
     text_to_image_ranks = torch.zeros(num_items, device=device, dtype=torch.long)
@@ -108,9 +126,9 @@ def _paired_retrieval_ranks(image_features, text_features, logit_scale, chunk_si
     scale = torch.as_tensor(
         logit_scale,
         device=device,
-        dtype=first_feature.dtype,
+        dtype=retrieval_dtype,
     )
-    targets = torch.empty(num_items, device=device, dtype=first_feature.dtype)
+    targets = torch.empty(num_items, device=device, dtype=retrieval_dtype)
 
     paired_chunks = zip(
         _iter_feature_chunks(image_features, chunk_size),
@@ -118,18 +136,18 @@ def _paired_retrieval_ranks(image_features, text_features, logit_scale, chunk_si
     )
     for (image_start, image_end, image_chunk), (text_start, text_end, text_chunk) in paired_chunks:
         assert image_start == text_start and image_end == text_end
-        image = _to_device(image_chunk, device)
-        text = _to_device(text_chunk, device)
+        image = _to_device(image_chunk, device, retrieval_dtype)
+        text = _to_device(text_chunk, device, retrieval_dtype)
         paired_scores = scale * (image @ text.T)
         targets[image_start:image_end] = paired_scores.diagonal()
 
     for image_start, image_end, image_chunk in _iter_feature_chunks(image_features, chunk_size):
-        image = _to_device(image_chunk, device)
+        image = _to_device(image_chunk, device, retrieval_dtype)
         image_target = targets[image_start:image_end]
         image_rank = torch.zeros(image.shape[0], device=device, dtype=torch.long)
 
         for text_start, text_end, text_chunk in _iter_feature_chunks(text_features, chunk_size):
-            text = _to_device(text_chunk, device)
+            text = _to_device(text_chunk, device, retrieval_dtype)
             scores = scale * (image @ text.T)
             greater_image = scores > image_target[:, None]
             greater_text = scores > targets[text_start:text_end][None, :]
@@ -160,6 +178,7 @@ def get_clip_metrics(
         text_key="text",
         retrieval_chunk_size=DEFAULT_RETRIEVAL_CHUNK_SIZE,
         retrieval_device=None,
+        retrieval_dtype=torch.float32,
 ):
     metrics = {}
 
@@ -169,6 +188,7 @@ def get_clip_metrics(
         logit_scale,
         retrieval_chunk_size,
         device=retrieval_device,
+        retrieval_dtype=retrieval_dtype,
     )
 
     _add_rank_metrics(metrics, f"{image_key}_to_{text_key}", image_to_text_ranks)

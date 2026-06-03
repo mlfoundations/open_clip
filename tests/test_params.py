@@ -22,3 +22,15 @@ def test_val_retrieval_chunk_size_parse():
     args = parse_args(["--val-retrieval-chunk-size", "128"])
 
     assert args.val_retrieval_chunk_size == 128
+
+
+def test_val_retrieval_device_parse():
+    args = parse_args(["--val-retrieval-device", "device"])
+
+    assert args.val_retrieval_device == "device"
+
+
+def test_val_retrieval_precision_parse():
+    args = parse_args(["--val-retrieval-precision", "model"])
+
+    assert args.val_retrieval_precision == "model"
