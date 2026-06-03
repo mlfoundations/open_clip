@@ -987,8 +987,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             **shared,
         )
     if naflex_data_config is not None:
-        if not hasattr(task, 'set_naflex_data_config'):
-            raise ValueError("NaFlex data config can only be used with image-text tasks.")
+        # Every task carries the NaFlex data policy via the base TrainingTask (image-text and audio-text alike).
         task.set_naflex_data_config(naflex_data_config)
     return task
 

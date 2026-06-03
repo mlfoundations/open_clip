@@ -9,6 +9,7 @@ import torch.nn as nn
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
     from torch.distributed._composable.fsdp import MixedPrecisionPolicy, CPUOffloadPolicy
+    from ..naflex_config import NaFlexDataConfig
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
@@ -69,6 +70,25 @@ class TrainingTask(nn.Module):
         self.normalize_checkpoint_scalars = True
         self._compiled_training_forward = None
         self._compiled_eval_forward = None
+        # Optional NaFlex data policy (image OR audio); shared with data loaders and dummy batches. NaFlex is a
+        # cross-modal data concern, so it lives on the modality-agnostic base, not just the image-text layer.
+        self._naflex_data_config = None
+
+    @property
+    def naflex_data_config(self) -> Optional["NaFlexDataConfig"]:
+        return self._naflex_data_config
+
+    @property
+    def naflex_eval_config(self) -> Optional[Tuple[Tuple[int, int], int]]:
+        return self._naflex_data_config.eval_config if self._naflex_data_config is not None else None
+
+    def set_naflex_data_config(
+            self,
+            naflex_data_config: Optional["NaFlexDataConfig"],
+    ) -> "TrainingTask":
+        """Configure the NaFlex train/eval data policy (image or audio); shared by loaders and dummy batches."""
+        self._naflex_data_config = naflex_data_config
+        return self
 
     @staticmethod
     def _compile_kwargs(
