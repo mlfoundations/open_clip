@@ -332,17 +332,8 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                 "val_retrieval_chunk_size",
                 DEFAULT_RETRIEVAL_CHUNK_SIZE,
             )
-            retrieval_device_name = getattr(args, "val_retrieval_device", "cpu")
             retrieval_precision = getattr(args, "val_retrieval_precision", "fp32")
-            retrieval_device = (
-                device
-                if (
-                    retrieval_chunk_size is not None and
-                    retrieval_chunk_size > 0 and
-                    retrieval_device_name == "device"
-                )
-                else None
-            )
+            retrieval_device = device if retrieval_chunk_size and retrieval_chunk_size > 0 else None
             val_metrics = get_clip_metrics(
                 image_features=all_image_features,
                 text_features=all_text_features,

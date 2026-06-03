@@ -145,16 +145,22 @@ def _paired_retrieval_ranks(
         image = _to_device(image_chunk, device, retrieval_dtype)
         image_target = targets[image_start:image_end]
         image_rank = torch.zeros(image.shape[0], device=device, dtype=torch.long)
+        image_query_idx = torch.arange(image_start, image_end, device=device)[:, None]
 
         for text_start, text_end, text_chunk in _iter_feature_chunks(text_features, chunk_size):
             text = _to_device(text_chunk, device, retrieval_dtype)
+            text_query_idx = torch.arange(text_start, text_end, device=device)[None, :]
             scores = scale * (image @ text.T)
-            greater_image = scores > image_target[:, None]
-            greater_text = scores > targets[text_start:text_end][None, :]
-            if text_start == image_start:
-                paired = torch.arange(image.shape[0], device=device)
-                greater_image[paired, paired] = False
-                greater_text[paired, paired] = False
+            text_candidate_idx = torch.arange(text_start, text_end, device=device)[None, :]
+            image_candidate_idx = torch.arange(image_start, image_end, device=device)[:, None]
+            greater_image = (
+                (scores > image_target[:, None]) |
+                ((scores == image_target[:, None]) & (text_candidate_idx < image_query_idx))
+            )
+            greater_text = (
+                (scores > targets[text_start:text_end][None, :]) |
+                ((scores == targets[text_start:text_end][None, :]) & (image_candidate_idx < text_query_idx))
+            )
             image_rank += greater_image.sum(dim=1)
             text_to_image_ranks[text_start:text_end] += greater_text.sum(dim=0)
 

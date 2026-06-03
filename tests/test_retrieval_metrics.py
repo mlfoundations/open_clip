@@ -98,6 +98,47 @@ def test_feature_list_chunked_metrics_match_full_matrix_metrics():
     _assert_metrics_close(actual, expected)
 
 
+def test_retrieval_metrics_cast_feature_chunks_to_fp32_by_default():
+    from open_clip_train.metrics import get_clip_metrics
+
+    image_features, text_features = _features(num_items=9, dim=5)
+    logit_scale = torch.tensor(4.0)
+    image_chunks = [image_features[:4].half(), image_features[4:].half()]
+    text_chunks = [text_features[:2].half(), text_features[2:].half()]
+
+    actual = get_clip_metrics(
+        image_features=image_chunks,
+        text_features=text_chunks,
+        logit_scale=logit_scale.half(),
+        retrieval_chunk_size=3,
+    )
+    expected = _full_matrix_metrics(
+        torch.cat(image_chunks).float(),
+        torch.cat(text_chunks).float(),
+        logit_scale.float(),
+    )
+
+    _assert_metrics_close(actual, expected)
+
+
+def test_chunked_metrics_match_full_matrix_tie_ranking():
+    from open_clip_train.metrics import get_clip_metrics
+
+    image_features = F.normalize(torch.ones(7, 4), dim=-1)
+    text_features = F.normalize(torch.ones(7, 4), dim=-1)
+    logit_scale = torch.tensor(1.0)
+
+    actual = get_clip_metrics(
+        image_features=[image_features[:2], image_features[2:5], image_features[5:]],
+        text_features=[text_features[:3], text_features[3:]],
+        logit_scale=logit_scale,
+        retrieval_chunk_size=2,
+    )
+    expected = _full_matrix_metrics(image_features, text_features, logit_scale)
+
+    _assert_metrics_close(actual, expected)
+
+
 def test_zero_chunk_size_matches_chunked_metrics():
     from open_clip_train.metrics import get_clip_metrics
 
