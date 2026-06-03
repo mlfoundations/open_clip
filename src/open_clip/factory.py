@@ -764,7 +764,7 @@ def get_tokenizer(
         context_length = text_config.get('context_length', DEFAULT_CONTEXT_LENGTH)
 
     # Merge tokenizer kwargs: function kwargs override config kwargs
-    tokenizer_kwargs = text_config.get('tokenizer_kwargs', {}) # Start with config kwargs
+    tokenizer_kwargs = dict(text_config.get('tokenizer_kwargs', {})) # Start with config kwargs
     tokenizer_kwargs.update(kwargs) # Apply caller kwargs, overriding config ones
 
     # Get the specified HF tokenizer name from config, if any
@@ -772,7 +772,21 @@ def get_tokenizer(
     if not hf_tokenizer_name and hf_fallback_id:
         hf_tokenizer_name = hf_fallback_id
 
-    if hf_tokenizer_name:
+    tokenizer_mode = text_config.get('tokenizer_mode', None)
+
+    if tokenizer_mode == 'tips':
+        if schema == 'local-dir':
+            tokenizer_source = str(local_dir_path / tokenizer_kwargs.pop('tokenizer_file', 'tokenizer.model'))
+        else:
+            tokenizer_source = tokenizer_kwargs.pop('tokenizer_name', None) or hf_tokenizer_name or 'tips'
+        _logger.info(f"Using SigLipTokenizer TIPS mode with source: '{tokenizer_source}'")
+        tokenizer = SigLipTokenizer(
+            tokenizer_source,
+            context_length=context_length,
+            tokenizer_mode=tokenizer_mode,
+            **tokenizer_kwargs,
+        )
+    elif hf_tokenizer_name:
         # If 'hf_tokenizer_name' key exists in text_cfg (even if empty string): Use HFTokenizer.
         if schema == 'local-dir':
             # If config came from local-dir, ALWAYS use the local dir path for HFTokenizer.
@@ -780,7 +794,6 @@ def get_tokenizer(
             tokenizer_source = local_dir_path
         else:
             tokenizer_source = hf_tokenizer_name
-        tokenizer_mode = text_config.get('tokenizer_mode', None)
 
         _logger.info(f"Using HFTokenizer with source: '{tokenizer_source}', mode: '{tokenizer_mode}'")
         tokenizer_kwargs.pop('trust_remote_code', False)
@@ -800,6 +813,7 @@ def get_tokenizer(
         tokenizer = SigLipTokenizer(
             tn_variant,
             context_length=context_length,
+            **tokenizer_kwargs,
         )
     else:
         # Default to SimpleTokenizer if no HF specified and not SigLIP name match

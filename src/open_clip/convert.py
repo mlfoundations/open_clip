@@ -261,7 +261,49 @@ def convert_mobile_clip_state_dict(model: CustomTextCLIP, state_dict, fastvit = 
     return out_dict
 
 
+def _get_tips_temperature(state_dict):
+    for key in ('temperature', 'temperature_contrastive'):
+        if key in state_dict:
+            return state_dict[key]
+    return None
+
+
+def convert_tips_state_dict(model: CustomTextCLIP, state_dict):
+    """Convert TIPS / TIPSv2 multimodal checkpoints to OpenCLIP keys."""
+    out_dict = {}
+
+    if any(k.startswith('vision_encoder.') for k in state_dict):
+        from timm.models.vision_transformer import checkpoint_filter_fn
+
+        vision_dict = checkpoint_filter_fn(state_dict, model.visual.trunk)
+        out_dict.update({
+            'visual.trunk.' + k: v
+            for k, v in vision_dict.items()
+        })
+
+    out_dict.update({
+        'text.' + k[len('text_encoder.'):]: v
+        for k, v in state_dict.items()
+        if k.startswith('text_encoder.')
+    })
+
+    if hasattr(model, 'logit_scale') and 'logit_scale' not in out_dict:
+        temperature = _get_tips_temperature(state_dict)
+        if temperature is not None:
+            temperature = torch.as_tensor(temperature, device=model.logit_scale.device, dtype=model.logit_scale.dtype)
+            out_dict['logit_scale'] = torch.log(1. / temperature).reshape(model.logit_scale.shape)
+        else:
+            out_dict['logit_scale'] = model.logit_scale.detach().clone()
+    logit_bias = getattr(model, 'logit_bias', None)
+    if logit_bias is not None and 'logit_bias' not in out_dict:
+        out_dict['logit_bias'] = logit_bias.detach().clone()
+
+    return out_dict
+
+
 def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
+    if 'vision_encoder.mask_token' in state_dict or 'text_encoder.token_embedding.weight' in state_dict:
+        state_dict = convert_tips_state_dict(model, state_dict)
     if 'image_encoder.model.patch_embed.0.rbr_conv.0.conv.weight' in state_dict:
         # Apple MobileCLIP s1 & s2 state_dicts (s0 and b not currently supported)
         state_dict = convert_mobile_clip_state_dict(model, state_dict)

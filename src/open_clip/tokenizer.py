@@ -85,6 +85,10 @@ def _clean_lower(x):
     return whitespace_clean(basic_clean(x)).lower()
 
 
+def _clean_lower_only(x):
+    return x.lower()
+
+
 def _clean_whitespace(x):
     # basic, remove whitespace
     return whitespace_clean(basic_clean(x))
@@ -95,6 +99,8 @@ def get_clean_fn(type: str):
         return _clean_canonicalize
     elif type == 'lower':
         return _clean_lower
+    elif type == 'lower_only':
+        return _clean_lower_only
     elif type == 'whitespace':
         return _clean_whitespace
     else:
@@ -567,13 +573,28 @@ class SigLipTokenizer:
         "mc4": "http://storage.googleapis.com/t5-data/vocabs/mc4.250000.100extra/sentencepiece.model",
         # used in SigLIP2 models, vocab_size=256000
         "gemma": "http://storage.googleapis.com/big_vision/gemma_tokenizer.model",
+        # used by TIPS / TIPSv2 models, vocab_size=32_000
+        "tips": "https://storage.googleapis.com/tips_data/v1_0/checkpoints/tokenizer.model",
     }
 
     def __init__(
             self,
             tokenizer_name: str,
             context_length: Optional[int] = 64,
+            tokenizer_mode: Optional[str] = None,
+            clean: Optional[str] = None,
+            pad_id: Optional[int] = None,
     ):
+        self.tokenizer_mode = tokenizer_mode or ''
+        self.context_length = context_length
+        if self.tokenizer_mode == 'tips':
+            self.clean_fn = get_clean_fn(clean or 'canonicalize')
+            self.pad_token_id = 0 if pad_id is None else pad_id
+            self.eos_token_id = None
+            self.tokenizer = self._load_sentencepiece_model(tokenizer_name)
+            return
+
+        self.clean_fn = get_clean_fn(clean or 'canonicalize')
         if 'gemma' in tokenizer_name:
             from transformers import GemmaTokenizerFast
             tokenizer_cls = partial(
@@ -594,11 +615,28 @@ class SigLipTokenizer:
         else:
             self.tokenizer = tokenizer_cls(tokenizer_name, legacy=False)
 
-        self.tokenizer.pad_token_id = 0 if 'gemma' in tokenizer_name else 1
+        self.tokenizer.pad_token_id = (0 if 'gemma' in tokenizer_name else 1) if pad_id is None else pad_id
         self.tokenizer.eos_token_id = 1
-        self.context_length = context_length
+        self.pad_token_id = self.tokenizer.pad_token_id
+        self.eos_token_id = self.tokenizer.eos_token_id
+
+    def _load_sentencepiece_model(self, tokenizer_name: str):
+        import sentencepiece as spm
+
+        if tokenizer_name in self.VOCAB_FILES:
+            from urllib.request import urlopen
+            with urlopen(self.VOCAB_FILES[tokenizer_name]) as src:
+                model = src.read()
+            return spm.SentencePieceProcessor(model_proto=model)
+
+        return spm.SentencePieceProcessor(model_file=tokenizer_name)
 
     def save_pretrained(self, dest):
+        if self.tokenizer_mode == 'tips':
+            os.makedirs(dest, exist_ok=True)
+            with open(os.path.join(dest, "tokenizer.model"), "wb") as f:
+                f.write(self.tokenizer.serialized_model_proto())
+            return
         self.tokenizer.save_pretrained(dest)
 
     def __call__(self, texts: Union[str, List[str]], context_length: Optional[int] = None) -> torch.Tensor:
@@ -610,7 +648,20 @@ class SigLipTokenizer:
         context_length = context_length or self.context_length
         assert context_length, 'Please set a valid context length in class init or call.'
 
-        texts = [canonicalize_text(basic_clean(text)) for text in texts]
+        texts = [self.clean_fn(text) for text in texts]
+
+        if self.tokenizer_mode == 'tips':
+            all_tokens = [self.tokenizer.encode(text, out_type=int)[:context_length] for text in texts]
+            result = torch.full(
+                (len(all_tokens), context_length),
+                self.pad_token_id,
+                dtype=torch.long,
+            )
+            for i, tokens in enumerate(all_tokens):
+                if tokens:
+                    result[i, :len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+            return result
+
         output = self.tokenizer(
             texts,
             return_tensors='pt',

@@ -1,0 +1,29 @@
+{
+    "embed_dim": 1024,
+    "custom_text": true,
+    "vision_cfg": {
+        "image_size": 448,
+        "timm_model_name": "vit_large_patch14_reg1_tipsv2",
+        "timm_model_pretrained": false,
+        "timm_pool": "token",
+        "timm_proj": "none"
+    },
+    "text_cfg": {
+        "context_length": 64,
+        "vocab_size": 32000,
+        "hf_tokenizer_name": "tips",
+        "tokenizer_mode": "tips",
+        "width": 1024,
+        "heads": 16,
+        "layers": 12,
+        "mlp_ratio": 4.0,
+        "no_causal_mask": true,
+        "use_pad_mask": true,
+        "pad_id": 0,
+        "pool_type": "mean",
+        "pos_embed_type": "sinusoidal",
+        "scale_sqrt_depth": true,
+        "proj_type": "none",
+        "act_layer": "relu"
+    }
+}

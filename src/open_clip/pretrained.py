@@ -123,6 +123,19 @@ def _pecfg(url='', hf_hub='', **kwargs):
     }
 
 
+def _tipscfg(url='', hf_hub='', **kwargs):
+    # TIPS / TIPSv2
+    return {
+        'url': url,
+        'hf_hub': hf_hub,
+        'mean': (0., 0., 0.),
+        'std': (1., 1., 1.),
+        'interpolation': 'bilinear',
+        'resize_mode': 'squash',
+        **kwargs,
+    }
+
+
 _RN50 = dict(
     openai=_pcfg(
         hf_hub="timm/resnet50_clip.openai/",
@@ -654,6 +667,19 @@ _PRETRAINED = {
     "MobileCLIP2-S3": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-S3-OpenCLIP/')),
     "MobileCLIP2-S4": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-S4-OpenCLIP/')),
     "MobileCLIP2-L-14": dict(dfndr2b=_mc2cfg(hf_hub='timm/MobileCLIP2-L-14-OpenCLIP/', interpolation='bicubic')),
+
+    "TIPSv2-B-14": dict(
+        webli=_tipscfg(hf_hub='google/tipsv2-b14/model.safetensors'),
+    ),
+    "TIPSv2-L-14": dict(
+        webli=_tipscfg(hf_hub='google/tipsv2-l14/model.safetensors'),
+    ),
+    "TIPSv2-SO400M-14": dict(
+        webli=_tipscfg(hf_hub='google/tipsv2-so400m14/model.safetensors'),
+    ),
+    "TIPSv2-g-14": dict(
+        webli=_tipscfg(hf_hub='google/tipsv2-g14/model.safetensors'),
+    ),
 
     "ViTamin-S": dict(
         datacomp1b=_pcfg(hf_hub='jienengchen/ViTamin-S/pytorch_model.bin'),
