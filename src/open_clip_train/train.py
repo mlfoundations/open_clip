@@ -558,18 +558,31 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                 i += 1
 
             if is_rank0 and num_samples > 0:
+                retrieval_chunk_size = getattr(
+                    args,
+                    "val_retrieval_chunk_size",
+                    DEFAULT_RETRIEVAL_CHUNK_SIZE,
+                )
+                retrieval_device_name = getattr(args, "val_retrieval_device", "cpu")
+                retrieval_precision = getattr(args, "val_retrieval_precision", "fp32")
+                retrieval_device = (
+                    device
+                    if (
+                        retrieval_chunk_size is not None and
+                        retrieval_chunk_size > 0 and
+                        retrieval_device_name == "device"
+                    )
+                    else None
+                )
                 val_metrics = get_clip_metrics(
                     image_features=all_primary_features,
                     text_features=all_text_features,
                     logit_scale=logit_scale.cpu(),
                     image_key=primary_key,
                     text_key="text",
-                    retrieval_chunk_size=getattr(
-                        args,
-                        "val_retrieval_chunk_size",
-                        DEFAULT_RETRIEVAL_CHUNK_SIZE,
-                    ),
-                    retrieval_device=device,
+                    retrieval_chunk_size=retrieval_chunk_size,
+                    retrieval_device=retrieval_device,
+                    retrieval_dtype="model" if retrieval_precision == "model" else torch.float32,
                 )
                 loss = cumulative_loss / num_samples
                 # Preserve the legacy dashboard key for image-text validation.
