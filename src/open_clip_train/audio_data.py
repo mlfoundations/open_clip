@@ -145,7 +145,9 @@ def get_wds_audio_dataset(
     else:
         num_samples = args.val_num_samples or 0
 
-    shared_epoch = SharedEpoch(epoch=epoch)
+    # Match the shared-epoch counter's mp context to the loader's (forkserver for audio when workers>0), so its
+    # SemLock can be pickled into the workers; otherwise a fork-context lock crossing to forkserver workers errors.
+    shared_epoch = SharedEpoch(epoch=epoch, mp_context=_audio_loader_kwargs(args).get("multiprocessing_context"))
     if is_train and args.train_data_upsampling_factors is not None:
         assert resampled, (
             "--train_data_upsampling_factors is only supported when sampling with replacement "
