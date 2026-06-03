@@ -272,6 +272,7 @@ class AudioLengthBucketer(LengthBucketer):
             freq_tokens: int = 1,
             patch_time: int = 1,
             hop_size: int = 1,
+            window_size: int = 0,
             sample_rate: int = 0,
             max_audio_tokens: int = 0,
             **kwargs,
@@ -282,6 +283,7 @@ class AudioLengthBucketer(LengthBucketer):
         self.freq_tokens = max(1, int(freq_tokens))
         self.patch_time = max(1, int(patch_time))
         self.hop_size = max(1, int(hop_size))
+        self.window_size = max(0, int(window_size))  # mel STFT floor: short clips are padded up to one window
         self.sample_rate = int(sample_rate)
         self.max_audio_tokens = max(0, int(max_audio_tokens))  # cap (== max seq-len bucket); 0 = uncapped
 
@@ -299,8 +301,10 @@ class AudioLengthBucketer(LengthBucketer):
         num_samples = waveform.shape[-1]
         if self.sample_rate and sr and sr != self.sample_rate:
             num_samples = num_samples * self.sample_rate / sr  # mel runs at sample_rate -> count resampled frames
+        num_samples = max(num_samples, self.window_size)  # mirror the transform's pad of sub-window clips
         frames = int(num_samples // self.hop_size) + 1
-        tokens = self.freq_tokens * (frames // self.patch_time)
+        time_tokens = max(1, math.ceil(frames / self.patch_time))  # match the transform's ceil-pad (not floor-crop)
+        tokens = self.freq_tokens * time_tokens
         return min(tokens, self.max_audio_tokens) if self.max_audio_tokens else tokens
 
     def _caption_len(self, sample: Sample) -> int:

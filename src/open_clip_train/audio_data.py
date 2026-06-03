@@ -247,6 +247,7 @@ def get_wds_audio_dataset(
                     freq_tokens=audio_naflex_cfg.freq_tokens,
                     patch_time=audio_naflex_cfg.patch_time,
                     hop_size=audio_naflex_cfg.hop_size,
+                    window_size=audio_naflex_cfg.window_size,  # mirror the transform's sub-window pad
                     sample_rate=audio_naflex_cfg.sample_rate,
                     max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp: clips truncate to this bucket
                 )

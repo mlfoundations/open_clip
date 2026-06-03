@@ -140,6 +140,46 @@ def test_audio_transform_factory_carries_pack_prefix():
     assert train.pack_prefix is True and val.pack_prefix is True
 
 
+def test_audio_length_bucketer_estimate_matches_actual_patch_count():
+    """Packed-mode estimate must equal the patch count the transform actually emits (ceil), for short AND
+    remainder clips -- otherwise packed bucketing mis-sizes T = max(k+m)."""
+    pytest.importorskip("torchaudio")
+    from open_clip_train.naflex_data import AudioLengthBucketer
+
+    # patch_time=2 (not 4) so a dropped window_size would actually diverge on the sub-window clip below; and pass
+    # window_size like production does, so this mirrors the real bucketer wiring (not an accidental match).
+    cfg = AudioNaFlexCfg(n_mels=64, patch_freq=32, patch_time=2)  # F = freq_tokens = 2 (2-D grid)
+    patchify = AudioNaFlexPatchify(cfg)
+    bucketer = AudioLengthBucketer(
+        pool=10, chunk=10, seed=0, epoch=0, packed=True, freq_tokens=cfg.freq_tokens, patch_time=cfg.patch_time,
+        hop_size=cfg.hop_size, window_size=cfg.window_size, sample_rate=cfg.sample_rate,
+    )
+    sr = cfg.sample_rate
+    for n_samples in (200, sr // 10, sr, sr * 3 + 137):  # sub-patch, short, 1s, 3s + remainder
+        wav = torch.randn(1, n_samples)
+        actual = patchify((wav, sr))["patches"].shape[0]
+        est = bucketer._audio_tokens({"audio": (wav, sr)})
+        assert est == actual, f"n_samples={n_samples}: estimate {est} != actual {actual}"
+
+
+def test_audio_naflex_seq_len_below_freq_tokens_raises():
+    """A seq-len bucket smaller than freq_tokens fails fast (else collate truncation drops freq rows)."""
+    cfg = AudioNaFlexCfg(n_mels=64, patch_freq=16, patch_time=16)  # freq_tokens = 4
+    factory = AudioNaFlexTransformFactory(cfg)
+    with pytest.raises(ValueError, match="freq_tokens"):
+        factory(max_seq_len=3, patch_size=None)  # 3 < 4 -> raises in AudioNaFlexPatchify.__init__
+
+
+def test_clip_audio_cfg_propagates_patch_pad_mode():
+    """NaFlexClap selects patch_pad_mode via CLIPAudioCfg; from_clip_audio_cfg must carry it to the transform cfg."""
+    from open_clip.audio.config import CLIPAudioCfg
+
+    assert AudioNaFlexCfg.from_clip_audio_cfg(CLIPAudioCfg()).patch_pad_mode == "floor"  # default
+    cfg = AudioNaFlexCfg.from_clip_audio_cfg(CLIPAudioCfg(patch_pad_mode="silence"))
+    assert cfg.patch_pad_mode == "silence"
+    assert AudioNaFlexTransformFactory(cfg).cfg.patch_pad_mode == "silence"  # reaches the actual patchify transform
+
+
 def test_synthetic_audio_rejects_naflex_transform():
     """synthetic-audio is NOT supported for NaFlex audio models (GenLAP/NaFlexClap) -> fail loudly, not with a
     confusing 'AudioNaFlexPatchify object is not subscriptable' collate error."""
