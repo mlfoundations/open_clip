@@ -102,6 +102,22 @@ class AudioTower(nn.Module):
                 no_wd.add("encoder." + name)
         return no_wd
 
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered ``(name, [members])`` groups for layer-wise LR decay / lock: the encoder's own
+        ``layer_groups`` (trunk, input -> output) followed by this tower's projection head as the top group.
+        Only encoders that expose ``layer_groups`` (e.g. the NaFlex spectrogram-ViT) are supported; HTSAT/Whisper
+        do not, so layer-wise LR decay on the audio tower raises a clear error for them upstream.
+        """
+        if not hasattr(self.encoder, "layer_groups"):
+            raise ValueError(
+                f"audio layer-wise LR decay is not supported for encoder {type(self.encoder).__name__} "
+                f"(no layer_groups); only the NaFlex audio encoder supports it."
+            )
+        groups = list(self.encoder.layer_groups(pooler_in_head))
+        if next(self.proj.parameters(), None) is not None:
+            groups.append(("proj", [self.proj]))
+        return groups
+
     def load_pretrained_encoder(self, path: Union[str, Path], weights_only: bool = True):
         checkpoint = _load_audio_checkpoint(path, weights_only=weights_only)
         if isinstance(checkpoint, dict) and "state_dict" in checkpoint:

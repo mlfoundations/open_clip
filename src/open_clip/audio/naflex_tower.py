@@ -45,6 +45,21 @@ class NaFlexAudioEncoder(nn.Module):
         inner = self.vit.no_weight_decay() if hasattr(self.vit, "no_weight_decay") else set()
         return {f"vit.{name}" for name in inner}
 
+    @torch.jit.ignore
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered ``(name, [members])`` groups of the spectrogram ViT trunk for layer-wise LR decay / lock,
+        built from the timm ViT's own ``group_matcher`` (the same enumeration timm's native layer-decay uses).
+        Members are the trunk parameters at each depth. The ``AudioTower`` wraps this and appends its projection
+        head. ``pooler_in_head`` is accepted for a common signature but unused (no text pooler here).
+        """
+        from timm.models.helpers import group_parameters
+        gparams = group_parameters(self.vit, self.vit.group_matcher())  # {layer_id: [param_name, ...]}
+        groups = []
+        for layer_id in sorted(gparams.keys()):
+            members = [self.vit.get_parameter(name) for name in gparams[layer_id]]
+            groups.append((f"layer.{layer_id}", members))
+        return groups
+
     def forward(
             self,
             audio: Dict[str, torch.Tensor],

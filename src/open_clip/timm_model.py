@@ -107,37 +107,61 @@ class TimmModel(nn.Module):
 
         self.head = nn.Sequential(head_layers)
 
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered, complete partition into named ``(name, [members])`` groups, input -> output, shared by ``lock``
+        and layer-wise LR decay.
+
+        Reuses the timm trunk's own ``group_matcher`` for the trunk layers (``layer.{id}``, members are the trunk
+        parameters at that depth -- this is exactly the enumeration timm's native layer-decay is built on). The
+        adapter head (``self.head``: custom pool / projection) is folded in as the top ``proj`` group when it has
+        parameters, so it (and the trunk's own head, when there is no adapter) lands at the top -- lr_scale 1.0
+        under decay, unlocked first under lock. ``pooler_in_head`` is accepted for a common signature but unused.
+        """
+        from timm.models.helpers import group_parameters
+        matcher = self.trunk.group_matcher()
+        gparams = group_parameters(self.trunk, matcher)  # {layer_id: [param_name, ...]}, low id == input side
+        groups = []
+        for layer_id in sorted(gparams.keys()):
+            members = [self.trunk.get_parameter(name) for name in gparams[layer_id]]
+            groups.append((f"layer.{layer_id}", members))
+        # When the adapter carries the projection (trunk built with num_classes=0) it is the head; when the adapter
+        # is empty the trunk's own top group already is the head, so nothing is appended.
+        if next(self.head.parameters(), None) is not None:
+            groups.append(("proj", [self.head]))
+        return groups
+
     def lock(self, unlocked_groups: int = 0, freeze_bn_stats: bool = False):
         """ lock modules
         Args:
-            unlocked_groups (int): leave last n layer groups unlocked (default: 0)
+            unlocked_groups (int): leave last n layer groups unlocked (default: 0); 0 freezes the whole tower
+                (adapter head included). Counts top groups via the shared ``layer_groups`` enumeration.
         """
-        if not unlocked_groups:
-            # lock full model
-            for param in self.trunk.parameters():
-                param.requires_grad = False
-            if freeze_bn_stats:
-                freeze_batch_norm_2d(self.trunk)
-        else:
-            # NOTE: partial freeze requires latest timm (master) branch and is subject to change
-            try:
-                # FIXME import here until API stable and in an official release
-                from timm.models.helpers import group_parameters, group_modules
-            except ImportError:
-                raise RuntimeError(
-                    'Please install latest timm `pip install git+https://github.com/rwightman/pytorch-image-models`')
-            matcher = self.trunk.group_matcher()
-            gparams = group_parameters(self.trunk, matcher)
-            max_layer_id = max(gparams.keys())
-            max_layer_id = max_layer_id - unlocked_groups
-            for group_idx in range(max_layer_id + 1):
-                group = gparams[group_idx]
-                for param in group:
-                    self.trunk.get_parameter(param).requires_grad = False
-            if freeze_bn_stats:
-                gmodules = group_modules(self.trunk, matcher, reverse=True)
-                gmodules = {k for k, v in gmodules.items() if v <= max_layer_id}
-                freeze_batch_norm_2d(self.trunk, gmodules)
+        # Set every group explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts
+        # are idempotent (progressive unfreezing / multi-stage training).
+        groups = self.layer_groups()
+        n_freeze = len(groups) if not unlocked_groups else len(groups) - unlocked_groups
+        frozen_trunk_ids = []
+        for i, (name, members) in enumerate(groups):
+            freeze = i < n_freeze
+            for m in members:
+                params = [m] if isinstance(m, nn.Parameter) else m.parameters()
+                for p in params:
+                    p.requires_grad = not freeze
+            if freeze and name.startswith("layer."):
+                frozen_trunk_ids.append(int(name.split(".", 1)[1]))
+        if freeze_bn_stats and frozen_trunk_ids:
+            from timm.models.helpers import group_modules
+            gmodules = group_modules(self.trunk, self.trunk.group_matcher(), reverse=True)
+            max_frozen = max(frozen_trunk_ids)
+            freeze_batch_norm_2d(self.trunk, {k for k, v in gmodules.items() if v <= max_frozen})
+
+    def no_weight_decay(self):
+        # Surface the timm trunk's own no-weight-decay params (e.g. a ViT's pos_embed/cls_token, which are not
+        # 1-D and so would otherwise be decayed), prefixed under ``trunk.`` to match this module's param names.
+        # Not every timm model defines it (e.g. resnets do not), hence the guard.
+        if not hasattr(self.trunk, 'no_weight_decay'):
+            return set()
+        return {f'trunk.{n}' for n in self.trunk.no_weight_decay()}
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         if impl == 'composable':

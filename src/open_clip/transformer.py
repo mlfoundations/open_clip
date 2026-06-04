@@ -746,38 +746,42 @@ class VisionTransformer(nn.Module):
 
         self.init_parameters()
 
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered, complete partition into named ``(name, [members])`` groups, input -> output, shared by ``lock``
+        and layer-wise LR decay. Groups: ``embeddings`` (patch conv + class/pos embeds + ln_pre), ``layer.{i}``
+        (transformer blocks; the final block is grouped with ``ln_post``), and ``proj`` (the projection head).
+        ``pooler_in_head`` is accepted for a common signature with the text towers but has no effect here.
+        """
+        embed = [
+            m for m in (
+                self.conv1,
+                getattr(self, "class_embedding", None),
+                getattr(self, "positional_embedding", None),
+                self.ln_pre,
+            )
+            if m is not None
+        ]
+        groups = [("embeddings", embed)]
+        resblocks = self.transformer.resblocks
+        n = len(resblocks)
+        for i, block in enumerate(resblocks):
+            members = [block]
+            if i == n - 1:
+                members.append(self.ln_post)
+            groups.append((f"layer.{i}", members))
+        if self.proj is not None:
+            groups.append(("proj", [self.proj]))
+        return groups
+
     def lock(self, unlocked_groups: int = 0, freeze_bn_stats: bool = False):
-        for param in self.parameters():
-            param.requires_grad = False
-
-        if unlocked_groups != 0:
-            groups = [
-                [
-                    self.conv1,
-                    self.class_embedding,
-                    self.positional_embedding,
-                    self.ln_pre,
-                ],
-                *self.transformer.resblocks[:-1],
-                [
-                    self.transformer.resblocks[-1],
-                    self.ln_post,
-                ],
-                self.proj,
-            ]
-
-            def _unlock(x):
-                if isinstance(x, Sequence):
-                    for g in x:
-                        _unlock(g)
-                else:
-                    if isinstance(x, torch.nn.Parameter):
-                        x.requires_grad = True
-                    else:
-                        for p in x.parameters():
-                            p.requires_grad = True
-
-            _unlock(groups[-unlocked_groups:])
+        # Freeze the tower top-down via the shared ``layer_groups`` enumeration: ``unlocked_groups`` counts the top
+        # groups (the proj head first) left trainable, so unlocked_groups=0 freezes everything. Each group is set
+        # explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts are idempotent
+        # (e.g. progressive unfreezing / multi-stage training).
+        groups = self.layer_groups()
+        n_freeze = len(groups) if not unlocked_groups else len(groups) - unlocked_groups
+        for i, (_, members) in enumerate(groups):
+            _set_group_requires_grad(members, requires_grad=(i >= n_freeze))
 
     def init_parameters(self):
         # FIXME OpenAI CLIP did not define an init for the VisualTransformer
@@ -1093,16 +1097,24 @@ class TextTransformer(nn.Module):
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.transformer.set_grad_checkpointing(enable, impl=impl)
 
-    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered, complete partition into named ``(name, [members])`` groups, shared by ``lock`` and layer-wise
+        LR decay. See :func:`_text_layer_groups`. ``pooler_in_head`` is accepted for a common signature with the HF
+        text tower but has no effect here (the native tower has no readout pooler).
+        """
+        return _text_layer_groups(self, pooler_in_head)
+
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, pooler_in_head: bool = True):
         """
         Lock the text transformer layers, optionally leaving some layers unlocked.
 
         Args:
             unlocked_layers: Number of layers to leave unlocked (from the end).
             freeze_layer_norm: LayerNorm freeze (only for API compatibility, not functional)
+            pooler_in_head: pooler placement policy (no effect for the native tower; kept for a common signature).
         """
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
-        lock_text_tower(self, unlocked_layers)
+        lock_text_tower(self, unlocked_layers, pooler_in_head)
 
     def no_weight_decay(self):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
@@ -1393,99 +1405,74 @@ class MultimodalTransformer(Transformer):
             self.grad_checkpointing = enable
 
 
-def lock_text_tower(
-    model: nn.Module,
-    unlocked_layers: int = 0,
-):
-    """
-    Lock text tower layers for CLIP models.
+def _text_layer_groups(module: nn.Module, pooler_in_head: bool = True):
+    """Ordered, complete partition of a native (CLIP) text tower into named ``(name, [members])`` groups.
 
-    Works with both model architectures:
-    - CustomTextCLIP where text components are in self.text
-    - Standard CLIP where text components are unpacked as attributes
+    Reads the duck-typed text attributes (``token_embedding``/``positional_embedding``/``cls_emb``,
+    ``transformer.resblocks``, ``ln_final``, ``text_projection``), so it works both for a ``TextTransformer`` and
+    for a standard CLIP that unpacks those attributes onto itself. Groups, input -> output: ``embeddings``,
+    ``layer.{i}`` (the final block is grouped with ``ln_final``), and ``proj`` (the projection head). The native
+    tower has no readout pooler, so ``pooler_in_head`` is accepted for a common signature but has no effect.
+    """
+    embed = [
+        m for m in (
+            getattr(module, "token_embedding", None),
+            getattr(module, "positional_embedding", None),
+            getattr(module, "cls_emb", None),
+        )
+        if m is not None
+    ]
+    groups = []
+    if embed:
+        groups.append(("embeddings", embed))
+    transformer = getattr(module, "transformer", None)
+    resblocks = transformer.resblocks if (transformer is not None and hasattr(transformer, "resblocks")) else []
+    ln_final = getattr(module, "ln_final", None)
+    n = len(resblocks)
+    for i, block in enumerate(resblocks):
+        layer_members = [block]
+        if (i == n - 1) and (ln_final is not None):
+            layer_members.append(ln_final)
+        groups.append((f"layer.{i}", layer_members))
+    text_projection = getattr(module, "text_projection", None)
+    if text_projection is not None:
+        groups.append(("proj", [text_projection]))
+    return groups
+
+
+def _set_group_requires_grad(members, requires_grad: bool):
+    """Set ``requires_grad`` on a group's members (a mix of ``nn.Module`` and ``nn.Parameter``)."""
+    for m in members:
+        if isinstance(m, nn.Parameter):
+            m.requires_grad = requires_grad
+        else:
+            for p in m.parameters():
+                p.requires_grad = requires_grad
+
+
+def lock_text_tower(
+        model: nn.Module,
+        unlocked_layers: int = 0,
+        pooler_in_head: bool = True,
+    ):
+    """Freeze a native (CLIP) text tower top-down, leaving the top ``unlocked_layers`` groups trainable.
+
+    Shares the ``_text_layer_groups`` enumeration with layer-wise LR decay, so freezing and decay agree on the
+    layer partition. ``unlocked_layers`` counts the top groups (the projection head first) left trainable, so
+    ``unlocked_layers=0`` freezes the whole tower. This is offset by one from layer-wise LR decay, which keeps
+    the head at lr_scale 1.0 (depth 0).
+
+    Works with both CustomTextCLIP (text components under ``model.text``) and standard CLIP (unpacked attributes).
 
     Args:
-        model: The CLIP model or TextTransformer module
-        unlocked_layers: Number of layers to leave unlocked (from the end)
+        model: the CLIP model or a ``TextTransformer``.
+        unlocked_layers: number of groups (from the output side, head first) to leave trainable; 0 freezes all.
+        pooler_in_head: pooler placement policy (no effect for the native tower; kept for a common signature).
     """
-    # Determine where to look for text components
-    if hasattr(model, 'text'):
-        # CustomTextCLIP or already a TextTransformer with nested structure
-        text_module = model.text
-    else:
-        # Standard CLIP or direct TextTransformer
-        text_module = model
-
-    # Collect text components
-    text_params = {}
-    text_params['token_embedding'] = getattr(text_module, 'token_embedding', None)
-    text_params['positional_embedding'] = getattr(text_module, 'positional_embedding', None)
-    text_params['cls_emb'] = getattr(text_module, 'cls_emb', None)
-    text_params['transformer'] = getattr(text_module, 'transformer', None)
-    text_params['ln_final'] = getattr(text_module, 'ln_final', None)
-    text_params['text_projection'] = getattr(text_module, 'text_projection', None)
-
-    # Filter out None values
-    text_params = {k: v for k, v in text_params.items() if v is not None}
-
-    # Freeze all text parameters first
-    for module in text_params.values():
-        if isinstance(module, nn.Parameter):
-            module.requires_grad = False
-        elif isinstance(module, nn.Module):
-            for param in module.parameters():
-                param.requires_grad = False
-
-    if unlocked_layers == 0:
-        return
-
-    # Check if we have transformer blocks to work with
-    transformer = text_params['transformer']
-    if not transformer or not hasattr(transformer, 'resblocks'):
-        return
-
-    total_layers = len(transformer.resblocks)
-    if total_layers == 0:
-        return
-
-    # Build groups for selective unlocking
-    groups = []
-
-    # Group 1: Embeddings
-    embedding_group = []
-    for key in ['token_embedding', 'positional_embedding', 'cls_emb']:
-        if key in text_params:
-            embedding_group.append(text_params[key])
-    if embedding_group:
-        groups.append(embedding_group)
-
-    # Group 2-N: Individual transformer blocks (except last)
-    if total_layers > 1:
-        for block in transformer.resblocks[:-1]:
-            groups.append([block])
-
-    # Combine last transformer block + final ln as the penultimate group
-    last_block = [transformer.resblocks[-1]]
-    if 'ln_final' in text_params:
-        last_block.append(text_params['ln_final'])
-    groups.append(last_block)
-
-    # The final group is the projection only
-    if 'text_projection' in text_params:
-        groups.append([text_params['text_projection']])
-
-    # Helper function to unlock parameters
-    def _unlock(module):
-        if isinstance(module, Sequence):
-            for m in module:
-                _unlock(m)
-        elif isinstance(module, nn.Parameter):
-            module.requires_grad = True
-        elif isinstance(module, nn.Module):
-            for name, param in module.named_parameters():
-                param.requires_grad = True
-
-    # Unlock the specified number of layer groups from the end
-    num_groups_to_unlock = min(unlocked_layers, len(groups))
-    for group in groups[-num_groups_to_unlock:]:
-        _unlock(group)
+    text_module = model.text if hasattr(model, "text") else model
+    groups = _text_layer_groups(text_module, pooler_in_head)
+    # Set every group explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts are
+    # idempotent (e.g. progressive unfreezing / multi-stage training).
+    n_freeze = len(groups) if not unlocked_layers else len(groups) - unlocked_layers
+    for i, (_, members) in enumerate(groups):
+        _set_group_requires_grad(members, requires_grad=(i >= n_freeze))

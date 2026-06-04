@@ -150,12 +150,37 @@ class ModifiedResNet(nn.Module):
                 if name.endswith("bn3.weight"):
                     nn.init.zeros_(param)
 
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered, complete partition into named ``(name, [members])`` groups, input -> output, shared by ``lock``
+        and layer-wise LR decay. Groups: ``embeddings`` (the 3-conv stem + BNs), ``layer.{0..3}`` (the residual
+        stages), and ``proj`` (the attention-pool head). ``pooler_in_head`` is accepted for a common signature with
+        the text towers but has no effect here.
+        """
+        groups = [
+            ("embeddings", [self.conv1, self.bn1, self.conv2, self.bn2, self.conv3, self.bn3]),
+            ("layer.0", [self.layer1]),
+            ("layer.1", [self.layer2]),
+            ("layer.2", [self.layer3]),
+            ("layer.3", [self.layer4]),
+        ]
+        if self.attnpool is not None:
+            groups.append(("proj", [self.attnpool]))
+        return groups
+
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
-        for param in self.parameters():
-            param.requires_grad = False
-        if freeze_bn_stats:
-            freeze_batch_norm_2d(self)
+        # Freeze the tower top-down via the shared ``layer_groups`` enumeration: ``unlocked_groups`` counts the top
+        # groups (the attn-pool head first) left trainable, so unlocked_groups=0 freezes everything. Each group is
+        # set explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts are
+        # idempotent (progressive unfreezing / multi-stage training).
+        groups = self.layer_groups()
+        n_freeze = len(groups) if not unlocked_groups else len(groups) - unlocked_groups
+        for i, (_, members) in enumerate(groups):
+            freeze = i < n_freeze
+            for module in members:  # ResNet group members are all modules
+                for p in module.parameters():
+                    p.requires_grad = not freeze
+                if freeze and freeze_bn_stats:
+                    freeze_batch_norm_2d(module)
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         # FIXME support for non-transformer
