@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import Dict, List, Optional, Sequence
 
 import torch
@@ -228,13 +229,25 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
     classnames, target_map = _get_classnames_and_target_map(dataset, target_key=target_key, class_key=class_key)
 
     model = get_model_from_task(model_or_task)
-    audio_aug_cfg = {
-        "data_trunc": getattr(args, "audio_trunc", "rand_trunc"),
-        "data_fill": getattr(args, "audio_fill", "repeatpad"),
-        "enable_fusion": getattr(args, "audio_fusion", False),
-        "int16_normalize": getattr(args, "audio_int16_normalize", False),
-    }
-    transform = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
+    if getattr(model.audio.cfg, "model_type", "").lower() == "naflexvit":
+        # NaFlexClap: the spectrogram-ViT tower consumes patchified mel ({patches, patch_coord, patch_valid}),
+        # NOT the HTSAT {waveform, longer}. Build the NaFlex audio transform + the pad-to-seq-len collate.
+        from open_clip.audio.naflex_audio import AudioNaFlexCfg, AudioNaFlexTransformFactory
+        from open_clip_train.naflex_data import collate_naflex_dicts
+
+        seq_len = max(getattr(args, "naflex_seq_lens", None) or [256])  # audio-token cap for the eval clips
+        naflex_cfg = AudioNaFlexCfg.from_clip_audio_cfg(model.audio.cfg)
+        transform = AudioNaFlexTransformFactory(naflex_cfg)(max_seq_len=seq_len, patch_size=None)
+        collate_fn = partial(collate_naflex_dicts, image_key="audio", target_key="target", max_seq_len=seq_len)
+    else:
+        audio_aug_cfg = {
+            "data_trunc": getattr(args, "audio_trunc", "rand_trunc"),
+            "data_fill": getattr(args, "audio_fill", "repeatpad"),
+            "enable_fusion": getattr(args, "audio_fusion", False),
+            "int16_normalize": getattr(args, "audio_int16_normalize", False),
+        }
+        transform = audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg)
+        collate_fn = _collate_audio_zero_shot
     wrapped = HFAudioClassificationDataset(
         dataset,
         transform,
@@ -257,7 +270,7 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
         shuffle=False,
         num_workers=num_workers,
         pin_memory=getattr(args, "device", "cpu") != "cpu",
-        collate_fn=_collate_audio_zero_shot,
+        collate_fn=collate_fn,
         **loader_kwargs,
     )
     return AudioZeroShotData(dataloader=dataloader, classnames=classnames, dataset_name=dataset_name)
