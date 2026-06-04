@@ -174,3 +174,35 @@ def test_naflexclap_preprocess_and_params():
     assert args.naflexclap is True
     assert args.use_naflex is True
     assert args.force_naflex_vision is False
+
+
+def test_naflexclap_audio_zero_shot_run_path():
+    """NaFlex audio zero-shot: mel-patch transform -> collate -> model(audio=) -> text classifier -> accuracy.
+    The run loop is generic; only the transform/collate differ from HTSAT, so this guards that the NaFlex-aware
+    audio_zero_shot path stays wired for naflexvit towers."""
+    pytest.importorskip("torchaudio")  # the NaFlex transform's mel extractor needs torchaudio
+    from open_clip import build_zero_shot_classifier
+    from open_clip_train.audio_zero_shot import AUDIO_ZEROSHOT_TEMPLATES, run_audio_zero_shot_classifier
+    from open_clip_train.naflex_data import collate_naflex_dicts
+
+    model = open_clip.create_model(CONFIG).eval()
+    tok = get_tokenizer(CONFIG)
+    sr = model.audio.cfg.sample_rate
+    transform = AudioNaFlexTransformFactory(
+        AudioNaFlexCfg.from_clip_audio_cfg(model.audio.cfg),
+    )(max_seq_len=256, patch_size=None)
+
+    classnames = ["dog barking", "rain", "engine"]
+    samples = [{"audio": transform((torch.randn(1, sr * 2), sr)), "target": i % 3} for i in range(6)]
+    batch = collate_naflex_dicts(samples, image_key="audio", target_key="target", max_seq_len=256)
+    assert set(batch["audio"]) >= {"patches", "patch_coord", "patch_valid"}
+    assert batch["target"].shape == (6,)
+
+    args = SimpleNamespace(device="cpu", precision="fp32", rank=0, batch_size=6, model=CONFIG)
+    classifier = build_zero_shot_classifier(
+        model, tokenizer=tok, classnames=classnames, templates=AUDIO_ZEROSHOT_TEMPLATES,
+        num_classes_per_batch=10, device="cpu", use_tqdm=False,
+    )
+    assert classifier.shape[1] == len(classnames)
+    top1, top5 = run_audio_zero_shot_classifier(model, classifier, [batch], args, use_fsdp_eval=False)
+    assert 0.0 <= top1 <= 1.0 and 0.0 <= top5 <= 1.0
