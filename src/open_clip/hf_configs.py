@@ -50,10 +50,12 @@ arch_dict = {
             "width": "hidden_size",
             "heads": "num_attention_heads",
             "layers": "num_hidden_layers",
+            "layer_attr": "layer",
+            "token_embeddings_attr": "embeddings",
         },
         "pooler": "cls_pooler",
     },
-    # https://huggingface.co/docs/transformers/model_doc/m2m_100
+    # https://huggingface.co/docs/transformers/model_doc/m2m_100  (also covers NLLB)
     "m2m_100": {
         "config_names": {
             "context_length": "max_position_embeddings",
@@ -61,6 +63,8 @@ arch_dict = {
             "width": "d_model",
             "heads": "encoder_attention_heads",
             "layers": "encoder_layers",
+            "layer_attr": "layers",
+            "token_embeddings_attr": "embed_tokens",
         },
         "pooler": "cls_pooler",
     },

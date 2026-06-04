@@ -264,14 +264,50 @@ def parse_args(args):
     )
     parser.add_argument(
         "--opt", type=str, default='adamw',
-        help="Which optimizer to use. Choices are ['adamw', or any timm optimizer 'timm/{opt_name}']."
+        help="Which optimizer to use. Choices are ['adamw', 'nadamw' (torch NAdam w/ decoupled weight decay), "
+             "or any timm optimizer 'timm/{opt_name}']."
     )
     parser.add_argument(
         "--opt-kwargs",
         nargs="*",
         default={},
         action=ParseKwargs,
-        help="Additional optimizer keyword arguments, passed as key=value pairs.",
+        help="Additional optimizer keyword arguments, passed as key=value pairs. The fallback LR scale for "
+             "Muon-family optimizers goes here (e.g. fallback_lr_scale=0.5).",
+    )
+    parser.add_argument(
+        "--opt-fallback-list", type=str, nargs="*", default=None, metavar="PATTERN",
+        help="Param-name glob patterns routed to a hybrid optimizer's fallback (Muon-family timm opts only, e.g. "
+             "timm/nadamuon): matched params use the AdamW fallback instead of Muon. No effect for non-Muon "
+             "optimizers; invalid for torch optimizers. e.g. --opt-fallback-list 'text.transformer.embeddings.*' "
+             "'*.proj.*'."
+    )
+    parser.add_argument(
+        "--text-layer-decay", type=float, default=None,
+        help="Layer-wise LR decay for the text tower: lr(group) = lr * decay**(depth_from_head). Off when unset "
+             "(or 1.0). A gentle alternative to freezing a pretrained text encoder (e.g. 0.65)."
+    )
+    parser.add_argument(
+        "--image-layer-decay", "--visual-layer-decay", type=float, default=None, dest="image_layer_decay",
+        help="Layer-wise LR decay for the image tower (builtin ViT/ResNet or timm trunk): lr(group) = lr * "
+             "decay**(depth_from_head); the projection/adapter head stays at full LR. Off when unset (or 1.0)."
+    )
+    parser.add_argument(
+        "--audio-layer-decay", type=float, default=None,
+        help="Layer-wise LR decay for the audio tower (model.audio, e.g. a NaFlex spectrogram-ViT in CLAP): same "
+             "lr * decay**(depth_from_head) rule. Off when unset (or 1.0). Note: a from-scratch audio tower "
+             "usually wants full LR (leave off); this is for fine-tuning a pretrained audio encoder."
+    )
+    parser.add_argument(
+        "--wd-exclude", type=str, nargs="*", default=[], metavar="PATTERN", dest="wd_exclude_patterns",
+        help="Extra parameter-name glob patterns whose params skip weight decay, on top of the default rule "
+             "(1-D params + the model's no_weight_decay()). Matched against full param names with fnmatch, so use "
+             "'*' for substrings, e.g. --wd-exclude '*.bias' 'visual.proj*' '*pos_embed*'."
+    )
+    parser.add_argument(
+        "--text-pooler-own-group", dest="text_pooler_in_head", action="store_false",
+        help="Give the text readout pooler its own layer-wise-LR-decay / lock group, one step below the "
+             "projection head. Default (flag absent): fold the pooler into the projection head (full LR)."
     )
     parser.add_argument(
         "--use-bn-sync",

@@ -313,9 +313,9 @@ class CLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
-    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, pooler_in_head: bool = True):
         assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
-        lock_text_tower(self, unlocked_layers)
+        lock_text_tower(self, unlocked_layers, pooler_in_head)
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.visual.set_grad_checkpointing(enable, impl=impl)
@@ -524,8 +524,8 @@ class CustomTextCLIP(nn.Module):
         # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
         self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
 
-    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
-        self.text.lock(unlocked_layers, freeze_layer_norm)
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, pooler_in_head: bool = True):
+        self.text.lock(unlocked_layers, freeze_layer_norm, pooler_in_head)
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.visual.set_grad_checkpointing(enable, impl=impl)

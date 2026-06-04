@@ -4,17 +4,25 @@ import torch
 
 
 def assign_learning_rate(optimizer, new_lr):
+    # Each param group may carry an ``lr_scale`` (layer-wise LR decay); groups without one default to 1.0, so this
+    # stays byte-identical to a flat schedule for the non-decay path.
     for param_group in optimizer.param_groups:
+        scaled_lr = new_lr * param_group.get("lr_scale", 1.0)
         lr = param_group["lr"]
         if isinstance(lr, torch.Tensor):
-            lr.fill_(new_lr)
+            lr.fill_(scaled_lr)
         else:
-            param_group["lr"] = new_lr
+            param_group["lr"] = scaled_lr
 
 
 def get_learning_rate(optimizer):
-    lr = optimizer.param_groups[0]["lr"]
-    return lr.item() if isinstance(lr, torch.Tensor) else lr
+    # Report the (unscaled) base LR -- the largest per-group LR, i.e. the lr_scale==1.0 group(s). For a flat
+    # schedule every group is equal, so this matches the previous param_groups[0] behaviour.
+    lrs = [
+        pg["lr"].item() if isinstance(pg["lr"], torch.Tensor) else pg["lr"]
+        for pg in optimizer.param_groups
+    ]
+    return max(lrs) if lrs else 0.0
 
 
 def tensorize_learning_rate(optimizer, device):

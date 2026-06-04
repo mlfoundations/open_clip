@@ -41,6 +41,7 @@ from open_clip_train.naflex_data import (
     get_naflex_model_patch_size,
 )
 from open_clip_train.logger import setup_logging
+from open_clip_train.optim import OptimizerCfg, create_optimizer
 from open_clip_train.params import parse_args
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown, tensorize_learning_rate
 from open_clip_train.train import (
@@ -310,7 +311,8 @@ def main(args):
     if args.lock_text:
         model.lock_text_tower(
             unlocked_layers=args.lock_text_unlocked_layers,
-            freeze_layer_norm=args.lock_text_freeze_layer_norm)
+            freeze_layer_norm=args.lock_text_freeze_layer_norm,
+            pooler_in_head=args.text_pooler_in_head)
 
     if args.grad_checkpointing:
         if args.fsdp and args.torchcompile:
@@ -432,56 +434,30 @@ def main(args):
     scaler = None
 
     if args.train_data or args.dataset_type in ("synthetic", "synthetic-audio"):
-        opt = getattr(args, 'opt', 'adamw').lower()
         use_tensor_learning_rate = args.torchcompile and args.torchcompile_strategy == 'step'
-        if opt.startswith('timm/'):
-            from timm.optim import create_optimizer_v2
-            timm_opt = opt.split('timm/')[-1]
-            opt_kwargs = {}
-            assert (args.beta1 is None) == (args.beta2 is None), \
-                'When using timm optimizer, BOTH beta1 and beta2 must be specified (or not specified).'
-            if args.beta1 is not None:
-                opt_kwargs['betas'] = (args.beta1, args.beta2)
-            if args.eps is not None:
-                opt_kwargs['eps'] = args.eps
-            if args.momentum is not None:
-                opt_kwargs['momentum'] = args.momentum
-            opt_kwargs.update(args.opt_kwargs or {})
-            optimizer = create_optimizer_v2(
-                task.trainable_module,
-                timm_opt,
+        optimizer = create_optimizer(
+            task.trainable_module,
+            OptimizerCfg(
+                opt=args.opt,
                 lr=args.lr,
                 weight_decay=args.wd,
-                **opt_kwargs,
-            )
-        else:
-            # If some params are not passed, we use the default values based on model name.
-            exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-            include = lambda n, p: not exclude(n, p)
-
-            named_parameters = list(task.trainable_module.named_parameters())
-            gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-            rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
-
-            if opt == 'adamw':
-                opt_kwargs = dict(
-                    lr=args.lr,
-                    betas=(args.beta1, args.beta2),
-                    eps=args.eps,
-                )
-                opt_kwargs.update(args.opt_kwargs or {})
-                optimizer = optim.AdamW(
-                    [
-                        {"params": gain_or_bias_params, "weight_decay": 0.},
-                        {"params": rest_params, "weight_decay": args.wd},
-                    ],
-                    **opt_kwargs,
-                )
-            else:
-                assert False, f'Unknown optimizer {opt}'
+                beta1=args.beta1,
+                beta2=args.beta2,
+                eps=args.eps,
+                momentum=args.momentum,
+                opt_kwargs=args.opt_kwargs or {},
+                text_layer_decay=args.text_layer_decay,
+                image_layer_decay=args.image_layer_decay,
+                audio_layer_decay=args.audio_layer_decay,
+                pooler_in_head=args.text_pooler_in_head,
+                wd_exclude_patterns=args.wd_exclude_patterns,
+                fallback_list=args.opt_fallback_list,
+            ),
+            device=device,
+            tensorize=use_tensor_learning_rate,
+        )
 
         if use_tensor_learning_rate:
-            tensorize_learning_rate(optimizer, device)
             _logger.info(
                 'Using tensor learning rate for step compile to avoid optimizer-step recompiles.'
             )
