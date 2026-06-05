@@ -1,3 +1,4 @@
+import logging
 import math
 import random
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -25,6 +26,9 @@ Sample = Dict[str, Any]
 
 __all__ = [
     "NAFLEX_AVAILABLE",
+    "AudioTokenLength",
+    "CaptionLength",
+    "LengthBucketer",
     "NaFlexBatchScheduler",
     "NaFlexBatcher",
     "NaFlexMapDatasetWrapper",
@@ -187,28 +191,79 @@ def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
     return total
 
 
-class LengthBucketer:
-    """WebDataset stage that reorders samples so similar caption lengths are adjacent.
+class CaptionLength:
+    """Length-fn: caption (text) token count of a sample. Picklable (forkserver-safe DataLoader workers)."""
 
-    Buffers ``pool`` samples, sorts each pool by caption token length, splits it into contiguous ``chunk``-size
-    runs, shuffles the run order (seeded), and yields. The downstream NaFlex batcher then pulls
-    length-homogeneous batches, which tightens per-batch-max text padding. It only reorders -- every sample is
-    yielded exactly once -- so the batch schedule, ``num_batches``, and DDP step counts are unaffected.
+    def __init__(self, key: str = "text"):
+        self.key = key
+
+    def __call__(self, sample: Sample) -> int:
+        value = sample.get(self.key)
+        if value is None:
+            return 0
+        return value.shape[0] if hasattr(value, "shape") else len(value)
+
+
+class AudioTokenLength:
+    """Length-fn: estimated NaFlex audio-patch count ``k`` before patchify.
+
+    Bucketing sees decoded ``(waveform, sr)`` samples, so this mirrors ``AudioNaFlexPatchify``: resample-aware
+    frame count, ceil to time patches, multiply by freq tokens, and optionally clamp to the largest cap.
+    """
+
+    def __init__(
+            self,
+            audio_key: str = "audio",
+            freq_tokens: int = 1,
+            patch_time: int = 1,
+            hop_size: int = 1,
+            window_size: int = 0,
+            sample_rate: int = 0,
+            max_audio_tokens: int = 0,
+    ):
+        self.audio_key = audio_key
+        self.freq_tokens = max(1, int(freq_tokens))
+        self.patch_time = max(1, int(patch_time))
+        self.hop_size = max(1, int(hop_size))
+        self.window_size = max(0, int(window_size))  # mel STFT floor: short clips padded up to one window
+        self.sample_rate = int(sample_rate)
+        self.max_audio_tokens = max(0, int(max_audio_tokens))  # cap (== max seq-len bucket); 0 = uncapped
+
+    def __call__(self, sample: Sample) -> int:
+        audio = sample.get(self.audio_key)
+        if not (isinstance(audio, (tuple, list)) and audio and hasattr(audio[0], "shape")):
+            return 0
+        waveform, sr = audio[0], (audio[1] if len(audio) > 1 else 0)
+        num_samples = waveform.shape[-1]
+        if self.sample_rate and sr and sr != self.sample_rate:
+            num_samples = num_samples * self.sample_rate / sr  # mel runs at sample_rate -> resampled frame count
+        num_samples = max(num_samples, self.window_size)  # mirror the transform's pad of sub-window clips
+        frames = int(num_samples // self.hop_size) + 1
+        time_tokens = max(1, math.ceil(frames / self.patch_time))  # match the transform's ceil-pad (not floor-crop)
+        tokens = self.freq_tokens * time_tokens
+        return min(tokens, self.max_audio_tokens) if self.max_audio_tokens else tokens
+
+
+class LengthBucketer:
+    """WebDataset stage that reorders samples so similar sequence lengths batch together.
+
+    Sort key is ``sum(fn(sample) for fn in length_fns)``: NaFlexClap ``[audio]``, GenLAP ``[audio, caption]``,
+    GenLIP ``[caption]``. Reorder-only; every sample and step count is preserved.
 
     Module-level and picklable (no closures) for forkserver-safe DataLoader workers, mirroring ``TokenizeText``.
     """
 
     def __init__(
             self,
+            length_fns: Optional[Sequence[Callable[[Sample], int]]] = None,
             pool: int = 2048,
             chunk: int = 128,
-            key: str = "text",
             seed: int = 42,
             epoch=-1,
     ):
+        self.length_fns = list(length_fns) if length_fns else [CaptionLength()]
         self.pool = max(1, int(pool))
         self.chunk = max(1, int(chunk))
-        self.key = key
         self.seed = int(seed)
         self.epoch = epoch
 
@@ -218,8 +273,7 @@ class LengthBucketer:
         return int(self.epoch)
 
     def _length(self, sample: Sample) -> int:
-        value = sample[self.key]
-        return value.shape[0] if hasattr(value, "shape") else len(value)
+        return sum(fn(sample) for fn in self.length_fns)
 
     def _flush(self, buffer: List[Sample], rng: random.Random):
         buffer.sort(key=self._length)
@@ -240,84 +294,6 @@ class LengthBucketer:
                 buffer = []
         if buffer:
             yield from self._flush(buffer, rng)
-
-
-class AudioLengthBucketer(LengthBucketer):
-    """NaFlex *audio* length bucketer with a **mode-aware** sort key.
-
-    NaFlex audio is genuinely variable-length (the spectrogram is patchified at native duration, no waveform
-    repeat/pad), so unlike the image path both the audio-patch count AND the caption length vary per row. Which
-    of those actually drives per-batch padding -- and therefore the right thing to bucket on -- depends on the
-    GenLAP model's sequence layout:
-
-      * **block layout** (``pack_prefix`` off): audio patches pad to the fixed seq-len bucket, so clip duration
-        is irrelevant to padding -- only caption length matters (text pads to batch-max). Key = caption length
-        (the base-class behaviour). This is also the right key for the contrastive (fixed-text) NaFlexClap case,
-        where it degenerates to a constant (no reordering).
-      * **packed layout** (``pack_prefix`` on): each row is compacted to ``[valid audio ; valid text ; PAD]`` of
-        length ``k + m`` and the batch pads to ``T = max_i(k_i + m_i)``, so the TOTAL token count drives padding.
-        Key = estimated audio tokens ``k`` + caption length ``m``. ``k`` is estimated from the waveform + mel
-        geometry (``freq_tokens * (frames // patch_time)``), available because ``sample[audio_key]`` is still the
-        decoded ``(waveform, sr)`` tuple at this stage (the patchify happens later, in the batcher's collate).
-
-    Reorder-only and picklable, like the base class, so ``num_batches`` / DDP step counts are unchanged. Subclass
-    for any future audio-specific bucketing concerns (fusion views, multi-rate, etc.).
-    """
-
-    def __init__(
-            self,
-            *args,
-            audio_key: str = "audio",
-            packed: bool = False,
-            freq_tokens: int = 1,
-            patch_time: int = 1,
-            hop_size: int = 1,
-            window_size: int = 0,
-            sample_rate: int = 0,
-            max_audio_tokens: int = 0,
-            **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.audio_key = audio_key
-        self.packed = bool(packed)
-        self.freq_tokens = max(1, int(freq_tokens))
-        self.patch_time = max(1, int(patch_time))
-        self.hop_size = max(1, int(hop_size))
-        self.window_size = max(0, int(window_size))  # mel STFT floor: short clips are padded up to one window
-        self.sample_rate = int(sample_rate)
-        self.max_audio_tokens = max(0, int(max_audio_tokens))  # cap (== max seq-len bucket); 0 = uncapped
-
-    def _audio_tokens(self, sample: Sample) -> int:
-        """Estimate the NaFlex audio-patch count ``k`` from the decoded ``(waveform, sr)`` and mel geometry.
-
-        Clamped to ``max_audio_tokens`` (the largest seq-len bucket): the transform truncates clips to the
-        sampled bucket, so two clips that both overflow the largest bucket are indistinguishable after
-        truncation -- without the clamp a very long outlier would be over-weighted in the sort.
-        """
-        audio = sample.get(self.audio_key)
-        if not (isinstance(audio, (tuple, list)) and audio and hasattr(audio[0], "shape")):
-            return 0
-        waveform, sr = audio[0], (audio[1] if len(audio) > 1 else 0)
-        num_samples = waveform.shape[-1]
-        if self.sample_rate and sr and sr != self.sample_rate:
-            num_samples = num_samples * self.sample_rate / sr  # mel runs at sample_rate -> count resampled frames
-        num_samples = max(num_samples, self.window_size)  # mirror the transform's pad of sub-window clips
-        frames = int(num_samples // self.hop_size) + 1
-        time_tokens = max(1, math.ceil(frames / self.patch_time))  # match the transform's ceil-pad (not floor-crop)
-        tokens = self.freq_tokens * time_tokens
-        return min(tokens, self.max_audio_tokens) if self.max_audio_tokens else tokens
-
-    def _caption_len(self, sample: Sample) -> int:
-        text = sample.get(self.key)
-        if text is None:
-            return 0
-        return text.shape[0] if hasattr(text, "shape") else len(text)
-
-    def _length(self, sample: Sample) -> int:
-        caption = self._caption_len(sample)
-        if not self.packed:
-            return caption  # block layout: audio pads to the bucket -> only caption padding varies
-        return self._audio_tokens(sample) + caption  # packed layout: row length is k + m -> bucket by the sum
 
 
 class NaFlexBatchScheduler:
@@ -343,6 +319,7 @@ class NaFlexBatchScheduler:
             target_key: str = "text",
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
+            pad_multiple: Optional[int] = None,
     ) -> None:
         require_naflex()
 
@@ -376,6 +353,19 @@ class NaFlexBatchScheduler:
         # (default; preserves CLIP/SigLIP behavior). GenLIP sets this to the caption cap so the budget bounds
         # total (image+text) tokens per batch. It does NOT change the image bucket used for patchify/collation.
         self.per_row_text_tokens = int(per_row_text_tokens or 0)
+
+        # Native audio pads to batch max, optionally modulus-rounded for a smaller compile shape set.
+        # Image paths keep pad-to-seq_len because their transforms resize to the sampled bucket.
+        if pad_multiple is not None and int(pad_multiple) <= 0:
+            raise ValueError(f"`pad_multiple` (--naflex-pad-multiple) must be > 0 when set, got {pad_multiple}.")
+        self.pad_multiple = int(pad_multiple) if pad_multiple else None
+        self.pad_freq_tokens = getattr(getattr(transform_factory, "cfg", None), "freq_tokens", None)
+        if self.pad_multiple and self.pad_freq_tokens and any(s % self.pad_multiple for s in self.seq_lens):
+            logging.info(
+                "NaFlex pad-multiple=%d does not divide all seq_lens %s; a few extra cap-aligned batch shapes "
+                "will appear under torch.compile (pick seq_lens divisible by %d to avoid).",
+                self.pad_multiple, self.seq_lens, self.pad_multiple,
+            )
 
         self.patch_sizes, self.patch_size_probs, self.variable_patch_size = resolve_patch_cfg(
             patch_size=patch_size,
@@ -513,8 +503,21 @@ class NaFlexBatchScheduler:
         return int(torch.multinomial(probs, 1, generator=generator).item())
 
     @staticmethod
-    def _collate_images(patch_dicts: List[Dict[str, torch.Tensor]], max_seq_len: int) -> Dict[str, torch.Tensor]:
-        max_patches = max_seq_len or max(patch_dict["patches"].shape[0] for patch_dict in patch_dicts)
+    def _collate_images(
+            patch_dicts: List[Dict[str, torch.Tensor]],
+            max_seq_len: int,
+            pad_multiple: Optional[int] = None,
+            freq_tokens: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if freq_tokens is None:
+            # Image / fixed-bucket path: pad to the sampled seq-len bucket (or batch-max if seq_len is 0/None).
+            max_patches = max_seq_len or max(pd["patches"].shape[0] for pd in patch_dicts)
+        else:
+            # Native audio: pad to batch max, optionally modulus-rounded, then clamp to the whole-column cap.
+            batch_max = max(pd["patches"].shape[0] for pd in patch_dicts)
+            max_patches = math.ceil(batch_max / pad_multiple) * pad_multiple if pad_multiple else batch_max
+            if max_seq_len:
+                max_patches = min(max_patches, freq_tokens * (max_seq_len // freq_tokens))
         batch_size = len(patch_dicts)
         first_patches = patch_dicts[0]["patches"]
         patches = first_patches.new_zeros((batch_size, max_patches) + tuple(first_patches.shape[1:]))
@@ -553,17 +556,20 @@ class NaFlexBatchScheduler:
             patch_dicts.append(patch_dict)
             targets.append(sample[self.target_key])
 
+        images = self._collate_images(
+            patch_dicts, seq_len, pad_multiple=self.pad_multiple, freq_tokens=self.pad_freq_tokens,
+        )
         if self.pad_id is not None:
             # Generative (GenLIP) path: variable-length captions padded within the batch.
             text, text_valid = collate_variable_text(targets, self.pad_id)
             return {
-                self.image_key: self._collate_images(patch_dicts, seq_len),
+                self.image_key: images,
                 self.target_key: text,
                 f"{self.target_key}_valid": text_valid,
             }
 
         return {
-            self.image_key: self._collate_images(patch_dicts, seq_len),
+            self.image_key: images,
             self.target_key: default_collate(targets),
         }
 
@@ -592,6 +598,7 @@ class NaFlexBatcher:
             target_key: str = "text",
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
+            pad_multiple: Optional[int] = None,
     ) -> None:
         self.epoch = epoch
         self.scheduler = NaFlexBatchScheduler(
@@ -613,6 +620,7 @@ class NaFlexBatcher:
             target_key=target_key,
             pad_id=pad_id,
             per_row_text_tokens=per_row_text_tokens,
+            pad_multiple=pad_multiple,
         )
 
     @property

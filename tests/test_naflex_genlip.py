@@ -349,7 +349,7 @@ def test_length_bucketer():
 
     torch.manual_seed(0)
     samples = [{"text": torch.zeros(int(n), dtype=torch.long)} for n in torch.randint(2, 80, (512,))]
-    bucketer = LengthBucketer(pool=256, chunk=32, seed=1, epoch=0)
+    bucketer = LengthBucketer(pool=256, chunk=32, seed=1, epoch=0)  # defaults to [CaptionLength()]
     out = list(bucketer(iter(samples)))
 
     assert len(out) == len(samples)

@@ -767,8 +767,8 @@ def parse_args(args):
     parser.add_argument(
         "--naflex-length-bucketing",
         action="store_true",
-        help="GenLIP: reorder samples so similar caption lengths share a batch, reducing per-batch-max text "
-             "padding. Reorder-only (schedule/num_batches/DDP unaffected); train-only."
+        help="NaFlex train: reorder by row length to reduce padding. GenLIP keys on caption; NaFlexClap on audio; "
+             "GenLAP on audio+caption. Reorder-only; train-only."
     )
     parser.add_argument(
         "--naflex-bucket-pool",
@@ -781,6 +781,13 @@ def parse_args(args):
         type=int,
         default=128,
         help="Run length within a sorted pool for --naflex-length-bucketing (~ a typical batch size)."
+    )
+    parser.add_argument(
+        "--naflex-pad-multiple",
+        type=int,
+        default=None,
+        help="NaFlex audio only: pad to batch max, optionally rounded to multiples of M and clamped at the "
+             "per-batch cap. None = exact batch-max. Use M (for example 32 or 64) to limit compile shapes."
     )
 
     args = parser.parse_args(args)

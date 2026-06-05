@@ -66,28 +66,23 @@ def test_audio_naflex_2d_token_cap_preserves_freq_rows():
     assert out["patch_coord"][:, 0].max().item() == 1    # BOTH freq rows present (no dropped row)
 
 
-def test_audio_length_bucketer_caption_only_when_block():
-    """pack_prefix OFF (block layout): audio pads to the seq-len bucket, so the key is caption length only."""
-    from open_clip_train.naflex_data import AudioLengthBucketer
+def test_caption_length_bucketer_sorts_by_caption():
+    """LengthBucketer([CaptionLength]) sorts by caption length (the GenLIP / fixed-modality case)."""
+    from open_clip_train.naflex_data import CaptionLength, LengthBucketer
 
-    sr = 16000
-    durs = [3, 1, 2, 1]   # seconds (waveform length / sr) -- must NOT influence the key here
-    caps = [5, 9, 2, 3]   # caption token counts
-    samples = [
-        {"audio": (torch.randn(1, sr * d), sr), "text": torch.zeros(c, dtype=torch.long)}
-        for d, c in zip(durs, caps)
-    ]
-    bucketer = AudioLengthBucketer(pool=10, chunk=10, seed=0, epoch=0)  # packed defaults off
-    assert bucketer._length(samples[0]) == 5  # caption length; duration ignored in block mode
+    caps = [5, 9, 2, 3]
+    samples = [{"text": torch.zeros(c, dtype=torch.long)} for c in caps]
+    bucketer = LengthBucketer(length_fns=[CaptionLength("text")], pool=10, chunk=10, seed=0, epoch=0)
+    assert bucketer._length(samples[0]) == 5
 
     out = list(bucketer(iter(samples)))
     assert len(out) == len(samples)  # permutation, nothing dropped/duplicated
     assert [s["text"].shape[0] for s in out] == sorted(caps)  # sorted by caption length
 
 
-def test_audio_length_bucketer_token_sum_when_packed():
-    """pack_prefix ON (packed layout): bucket by the compacted row length = est. audio tokens + caption."""
-    from open_clip_train.naflex_data import AudioLengthBucketer
+def test_generative_audio_bucketer_sorts_by_audio_plus_caption():
+    """Generative GenLAP keys on the SUM audio_tokens + caption (LengthBucketer sorts by sum(length_fns))."""
+    from open_clip_train.naflex_data import AudioTokenLength, CaptionLength, LengthBucketer
 
     sr = 16000
     durs = [3, 1, 2, 1]
@@ -97,10 +92,11 @@ def test_audio_length_bucketer_token_sum_when_packed():
         for d, c in zip(durs, caps)
     ]
     # freq_tokens=1, patch_time=1, hop_size=sr -> audio_tokens = (samples // sr) + 1 = duration_sec + 1
-    bucketer = AudioLengthBucketer(
-        pool=10, chunk=10, seed=0, epoch=0,
-        packed=True, freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr,
-    )
+    length_fns = [
+        AudioTokenLength(freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr),
+        CaptionLength("text"),
+    ]
+    bucketer = LengthBucketer(length_fns=length_fns, pool=10, chunk=10, seed=0, epoch=0)
     assert bucketer._length(samples[0]) == (3 + 1) + 5  # audio_tokens (dur+1) + caption
 
     sums = [(d + 1) + c for d, c in zip(durs, caps)]  # [9, 11, 5, 6]
@@ -109,16 +105,17 @@ def test_audio_length_bucketer_token_sum_when_packed():
     assert [bucketer._length(s) for s in out] == sorted(sums)  # sorted by the token sum
 
 
-def test_audio_length_bucketer_clamps_long_clips_when_packed():
-    """The estimate is clamped to max_audio_tokens (the largest bucket): clips that both overflow it are
-    indistinguishable after the transform truncates them, so they sort by caption -- no outlier over-weighting."""
-    from open_clip_train.naflex_data import AudioLengthBucketer
+def test_audio_token_length_clamps_long_clips():
+    """AudioTokenLength clamps its estimate to max_audio_tokens, so overflowing clips sort by caption rather
+    than an outlier duration (the transform truncates them to that cap anyway)."""
+    from open_clip_train.naflex_data import AudioTokenLength, CaptionLength, LengthBucketer
 
     sr = 16000
-    bucketer = AudioLengthBucketer(
-        pool=10, chunk=10, seed=0, epoch=0,
-        packed=True, freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr, max_audio_tokens=5,
-    )
+    length_fns = [
+        AudioTokenLength(freq_tokens=1, patch_time=1, hop_size=sr, sample_rate=sr, max_audio_tokens=5),
+        CaptionLength("text"),
+    ]
+    bucketer = LengthBucketer(length_fns=length_fns, pool=10, chunk=10, seed=0, epoch=0)
     long_short_cap = {"audio": (torch.randn(1, sr * 100), sr), "text": torch.zeros(2, dtype=torch.long)}
     long_long_cap = {"audio": (torch.randn(1, sr * 50), sr), "text": torch.zeros(4, dtype=torch.long)}
     # both audio estimates (101, 51) clamp to 5 -> keys are 5+2 and 5+4, NOT 103 vs 55
@@ -140,25 +137,25 @@ def test_audio_transform_factory_carries_pack_prefix():
     assert train.pack_prefix is True and val.pack_prefix is True
 
 
-def test_audio_length_bucketer_estimate_matches_actual_patch_count():
-    """Packed-mode estimate must equal the patch count the transform actually emits (ceil), for short AND
-    remainder clips -- otherwise packed bucketing mis-sizes T = max(k+m)."""
+def test_audio_token_length_estimate_matches_actual_patch_count():
+    """The AudioTokenLength estimate must equal the patch count the transform actually emits (ceil), for short
+    AND remainder clips -- otherwise audio bucketing mis-sizes the per-batch max."""
     pytest.importorskip("torchaudio")
-    from open_clip_train.naflex_data import AudioLengthBucketer
+    from open_clip_train.naflex_data import AudioTokenLength
 
     # patch_time=2 (not 4) so a dropped window_size would actually diverge on the sub-window clip below; and pass
     # window_size like production does, so this mirrors the real bucketer wiring (not an accidental match).
     cfg = AudioNaFlexCfg(n_mels=64, patch_freq=32, patch_time=2)  # F = freq_tokens = 2 (2-D grid)
     patchify = AudioNaFlexPatchify(cfg)
-    bucketer = AudioLengthBucketer(
-        pool=10, chunk=10, seed=0, epoch=0, packed=True, freq_tokens=cfg.freq_tokens, patch_time=cfg.patch_time,
+    audio_len = AudioTokenLength(
+        audio_key="audio", freq_tokens=cfg.freq_tokens, patch_time=cfg.patch_time,
         hop_size=cfg.hop_size, window_size=cfg.window_size, sample_rate=cfg.sample_rate,
     )
     sr = cfg.sample_rate
     for n_samples in (200, sr // 10, sr, sr * 3 + 137):  # sub-patch, short, 1s, 3s + remainder
         wav = torch.randn(1, n_samples)
         actual = patchify((wav, sr))["patches"].shape[0]
-        est = bucketer._audio_tokens({"audio": (wav, sr)})
+        est = audio_len({"audio": (wav, sr)})
         assert est == actual, f"n_samples={n_samples}: estimate {est} != actual {actual}"
 
 
@@ -206,3 +203,52 @@ def test_params_genlap_enables_naflex():
     assert args.genlap is True
     assert args.use_naflex is True
     assert args.force_naflex_vision is False
+
+
+def test_contrastive_audio_bucketer_reorders_by_audio_tokens():
+    """NaFlexClap (constant text) must bucket on audio_tokens, not the constant caption: the audio-keyed
+    LengthBucketer reorders by duration, a caption-keyed one cannot (the bug we fixed)."""
+    from open_clip_train.naflex_data import AudioTokenLength, CaptionLength, LengthBucketer
+
+    sr = 48000
+    audio_len = AudioTokenLength(
+        audio_key="audio", freq_tokens=8, patch_time=16, hop_size=480, window_size=1024, sample_rate=sr,
+    )
+    durs = [1.0, 9.0, 2.0, 8.0, 1.5, 9.5, 3.0, 7.0]
+    samples = [{"audio": (torch.randn(1, int(d * sr)), sr), "text": torch.zeros(77, dtype=torch.long)} for d in durs]
+
+    # pool=chunk=len -> a single sorted chunk (no shuffle), so output order == sorted-by-_length order.
+    audio_b = LengthBucketer(length_fns=[audio_len], pool=len(samples), chunk=len(samples), seed=0, epoch=0)
+    out = [round(s["audio"][0].shape[-1] / sr, 1) for s in audio_b(list(samples))]
+    assert out == sorted(durs), out  # audio-keyed -> grouped by duration
+
+    cap_b = LengthBucketer(length_fns=[CaptionLength("text")], pool=len(samples), chunk=len(samples), seed=0, epoch=0)
+    assert {cap_b._length(s) for s in samples} == {77}  # constant caption -> no signal
+    assert [round(s["audio"][0].shape[-1] / sr, 1) for s in cap_b(list(samples))] == durs  # stable -> no reorder
+
+
+def test_audio_collate_modulus_batch_max_and_clamp():
+    """Audio collate pads to min(ceil(batch_max/M)*M, F*(S//F)): image mode -> seq_len; M=None -> batch_max;
+    M set -> modulus, clamped at the per-batch cap; always >= batch_max (holds all tokens)."""
+    from open_clip_train.naflex_data import NaFlexBatchScheduler
+
+    F = 8
+
+    def pd(n, d=8):
+        return {
+            "patches": torch.ones(n, d),
+            "patch_coord": torch.zeros(n, 2, dtype=torch.long),
+            "patch_valid": torch.ones(n, dtype=torch.bool),
+        }
+
+    dicts = [pd(104), pd(456), pd(56), pd(400)]  # batch_max = 456, cap = F*(504//F) = 504
+    collate = NaFlexBatchScheduler._collate_images
+    assert collate(dicts, 504, None, None)["seq_len"] == 504          # image: pad to seq_len
+    assert collate(dicts, 504, None, F)["seq_len"] == 456             # audio M=None: batch_max
+    assert collate(dicts, 504, 64, F)["seq_len"] == 504               # ceil(456/64)*64=512 -> clamp to cap 504
+    assert collate([pd(496)], 504, 64, F)["seq_len"] == 504           # ceil(496/64)*64=512 -> clamp to 504
+    tight = [pd(400), pd(408), pd(392)]
+    assert collate(tight, 504, 64, F)["seq_len"] == 448               # ceil(408/64)*64=448, no clamp
+
+    out = collate(dicts, 504, 64, F)  # never drops a valid token
+    assert int(out["patch_valid"].sum()) == sum(d["patches"].shape[0] for d in dicts)

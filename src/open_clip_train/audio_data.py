@@ -26,7 +26,13 @@ from open_clip_train.data import (
     tarfile_to_samples_nothrow,
     wds_shuffle_sizes,
 )
-from open_clip_train.naflex_data import AudioLengthBucketer, collate_naflex_dicts, create_naflex_eval_transform
+from open_clip_train.naflex_data import (
+    AudioTokenLength,
+    CaptionLength,
+    LengthBucketer,
+    collate_naflex_dicts,
+    create_naflex_eval_transform,
+)
 
 
 def _audio_loader_kwargs(args):
@@ -154,10 +160,8 @@ def get_wds_audio_dataset(
             "(with --dataset-resampled)."
         )
 
-    # NaFlex audio path (GenLAP generative + NaFlexClap contrastive) mirrors the image NaFlex path
-    # (RepeatedShardList head + batcher-derived epoch); otherwise fall through to the standard CLAP fixed-batch
-    # loader. `generative` (GenLAP) => variable-length caption concatenated to audio (pad_id, text budget);
-    # contrastive (NaFlexClap) => fixed-length text in a separate tower (pad_id=None, no text budget).
+    # NaFlex audio uses the shared batcher path; standard CLAP keeps the fixed-batch loader.
+    # GenLAP has variable text in the audio row budget; NaFlexClap text stays fixed and separate.
     naflex_audio = naflex_data_config is not None and (
         getattr(args, "genlap", False) or getattr(args, "naflexclap", False)
     )
@@ -221,42 +225,39 @@ def get_wds_audio_dataset(
         ]
     )
 
-    # Generative (GenLAP) concatenates a variable-length caption to the audio (needs pad_id + a per-row text
-    # budget); contrastive (NaFlexClap) uses fixed-length text in a separate tower (pad_id=None -> NaFlexBatcher
-    # fixed-text collate; no text in the audio token budget).
+    # GenLAP budgets variable text with audio; NaFlexClap keeps fixed text outside the audio token budget.
     naflex_pad_id = getattr(tokenizer, "pad_token_id", None) if generative else None
     naflex_text_cost = (getattr(tokenizer, "context_length", 0) or 0) if generative else 0
     naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=generative)
 
     naflex_batcher = None
     if naflex_train:
-        # Audio is variable-length (no waveform repeat/pad), so bucket whenever enabled -- for BOTH generative
-        # (genlap) and contrastive (naflexclap). The key is mode-aware: caption length for the block layout, and
-        # the audio+caption token SUM when GenLAP packs each row (pack_prefix) so the compacted T = max(k+m) is
-        # tight. pack_prefix + the mel geometry come off the AudioNaFlexTransformFactory we already received
-        # (set from the resolved model in _build_preprocess), which is robust to local-dir:/hf-hub:/override
-        # config sources that a get_model_config(args.model) name lookup would miss.
+        # Native audio is variable-length. NaFlexClap buckets by audio tokens; GenLAP buckets by audio+caption
+        # tokens for both block and packed-prefix layouts. Geometry comes from the resolved transform factory.
         audio_bucketer = None
-        if getattr(args, "naflex_length_bucketing", False):
-            packed = bool(getattr(preprocess_audio, "pack_prefix", False))
-            bucket_geom = {}
-            audio_naflex_cfg = getattr(preprocess_audio, "cfg", None)
-            if packed and audio_naflex_cfg is not None:
-                bucket_geom = dict(
-                    packed=True,
+        audio_naflex_cfg = getattr(preprocess_audio, "cfg", None)
+        if getattr(args, "naflex_length_bucketing", False) and audio_naflex_cfg is not None:
+            # Always include audio length; generative audio adds variable caption length below.
+            length_fns = [
+                AudioTokenLength(
+                    audio_key="audio",
                     freq_tokens=audio_naflex_cfg.freq_tokens,
                     patch_time=audio_naflex_cfg.patch_time,
                     hop_size=audio_naflex_cfg.hop_size,
                     window_size=audio_naflex_cfg.window_size,  # mirror the transform's sub-window pad
                     sample_rate=audio_naflex_cfg.sample_rate,
-                    max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp: clips truncate to this bucket
+                    max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp the sort key for outliers
                 )
-            audio_bucketer = AudioLengthBucketer(
+            ]
+            if generative:
+                # GenLAP text is variable, so use audio+caption length in block and packed-prefix modes.
+                length_fns.append(CaptionLength(key="text"))
+            audio_bucketer = LengthBucketer(
+                length_fns=length_fns,
                 pool=args.naflex_bucket_pool,
                 chunk=args.naflex_bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
-                **bucket_geom,
             )
         # Reuse the modality-agnostic NaFlex tail; the batcher applies preprocess_audio (an
         # AudioNaFlexTransformFactory) to sample["audio"] and reads sample["text"]. Epoch by num_samples
@@ -274,6 +275,7 @@ def get_wds_audio_dataset(
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=audio_bucketer,
+            pad_multiple=getattr(args, "naflex_pad_multiple", None),
         )
     elif naflex_eval:
         eval_transform, eval_seq_len, _ = create_naflex_eval_transform(preprocess_audio, naflex_data_config)

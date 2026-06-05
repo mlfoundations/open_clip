@@ -201,9 +201,8 @@ class AudioNaFlexPatchify:
     """Picklable transform: ``(waveform, sample_rate)`` -> ``{patches, patch_coord, patch_valid}``.
 
     Reuses the CLAP log-mel extractor (``audio/transform._get_mel``; torchaudio is imported lazily). Unlike
-    ``AudioPreprocess`` there is no fixed-clip truncation or fusion -- the time axis stays native and variable,
-    and the NaFlex collate pads the batch to the seq-len bucket with a valid mask. An optional
-    ``max_audio_tokens`` caps the per-sample token count by keeping whole time columns (see below).
+    ``AudioPreprocess`` there is no fixed-clip repeat/pad or fusion: time stays native. ``max_audio_tokens`` caps
+    over-length clips by whole time columns; audio collate pads to batch max (optionally modulus-rounded).
     """
 
     def __init__(self, cfg: AudioNaFlexCfg, max_audio_tokens: Optional[int] = None):
@@ -265,8 +264,7 @@ class AudioNaFlexTransformFactory:
 
     def __init__(self, cfg: AudioNaFlexCfg, pack_prefix: bool = False):
         self.cfg = cfg
-        # GenLAP's packed-row layout (resolved from the actual model, not a config-name lookup) so the data path
-        # can pick the right length-bucketing key off the transform it already receives -- see AudioLengthBucketer.
+        # Resolved model state used by the audio data path; avoids config-name lookups.
         self.pack_prefix = pack_prefix
 
     def __call__(self, max_seq_len: Optional[int] = None, patch_size: Any = None) -> AudioNaFlexPatchify:

@@ -44,6 +44,7 @@ class TokenizeText:
         return self.tokenizer(text)[0]
 
 from open_clip_train.naflex_data import (
+    CaptionLength,
     LengthBucketer,
     NaFlexBatcher,
     NaFlexMapDatasetWrapper,
@@ -468,6 +469,7 @@ def append_naflex_train_stages(
         pad_id,
         per_row_text_tokens,
         bucketer=None,
+        pad_multiple=None,
 ):
     """Append the modality-agnostic NaFlex train stages to ``pipeline`` and return the ``NaFlexBatcher``.
 
@@ -485,9 +487,9 @@ def append_naflex_train_stages(
 
     stages = [wds.map_dict(text=tokenize_text)]
     if bucketer is not None:
-        # Reorder samples so similar lengths batch together (text for image, (duration, caption) for audio),
+        # Reorder samples so similar lengths batch together (text for image, audio_tokens for audio),
         # tightening per-batch-max padding. Reorder-only -> schedule / num_batches / DDP unchanged. The caller
-        # owns the bucketer choice + policy (image: text-length; audio: AudioLengthBucketer).
+        # owns the bucketer choice + policy (a LengthBucketer with the right length_fns per the model type).
         stages.append(bucketer)
     stages.append(NaFlexBatcher(
         train_num_samples=num_samples,
@@ -508,6 +510,7 @@ def append_naflex_train_stages(
         image_key=modality_key,
         pad_id=pad_id,
         per_row_text_tokens=per_row_text_tokens,
+        pad_multiple=pad_multiple,
     ))
     if pad_id is not None:
         _logger.info(
@@ -636,9 +639,11 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     if use_naflex_train:
         # Image bucketing reorders by caption length, and only helps the generative (variable-text) case
         # (naflex_pad_id is set iff genlip). NaFlex resizes images to ~fill the bucket, so only text varies.
+        # GenLIP only: caption-length bucketing (image is resized to ~fill the bucket, so only text varies).
         image_bucketer = None
         if naflex_pad_id is not None and getattr(args, 'naflex_length_bucketing', False):
             image_bucketer = LengthBucketer(
+                length_fns=[CaptionLength(key="text")],
                 pool=args.naflex_bucket_pool,
                 chunk=args.naflex_bucket_chunk,
                 seed=args.seed,
@@ -657,6 +662,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=image_bucketer,
+            pad_multiple=getattr(args, 'naflex_pad_multiple', None),
         )
         dataset = wds.DataPipeline(*pipeline)
         num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
