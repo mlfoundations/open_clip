@@ -114,6 +114,7 @@ class CLIPTextCfg:
     hf_model_pretrained: bool = True
     hf_proj_type: str = 'mlp'
     hf_pooler_type: str = 'mean_pooler'  # attentional pooling for HF models
+    hf_model_config: Optional[dict] = None  # HF config overrides, e.g. {"hidden_dropout_prob": 0.0}
 
 
 def get_cast_dtype(precision: str):
@@ -231,6 +232,7 @@ def _build_text_tower(
             pooler_type=text_cfg.hf_pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
+            model_config=text_cfg.hf_model_config,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU

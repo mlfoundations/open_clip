@@ -3,6 +3,7 @@
 Wraps HuggingFace transformers (https://github.com/huggingface/transformers) models for use as a text tower in CLIP model.
 """
 import re
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -105,6 +106,7 @@ class HFTextEncoder(nn.Module):
             proj_type: str = None,
             pretrained: bool = True,
             output_tokens: bool = False,
+            model_config: Optional[dict] = None,
     ):
         super().__init__()
         self.output_tokens = output_tokens
@@ -117,14 +119,26 @@ class HFTextEncoder(nn.Module):
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
             self.config = AutoConfig.from_pretrained(model_name_or_path)
-            create_func, model_args = (AutoModel.from_pretrained, model_name_or_path) if pretrained else (
-                AutoModel.from_config, self.config)
+            # Apply optional HF config overrides (e.g. {"hidden_dropout_prob": 0.0,
+            # "attention_probs_dropout_prob": 0.0}) before construction so they take effect for both the
+            # pretrained and from-scratch branches; passing the modified config to from_pretrained still
+            # loads the pretrained weights.
+            for key, value in (model_config or {}).items():
+                setattr(self.config, key, value)
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
-                self.transformer = create_func(model_args)
+                self.transformer = (
+                    AutoModel.from_pretrained(model_name_or_path, config=self.config)
+                    if pretrained else AutoModel.from_config(self.config)
+                )
                 self.transformer = self.transformer.encoder
             else:
-                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                self.transformer = (
+                    AutoModel.from_pretrained(
+                        model_name_or_path, config=self.config, add_pooling_layer=uses_transformer_pooler)
+                    if pretrained else
+                    AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
+                )
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
