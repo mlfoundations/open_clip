@@ -23,7 +23,8 @@
     "text_cfg": {
         "hf_model_name": "roberta-base",
         "hf_tokenizer_name": "roberta-base",
-        "hf_pooler_type": "cls_pooler",
-        "hf_proj_type": "clap_mlp"
+        "hf_pooler_type": "mean_pooler",
+        "hf_proj_type": "linear",
+        "hf_model_config": {"hidden_dropout_prob": 0.0, "attention_probs_dropout_prob": 0.0}
     }
 }
