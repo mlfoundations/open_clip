@@ -130,8 +130,10 @@ class CLAPTask(TrainingTask):
         # HTSAT feature-fusion towers exercise their fusion modules only for batches containing 'longer' clips,
         # so those params receive no grads on all-short batches and DDP must search for unused parameters.
         # Static audio towers (no fusion, NaFlexClap) skip the search -- it costs an extra graph traversal
-        # every step (and PyTorch warns when nothing unused is found).
+        # every step (and PyTorch warns when nothing unused is found). Fusion is declared on the audio tower
+        # cfg; the module-attribute scan is a fallback for towers built without a cfg (HTSAT sets both).
         model = unwrap_model(self.trainable_module)
-        if any(getattr(m, "enable_fusion", False) for m in model.modules()):
-            return {"find_unused_parameters": True}
-        return {}
+        audio_cfg = getattr(getattr(model, "audio", None), "cfg", None)
+        fusion = bool(getattr(audio_cfg, "enable_fusion", False))
+        fusion = fusion or any(getattr(m, "enable_fusion", False) for m in model.modules())
+        return {"find_unused_parameters": True} if fusion else {}
