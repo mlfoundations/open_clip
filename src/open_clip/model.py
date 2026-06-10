@@ -122,10 +122,14 @@ class CLIPTextCfg:
     attention_mode: str = "causal"  # "causal" or "bidirectional"
     pos_embed: str = "rope"
     rope_temperature: float = 10000.0
-    mlp_type: str = "swiglu"
+    mlp_type: str = "swiglu"  # "swiglu", "mlp" (GELU), or "relu2" (squared-ReLU)
     norm_type: str = "rmsnorm"
     norm_eps: float = 1e-6
     attn_gated: bool = False
+    pre_norm: bool = False  # normalize embeddings (after register concat) before block 0 (timm ViT norm_pre)
+    norm_placement: str = "pre"  # "pre" or "sandwich" (extra norm on sublayer outputs, Gemma-2 style)
+    reg_tokens: int = 0  # learned register tokens prepended to the sequence and excluded from pooling
+    value_residual: bool = False  # mix each layer's V with layer-0 V via a learned per-layer scalar (ResFormer)
 
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
