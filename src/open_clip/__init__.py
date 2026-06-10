@@ -31,6 +31,7 @@ from .model import (
     CustomTextCLIP,
     CLIPTextCfg,
     CLIPVisionCfg,
+    ModernTextTransformer,
     convert_weights_to_lp,
     convert_weights_to_fp16,
     get_cast_dtype,

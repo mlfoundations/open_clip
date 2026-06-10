@@ -21,6 +21,33 @@ def seed_all(seed = 0):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+
+class VariableTokenizer:
+    """Minimal tokenizer stub for variable-text data-pipeline tests.
+
+    The token count is derived from the caption via ``length_fn`` (default ``len(text) + 1``, i.e. body + eos).
+    ``pad=False`` returns per-sample 1-D tensors (the variable-text contract); ``pad=True`` right-pads each row
+    to ``context_length`` with ``pad_token_id``.
+    """
+    pad_token_id = 99
+    context_length = 16
+
+    def __init__(self, length_fn = None):
+        self.length_fn = length_fn or (lambda text: len(text) + 1)
+
+    def __call__(self, texts, pad = True):
+        if isinstance(texts, bytes):
+            texts = texts.decode('utf-8')
+        if isinstance(texts, str):
+            texts = [texts]
+        tokens = [torch.arange(1, self.length_fn(text) + 1, dtype=torch.long) for text in texts]
+        if not pad:
+            return tokens
+        out = torch.full((len(tokens), self.context_length), self.pad_token_id, dtype=torch.long)
+        for i, row in enumerate(tokens):
+            out[i, :row.numel()] = row
+        return out
+
 def inference_text(model, model_name, batches):
     y = []
     tokenizer = open_clip.get_tokenizer(model_name)

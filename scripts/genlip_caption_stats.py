@@ -206,7 +206,7 @@ def report_field(
     print(f"\n  Suggested train flags (~{target_batch} rows/GPU; tune budget to VRAM):")
     print(f"    {source_flag}--naflex-seq-lens {image_seq_len} --naflex-max-text-tokens {rec_cap} \\")
     print(f"      --naflex-max-tokens-per-batch {budget} \\")
-    print(f"      --naflex-length-bucketing --naflex-bucket-chunk {target_batch}")
+    print(f"      --length-bucketing --bucket-chunk {target_batch}")
 
 
 def main():
@@ -258,8 +258,8 @@ def main():
 
     print(f"\n{'-' * 78}")
     print("Notes:")
-    print("  * 'text_util'/'total_util' are for RANDOM batching (per-batch-max padding); --naflex-length-bucketing")
-    print("    raises them toward ~100%/95% (set --naflex-bucket-chunk ~ rows; --naflex-bucket-pool larger for")
+    print("  * 'text_util'/'total_util' are for RANDOM batching (per-batch-max padding); --length-bucketing")
+    print("    raises them toward ~100%/95% (set --bucket-chunk ~ rows; --bucket-pool larger for")
     print("    wide/long-caption fields).")
     print("  * Cap is set on the CLI via --naflex-max-text-tokens (truncates captions AND feeds the row cost).")
     print("  * Batch is driven by --naflex-max-tokens-per-batch = rows * (image_seq_len + cap), NOT --batch-size;")

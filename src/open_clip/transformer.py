@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import math
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -955,7 +955,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+
         return pooled
 
 
@@ -983,6 +983,471 @@ def text_global_pool(
         pooled = x
 
     return pooled
+
+
+class ModernRMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = x.dtype
+        x_float = x.float()
+        x = x_float * torch.rsqrt(x_float.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return (x.to(dtype) * self.weight.to(dtype))
+
+
+class SwiGLU(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int):
+        super().__init__()
+        self.w12 = nn.Linear(dim, hidden_dim * 2)
+        self.w3 = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x, gate = self.w12(x).chunk(2, dim=-1)
+        return self.w3(x * F.silu(gate))
+
+
+class RotaryEmbedding1D(nn.Module):
+    def __init__(self, dim: int, temperature: float = 10000.0):
+        super().__init__()
+        if dim % 2:
+            raise ValueError(f"RoPE head dim must be even, got {dim}.")
+        inv_freq = 1.0 / (temperature ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+    def forward(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Return cos/sin concatenated as one ``[seq_len, head_dim]`` table (cos | sin halves).
+
+        Computed once per forward in the parent tower and threaded through every block (timm-style cat layout),
+        rather than recomputed per layer.
+        """
+        pos = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
+        freqs = torch.outer(pos, self.inv_freq.to(device=device))
+        return torch.cat((freqs.cos(), freqs.sin()), dim=-1).to(dtype=dtype)
+
+
+def _apply_rope_1d(x: torch.Tensor, rope_embed: torch.Tensor) -> torch.Tensor:
+    cos, sin = rope_embed.chunk(2, dim=-1)
+    x1, x2 = x[..., ::2], x[..., 1::2]
+    return torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1).flatten(-2)
+
+
+class ModernTextAttention(nn.Module):
+    def __init__(
+            self,
+            dim: int,
+            heads: int,
+            qk_norm: bool = False,
+            gated: bool = False,
+    ):
+        super().__init__()
+        if dim % heads:
+            raise ValueError(f"text width {dim} must be divisible by heads {heads}.")
+        self.heads = heads
+        self.head_dim = dim // heads
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.q_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
+        self.gate = nn.Linear(dim, dim, bias=True) if gated else None
+        self.proj = nn.Linear(dim, dim)
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            rope_embed: Optional[torch.Tensor] = None,
+            key_bias: Optional[torch.Tensor] = None,
+            is_causal: bool = False,
+    ) -> torch.Tensor:
+        b, l, c = x.shape
+        qkv = self.qkv(x).reshape(b, l, 3, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        q, k = self.q_norm(q), self.k_norm(k)
+        if rope_embed is not None:
+            q = _apply_rope_1d(q, rope_embed)
+            k = _apply_rope_1d(k, rope_embed)
+        # Causal mode passes is_causal (no mask tensor); bidirectional passes a [B, 1, 1, L] key-pad bias. SDPA
+        # forbids both at once, and the two are mutually exclusive here (see ModernTextTransformer._attn_inputs).
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=key_bias, is_causal=is_causal)
+        out = out.transpose(1, 2).reshape(b, l, c)
+        if self.gate is not None:
+            out = out * self.gate(x).sigmoid()
+        return self.proj(out)
+
+
+class ModernTextBlock(nn.Module):
+    def __init__(
+            self,
+            dim: int,
+            heads: int,
+            mlp_ratio: float,
+            norm_layer: Callable[[int], nn.Module],
+            qk_norm: bool = False,
+            attn_gated: bool = False,
+            mlp_type: str = "swiglu",
+            ls_init_value: Optional[float] = None,
+    ):
+        super().__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = ModernTextAttention(dim, heads, qk_norm=qk_norm, gated=attn_gated)
+        self.ls1 = LayerScale(dim, ls_init_value) if ls_init_value is not None else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        hidden = int(dim * mlp_ratio)
+        if mlp_type == "swiglu":
+            self.mlp = SwiGLU(dim, hidden)
+        elif mlp_type == "mlp":
+            self.mlp = nn.Sequential(OrderedDict([
+                ("c_fc", nn.Linear(dim, hidden)),
+                ("act", nn.GELU()),
+                ("c_proj", nn.Linear(hidden, dim)),
+            ]))
+        else:
+            raise ValueError(f"unknown modern text mlp_type={mlp_type!r}")
+        self.ls2 = LayerScale(dim, ls_init_value) if ls_init_value is not None else nn.Identity()
+
+    def get_weight_dtype(self) -> torch.dtype:
+        return self.attn.qkv.weight.dtype
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            rope_embed: Optional[torch.Tensor] = None,
+            key_bias: Optional[torch.Tensor] = None,
+            is_causal: bool = False,
+    ) -> torch.Tensor:
+        x = x + self.ls1(self.attn(self.norm1(x), rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal))
+        x = x + self.ls2(self.mlp(self.norm2(x)))
+        return x
+
+
+class ModernTextPool(nn.Module):
+    def __init__(
+            self,
+            width: int,
+            pool_type: str = "eos",
+            heads: int = 8,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
+        super().__init__()
+        self.pool_type = pool_type
+        self.heads = heads
+        if pool_type == "map":
+            if width % heads:
+                raise ValueError(f"text width {width} must be divisible by MAP heads {heads}.")
+            self.head_dim = width // heads
+            self.query = nn.Parameter(torch.empty(1, 1, width))
+            self.q = nn.Linear(width, width)
+            self.kv = nn.Linear(width, width * 2)
+            self.norm = norm_layer(width) if norm_layer is not None else nn.Identity()
+            nn.init.normal_(self.query, std=width ** -0.5)
+        elif pool_type in ("eos", "mean"):
+            self.query = None
+        else:
+            # NOTE: no 'last' here on purpose -- in open_clip 'last' means the last *physical* position
+            # (SigLIP / CLIPA fixed-length contract), which is padding for this variable-length tower. The
+            # masked equivalent (last valid token) is the no-eos-in-row fallback of the 'eos' branch.
+            raise ValueError(f"unknown modern text pool_type={pool_type!r}")
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            text: torch.Tensor,
+            valid: torch.Tensor,
+            eos_id: Optional[int],
+    ) -> torch.Tensor:
+        if self.pool_type == "mean":
+            weights = valid.to(x.dtype)
+            return (x * weights.unsqueeze(-1)).sum(dim=1) / weights.sum(dim=1, keepdim=True).clamp(min=1)
+        if self.pool_type == "eos":
+            # Pool at the first eos_id occurrence; rows without one (eos lost to truncation) fall back to the
+            # last valid (non-pad) token, which is where the eos would sit under the right-padded contract.
+            eos = text == eos_id
+            last_valid = valid.long().sum(dim=1).sub(1).clamp(min=0)
+            idx = torch.where(eos.any(dim=1), eos.int().argmax(dim=1), last_valid)
+            return x[torch.arange(x.shape[0], device=x.device), idx]
+
+        b, l, c = x.shape
+        q = self.q(self.query.expand(b, -1, -1)).reshape(b, 1, self.heads, self.head_dim).transpose(1, 2)
+        kv = self.kv(self.norm(x)).reshape(b, l, 2, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        k, v = kv.unbind(0)
+        attn_bias = x.new_zeros((b, 1, 1, l))
+        attn_bias.masked_fill_(~valid[:, None, None, :], torch.finfo(x.dtype).min)
+        pooled = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, is_causal=False)
+        return pooled.transpose(1, 2).reshape(b, c)
+
+
+class ModernTextTransformer(nn.Module):
+    """Dedicated variable-length text tower with RoPE, SwiGLU, optional gated attention, and masked pooling."""
+
+    def __init__(
+            self,
+            cfg: Any,
+            output_dim: int,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.variable_text = bool(getattr(cfg, "variable_text", False))
+        # Classic 'argmax' pooling (CLIP picks the EOT as the max token id) maps to 'eos' here: same intent,
+        # keyed on the configured eos token id. eos_id has no config default and is validated below (and against
+        # the tokenizer in get_tokenizer), so a stale/wrong id fails fast instead of pooling silently wrong.
+        pool_type = "eos" if cfg.pool_type == "argmax" else cfg.pool_type
+        if pool_type == "eos" and cfg.eos_id is None:
+            raise ValueError(
+                "modern text 'eos' (or 'argmax') pooling requires text_cfg.eos_id "
+                "(must match the tokenizer eos/eot token id)."
+            )
+
+        if cfg.attention_mode not in ("causal", "bidirectional"):
+            raise ValueError(f"unknown modern text attention_mode={cfg.attention_mode!r}")
+        if cfg.pos_embed not in ("rope", "none", ""):
+            raise ValueError(f"unknown modern text pos_embed={cfg.pos_embed!r}")
+        if cfg.width % cfg.heads != 0:
+            raise ValueError(f"modern text width ({cfg.width}) must be divisible by heads ({cfg.heads}).")
+        if cfg.pos_embed == "rope" and (cfg.width // cfg.heads) % 2 != 0:
+            raise ValueError(
+                f"modern text RoPE head dim must be even, got width / heads = {cfg.width // cfg.heads}."
+            )
+
+        # Public text-tower API used by CustomTextCLIP/CLAP, tokenizer checks, and training setup. Keep the rest
+        # in cfg or private fields so config knobs do not become accidental model attributes.
+        self.context_length = cfg.context_length
+        self.num_pos = cfg.context_length
+        self.vocab_size = cfg.vocab_size
+        self.width = cfg.width
+        self.layers = cfg.layers
+        self.output_dim = output_dim
+        self.pad_id = cfg.pad_id
+        self.eos_id = cfg.eos_id
+
+        if cfg.norm_type == "rmsnorm":
+            norm_layer = lambda dim: ModernRMSNorm(dim, eps=cfg.norm_eps)
+        elif cfg.norm_type == "layernorm":
+            norm_layer = lambda dim: LayerNorm(dim, eps=cfg.norm_eps)
+        else:
+            raise ValueError(f"unknown modern text norm_type={cfg.norm_type!r}")
+
+        self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.width, padding_idx=cfg.pad_id)
+        # One rope module on the tower; the cos/sin table is computed once per forward and threaded through the
+        # blocks (ModernTextAttention applies it), instead of being recomputed inside every layer.
+        self.rope = RotaryEmbedding1D(
+            cfg.width // cfg.heads,
+            temperature=cfg.rope_temperature,
+        ) if cfg.pos_embed == "rope" else None
+        self.blocks = nn.ModuleList([
+            ModernTextBlock(
+                cfg.width,
+                cfg.heads,
+                mlp_ratio=cfg.mlp_ratio,
+                norm_layer=norm_layer,
+                qk_norm=cfg.qk_norm,
+                attn_gated=cfg.attn_gated,
+                mlp_type=cfg.mlp_type,
+                ls_init_value=cfg.ls_init_value,
+            )
+            for _ in range(cfg.layers)
+        ])
+        self.ln_final = norm_layer(cfg.width)
+        self.pool = ModernTextPool(cfg.width, pool_type=pool_type, heads=cfg.heads, norm_layer=norm_layer)
+        self.text_projection = (
+            None
+            if cfg.proj_type == "none" or not output_dim
+            else nn.Linear(cfg.width, output_dim, bias=cfg.proj_bias)
+        )
+        self.grad_checkpointing = False
+        self.init_parameters()
+
+    def init_parameters(self):
+        nn.init.normal_(self.token_embedding.weight, std=0.02)
+        if self.pad_id is not None:
+            with torch.no_grad():
+                self.token_embedding.weight[self.pad_id].zero_()
+
+        # Block weights follow the open_clip TextTransformer / GPT-2 convention: input projections at
+        # ``width**-0.5``, and the residual *output* projections (attn ``proj``, SwiGLU ``w3`` / GELU ``c_proj``)
+        # additionally scaled by ``(2*layers)**-0.5`` so the residual-stream variance does not grow with depth.
+        # RMSNorm / qk_norm weights stay at 1.0 (set in their constructors); all biases are zeroed. This replaces
+        # PyTorch's default ``kaiming_uniform_(a=sqrt(5))``, which both uses the wrong scale and skips the depth term.
+        attn_std = self.width ** -0.5
+        proj_std = attn_std * ((2 * self.layers) ** -0.5)
+        fc_std = (2 * self.width) ** -0.5
+        for block in self.blocks:
+            attn = block.attn
+            nn.init.normal_(attn.qkv.weight, std=attn_std)
+            nn.init.zeros_(attn.qkv.bias)
+            nn.init.normal_(attn.proj.weight, std=proj_std)
+            if attn.proj.bias is not None:
+                nn.init.zeros_(attn.proj.bias)
+            if attn.gate is not None:
+                # Match the timm / GenLIP gated-attention default: bias 0 -> sigmoid(0)=0.5 (half-open) at init.
+                nn.init.normal_(attn.gate.weight, std=attn_std)
+                nn.init.zeros_(attn.gate.bias)
+            mlp = block.mlp
+            if isinstance(mlp, SwiGLU):
+                nn.init.normal_(mlp.w12.weight, std=fc_std)
+                nn.init.zeros_(mlp.w12.bias)
+                nn.init.normal_(mlp.w3.weight, std=proj_std)
+                nn.init.zeros_(mlp.w3.bias)
+            else:  # nn.Sequential GELU MLP (c_fc, act, c_proj)
+                nn.init.normal_(mlp.c_fc.weight, std=fc_std)
+                nn.init.zeros_(mlp.c_fc.bias)
+                nn.init.normal_(mlp.c_proj.weight, std=proj_std)
+                nn.init.zeros_(mlp.c_proj.bias)
+
+        # MAP attentive-pool projections (the learned ``query`` is already initialized in ModernTextPool.__init__).
+        if getattr(self.pool, "query", None) is not None:
+            nn.init.normal_(self.pool.q.weight, std=attn_std)
+            nn.init.zeros_(self.pool.q.bias)
+            nn.init.normal_(self.pool.kv.weight, std=attn_std)
+            nn.init.zeros_(self.pool.kv.bias)
+
+        if self.text_projection is not None:
+            nn.init.normal_(self.text_projection.weight, std=self.width ** -0.5)
+            if self.text_projection.bias is not None:
+                nn.init.zeros_(self.text_projection.bias)
+
+    def _valid_mask(self, text: torch.Tensor) -> torch.Tensor:
+        if self.pad_id is None:
+            return torch.ones_like(text, dtype=torch.bool)
+        valid = text != self.pad_id
+        # Guarantee at least one valid position per row so degenerate all-pad rows do not yield NaNs at pooling.
+        # Done branchlessly (no data-dependent ``if``) so the tower stays torch.compile(fullgraph=True)-friendly:
+        # for rows that already have a valid token this is a no-op (the OR'd term is all-False).
+        empty = ~valid.any(dim=1, keepdim=True)
+        first = torch.zeros_like(valid)
+        first[:, 0] = True
+        return valid | (empty & first)
+
+    def _attn_inputs(
+            self,
+            text: torch.Tensor,
+            dtype: torch.dtype,
+    ) -> Tuple[bool, Optional[torch.Tensor], torch.Tensor]:
+        """Resolve SDPA attention inputs for this batch as ``(is_causal, key_bias, valid)``.
+
+        The branch is on the static attention mode (no data-dependent control flow, so torch.compile
+        sees one graph per mode):
+
+        - ``"causal"``: ``is_causal=True`` with **no** mask tensor. Captions are right-padded (the collators fill
+          the tail with ``pad_id``), so under the causal constraint real tokens never attend to pad positions and
+          pad-position outputs are discarded at pooling -- masking pad keys is a no-op for the pooled output, and
+          dropping the ``[B, 1, L, L]`` mask removes the L^2 materialization (the dominant memory + compile cost).
+        - ``"bidirectional"``: a ``[B, 1, 1, L]`` additive key-pad bias (broadcast over the query axis); real
+          tokens here *can* see pads, so the mask is required.
+        """
+        b, l = text.shape
+        valid = self._valid_mask(text)
+        if self.cfg.attention_mode == "causal":
+            return True, None, valid
+        key_bias = torch.zeros((b, 1, 1, l), device=text.device, dtype=dtype)
+        key_bias.masked_fill_(~valid[:, None, None, :], torch.finfo(dtype).min)
+        return False, key_bias, valid
+
+    def get_cast_dtype(self) -> torch.dtype:
+        return self.blocks[0].get_weight_dtype() if self.blocks else self.token_embedding.weight.dtype
+
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = "inline"):
+        if impl == "composable" and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for block in self.blocks:
+                composable_checkpoint(block)
+        else:
+            self.grad_checkpointing = enable
+
+    def layer_groups(self, pooler_in_head: bool = True):
+        groups = [("embeddings", [self.token_embedding])]
+        n = len(self.blocks)
+        for i, block in enumerate(self.blocks):
+            members = [block]
+            if i == n - 1:
+                members.append(self.ln_final)
+                if not pooler_in_head:
+                    members.append(self.pool)
+            groups.append((f"layer.{i}", members))
+        head = []
+        if pooler_in_head:
+            head.append(self.pool)
+        if self.text_projection is not None:
+            head.append(self.text_projection)
+        if head:
+            groups.append(("proj", head))
+        return groups
+
+    def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, pooler_in_head: bool = True):
+        assert freeze_layer_norm, 'Unfreezing normalization layers is not supported.'
+        _lock_layer_groups(self.layer_groups(pooler_in_head), unlocked_layers)
+
+    def no_weight_decay(self):
+        return set()
+
+    def _encode_tokens(
+            self,
+            text: torch.Tensor,
+            take_indices: Optional[List[int]] = None,
+            stop_index: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
+        """Run the block stack, returning ``(x, valid, intermediates)`` with ``x`` pre-``ln_final``.
+
+        ``take_indices`` collects raw block outputs for ``forward_intermediates``; ``stop_index`` truncates the
+        stack (early exit) when only intermediates are needed.
+        """
+        cast_dtype = self.get_cast_dtype()
+        x = self.token_embedding(text).to(cast_dtype)
+        is_causal, key_bias, valid = self._attn_inputs(text, x.dtype)
+        rope_embed = self.rope(text.shape[1], x.device, x.dtype) if self.rope is not None else None
+        blocks = self.blocks if stop_index is None else self.blocks[:stop_index + 1]
+        intermediates = []
+        for i, block in enumerate(blocks):
+            if self.grad_checkpointing:
+                x = checkpoint(block, x, rope_embed, key_bias, is_causal, use_reentrant=False)
+            else:
+                x = block(x, rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal)
+            if take_indices is not None and i in take_indices:
+                intermediates.append(x)
+        return x, valid, intermediates
+
+    def forward_intermediates(
+            self,
+            text: torch.Tensor,
+            indices: Optional[Union[int, List[int]]] = None,
+            stop_early: bool = False,
+            normalize_intermediates: bool = False,
+            intermediates_only: bool = False,
+            output_fmt: str = 'NLC',
+            output_extra_tokens: bool = False,
+    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        assert output_fmt == 'NLC', 'ModernTextTransformer only supports NLC text intermediates.'
+        take_indices, max_index = feature_take_indices(len(self.blocks), indices)
+        x, valid, intermediates = self._encode_tokens(
+            text,
+            take_indices=take_indices,
+            stop_index=max_index if stop_early else None,
+        )
+        if normalize_intermediates:
+            intermediates = [self.ln_final(t) for t in intermediates]
+
+        output = {"text_intermediates": intermediates}
+        if intermediates_only:
+            return output
+
+        x = self.ln_final(x)
+        pooled = self.pool(x, text=text, valid=valid, eos_id=self.eos_id)
+        if self.text_projection is not None:
+            pooled = self.text_projection(pooled)
+        output["text_features"] = pooled
+        if output_extra_tokens:
+            output["text_intermediates_extra"] = []
+        return output
+
+    def forward(self, text: torch.Tensor):
+        x, valid, _ = self._encode_tokens(text)
+        x = self.ln_final(x)
+        pooled = self.pool(x, text=text, valid=valid, eos_id=self.eos_id)
+        if self.text_projection is not None:
+            pooled = self.text_projection(pooled)
+        if self.cfg.output_tokens:
+            return pooled, x
+        return pooled
 
 
 class TextTransformer(nn.Module):
@@ -1167,13 +1632,14 @@ class TextTransformer(nn.Module):
             seq_len += 1
 
         attn_mask = self.attn_mask  # Base causal mask (if any)
+        if attn_mask is not None:
+            attn_mask = attn_mask[:seq_len, :seq_len]
 
         # Class + padding additive mask
         if self.use_pad_mask or self.cls_emb is not None:
             add_mask  = self._build_additive_mask(text, seq_len, x.dtype)
             if attn_mask is not None:
-                # Slice the causal mask to match current sequence length
-                attn_mask = attn_mask[:seq_len, :seq_len].unsqueeze(0) + add_mask
+                attn_mask = attn_mask.unsqueeze(0) + add_mask
             else:
                 attn_mask = add_mask
 
@@ -1450,6 +1916,18 @@ def _set_group_requires_grad(members, requires_grad: bool):
                 p.requires_grad = requires_grad
 
 
+def _lock_layer_groups(groups, unlocked_layers: int = 0):
+    """Freeze layer groups bottom-up, leaving the top ``unlocked_layers`` groups trainable.
+
+    Sets every group explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts are
+    idempotent (e.g. progressive unfreezing / multi-stage training). Shared by ``lock_text_tower`` and tower
+    ``lock`` methods so the freeze policy cannot drift between towers.
+    """
+    n_freeze = len(groups) if not unlocked_layers else len(groups) - unlocked_layers
+    for i, (_, members) in enumerate(groups):
+        _set_group_requires_grad(members, requires_grad=(i >= n_freeze))
+
+
 def lock_text_tower(
         model: nn.Module,
         unlocked_layers: int = 0,
@@ -1470,9 +1948,4 @@ def lock_text_tower(
         pooler_in_head: pooler placement policy (no effect for the native tower; kept for a common signature).
     """
     text_module = model.text if hasattr(model, "text") else model
-    groups = _text_layer_groups(text_module, pooler_in_head)
-    # Set every group explicitly (frozen -> False, unlocked -> True) so repeated calls with different counts are
-    # idempotent (e.g. progressive unfreezing / multi-stage training).
-    n_freeze = len(groups) if not unlocked_layers else len(groups) - unlocked_layers
-    for i, (_, members) in enumerate(groups):
-        _set_group_requires_grad(members, requires_grad=(i >= n_freeze))
+    _lock_layer_groups(_text_layer_groups(text_module, pooler_in_head), unlocked_layers)

@@ -54,7 +54,7 @@ class CLAPTask(TrainingTask):
         return inputs
 
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        model_out = self.trainable_module(**batch)
+        model_out = self.trainable_module(audio=batch["audio"], text=batch["text"])
         loss_inputs = self._loss_inputs(model_out)
         logit_scale = loss_inputs["logit_scale"]
         losses = self.loss(**loss_inputs, output_dict=True)
@@ -62,6 +62,10 @@ class CLAPTask(TrainingTask):
         losses["loss"] = total_loss
         losses["logit_scale"] = logit_scale
         return losses
+
+    def eval_forward(self, batch: Dict[str, torch.Tensor]):
+        inputs = {key: batch[key] for key in self.data_keys if key in batch}
+        return self.get_trainable_module(use_ema=True)(**inputs)
 
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         loss_inputs = {

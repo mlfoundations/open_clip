@@ -223,7 +223,12 @@ class SimpleTokenizer(object):
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
         return text
 
-    def __call__(self, texts: Union[str, List[str]], context_length: Optional[int] = None) -> torch.LongTensor:
+    def __call__(
+            self,
+            texts: Union[str, List[str]],
+            context_length: Optional[int] = None,
+            pad: bool = True,
+    ) -> torch.LongTensor:
         """ Returns the tokenized representation of given input string(s)
 
         Parameters
@@ -243,6 +248,13 @@ class SimpleTokenizer(object):
         context_length = context_length or self.context_length
         assert context_length, 'Please set a valid context length'
 
+        if not pad:
+            raise ValueError(
+                "SimpleTokenizer does not support variable-length tokenization because token id 0 "
+                "is part of the BPE vocabulary. Use TikTokenTokenizer or an HF tokenizer with a "
+                "reserved pad token for variable_text=True."
+            )
+
         if self.reduction_fn is not None:
             # use reduction strategy for tokenize if set, otherwise default to truncation below
             return self.reduction_fn(
@@ -254,12 +266,17 @@ class SimpleTokenizer(object):
             )
 
         all_tokens = [[self.sot_token_id] + self.encode(text) + [self.eot_token_id] for text in texts]
-        result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
-
-        for i, tokens in enumerate(all_tokens):
+        truncated = []
+        for tokens in all_tokens:
             if len(tokens) > context_length:
                 tokens = tokens[:context_length]  # Truncate
                 tokens[-1] = self.eot_token_id
+            truncated.append(tokens)
+        all_tokens = truncated
+
+        result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+        for i, tokens in enumerate(all_tokens):
             result[i, :len(tokens)] = torch.tensor(tokens)
 
         return result
@@ -454,6 +471,20 @@ class HFTokenizer:
             cache_dir=cache_dir,
             **kwargs
         )
+        # Keep pad_token_id as None when the underlying tokenizer has no reserved pad token: a 0 fallback is a
+        # real vocab id in most BPE vocabs, and downstream variable-text setup (get_text_pad_id) relies on None
+        # to reject tokenizers that cannot pad safely.
+        self.pad_token_id = self.tokenizer.pad_token_id
+        # open_clip pooling and masking assume right-padded sequences (causal no-mask path, last/eos index math,
+        # cls at position 0); force it for tokenizers that default to left padding (decoder-family).
+        self.tokenizer.padding_side = 'right'
+        self.eot_token_id = self.tokenizer.eos_token_id
+        if self.eot_token_id is None:
+            self.eot_token_id = self.tokenizer.sep_token_id
+        self.sot_token_id = self.tokenizer.bos_token_id
+        if self.sot_token_id is None:
+            self.sot_token_id = self.tokenizer.cls_token_id
+        self.vocab_size = len(self.tokenizer)
 
         # Set language function if available
         set_lang_fn = getattr(self.tokenizer, 'set_src_lang_special_tokens', None)
@@ -465,7 +496,12 @@ class HFTokenizer:
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
-    def __call__(self, texts: Union[str, List[str]], context_length: Optional[int] = None) -> torch.Tensor:
+    def __call__(
+            self,
+            texts: Union[str, List[str]],
+            context_length: Optional[int] = None,
+            pad: bool = True,
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if isinstance(texts, str):
@@ -478,23 +514,35 @@ class HFTokenizer:
 
         # Handle different tokenization modes
         if self.tokenizer_mode == 'clips':
-            return self._clips_tokenize(texts, context_length)
+            return self._clips_tokenize(texts, context_length, pad=pad)
         else:
             # Standard tokenization
-            input_ids = self.tokenizer(
+            encoded = self.tokenizer(
                 texts,
-                return_tensors='pt',
                 max_length=context_length,
-                padding='max_length',
+                padding='max_length' if pad else False,
                 truncation=True,
-            ).input_ids
+                return_tensors='pt' if pad else None,
+            )
+            input_ids = encoded.input_ids if pad else encoded["input_ids"]
 
             if self.strip_sep_token:
-                input_ids = torch.where(
-                    input_ids == self.tokenizer.sep_token_id,
-                    torch.zeros_like(input_ids),
-                    input_ids,
-                )
+                # pad_token_id can legitimately be None (no reserved pad token); fall back to the historical 0.
+                fill_id = 0 if self.pad_token_id is None else self.pad_token_id
+                if pad:
+                    input_ids = torch.where(
+                        input_ids == self.tokenizer.sep_token_id,
+                        torch.full_like(input_ids, fill_id),
+                        input_ids,
+                    )
+                else:
+                    input_ids = [
+                        [fill_id if token == self.tokenizer.sep_token_id else token for token in tokens]
+                        for tokens in input_ids
+                    ]
+
+            if not pad:
+                return [torch.tensor(tokens, dtype=torch.long) for tokens in input_ids]
 
             return input_ids
 
@@ -504,7 +552,12 @@ class HFTokenizer:
         else:
             warnings.warn('Cannot set language for the tokenizer.')
 
-    def _clips_tokenize(self, texts: List[str], context_length: int) -> torch.Tensor:
+    def _clips_tokenize(
+            self,
+            texts: List[str],
+            context_length: int,
+            pad: bool = True,
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
         """Use standard HF tokenizer but apply custom post-processing"""
         # Use standard tokenizer without special tokens - we'll add our own
         encoded_outputs = self.tokenizer(
@@ -520,6 +573,14 @@ class HFTokenizer:
             tokens = tokens[:context_length - 3]  # Leave room for special tokens
             tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
             encoded.append(tokens)
+
+        if not pad:
+            # Match the padded contract: the class token terminates the sequence. The body is truncated to
+            # context_length - 3 above, so [bos] + body + [eos] + [cls] always fits within context_length.
+            return [
+                torch.tensor(tokens + [self.tokenizer.cls_token_id], dtype=torch.long)
+                for tokens in encoded
+            ]
 
         # Create result tensor and handle padding + class token
         result = torch.zeros(len(encoded), context_length, dtype=torch.long)
@@ -596,12 +657,20 @@ class SigLipTokenizer:
 
         self.tokenizer.pad_token_id = 0 if 'gemma' in tokenizer_name else 1
         self.tokenizer.eos_token_id = 1
+        self.pad_token_id = self.tokenizer.pad_token_id
+        self.eot_token_id = self.tokenizer.eos_token_id
+        self.vocab_size = len(self.tokenizer)
         self.context_length = context_length
 
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
-    def __call__(self, texts: Union[str, List[str]], context_length: Optional[int] = None) -> torch.Tensor:
+    def __call__(
+            self,
+            texts: Union[str, List[str]],
+            context_length: Optional[int] = None,
+            pad: bool = True,
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if isinstance(texts, str):
@@ -613,11 +682,13 @@ class SigLipTokenizer:
         texts = [canonicalize_text(basic_clean(text)) for text in texts]
         output = self.tokenizer(
             texts,
-            return_tensors='pt',
+            return_tensors='pt' if pad else None,
             max_length=context_length,
-            padding='max_length',
+            padding='max_length' if pad else False,
             truncation=True,
         )
+        if not pad:
+            return [torch.tensor(tokens, dtype=torch.long) for tokens in output.input_ids]
         return output.input_ids
 
 

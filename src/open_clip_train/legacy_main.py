@@ -24,7 +24,7 @@ except ImportError:
     tensorboard = None
 
 from open_clip import create_model_and_transforms, get_tokenizer, create_loss
-from open_clip_train.data import get_data
+from open_clip_train.legacy_data import get_data_legacy as get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.naflex_data import (
     create_naflex_data_config_from_args,
@@ -390,6 +390,10 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
+    # Mirror main.py: variable-text towers opt the data pipeline into per-batch text padding via this flag.
+    # The model may already be DDP-wrapped here, so look through `.module` for the text tower.
+    text_tower = getattr(getattr(model, 'module', model), 'text', None)
+    args.variable_text = bool(getattr(args, 'variable_text', False) or getattr(text_tower, 'variable_text', False))
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
     naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
     naflex_eval_seq_len = get_naflex_model_image_seq_len(model) if args.use_naflex else None

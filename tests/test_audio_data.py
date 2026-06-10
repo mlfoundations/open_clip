@@ -4,6 +4,18 @@ import torch
 
 from open_clip.audio.naflex_audio import AudioNaFlexCfg
 from open_clip_train.audio_data import SyntheticAudioDataset, _audio_collate, get_synthetic_audio_dataset
+from open_clip_train.naflex_data import AudioTokenLength
+
+
+def test_audio_token_length_accepts_raw_bytes():
+    """Bucketed pipelines reorder before decode, so the length-fn sees raw bytes: it must never raise, and
+    falls back to 0 (sort-key only) when the container header cannot be parsed."""
+    fn = AudioTokenLength(freq_tokens=2, patch_time=4, hop_size=160, sample_rate=16000)
+    decoded = fn({"audio": (torch.zeros(1, 16000), 16000)})
+    assert decoded > 0
+    raw = fn({"audio": b"\x00" * 64})  # not a valid container -> graceful 0
+    assert isinstance(raw, int) and raw >= 0
+    assert fn({"audio": None}) == 0
 
 
 def test_audio_collate_returns_nested_dict():
@@ -31,6 +43,28 @@ def test_audio_collate_returns_nested_dict():
     assert out["audio"]["longer"].dtype == torch.bool
     assert out["audio"]["mel_fusion"].shape == (2, 4, 5, 3)
     assert out["text"].shape == (2, 5)
+
+
+def test_audio_collate_variable_text_pads_to_batch_max():
+    batch = [
+        {
+            "audio": {"waveform": torch.ones(8), "longer": False},
+            "text": torch.tensor([1, 2], dtype=torch.long),
+        },
+        {
+            "audio": {"waveform": torch.zeros(8), "longer": True},
+            "text": torch.tensor([1, 3, 4, 2], dtype=torch.long),
+        },
+    ]
+    out = _audio_collate(batch, pad_id=99)
+
+    assert set(out) == {"audio", "text", "text_valid"}
+    assert out["text"].shape == (2, 4)
+    assert out["text"][0].tolist() == [1, 2, 99, 99]
+    assert out["text_valid"].tolist() == [
+        [True, True, False, False],
+        [True, True, True, True],
+    ]
 
 
 def test_synthetic_audio_dataset_uses_transform_and_dict_contract():

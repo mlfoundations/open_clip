@@ -27,6 +27,7 @@ from .transformer import (
     Attention,
     VisionTransformer,
     TextTransformer,
+    ModernTextTransformer,
     text_global_pool,
     lock_text_tower,
 )
@@ -77,7 +78,9 @@ class CLIPVisionCfg:
 
 @dataclass
 class CLIPTextCfg:
+    text_arch: str = "clip"  # "clip" (native/HF) or "modern" (dedicated text tower only)
     context_length: int = 77
+    variable_text: bool = False
     vocab_size: int = 49408
     hf_tokenizer_name: Optional[str] = None
     tokenizer_mode: Optional[str] = None
@@ -90,7 +93,13 @@ class CLIPTextCfg:
     ls_init_value: Optional[float] = None  # layer scale initial value
     embed_cls: bool = False
     pad_id: int = 0
-    eos_id: int = 2  # only used for when pool_type == 'eos', must match tokenizer eos
+    bos_id: Optional[int] = None
+    # Only used for pool_type == 'eos' (and the modern text arch 'argmax' remap). No default on purpose: it must
+    # match the tokenizer's eos/eot id (e.g. 1 for mt5, 2 for xlm-v, 50257 for the GenLIP tiktoken vocab), so
+    # configs that pool on eos are required to set it explicitly and it is validated against the tokenizer.
+    eos_id: Optional[int] = None
+    tokenizer_type: str = ''
+    tiktoken_name: str = 'cl100k_base'
     no_causal_mask: bool = False  # disable causal masking
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
@@ -108,6 +117,15 @@ class CLIPTextCfg:
     scale_attn_inner: bool = False  # apply layer norm on attention context, before output projection
     scale_attn: bool = False  # apply layer norm after full attention block
     scale_fc: bool = False  # apply layer norm in MLP block
+
+    # ModernTextTransformer settings (text_arch == "modern")
+    attention_mode: str = "causal"  # "causal" or "bidirectional"
+    pos_embed: str = "rope"
+    rope_temperature: float = 10000.0
+    mlp_type: str = "swiglu"
+    norm_type: str = "rmsnorm"
+    norm_eps: float = 1e-6
+    attn_gated: bool = False
 
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
@@ -224,7 +242,16 @@ def _build_text_tower(
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
 
-    if text_cfg.hf_model_name:
+    # eos pooling is keyed on a token id; there is deliberately no eos_id default (a wrong id pools silently
+    # wrong positions), so require it here. The modern arch remaps 'argmax' to 'eos' and re-checks internally.
+    if text_cfg.pool_type == 'eos' and text_cfg.eos_id is None:
+        raise ValueError("pool_type='eos' requires text_cfg.eos_id (must match the tokenizer eos/eot token id).")
+
+    if text_cfg.text_arch == "modern":
+        if text_cfg.hf_model_name:
+            raise ValueError("text_arch='modern' cannot be combined with hf_model_name.")
+        text = ModernTextTransformer(text_cfg, output_dim=embed_dim)
+    elif text_cfg.hf_model_name:
         text = HFTextEncoder(
             text_cfg.hf_model_name,
             output_dim=embed_dim,
@@ -269,6 +296,7 @@ def _build_text_tower(
             scale_attn=text_cfg.scale_attn,
             scale_fc=text_cfg.scale_fc,
         )
+    text.variable_text = bool(text_cfg.variable_text)
     return text
 
 
@@ -287,6 +315,18 @@ class CLIP(nn.Module):
             output_dict: bool = False,
     ):
         super().__init__()
+        text_arch = (
+            text_cfg.get("text_arch", "clip") if isinstance(text_cfg, dict) else getattr(text_cfg, "text_arch", "clip")
+        )
+        variable_text = (
+            text_cfg.get("variable_text", False)
+            if isinstance(text_cfg, dict)
+            else getattr(text_cfg, "variable_text", False)
+        )
+        if text_arch == "modern":
+            raise ValueError("text_arch='modern' requires CustomTextCLIP or CLAP; pass custom_text=True.")
+        if variable_text:
+            raise ValueError("variable_text=True requires CustomTextCLIP or CLAP; pass custom_text=True.")
         self.output_dict = output_dict
         self.embed_dim = embed_dim
 

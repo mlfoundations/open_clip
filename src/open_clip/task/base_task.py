@@ -235,17 +235,17 @@ class TrainingTask(nn.Module):
         """Discover modules to shard with FSDP2.
 
         Default: finds all ResidualAttentionBlock, CustomResidualAttentionBlock,
-        and Bottleneck instances within the trainable module. Models can override
-        this by defining a ``fsdp_shard_modules()`` method.
+        ModernTextBlock, and Bottleneck instances within the trainable module.
+        Models can override this by defining a ``fsdp_shard_modules()`` method.
         """
         model = unwrap_model(self.trainable_module)
         if hasattr(model, 'fsdp_shard_modules'):
             return model.fsdp_shard_modules()
 
-        from open_clip.transformer import ResidualAttentionBlock, CustomResidualAttentionBlock
+        from open_clip.transformer import ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock
         from open_clip.modified_resnet import Bottleneck
 
-        shard_types = (ResidualAttentionBlock, CustomResidualAttentionBlock, Bottleneck)
+        shard_types = (ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock, Bottleneck)
 
         modules = []
         for name, mod in model.named_modules():

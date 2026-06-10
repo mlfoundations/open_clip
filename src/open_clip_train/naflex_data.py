@@ -1,3 +1,4 @@
+import io
 import logging
 import math
 import random
@@ -136,18 +137,36 @@ def collate_naflex_tuples(
 def collate_variable_text(
         targets: List[Any],
         pad_id: int,
+        pad_multiple: Optional[int] = None,
+        pad_cap: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Pad a list of variable-length token id sequences into a batch.
 
     Args:
         targets: List of 1-D token id tensors (or sequences) of differing lengths.
         pad_id: Padding token id used to fill, and to derive the validity mask.
+        pad_multiple: When set, round the batch sequence length up to this multiple. Bounds the number of distinct
+            ``Lmax`` values across batches so torch.compile recompiles a small fixed set of graphs (the text-axis
+            analogue of ``--naflex-pad-multiple`` for audio patches).
+        pad_cap: Upper bound for the rounded length (typically the tokenizer truncation cap / context_length), so
+            rounding never pads past what absolute-position towers can consume. Sequences longer than the cap
+            raise: the tokenizer is expected to have truncated already, and truncating here would silently chop
+            the tail (including the EOS that pooling depends on).
 
     Returns:
         Tuple ``(text, text_valid)`` of shape ``[B, Lmax]``; ``text_valid`` is ``text != pad_id``.
     """
     tensors = [t if torch.is_tensor(t) else torch.as_tensor(t, dtype=torch.long) for t in targets]
     max_len = max((t.shape[0] for t in tensors), default=0)
+    if pad_cap and max_len > pad_cap:
+        raise ValueError(
+            f"variable-text sequence length ({max_len}) exceeds pad_cap ({pad_cap}); "
+            "the tokenizer is expected to truncate to the context length."
+        )
+    if pad_multiple:
+        max_len = math.ceil(max_len / pad_multiple) * pad_multiple
+        if pad_cap:
+            max_len = min(max_len, pad_cap)
     text = torch.full((len(tensors), max_len), pad_id, dtype=torch.long)
     for i, tokens in enumerate(tensors):
         text[i, :tokens.shape[0]] = tokens
@@ -160,13 +179,19 @@ def collate_naflex_dicts(
         target_key: str = "text",
         max_seq_len: Optional[int] = None,
         pad_id: Optional[int] = None,
+        text_pad_multiple: Optional[int] = None,
+        text_pad_cap: Optional[int] = None,
 ) -> Dict[str, Any]:
     if pad_id is not None:
-        # Generative (GenLIP) path: variable-length captions padded within the batch.
+        # Variable-length captions padded within the batch. The `<target>_valid` mask is always emitted; tasks
+        # select the batch keys they consume, so contrastive towers simply ignore it.
         images = NaFlexBatchScheduler._collate_images(
             [sample[image_key] for sample in batch], max_seq_len,
         )
-        text, text_valid = collate_variable_text([sample[target_key] for sample in batch], pad_id)
+        text, text_valid = collate_variable_text(
+            [sample[target_key] for sample in batch], pad_id,
+            pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
+        )
         return {
             image_key: images,
             target_key: text,
@@ -207,8 +232,10 @@ class CaptionLength:
 class AudioTokenLength:
     """Length-fn: estimated NaFlex audio-patch count ``k`` before patchify.
 
-    Bucketing sees decoded ``(waveform, sr)`` samples, so this mirrors ``AudioNaFlexPatchify``: resample-aware
-    frame count, ceil to time patches, multiply by freq tokens, and optionally clamp to the largest cap.
+    Mirrors ``AudioNaFlexPatchify``: resample-aware frame count, ceil to time patches, multiply by freq tokens,
+    and optionally clamp to the largest cap. Accepts either decoded ``(waveform, sr)`` samples or raw audio
+    bytes -- bucketed pipelines reorder *before* decode (so the bucket pool holds compressed bytes, not
+    waveforms), in which case frame count and sample rate are read from the container header without decoding.
     """
 
     def __init__(
@@ -231,10 +258,23 @@ class AudioTokenLength:
 
     def __call__(self, sample: Sample) -> int:
         audio = sample.get(self.audio_key)
-        if not (isinstance(audio, (tuple, list)) and audio and hasattr(audio[0], "shape")):
+        if isinstance(audio, (bytes, bytearray)):
+            # Raw (pre-decode) member: header-parse frames + rate. Containers without a frame count in the
+            # header (e.g. some VBR mp3 backends) fall through to 0 -- those samples just sort together,
+            # a sort-key quality degradation only, never a correctness issue.
+            try:
+                import torchaudio
+                info = torchaudio.info(io.BytesIO(audio))
+                num_samples, sr = int(info.num_frames), int(info.sample_rate)
+            except Exception:
+                return 0
+            if num_samples <= 0:
+                return 0
+        elif isinstance(audio, (tuple, list)) and audio and hasattr(audio[0], "shape"):
+            waveform, sr = audio[0], (audio[1] if len(audio) > 1 else 0)
+            num_samples = waveform.shape[-1]
+        else:
             return 0
-        waveform, sr = audio[0], (audio[1] if len(audio) > 1 else 0)
-        num_samples = waveform.shape[-1]
         if self.sample_rate and sr and sr != self.sample_rate:
             num_samples = num_samples * self.sample_rate / sr  # mel runs at sample_rate -> resampled frame count
         num_samples = max(num_samples, self.window_size)  # mirror the transform's pad of sub-window clips
@@ -320,6 +360,8 @@ class NaFlexBatchScheduler:
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
             pad_multiple: Optional[int] = None,
+            text_pad_multiple: Optional[int] = None,
+            text_pad_cap: Optional[int] = None,
     ) -> None:
         require_naflex()
 
@@ -359,6 +401,15 @@ class NaFlexBatchScheduler:
         if pad_multiple is not None and int(pad_multiple) <= 0:
             raise ValueError(f"`pad_multiple` (--naflex-pad-multiple) must be > 0 when set, got {pad_multiple}.")
         self.pad_multiple = int(pad_multiple) if pad_multiple else None
+        # Text-axis pad-multiple: round variable-length captions to a multiple to bound compile shapes (token
+        # axis, independent of the audio-patch `pad_multiple`); `text_pad_cap` (the tokenizer truncation cap)
+        # bounds the rounding so it never pads past what the text tower can consume.
+        if text_pad_multiple is not None and int(text_pad_multiple) <= 0:
+            raise ValueError(
+                f"`text_pad_multiple` (--text-pad-multiple) must be > 0 when set, got {text_pad_multiple}."
+            )
+        self.text_pad_multiple = int(text_pad_multiple) if text_pad_multiple else None
+        self.text_pad_cap = int(text_pad_cap) if text_pad_cap else None
         self.pad_freq_tokens = getattr(getattr(transform_factory, "cfg", None), "freq_tokens", None)
         if self.pad_multiple and self.pad_freq_tokens and any(s % self.pad_multiple for s in self.seq_lens):
             logging.info(
@@ -560,8 +611,11 @@ class NaFlexBatchScheduler:
             patch_dicts, seq_len, pad_multiple=self.pad_multiple, freq_tokens=self.pad_freq_tokens,
         )
         if self.pad_id is not None:
-            # Generative (GenLIP) path: variable-length captions padded within the batch.
-            text, text_valid = collate_variable_text(targets, self.pad_id)
+            # Variable-length captions padded within the batch; tasks select the keys they consume, so the
+            # `<target>_valid` mask is always emitted.
+            text, text_valid = collate_variable_text(
+                targets, self.pad_id, pad_multiple=self.text_pad_multiple, pad_cap=self.text_pad_cap,
+            )
             return {
                 self.image_key: images,
                 self.target_key: text,
@@ -599,6 +653,8 @@ class NaFlexBatcher:
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
             pad_multiple: Optional[int] = None,
+            text_pad_multiple: Optional[int] = None,
+            text_pad_cap: Optional[int] = None,
     ) -> None:
         self.epoch = epoch
         self.scheduler = NaFlexBatchScheduler(
@@ -621,6 +677,8 @@ class NaFlexBatcher:
             pad_id=pad_id,
             per_row_text_tokens=per_row_text_tokens,
             pad_multiple=pad_multiple,
+            text_pad_multiple=text_pad_multiple,
+            text_pad_cap=text_pad_cap,
         )
 
     @property
@@ -689,6 +747,8 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             batch_divisor: int = 8,
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
+            text_pad_multiple: Optional[int] = None,
+            text_pad_cap: Optional[int] = None,
     ) -> None:
         if not hasattr(base_dataset, '__len__') or not hasattr(base_dataset, '__getitem__'):
             raise TypeError("NaFlex map batching requires a map-style dataset.")
@@ -719,6 +779,8 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             batch_divisor=batch_divisor,
             pad_id=pad_id,
             per_row_text_tokens=per_row_text_tokens,
+            text_pad_multiple=text_pad_multiple,
+            text_pad_cap=text_pad_cap,
         )
 
     def __len__(self) -> int:

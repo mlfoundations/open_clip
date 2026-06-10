@@ -57,7 +57,7 @@ class MaxPooler(nn.Module):
     """Max pooling"""
 
     def forward(self, x: BaseModelOutput, attention_mask: TensorType):
-        masked_output = x.last_hidden_state.masked_fill(attention_mask.unsqueeze(-1), -torch.inf)
+        masked_output = x.last_hidden_state.masked_fill(~attention_mask.bool().unsqueeze(-1), -torch.inf)
         return masked_output.max(1).values
 
 
@@ -94,6 +94,15 @@ class ClsLastHiddenStatePooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 
+_MODEL_TYPES_WITH_POOLING_LAYER_KWARG = {"bert", "roberta", "xlm-roberta"}
+
+
+def _auto_model_kwargs(config: PretrainedConfig, pooler_type: str):
+    if config.model_type in _MODEL_TYPES_WITH_POOLING_LAYER_KWARG:
+        return {"add_pooling_layer": pooler_type == "cls_pooler"}
+    return {}
+
+
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
 
@@ -112,9 +121,6 @@ class HFTextEncoder(nn.Module):
         self.output_tokens = output_tokens
         self.output_dim = output_dim
 
-        # TODO: find better way to get this information
-        uses_transformer_pooler = (pooler_type == "cls_pooler")
-
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
@@ -125,7 +131,25 @@ class HFTextEncoder(nn.Module):
             # loads the pretrained weights.
             for key, value in (model_config or {}).items():
                 setattr(self.config, key, value)
-            # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
+        else:
+            self.config = config
+
+        # Some HF repos pin a low-precision dtype in their config (e.g. gte-modernbert: float16), which
+        # AutoModel.from_config honors -- leaving a fp16 transformer under the fp32 projection. open_clip
+        # builds towers fp32 and manages precision itself (--precision / convert_weights_to_lp), so clear it.
+        if hasattr(self.config, "dtype"):  # transformers >= 5 renamed torch_dtype -> dtype
+            self.config.dtype = None
+        else:
+            self.config.torch_dtype = None
+
+        # Resolve construction kwargs from the *explicit* pooler_type only, before defaulting: pooler_type=None
+        # has always built the tower without the HF pooling layer (the old `uses_transformer_pooler` was False
+        # for None), so existing checkpoints have no transformer.pooler.* keys. The arch-default pooler is
+        # resolved after, for the readout side only.
+        model_kwargs = _auto_model_kwargs(self.config, pooler_type)
+        if pooler_type is None:  # get default arch pooler
+            pooler_type = (arch_dict[self.config.model_type]["pooler"])
+        if config is None:
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                 self.transformer = (
                     AutoModel.from_pretrained(model_name_or_path, config=self.config)
@@ -135,20 +159,17 @@ class HFTextEncoder(nn.Module):
             else:
                 self.transformer = (
                     AutoModel.from_pretrained(
-                        model_name_or_path, config=self.config, add_pooling_layer=uses_transformer_pooler)
+                        model_name_or_path, config=self.config, **model_kwargs)
                     if pretrained else
-                    AutoModel.from_config(self.config, add_pooling_layer=uses_transformer_pooler)
+                    AutoModel.from_config(self.config, **model_kwargs)
                 )
         else:
-            self.config = config
-            self.transformer = AutoModel.from_config(config)
+            self.transformer = AutoModel.from_config(self.config, **model_kwargs)
             # Normalize encoder-decoder models to their encoder, matching the model_name branch above, so the rest
             # of the class (layer_groups / forward) sees encoder attrs (e.g. embed_tokens) regardless of how the
             # tower was constructed.
-            if getattr(config, "is_encoder_decoder", False):
+            if getattr(self.config, "is_encoder_decoder", False):
                 self.transformer = self.transformer.encoder
-        if pooler_type is None:  # get default arch pooler
-            pooler_type = (arch_dict[self.config.model_type]["pooler"])
 
         # FIXME downstream users of OpenCLIP models use these attr, need to verify valid across all models
         self.vocab_size = getattr(self.config, 'vocab_size', 0)
