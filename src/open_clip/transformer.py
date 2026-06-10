@@ -1009,6 +1009,13 @@ class SwiGLU(nn.Module):
         return self.w3(x * F.silu(gate))
 
 
+class ReLUSquared(nn.Module):
+    """Squared-ReLU activation (Primer); simpler than SwiGLU and competitive at small model scale."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.relu(x).square()
+
+
 class RotaryEmbedding1D(nn.Module):
     def __init__(self, dim: int, temperature: float = 10000.0):
         super().__init__()
@@ -1041,6 +1048,8 @@ class ModernTextAttention(nn.Module):
             heads: int,
             qk_norm: bool = False,
             gated: bool = False,
+            value_residual: bool = False,
+            vr_first: bool = False,
     ):
         super().__init__()
         if dim % heads:
@@ -1051,6 +1060,11 @@ class ModernTextAttention(nn.Module):
         self.q_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
         self.gate = nn.Linear(dim, dim, bias=True) if gated else None
+        # Value residual (ResFormer): mix this layer's V with layer-0's V via a learned scalar,
+        # v = lerp(v_first, v, vr_lambda); init 0.5 = equal mix, lambda -> 1 recovers plain attention.
+        # Layer 0 only *produces* v_first (vr_first), so it gets no lambda (an unused param breaks DDP).
+        self.value_residual = value_residual
+        self.vr_lambda = nn.Parameter(torch.full((1,), 0.5)) if (value_residual and not vr_first) else None
         self.proj = nn.Linear(dim, dim)
 
     def forward(
@@ -1059,10 +1073,19 @@ class ModernTextAttention(nn.Module):
             rope_embed: Optional[torch.Tensor] = None,
             key_bias: Optional[torch.Tensor] = None,
             is_causal: bool = False,
-    ) -> torch.Tensor:
+            v_first: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         b, l, c = x.shape
         qkv = self.qkv(x).reshape(b, l, 3, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
+        v_out = None
+        if self.value_residual:
+            # Layer 0 (v_first None) contributes its raw V; later layers mix and propagate v_first unchanged.
+            # vr_lambda stays fp32 under static low-precision conversion (convert_weights_to_lp only converts
+            # module weights), so cast at use like reg_tokens / norm weights.
+            v_out = v if v_first is None else v_first
+            if self.vr_lambda is not None and v_first is not None:
+                v = torch.lerp(v_first, v, self.vr_lambda.to(v.dtype))
         q, k = self.q_norm(q), self.k_norm(k)
         if rope_embed is not None:
             q = _apply_rope_1d(q, rope_embed)
@@ -1073,7 +1096,7 @@ class ModernTextAttention(nn.Module):
         out = out.transpose(1, 2).reshape(b, l, c)
         if self.gate is not None:
             out = out * self.gate(x).sigmoid()
-        return self.proj(out)
+        return self.proj(out), v_out
 
 
 class ModernTextBlock(nn.Module):
@@ -1086,24 +1109,36 @@ class ModernTextBlock(nn.Module):
             qk_norm: bool = False,
             attn_gated: bool = False,
             mlp_type: str = "swiglu",
+            norm_placement: str = "pre",
             ls_init_value: Optional[float] = None,
+            value_residual: bool = False,
+            vr_first: bool = False,
     ):
         super().__init__()
+        if norm_placement not in ("pre", "sandwich"):
+            raise ValueError(f"unknown modern text norm_placement={norm_placement!r}")
+        sandwich = norm_placement == "sandwich"
         self.norm1 = norm_layer(dim)
-        self.attn = ModernTextAttention(dim, heads, qk_norm=qk_norm, gated=attn_gated)
+        self.attn = ModernTextAttention(
+            dim, heads, qk_norm=qk_norm, gated=attn_gated, value_residual=value_residual, vr_first=vr_first,
+        )
+        # Sandwich placement (Gemma-2 style): an extra norm on each sublayer *output*, before LayerScale and
+        # the residual add; widens the stable-LR range at the cost of two extra norms per block.
+        self.norm1_post = norm_layer(dim) if sandwich else nn.Identity()
         self.ls1 = LayerScale(dim, ls_init_value) if ls_init_value is not None else nn.Identity()
         self.norm2 = norm_layer(dim)
         hidden = int(dim * mlp_ratio)
         if mlp_type == "swiglu":
             self.mlp = SwiGLU(dim, hidden)
-        elif mlp_type == "mlp":
+        elif mlp_type in ("mlp", "relu2"):
             self.mlp = nn.Sequential(OrderedDict([
                 ("c_fc", nn.Linear(dim, hidden)),
-                ("act", nn.GELU()),
+                ("act", nn.GELU() if mlp_type == "mlp" else ReLUSquared()),
                 ("c_proj", nn.Linear(hidden, dim)),
             ]))
         else:
             raise ValueError(f"unknown modern text mlp_type={mlp_type!r}")
+        self.norm2_post = norm_layer(dim) if sandwich else nn.Identity()
         self.ls2 = LayerScale(dim, ls_init_value) if ls_init_value is not None else nn.Identity()
 
     def get_weight_dtype(self) -> torch.dtype:
@@ -1115,10 +1150,14 @@ class ModernTextBlock(nn.Module):
             rope_embed: Optional[torch.Tensor] = None,
             key_bias: Optional[torch.Tensor] = None,
             is_causal: bool = False,
-    ) -> torch.Tensor:
-        x = x + self.ls1(self.attn(self.norm1(x), rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal))
-        x = x + self.ls2(self.mlp(self.norm2(x)))
-        return x
+            v_first: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        attn_out, v_first = self.attn(
+            self.norm1(x), rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
+        )
+        x = x + self.ls1(self.norm1_post(attn_out))
+        x = x + self.ls2(self.norm2_post(self.mlp(self.norm2(x))))
+        return x, v_first
 
 
 class ModernTextPool(nn.Module):
@@ -1168,7 +1207,8 @@ class ModernTextPool(nn.Module):
             return x[torch.arange(x.shape[0], device=x.device), idx]
 
         b, l, c = x.shape
-        q = self.q(self.query.expand(b, -1, -1)).reshape(b, 1, self.heads, self.head_dim).transpose(1, 2)
+        # The learned query latent stays fp32 under static low-precision conversion; cast at use.
+        q = self.q(self.query.to(x.dtype).expand(b, -1, -1)).reshape(b, 1, self.heads, self.head_dim).transpose(1, 2)
         kv = self.kv(self.norm(x)).reshape(b, l, 2, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         k, v = kv.unbind(0)
         attn_bias = x.new_zeros((b, 1, 1, l))
@@ -1178,7 +1218,8 @@ class ModernTextPool(nn.Module):
 
 
 class ModernTextTransformer(nn.Module):
-    """Dedicated variable-length text tower with RoPE, SwiGLU, optional gated attention, and masked pooling."""
+    """Dedicated variable-length text tower: RoPE, SwiGLU/ReLU^2, masked pooling, and optional gated attention,
+    qk-norm, embedding pre-norm, sandwich norms, register tokens, and layer-0 value residuals."""
 
     def __init__(
             self,
@@ -1228,12 +1269,22 @@ class ModernTextTransformer(nn.Module):
             raise ValueError(f"unknown modern text norm_type={cfg.norm_type!r}")
 
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.width, padding_idx=cfg.pad_id)
+        # Learned register tokens: prepended to the sequence (always valid) and excluded from pooling. In
+        # bidirectional mode they are true scratch positions (read and write the whole sequence). In causal
+        # mode the prefix can only be *attended to*, not read from text, so they act as learned attention
+        # sinks -- still useful for soaking up sink/outlier mass, but a weaker mechanism than bidirectional
+        # registers, and largely redundant with a BOS token.
+        self.num_reg = max(0, int(getattr(cfg, "reg_tokens", 0) or 0))
+        self.reg_tokens = nn.Parameter(torch.empty(1, self.num_reg, cfg.width)) if self.num_reg else None
         # One rope module on the tower; the cos/sin table is computed once per forward and threaded through the
         # blocks (ModernTextAttention applies it), instead of being recomputed inside every layer.
         self.rope = RotaryEmbedding1D(
             cfg.width // cfg.heads,
             temperature=cfg.rope_temperature,
         ) if cfg.pos_embed == "rope" else None
+        # Embedding norm before block 0 (timm ViT pre_norm / norm_pre; ModernBERT embeddings.norm), applied
+        # after register concat.
+        self.norm_pre = norm_layer(cfg.width) if getattr(cfg, "pre_norm", False) else nn.Identity()
         self.blocks = nn.ModuleList([
             ModernTextBlock(
                 cfg.width,
@@ -1243,9 +1294,12 @@ class ModernTextTransformer(nn.Module):
                 qk_norm=cfg.qk_norm,
                 attn_gated=cfg.attn_gated,
                 mlp_type=cfg.mlp_type,
+                norm_placement=getattr(cfg, "norm_placement", "pre"),
                 ls_init_value=cfg.ls_init_value,
+                value_residual=getattr(cfg, "value_residual", False),
+                vr_first=(i == 0),
             )
-            for _ in range(cfg.layers)
+            for i in range(cfg.layers)
         ])
         self.ln_final = norm_layer(cfg.width)
         self.pool = ModernTextPool(cfg.width, pool_type=pool_type, heads=cfg.heads, norm_layer=norm_layer)
@@ -1262,6 +1316,8 @@ class ModernTextTransformer(nn.Module):
         if self.pad_id is not None:
             with torch.no_grad():
                 self.token_embedding.weight[self.pad_id].zero_()
+        if self.reg_tokens is not None:
+            nn.init.normal_(self.reg_tokens, std=0.02)
 
         # Block weights follow the open_clip TextTransformer / GPT-2 convention: input projections at
         # ``width**-0.5``, and the residual *output* projections (attn ``proj``, SwiGLU ``w3`` / GELU ``c_proj``)
@@ -1282,6 +1338,8 @@ class ModernTextTransformer(nn.Module):
                 # Match the timm / GenLIP gated-attention default: bias 0 -> sigmoid(0)=0.5 (half-open) at init.
                 nn.init.normal_(attn.gate.weight, std=attn_std)
                 nn.init.zeros_(attn.gate.bias)
+            if attn.vr_lambda is not None:
+                nn.init.constant_(attn.vr_lambda, 0.5)  # equal layer-0 / current-layer value mix at init
             mlp = block.mlp
             if isinstance(mlp, SwiGLU):
                 nn.init.normal_(mlp.w12.weight, std=fc_std)
@@ -1322,6 +1380,7 @@ class ModernTextTransformer(nn.Module):
             self,
             text: torch.Tensor,
             dtype: torch.dtype,
+            num_prefix: int = 0,
     ) -> Tuple[bool, Optional[torch.Tensor], torch.Tensor]:
         """Resolve SDPA attention inputs for this batch as ``(is_causal, key_bias, valid)``.
 
@@ -1334,13 +1393,19 @@ class ModernTextTransformer(nn.Module):
           dropping the ``[B, 1, L, L]`` mask removes the L^2 materialization (the dominant memory + compile cost).
         - ``"bidirectional"``: a ``[B, 1, 1, L]`` additive key-pad bias (broadcast over the query axis); real
           tokens here *can* see pads, so the mask is required.
+
+        ``num_prefix`` always-valid positions (register tokens) are prepended to the key axis of the bias;
+        the returned ``valid`` covers the text positions only (it drives pooling, which excludes registers).
         """
         b, l = text.shape
         valid = self._valid_mask(text)
         if self.cfg.attention_mode == "causal":
             return True, None, valid
-        key_bias = torch.zeros((b, 1, 1, l), device=text.device, dtype=dtype)
-        key_bias.masked_fill_(~valid[:, None, None, :], torch.finfo(dtype).min)
+        key_valid = valid
+        if num_prefix:
+            key_valid = torch.cat([valid.new_ones(b, num_prefix), valid], dim=1)
+        key_bias = torch.zeros((b, 1, 1, l + num_prefix), device=text.device, dtype=dtype)
+        key_bias.masked_fill_(~key_valid[:, None, None, :], torch.finfo(dtype).min)
         return False, key_bias, valid
 
     def get_cast_dtype(self) -> torch.dtype:
@@ -1355,7 +1420,12 @@ class ModernTextTransformer(nn.Module):
             self.grad_checkpointing = enable
 
     def layer_groups(self, pooler_in_head: bool = True):
-        groups = [("embeddings", [self.token_embedding])]
+        embed = [self.token_embedding]
+        if self.reg_tokens is not None:
+            embed.append(self.reg_tokens)
+        if not isinstance(self.norm_pre, nn.Identity):
+            embed.append(self.norm_pre)
+        groups = [("embeddings", embed)]
         n = len(self.blocks)
         for i, block in enumerate(self.blocks):
             members = [block]
@@ -1378,7 +1448,14 @@ class ModernTextTransformer(nn.Module):
         _lock_layer_groups(self.layer_groups(pooler_in_head), unlocked_layers)
 
     def no_weight_decay(self):
-        return set()
+        # Learned token-like params follow the positional_embedding / cls_emb convention: excluded from decay
+        # (registers and the MAP pool's query latent); the 1-D rule already covers norms, biases, and scalars.
+        no_wd = set()
+        if self.reg_tokens is not None:
+            no_wd.add("reg_tokens")
+        if getattr(self.pool, "query", None) is not None:
+            no_wd.add("pool.query")
+        return no_wd
 
     def _encode_tokens(
             self,
@@ -1388,20 +1465,28 @@ class ModernTextTransformer(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """Run the block stack, returning ``(x, valid, intermediates)`` with ``x`` pre-``ln_final``.
 
-        ``take_indices`` collects raw block outputs for ``forward_intermediates``; ``stop_index`` truncates the
-        stack (early exit) when only intermediates are needed.
+        ``x`` (and collected intermediates) include the ``num_reg`` register prefix when configured; ``valid``
+        covers the text positions only. ``take_indices`` collects raw block outputs for
+        ``forward_intermediates``; ``stop_index`` truncates the stack (early exit) when only intermediates are
+        needed.
         """
         cast_dtype = self.get_cast_dtype()
         x = self.token_embedding(text).to(cast_dtype)
-        is_causal, key_bias, valid = self._attn_inputs(text, x.dtype)
-        rope_embed = self.rope(text.shape[1], x.device, x.dtype) if self.rope is not None else None
+        if self.reg_tokens is not None:
+            x = torch.cat([self.reg_tokens.to(x.dtype).expand(x.shape[0], -1, -1), x], dim=1)
+        x = self.norm_pre(x)
+        is_causal, key_bias, valid = self._attn_inputs(text, x.dtype, num_prefix=self.num_reg)
+        rope_embed = self.rope(x.shape[1], x.device, x.dtype) if self.rope is not None else None
         blocks = self.blocks if stop_index is None else self.blocks[:stop_index + 1]
         intermediates = []
+        v_first = None
         for i, block in enumerate(blocks):
             if self.grad_checkpointing:
-                x = checkpoint(block, x, rope_embed, key_bias, is_causal, use_reentrant=False)
+                x, v_first = checkpoint(block, x, rope_embed, key_bias, is_causal, v_first, use_reentrant=False)
             else:
-                x = block(x, rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal)
+                x, v_first = block(
+                    x, rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
+                )
             if take_indices is not None and i in take_indices:
                 intermediates.append(x)
         return x, valid, intermediates
@@ -1425,28 +1510,37 @@ class ModernTextTransformer(nn.Module):
         )
         if normalize_intermediates:
             intermediates = [self.ln_final(t) for t in intermediates]
+        # Split the register prefix out of the intermediates: text positions under the usual key, registers
+        # (the only "extra" tokens this tower has) under the extra key when requested.
+        extra = []
+        if self.num_reg:
+            extra = [t[:, :self.num_reg] for t in intermediates]
+            intermediates = [t[:, self.num_reg:] for t in intermediates]
 
         output = {"text_intermediates": intermediates}
+        if output_extra_tokens:
+            output["text_intermediates_extra"] = extra
         if intermediates_only:
             return output
 
         x = self.ln_final(x)
-        pooled = self.pool(x, text=text, valid=valid, eos_id=self.eos_id)
+        pooled = self.pool(x[:, self.num_reg:] if self.num_reg else x, text=text, valid=valid, eos_id=self.eos_id)
         if self.text_projection is not None:
             pooled = self.text_projection(pooled)
         output["text_features"] = pooled
-        if output_extra_tokens:
-            output["text_intermediates_extra"] = []
         return output
 
     def forward(self, text: torch.Tensor):
         x, valid, _ = self._encode_tokens(text)
         x = self.ln_final(x)
-        pooled = self.pool(x, text=text, valid=valid, eos_id=self.eos_id)
+        tokens = x[:, self.num_reg:] if self.num_reg else x
+        pooled = self.pool(tokens, text=text, valid=valid, eos_id=self.eos_id)
         if self.text_projection is not None:
             pooled = self.text_projection(pooled)
         if self.cfg.output_tokens:
-            return pooled, x
+            # NOTE: tokens cover the text positions (registers stripped) but pad positions are NOT masked --
+            # consumers of per-token features must mask via `text != pad_id`, like the pooling here does.
+            return pooled, tokens
         return pooled
 
 

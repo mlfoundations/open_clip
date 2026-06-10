@@ -51,7 +51,10 @@ def _modern_cfg(**kwargs):
     return cfg
 
 
-def _make_modern_text(attention_mode="causal", pool_type="eos", qk_norm=True, attn_gated=True, layers=3, eos_id=EOS_ID):
+def _make_modern_text(
+        attention_mode="causal", pool_type="eos", qk_norm=True, attn_gated=True, layers=3, eos_id=EOS_ID,
+        **overrides,
+):
     """Tower builder for the attention/pooling numerics tests (wider, variable-text, swiglu/rope defaults)."""
     cfg = CLIPTextCfg(
         text_arch="modern",
@@ -71,6 +74,8 @@ def _make_modern_text(attention_mode="causal", pool_type="eos", qk_norm=True, at
         attn_gated=attn_gated,
         proj_bias=False,
     )
+    for k, v in overrides.items():
+        setattr(cfg, k, v)
     return ModernTextTransformer(cfg, output_dim=48).eval()
 
 
@@ -83,8 +88,9 @@ def _right_padded_batch(lengths, total_len):
     return text
 
 
-def _old_attn_inputs(self, text, dtype):
+def _old_attn_inputs(self, text, dtype, num_prefix=0):
     """Reference: a full ``[B, 1, L, L]`` additive mask (causal AND valid), is_causal=False."""
+    assert num_prefix == 0  # reference path is register-free
     b, l = text.shape
     valid = self._valid_mask(text)
     allowed = valid[:, None, None, :].expand(b, 1, l, l).clone()
@@ -155,6 +161,70 @@ def test_modern_text_bidirectional_map_padding_invariant():
     assert out_short.shape == (1, 16)
     assert torch.isfinite(out_padded).all()
     assert torch.allclose(out_short, out_padded, atol=1e-5)
+
+
+def test_modern_text_arch_options_padding_invariant():
+    """pre_norm / sandwich norms / registers / value residual / relu2 all preserve causal padding invariance
+    (pooled output unchanged by a pad tail), individually and combined."""
+    torch.manual_seed(0)
+    option_sets = (
+        {"pre_norm": True},
+        {"norm_placement": "sandwich"},
+        {"reg_tokens": 4},
+        {"value_residual": True},
+        {"mlp_type": "relu2"},
+        {"pre_norm": True, "norm_placement": "sandwich", "reg_tokens": 2, "value_residual": True,
+         "mlp_type": "relu2"},
+    )
+    short = _right_padded_batch([6, 4], total_len=6)
+    padded = torch.cat([short, torch.full((2, 4), PAD_ID)], dim=1)
+    for opts in option_sets:
+        m = _make_modern_text(**opts)
+        with torch.no_grad():
+            assert torch.allclose(m(short), m(padded), atol=1e-5), f"options {opts} broke padding invariance"
+
+
+def test_modern_text_registers_excluded_from_outputs():
+    """Registers are prepended internally but never leak: token outputs, intermediates, and pooling all cover
+    text positions only; registers surface via output_extra_tokens and are excluded from weight decay."""
+    m = _make_modern_text(reg_tokens=3, output_tokens=True)
+    text = _right_padded_batch([5, 7], total_len=8)
+    with torch.no_grad():
+        pooled, tokens = m(text)
+        inter = m.forward_intermediates(text, indices=1, output_extra_tokens=True)
+    assert pooled.shape == (2, 48)
+    assert tokens.shape[:2] == (2, text.shape[1])
+    assert inter["text_intermediates"][0].shape[1] == text.shape[1]
+    assert inter["text_intermediates_extra"][0].shape[1] == 3
+    assert "reg_tokens" in m.no_weight_decay()
+    assert any(p is m.reg_tokens for _, members in m.layer_groups() for p in members)
+
+
+def test_modern_text_value_residual_params_and_grads():
+    """Layer 0 produces v_first (no lambda -- an unused param breaks DDP); later layers mix with a learned
+    scalar that receives gradient."""
+    m = _make_modern_text(value_residual=True, layers=3).train()
+    assert m.blocks[0].attn.vr_lambda is None
+    assert all(b.attn.vr_lambda is not None for b in m.blocks[1:])
+    m(_right_padded_batch([5, 3], total_len=6)).sum().backward()
+    assert all(b.attn.vr_lambda.grad is not None for b in m.blocks[1:])
+
+
+def test_modern_text_low_precision_conversion():
+    """convert_weights_to_lp converts module weights but not standalone params (vr_lambda, pool.query,
+    reg_tokens); those stay fp32 and must cast at use, so fp16/bf16-converted towers still run."""
+    from open_clip.model import convert_weights_to_lp
+
+    text = _right_padded_batch([6, 4], total_len=8)
+    for dtype in (torch.bfloat16, torch.float16):
+        m = _make_modern_text(pool_type="map", value_residual=True, reg_tokens=2, norm_placement="sandwich")
+        convert_weights_to_lp(m, dtype=dtype)
+        assert m.blocks[1].attn.vr_lambda.dtype == torch.float32  # standalone params stay fp32 by design
+        assert m.pool.query.dtype == torch.float32
+        with torch.no_grad():
+            out = m(text)
+        assert out.dtype == dtype
+        assert torch.isfinite(out.float()).all()
 
 
 def test_all_pad_row_is_finite():
