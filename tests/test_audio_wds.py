@@ -38,14 +38,21 @@ def _fake_decode(key, data):
     return None
 
 
+def _fake_decode_bytes(data):
+    """Stand in for the post-rename bytes decode map (torchaudio.load on raw bytes)."""
+    return torch.randn(1, SR), SR
+
+
 @pytest.fixture(autouse=True)
 def _audio_wds_env(monkeypatch):
     # Tiny shuffle buffers (public env knob) so the first batch doesn't wait on a 1000-sample buffer fill,
-    # and a stub decoder so the test doesn't depend on a torchaudio file-decode backend.
+    # and stub decoders so the test doesn't depend on a torchaudio file-decode backend (the default pipeline
+    # decodes via _decode_audio_bytes after rename; the legacy assembly uses the extension-keyed _decode_audio).
     for name in ("OPENCLIP_WDS_SHARD_SHUFFLE_SIZE", "OPENCLIP_WDS_SHARD_SHUFFLE_INITIAL",
                  "OPENCLIP_WDS_SAMPLE_SHUFFLE_SIZE", "OPENCLIP_WDS_SAMPLE_SHUFFLE_INITIAL"):
         monkeypatch.setenv(name, "4" if name.endswith("SIZE") else "1")
     monkeypatch.setattr(audio_data, "_decode_audio", _fake_decode)
+    monkeypatch.setattr(audio_data, "_decode_audio_bytes", _fake_decode_bytes)
 
 
 def _build_audio_tar(test_name, num_samples=12):
@@ -118,9 +125,9 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
 
     args = _base_args(shard)
     args.genlap = True  # triggers the NaFlex audio branch (generative: variable text + pad_id)
-    args.naflex_length_bucketing = True  # exercise audio LengthBucketer wiring
-    args.naflex_bucket_pool = 4          # tiny pool so the bucketer flushes fast over the test shard
-    args.naflex_bucket_chunk = 2
+    args.length_bucketing = True  # exercise audio LengthBucketer wiring
+    args.bucket_pool = 4          # tiny pool so the bucketer flushes fast over the test shard
+    args.bucket_chunk = 2
     preprocess_audio = AudioNaFlexTransformFactory(model.audio_cfg)  # genlap audio_cfg is already AudioNaFlexCfg
     naflex_data_config = NaFlexDataConfig.resolve(
         patch_sizes=[16], seq_lens=(256,), max_tokens_per_batch=2560, batch_divisor=1,

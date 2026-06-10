@@ -4,7 +4,7 @@ import math
 import random
 from dataclasses import asdict, is_dataclass
 from functools import partial
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import webdataset as wds
@@ -21,6 +21,7 @@ from open_clip_train.data import (
     detshuffle2,
     expand_urls,
     get_dataset_size,
+    get_text_pad_id,
     log_and_continue,
     naflex_loader_counts,
     tarfile_to_samples_nothrow,
@@ -31,6 +32,7 @@ from open_clip_train.naflex_data import (
     CaptionLength,
     LengthBucketer,
     collate_naflex_dicts,
+    collate_variable_text,
     create_naflex_eval_transform,
 )
 
@@ -53,6 +55,7 @@ def filter_no_caption_or_no_audio(sample):
 
 
 def _decode_audio(key, data):
+    # Extension-keyed `wds.decode` handler; used by the legacy (decode-first) pipeline assembly.
     import torchaudio
 
     ext = key.rsplit(".", 1)[-1] if "." in key else key
@@ -61,20 +64,35 @@ def _decode_audio(key, data):
     return torchaudio.load(io.BytesIO(data))
 
 
+def _decode_audio_bytes(data):
+    """Decode raw audio bytes to ``(waveform, sr)`` (per-key map for the post-rename/post-bucket pipelines).
+
+    The format is sniffed from the byte stream (extension keys are gone after ``wds.rename``), matching what
+    the extension-keyed ``_decode_audio`` handler produces.
+    """
+    import torchaudio
+
+    return torchaudio.load(io.BytesIO(data))
+
+
 class _TokenizeAudioCaption:
     # Module-level callable (picklable for forkserver workers).
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer, variable: bool = False):
         self.tokenizer = tokenizer
+        self.variable = variable
 
     def __call__(self, text):
-        return self.tokenizer(_extract_caption(text))[0]
+        caption = _extract_caption(text)
+        if self.variable:
+            return self.tokenizer(caption, pad=False)[0]
+        return self.tokenizer(caption)[0]
 
 
 class AudioCaptionTokenizer:
     """Picklable caption-member -> token tensor for the NaFlex audio path.
 
     Reuses ``_extract_caption`` (json/txt/cls + multi-caption handling); ``variable=True`` returns a 1-D
-    unpadded sequence (the generative contract the NaFlex collator pads per-batch), mirroring ``TokenizeText``.
+    unpadded sequence for per-batch text padding, mirroring ``TokenizeText``.
     """
 
     def __init__(self, tokenizer, variable: bool = False):
@@ -109,19 +127,33 @@ def _extract_caption(text_data):
     return str(text_data)
 
 
-def _audio_collate(batch: List[Dict]):
+def _audio_collate(
+        batch: List[Dict],
+        pad_id: Optional[int] = None,
+        text_pad_multiple: Optional[int] = None,
+        text_pad_cap: Optional[int] = None,
+):
     audios = [sample["audio"] for sample in batch]
     texts = [sample["text"] for sample in batch]
     waveforms = torch.stack([audio["waveform"] for audio in audios])
     longers = torch.as_tensor([bool(audio["longer"]) for audio in audios], dtype=torch.bool)
-    text_tensor = torch.stack(list(texts))
+    if pad_id is None:
+        text_tensor = torch.stack(list(texts))
+        text_valid = None
+    else:
+        text_tensor, text_valid = collate_variable_text(
+            texts, pad_id, pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
+        )
     audio_batch = {
         "waveform": waveforms,
         "longer": longers,
     }
     if "mel_fusion" in audios[0]:
         audio_batch["mel_fusion"] = torch.stack([audio["mel_fusion"] for audio in audios])
-    return {"audio": audio_batch, "text": text_tensor}
+    out = {"audio": audio_batch, "text": text_tensor}
+    if text_valid is not None:
+        out["text_valid"] = text_valid
+    return out
 
 
 def get_wds_audio_dataset(
@@ -161,11 +193,13 @@ def get_wds_audio_dataset(
         )
 
     # NaFlex audio uses the shared batcher path; standard CLAP keeps the fixed-batch loader.
-    # GenLAP has variable text in the audio row budget; NaFlexClap text stays fixed and separate.
+    # GenLAP has variable text in the audio row budget; contrastive variable text is padded separately.
     naflex_audio = naflex_data_config is not None and (
         getattr(args, "genlap", False) or getattr(args, "naflexclap", False)
     )
     generative = getattr(args, "genlap", False)
+    variable_text = bool(getattr(args, "variable_text", False))
+    text_variable = generative or variable_text
     naflex_train = naflex_audio and is_train
     naflex_eval = naflex_audio and not is_train
 
@@ -216,19 +250,26 @@ def get_wds_audio_dataset(
         )
 
     audio_ext = getattr(args, "audio_ext", "flac")
-    # Shared decode/filter/rename head (sample -> {audio: (waveform, sr), text: <raw caption member>}).
+    # Shared filter/rename head (sample -> {audio: <raw bytes>, text: <raw caption member>}). Audio decode runs
+    # later, after tokenize and the optional length bucketer: the bucketer pools `--bucket-pool` complete
+    # samples per worker, so it must see raw compressed bytes -- pre-crop decoded waveforms are far larger
+    # (a 2-minute 48kHz stereo clip is ~45MB) and can OOM dataloader workers. One ordering for all branches;
+    # the decode-first assembly lives in legacy_data.py.
     pipeline.extend(
         [
             wds.select(filter_no_caption_or_no_audio),
-            wds.decode(_decode_audio, handler=log_and_continue),
             wds.rename(audio=audio_ext, text="json;txt;cls", keep=False),
         ]
     )
+    decode_audio = wds.map_dict(audio=_decode_audio_bytes, handler=log_and_continue)
 
-    # GenLAP budgets variable text with audio; NaFlexClap keeps fixed text outside the audio token budget.
-    naflex_pad_id = getattr(tokenizer, "pad_token_id", None) if generative else None
+    # GenLAP budgets variable text with audio; contrastive variable text only changes padding/collation.
+    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_pad_multiple = getattr(args, "text_pad_multiple", None)
+    text_pad_cap = getattr(tokenizer, "context_length", None)
+    naflex_pad_id = text_pad_id if text_variable else None
     naflex_text_cost = (getattr(tokenizer, "context_length", 0) or 0) if generative else 0
-    naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=generative)
+    naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=text_variable)
 
     naflex_batcher = None
     if naflex_train:
@@ -236,8 +277,8 @@ def get_wds_audio_dataset(
         # tokens for both block and packed-prefix layouts. Geometry comes from the resolved transform factory.
         audio_bucketer = None
         audio_naflex_cfg = getattr(preprocess_audio, "cfg", None)
-        if getattr(args, "naflex_length_bucketing", False) and audio_naflex_cfg is not None:
-            # Always include audio length; generative audio adds variable caption length below.
+        if getattr(args, "length_bucketing", False) and audio_naflex_cfg is not None:
+            # Always include audio length; variable-text towers add caption length below.
             length_fns = [
                 AudioTokenLength(
                     audio_key="audio",
@@ -249,13 +290,13 @@ def get_wds_audio_dataset(
                     max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp the sort key for outliers
                 )
             ]
-            if generative:
-                # GenLAP text is variable, so use audio+caption length in block and packed-prefix modes.
+            if text_variable:
+                # Variable text adds caption length to the reorder key; only GenLAP also adds its cap to row budget.
                 length_fns.append(CaptionLength(key="text"))
             audio_bucketer = LengthBucketer(
                 length_fns=length_fns,
-                pool=args.naflex_bucket_pool,
-                chunk=args.naflex_bucket_chunk,
+                pool=args.bucket_pool,
+                chunk=args.bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
             )
@@ -275,12 +316,16 @@ def get_wds_audio_dataset(
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=audio_bucketer,
+            decode_stage=decode_audio,
             pad_multiple=getattr(args, "naflex_pad_multiple", None),
+            text_pad_multiple=text_pad_multiple,
+            text_pad_cap=text_pad_cap,
         )
     elif naflex_eval:
         eval_transform, eval_seq_len, _ = create_naflex_eval_transform(preprocess_audio, naflex_data_config)
         pipeline.extend(
             [
+                decode_audio,
                 wds.map_dict(audio=eval_transform, text=naflex_tokenize),
                 wds.batched(
                     args.batch_size,
@@ -290,6 +335,8 @@ def get_wds_audio_dataset(
                         image_key="audio",
                         max_seq_len=eval_seq_len,
                         pad_id=naflex_pad_id,
+                        text_pad_multiple=text_pad_multiple,
+                        text_pad_cap=text_pad_cap,
                     ),
                 ),
             ]
@@ -297,12 +344,21 @@ def get_wds_audio_dataset(
     else:
         pipeline.extend(
             [
+                decode_audio,
                 wds.map_dict(
                     audio=preprocess_audio,
-                    text=_TokenizeAudioCaption(tokenizer),
+                    text=_TokenizeAudioCaption(tokenizer, variable=variable_text),
                 ),
                 wds.map(_keep_audio_text),
-                wds.batched(args.batch_size, partial=not is_train, collation_fn=_audio_collate),
+                wds.batched(
+                    args.batch_size,
+                    partial=not is_train,
+                    collation_fn=partial(
+                        _audio_collate, pad_id=text_pad_id,
+                        text_pad_multiple=text_pad_multiple,
+                        text_pad_cap=text_pad_cap,
+                    ) if variable_text else _audio_collate,
+                ),
             ]
         )
 
@@ -339,7 +395,7 @@ def get_wds_audio_dataset(
 
 
 class SyntheticAudioDataset(Dataset):
-    def __init__(self, audio_cfg, transform=None, dataset_size=100, tokenizer=None):
+    def __init__(self, audio_cfg, transform=None, dataset_size=100, tokenizer=None, variable_text: bool = False):
         self.audio_cfg = audio_cfg
         self.transform = transform
         self.sample_rate = int(audio_cfg.get("sample_rate", 48000))
@@ -348,7 +404,7 @@ class SyntheticAudioDataset(Dataset):
         # fallback when no resolved audio config was available at all.
         self.clip_samples = int(audio_cfg.get("clip_samples", self.sample_rate if "sample_rate" in audio_cfg else 480000))
         self.dataset_size = dataset_size
-        self.preprocess_txt = TokenizeText(tokenizer)
+        self.preprocess_txt = TokenizeText(tokenizer, variable=variable_text)
         self.caption = "Dummy caption"
 
     def __len__(self):
@@ -390,11 +446,13 @@ def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenize
         }
     else:
         audio_cfg = {}
+    variable_text = bool(getattr(args, "variable_text", False))
     dataset = SyntheticAudioDataset(
         audio_cfg=audio_cfg,
         transform=preprocess_fn,
         dataset_size=args.train_num_samples,
         tokenizer=tokenizer,
+        variable_text=variable_text,
     )
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
@@ -407,7 +465,11 @@ def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenize
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
-        collate_fn=_audio_collate,
+        collate_fn=partial(
+            _audio_collate, pad_id=get_text_pad_id(tokenizer),
+            text_pad_multiple=getattr(args, "text_pad_multiple", None),
+            text_pad_cap=getattr(tokenizer, "context_length", None),
+        ) if variable_text else _audio_collate,
         **_audio_loader_kwargs(args),
     )
     dataloader.num_samples = num_samples

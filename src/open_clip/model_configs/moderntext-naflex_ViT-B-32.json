@@ -1,0 +1,36 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 224,
+        "image_seq_len": 49,
+        "timm_model_name": "naflexvit_base_patch16_gap",
+        "timm_model_pretrained": false,
+        "timm_model_kwargs": {
+            "patch_size": 32,
+            "pos_embed_grid_size": [7, 7]
+        }
+    },
+    "text_cfg": {
+        "text_arch": "modern",
+        "context_length": 256,
+        "variable_text": true,
+        "vocab_size": 50260,
+        "width": 512,
+        "heads": 8,
+        "layers": 12,
+        "mlp_ratio": 2.6666667,
+        "pad_id": 50258,
+        "bos_id": 50259,
+        "eos_id": 50257,
+        "pool_type": "eos",
+        "attention_mode": "causal",
+        "pos_embed": "rope",
+        "mlp_type": "swiglu",
+        "norm_type": "rmsnorm",
+        "norm_eps": 1e-6,
+        "qk_norm": false,
+        "attn_gated": true,
+        "tokenizer_type": "tiktoken",
+        "tiktoken_name": "r50k_base"
+    }
+}

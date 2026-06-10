@@ -39,10 +39,14 @@ class CLIPTask(ImageTextTask):
         # else: eval-only construction, no self.loss attribute
 
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        model_out = self.trainable_module(**batch)
+        model_out = self.trainable_module(image=batch["image"], text=batch["text"])
         logit_scale = model_out["logit_scale"]
         losses = self.loss(**model_out, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
         losses["logit_scale"] = logit_scale
         return losses
+
+    def eval_forward(self, batch: Dict[str, torch.Tensor]):
+        inputs = {key: batch[key] for key in self.data_keys if key in batch}
+        return self.get_trainable_module(use_ema=True)(**inputs)

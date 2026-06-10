@@ -324,6 +324,9 @@ def main(args):
         else:
             model.set_grad_checkpointing(impl='composable' if args.fsdp else 'inline')
 
+    text_tower = getattr(model, 'text', None)
+    args.variable_text = bool(getattr(args, 'variable_text', False) or getattr(text_tower, 'variable_text', False))
+
     if is_master(args):
         _logger.info("Model:")
         _logger.info(f"{str(model)}")

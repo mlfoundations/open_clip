@@ -1,0 +1,21 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 256,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 32
+    },
+    "text_cfg": {
+        "context_length": 256,
+        "variable_text": true,
+        "pad_id": 50283,
+        "hf_model_name": "Alibaba-NLP/gte-modernbert-base",
+        "hf_tokenizer_name": "Alibaba-NLP/gte-modernbert-base",
+        "hf_pooler_type": "cls_pooler",
+        "hf_proj_type": "linear",
+        "hf_model_config": {
+            "max_position_embeddings": 256
+        }
+    }
+}

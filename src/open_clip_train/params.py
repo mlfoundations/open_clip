@@ -765,22 +765,25 @@ def parse_args(args):
         ),
     )
     parser.add_argument(
-        "--naflex-length-bucketing",
+        "--length-bucketing",
         action="store_true",
-        help="NaFlex train: reorder by row length to reduce padding. GenLIP keys on caption; NaFlexClap on audio; "
-             "GenLAP on audio+caption. Reorder-only; train-only."
+        help="Train: reorder by sequence length to reduce per-batch padding. Standard CLIP / NaFlexClap key on "
+             "caption (variable text); NaFlexClap on audio; GenLAP on audio+caption; GenLIP on caption. "
+             "Reorder-only; train-only."
     )
     parser.add_argument(
-        "--naflex-bucket-pool",
+        "--bucket-pool",
         type=int,
         default=2048,
-        help="Per-worker sample pool size to sort for --naflex-length-bucketing (bucketing breadth vs randomness)."
+        help="Per-worker sample pool size to sort for --length-bucketing (bucketing breadth vs randomness). "
+             "The pool buffers complete, undecoded samples (raw image/audio bytes), so per-worker memory "
+             "scales with pool x average raw sample size."
     )
     parser.add_argument(
-        "--naflex-bucket-chunk",
+        "--bucket-chunk",
         type=int,
         default=128,
-        help="Run length within a sorted pool for --naflex-length-bucketing (~ a typical batch size)."
+        help="Run length within a sorted pool for --length-bucketing (~ a typical batch size)."
     )
     parser.add_argument(
         "--naflex-pad-multiple",
@@ -789,8 +792,21 @@ def parse_args(args):
         help="NaFlex audio only: pad to batch max, optionally rounded to multiples of M and clamped at the "
              "per-batch cap. None = exact batch-max. Use M (for example 32 or 64) to limit compile shapes."
     )
+    parser.add_argument(
+        "--text-pad-multiple",
+        type=int,
+        default=None,
+        help="Variable-length text only: round per-batch caption length up to multiples of M. None = exact "
+             "batch-max. Use M (for example 16 or 32) to bound the number of distinct text sequence lengths and "
+             "limit torch.compile recompiles (the token-axis analogue of --naflex-pad-multiple)."
+    )
 
     args = parser.parse_args(args)
+
+    # Guard here (not just in NaFlexBatchScheduler) so the collate-only variable-text paths that bypass the
+    # scheduler (standard CLAP / synthetic / plain CLIP) also reject non-positive values.
+    if args.text_pad_multiple is not None and args.text_pad_multiple <= 0:
+        raise ValueError(f"--text-pad-multiple must be > 0 when set, got {args.text_pad_multiple}.")
 
     # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
     # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).

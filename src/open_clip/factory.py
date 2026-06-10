@@ -496,6 +496,8 @@ def create_model(
     enable_default_text_weights = pretrained_text and pretrained_text_path is None and checkpoint_path is None
     is_timm_model = (not is_audio_model) and 'timm_model_name' in model_cfg.get("vision_cfg", {})
     is_hf_text_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
+    is_modern_text_model = model_cfg.get('text_cfg', {}).get('text_arch') == 'modern'
+    is_variable_text_model = bool(model_cfg.get('text_cfg', {}).get('variable_text', False))
     if is_timm_model:
         vision_cfg['timm_model_pretrained'] = enable_default_image_weights
     else:
@@ -517,7 +519,13 @@ def create_model(
     elif is_audio_model:
         model_class = CLAP
     else:
-        custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
+        custom_text_requested = model_cfg.pop('custom_text', False)
+        if is_modern_text_model and "multimodal_cfg" in model_cfg:
+            raise ValueError("text_arch='modern' is not supported for CoCa / multimodal_cfg models.")
+        custom_text = (
+            custom_text_requested or force_custom_text or is_hf_text_model or
+            is_modern_text_model or is_variable_text_model
+        )
         if custom_text:
             if "multimodal_cfg" in model_cfg:
                 model_class = CoCa
@@ -694,6 +702,47 @@ def create_model(
     return model
 
 
+def _validate_special_tokens(text_config: dict, tokenizer) -> None:
+    """Fail fast when a config's special token ids disagree with the resolved tokenizer.
+
+    eos: ``pool_type == 'eos'`` (and the modern text arch's ``'argmax'``, which remaps to eos pooling) requires
+    an explicit ``eos_id`` matching the tokenizer's eos/eot id -- ``eos_id`` has no config default because a
+    wrong id pools silently wrong positions, which is far harder to notice than this error.
+
+    pad: towers mask via ``text != pad_id`` while collators fill with the tokenizer's pad id, so an explicit
+    ``pad_id`` that drifts from the tokenizer corrupts masks/pooling silently. ``variable_text`` additionally
+    requires the tokenizer to have a reserved pad id at all (also enforced at data setup by ``get_text_pad_id``;
+    checked here so it fails at tokenizer resolution rather than deep in the data pipeline).
+    """
+    pool_type = text_config.get('pool_type', 'argmax')
+    uses_eos = pool_type == 'eos' or (text_config.get('text_arch') == 'modern' and pool_type == 'argmax')
+    if uses_eos:
+        eos_id = text_config.get('eos_id', None)
+        if eos_id is None:
+            raise ValueError(
+                "pool_type='eos' requires text_cfg.eos_id (must match the tokenizer eos/eot token id)."
+            )
+        tokenizer_eos = getattr(tokenizer, 'eot_token_id', None)
+        if tokenizer_eos is not None and int(tokenizer_eos) != int(eos_id):
+            raise ValueError(
+                f"text_cfg.eos_id ({eos_id}) does not match the resolved tokenizer's eos/eot token id "
+                f"({tokenizer_eos}); eos pooling would index the wrong positions."
+            )
+
+    tokenizer_pad = getattr(tokenizer, 'pad_token_id', None)
+    if text_config.get('variable_text', False) and tokenizer_pad is None:
+        raise ValueError(
+            "variable_text=True requires a tokenizer with a reserved `pad_token_id` (id 0 is a real vocab "
+            "token in most BPE vocabs, so no fallback is assumed)."
+        )
+    pad_id = text_config.get('pad_id', None)
+    if pad_id is not None and tokenizer_pad is not None and int(tokenizer_pad) != int(pad_id):
+        raise ValueError(
+            f"text_cfg.pad_id ({pad_id}) does not match the resolved tokenizer's pad token id "
+            f"({tokenizer_pad}); pad masks and per-batch padding would disagree."
+        )
+
+
 def get_tokenizer(
         model_name: str = '',
         context_length: Optional[int] = None,
@@ -831,6 +880,8 @@ def get_tokenizer(
             context_length=context_length,
             **tokenizer_kwargs,
         )
+
+    _validate_special_tokens(text_config, tokenizer)
 
     return tokenizer
 

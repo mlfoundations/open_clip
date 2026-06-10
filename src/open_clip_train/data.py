@@ -1,4 +1,5 @@
 import ast
+import io
 import json
 import logging
 import math
@@ -37,8 +38,12 @@ class TokenizeText:
         self.variable = variable
 
     def __call__(self, text):
-        # `variable=True` returns a per-sample 1-D tensor (no fixed-length padding); the NaFlex
-        # collator pads captions to the per-batch max. Used by generative (GenLIP) models.
+        # Bucketed pipelines tokenize before `wds.decode` runs (the bucket pool holds raw, undecoded samples),
+        # so the caption may arrive as raw utf-8 bytes rather than a decoded str.
+        if isinstance(text, bytes):
+            text = text.decode('utf-8')
+        # `variable=True` returns a per-sample 1-D tensor (no fixed-length padding); collators pad captions
+        # to the per-batch max for text towers that support variable length.
         if self.variable:
             return self.tokenizer(text, pad=False)[0]
         return self.tokenizer(text)[0]
@@ -50,13 +55,49 @@ from open_clip_train.naflex_data import (
     NaFlexMapDatasetWrapper,
     collate_naflex_dicts,
     collate_naflex_tuples,
+    collate_variable_text,
     create_naflex_eval_transform,
     require_naflex,
 )
 
 
+def get_text_pad_id(tokenizer) -> int:
+    pad_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_id is None:
+        raise ValueError("variable_text=True requires a tokenizer with a reserved `pad_token_id`.")
+    return int(pad_id)
+
+
+def collate_variable_text_dicts(
+        batch,
+        *,
+        pad_id: int,
+        target_key: str = "text",
+        text_pad_multiple: Optional[int] = None,
+        text_pad_cap: Optional[int] = None,
+):
+    text, text_valid = collate_variable_text(
+        [sample[target_key] for sample in batch], pad_id,
+        pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
+    )
+    others = [{k: v for k, v in sample.items() if k != target_key} for sample in batch]
+    out = default_collate(others) if others and others[0] else {}
+    out[target_key] = text
+    out[f"{target_key}_valid"] = text_valid
+    return out
+
+
 class CsvDataset(Dataset):
-    def __init__(self, input_filename, transforms, img_key, caption_key, sep="\t", tokenizer=None):
+    def __init__(
+            self,
+            input_filename,
+            transforms,
+            img_key,
+            caption_key,
+            sep="\t",
+            tokenizer=None,
+            variable_text: bool = False,
+    ):
         _logger.debug(f'Loading csv data from {input_filename}.')
         df = pd.read_csv(input_filename, sep=sep)
 
@@ -71,6 +112,7 @@ class CsvDataset(Dataset):
         _logger.debug('Done loading data.')
 
         self.tokenize = tokenizer
+        self.variable_text = variable_text
 
     def __len__(self):
         return len(self.images)
@@ -79,7 +121,11 @@ class CsvDataset(Dataset):
         image = Image.open(str(self.images.iloc[idx]))
         if self.transforms is not None:
             image = self.transforms(image)
-        text = self.tokenize([str(self.captions.iloc[idx])])[0]
+        caption = str(self.captions.iloc[idx])
+        if self.variable_text:
+            text = self.tokenize(caption, pad=False)[0]
+        else:
+            text = self.tokenize([caption])[0]
         return {"image": image, "text": text}
 
 
@@ -277,6 +323,19 @@ class JsonCaptionExtractor:
         return sample
 
 
+def decode_pil_rgb(data):
+    """Decode raw image bytes to an RGB PIL image (what ``wds.decode('pilrgb')`` does, as a per-key map).
+
+    Bucketed pipelines reorder samples *before* decoding so the bucket pool holds raw bytes instead of decoded
+    images (10-50x smaller); this runs after the reorder. PIL sniffs the format from the byte signature, so the
+    extension-keyed dispatch of ``wds.decode`` is not needed.
+    """
+    with io.BytesIO(data) as stream:
+        img = Image.open(stream)
+        img.load()
+        return img.convert("RGB")
+
+
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
     _logger.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
@@ -469,12 +528,17 @@ def append_naflex_train_stages(
         pad_id,
         per_row_text_tokens,
         bucketer=None,
+        decode_stage=None,
         pad_multiple=None,
+        text_pad_multiple=None,
+        text_pad_cap=None,
 ):
     """Append the modality-agnostic NaFlex train stages to ``pipeline`` and return the ``NaFlexBatcher``.
 
     Shared by the image (``get_wds_dataset``) and audio (``get_wds_audio_dataset``) pipelines: tokenize text ->
-    optional length bucketing (when captions are variable-length, i.e. ``pad_id`` set) -> ``NaFlexBatcher``.
+    optional length bucketing -> ``decode_stage`` -> ``NaFlexBatcher``.
+    ``decode_stage`` is the caller's modality-specific decode map (image bytes -> PIL / audio bytes ->
+    ``(waveform, sr)``); it runs after the bucketer so the bucket pool holds raw, undecoded samples.
     The batcher reads ``sample[modality_key]`` (``"image"`` or ``"audio"``) plus ``sample['text']`` and applies
     ``transform_factory`` to produce the ``{patches, patch_coord, patch_valid}`` rows -- so audio reuses the
     whole batching/scheduling/collation path unchanged via ``modality_key="audio"``.
@@ -491,6 +555,8 @@ def append_naflex_train_stages(
         # tightening per-batch-max padding. Reorder-only -> schedule / num_batches / DDP unchanged. The caller
         # owns the bucketer choice + policy (a LengthBucketer with the right length_fns per the model type).
         stages.append(bucketer)
+    if decode_stage is not None:
+        stages.append(decode_stage)
     stages.append(NaFlexBatcher(
         train_num_samples=num_samples,
         train_num_tokens=num_tokens,
@@ -511,11 +577,15 @@ def append_naflex_train_stages(
         pad_id=pad_id,
         per_row_text_tokens=per_row_text_tokens,
         pad_multiple=pad_multiple,
+        text_pad_multiple=text_pad_multiple,
+        text_pad_cap=text_pad_cap,
     ))
     if pad_id is not None:
         _logger.info(
-            f"NaFlex generative batch budget = {naflex_data_config.max_tokens_per_batch} total tokens/row-batch "
-            f"({modality_key} bucket + text cap {per_row_text_tokens})"
+            f"NaFlex batch budget = {naflex_data_config.max_tokens_per_batch} modality tokens/row-batch "
+            f"({modality_key} bucket"
+            + (f" + text cap {per_row_text_tokens}" if per_row_text_tokens else "")
+            + ")"
             + ("; length bucketing ON" if bucketer is not None else "")
         )
     pipeline.extend(stages)
@@ -611,41 +681,51 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
+    # GenLIP budgets variable captions with image tokens. Other variable-text towers only need batch-time padding.
+    genlip_text = getattr(args, 'genlip', False)
+    variable_text = bool(getattr(args, 'variable_text', False))
+    text_variable = genlip_text or variable_text
+    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_pad_multiple = getattr(args, 'text_pad_multiple', None)
+    text_pad_cap = getattr(tokenizer, 'context_length', None)
+    naflex_pad_id = text_pad_id if text_variable else None
+    naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
+    tokenize_text = TokenizeText(tokenizer, variable=text_variable)
+
+    # Length bucketing reorders by caption length (train-only; only meaningful for variable text).
+    use_bucketing = is_train and text_variable and getattr(args, 'length_bucketing', False)
+
+    # Image decode runs *after* tokenize and the optional length bucketer (see decode_pil_rgb below): the
+    # bucketer pools `--bucket-pool` complete samples per worker, so it must see raw, undecoded samples (the
+    # same regime as the raw-sample shuffle above) -- a pool of decoded full-resolution images is 10-50x
+    # larger and can OOM dataloader workers on hi-res data. One ordering for all branches, bucketed or not;
+    # the decode-first assembly lives in legacy_data.py.
     text_key = getattr(args, 'text_key', 'txt') or 'txt'
     json_text_key = getattr(args, 'json_text_key', None)
     if json_text_key:
         # Read the caption from a field of each sample's .json (datasets without a text member, e.g. monet).
         pipeline.extend([
             wds.select(FilterValidSample(json_text_key=json_text_key)),
-            wds.decode("pilrgb", handler=log_and_continue),
             wds.rename(image="jpg;png;jpeg;webp", json="json", keep=False),
-            wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),
+            wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),  # parses raw bytes itself
         ])
     else:
         # Read the caption from a tar member (default 'txt'; --text-key allows alternatives like 'txt;caption').
+        # Plain-text members only (TokenizeText utf-8 decodes the raw bytes); json captions use --json-text-key.
         pipeline.extend([
             wds.select(FilterValidSample(text_key=text_key)),
-            wds.decode("pilrgb", handler=log_and_continue),
             wds.rename(image="jpg;png;jpeg;webp", text=text_key, keep=False),
         ])
-
-    # Generative (GenLIP) models use variable-length captions padded within the NaFlex batch. The caption cap
-    # (tokenizer.context_length) is added to each row's token cost so the batch budget bounds total tokens.
-    genlip_text = getattr(args, 'genlip', False)
-    naflex_pad_id = getattr(tokenizer, 'pad_token_id', None) if genlip_text else None
-    naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
-    tokenize_text = TokenizeText(tokenizer, variable=genlip_text)
+    decode_image = wds.map_dict(image=decode_pil_rgb, handler=log_and_continue)
 
     if use_naflex_train:
-        # Image bucketing reorders by caption length, and only helps the generative (variable-text) case
-        # (naflex_pad_id is set iff genlip). NaFlex resizes images to ~fill the bucket, so only text varies.
-        # GenLIP only: caption-length bucketing (image is resized to ~fill the bucket, so only text varies).
+        # Image NaFlex resizes images to ~fill the bucket, so caption length is the only optional bucketing signal.
         image_bucketer = None
-        if naflex_pad_id is not None and getattr(args, 'naflex_length_bucketing', False):
+        if use_bucketing:
             image_bucketer = LengthBucketer(
                 length_fns=[CaptionLength(key="text")],
-                pool=args.naflex_bucket_pool,
-                chunk=args.naflex_bucket_chunk,
+                pool=args.bucket_pool,
+                chunk=args.bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
             )
@@ -662,25 +742,58 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=image_bucketer,
+            decode_stage=decode_image,
             pad_multiple=getattr(args, 'naflex_pad_multiple', None),
+            text_pad_multiple=text_pad_multiple,
+            text_pad_cap=text_pad_cap,
         )
         dataset = wds.DataPipeline(*pipeline)
         num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
     elif use_naflex_eval:
         pipeline.extend([
+            decode_image,
             wds.map_dict(image=preprocess_img, text=tokenize_text),
             wds.batched(
                 args.batch_size,
                 partial=True,
-                collation_fn=partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len, pad_id=naflex_pad_id),
+                collation_fn=partial(
+                    collate_naflex_dicts,
+                    max_seq_len=naflex_max_seq_len,
+                    pad_id=naflex_pad_id,
+                    text_pad_multiple=text_pad_multiple,
+                    text_pad_cap=text_pad_cap,
+                ),
             ),
         ])
         dataset = wds.DataPipeline(*pipeline)
     else:
-        pipeline.extend([
-            wds.map_dict(image=preprocess_img, text=tokenize_text),
-            wds.batched(args.batch_size, partial=not is_train, collation_fn=default_collate),
+        collate_fn = (
+            partial(
+                collate_variable_text_dicts,
+                pad_id=text_pad_id,
+                text_pad_multiple=text_pad_multiple,
+                text_pad_cap=text_pad_cap,
+            )
+            if text_variable else default_collate
+        )
+        # Tokenize -> [bucket] -> decode -> transform -> batch. Bucketing reorders by caption length so
+        # similar-length captions batch together: tighter per-batch-max text padding and fewer distinct
+        # text shapes (stacks with --text-pad-multiple).
+        stages = [wds.map_dict(text=tokenize_text)]
+        if use_bucketing:
+            stages.append(LengthBucketer(
+                length_fns=[CaptionLength(key="text")],
+                pool=args.bucket_pool,
+                chunk=args.bucket_chunk,
+                seed=args.seed,
+                epoch=shared_epoch,
+            ))
+        stages.extend([
+            decode_image,
+            wds.map_dict(image=preprocess_img),
+            wds.batched(args.batch_size, partial=not is_train, collation_fn=collate_fn),
         ])
+        pipeline.extend(stages)
         dataset = wds.DataPipeline(*pipeline)
 
     if is_train and not use_naflex_train:
@@ -735,6 +848,12 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
     shared_epoch = SharedEpoch(epoch=epoch)
     use_naflex_train = naflex_data_config is not None and is_train
     use_naflex_eval = naflex_data_config is not None and not is_train
+    variable_text = bool(getattr(args, 'variable_text', False))
+    genlip_text = getattr(args, 'genlip', False)
+    text_variable = variable_text or genlip_text
+    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_pad_multiple = getattr(args, 'text_pad_multiple', None)
+    text_pad_cap = getattr(tokenizer, 'context_length', None)
     collate_fn = default_collate
 
     if use_naflex_train:
@@ -744,9 +863,17 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         dataset_transform = None
     elif use_naflex_eval:
         dataset_transform, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_fn, naflex_data_config)
-        collate_fn = partial(collate_naflex_dicts, max_seq_len=naflex_max_seq_len)
+        collate_fn = partial(
+            collate_naflex_dicts, max_seq_len=naflex_max_seq_len, pad_id=text_pad_id,
+            text_pad_multiple=text_pad_multiple, text_pad_cap=text_pad_cap,
+        )
     else:
         dataset_transform = preprocess_fn
+        if text_variable:
+            collate_fn = partial(
+                collate_variable_text_dicts, pad_id=text_pad_id,
+                text_pad_multiple=text_pad_multiple, text_pad_cap=text_pad_cap,
+            )
 
     dataset = CsvDataset(
         input_filename,
@@ -754,7 +881,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         img_key=args.csv_img_key,
         caption_key=args.csv_caption_key,
         sep=args.csv_separator,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        variable_text=text_variable,
     )
 
     if use_naflex_train:
@@ -763,10 +891,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         if not naflex_data_config.variable_patch_size:
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
-        # GenLIP: include the caption-token cap in the batch budget (else this path overbatches by counting
-        # image tokens only) and pad variable-length text within the batch. Matches the WebDataset path.
-        genlip_text = getattr(args, 'genlip', False)
-        naflex_pad_id = getattr(tokenizer, 'pad_token_id', None) if genlip_text else None
+        # GenLIP includes caption-token cap in the batch budget; other variable-text towers only need padding.
+        naflex_pad_id = text_pad_id if (genlip_text or variable_text) else None
         naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
         dataset = NaFlexMapDatasetWrapper(
             dataset,
@@ -786,6 +912,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
             batch_divisor=naflex_data_config.batch_divisor,
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
+            text_pad_multiple=text_pad_multiple,
+            text_pad_cap=text_pad_cap,
         )
         dataloader = DataLoader(
             dataset,
@@ -829,6 +957,7 @@ class SyntheticDataset(Dataset):
             caption="Dummy caption",
             dataset_size=100,
             tokenizer=None,
+            variable_text: bool = False,
     ):
         self.transform = transform
         self.image_size = image_size
@@ -836,7 +965,7 @@ class SyntheticDataset(Dataset):
         self.image = Image.new('RGB', image_size)
         self.dataset_size = dataset_size
 
-        self.preprocess_txt = TokenizeText(tokenizer)
+        self.preprocess_txt = TokenizeText(tokenizer, variable=variable_text)
 
     def __len__(self):
         return self.dataset_size
@@ -849,8 +978,22 @@ class SyntheticDataset(Dataset):
 
 def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
     image_size = preprocess_fn.transforms[0].size
+    variable_text = bool(getattr(args, 'variable_text', False))
+    collate_fn = (
+        partial(
+            collate_variable_text_dicts, pad_id=get_text_pad_id(tokenizer),
+            text_pad_multiple=getattr(args, 'text_pad_multiple', None),
+            text_pad_cap=getattr(tokenizer, 'context_length', None),
+        )
+        if variable_text else default_collate
+    )
     dataset = SyntheticDataset(
-        transform=preprocess_fn, image_size=image_size, dataset_size=args.train_num_samples, tokenizer=tokenizer)
+        transform=preprocess_fn,
+        image_size=image_size,
+        dataset_size=args.train_num_samples,
+        tokenizer=tokenizer,
+        variable_text=variable_text,
+    )
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
@@ -863,6 +1006,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
         pin_memory=True,
         sampler=sampler,
         drop_last=is_train,
+        collate_fn=collate_fn,
     )
     dataloader.num_samples = num_samples
     dataloader.num_batches = len(dataloader)

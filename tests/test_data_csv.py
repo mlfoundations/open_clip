@@ -8,6 +8,7 @@ from PIL import Image
 from torchvision import transforms
 
 import open_clip
+import util_test
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip_train.data import CsvDataset, get_csv_dataset
 from open_clip_train.naflex_data import NAFLEX_AVAILABLE
@@ -137,6 +138,39 @@ def test_get_csv_dataset_batches_are_dicts(tmp_path):
     assert isinstance(batch, dict)
     assert "image" in batch and "text" in batch
     assert batch["image"].shape[0] == 2
+
+
+def test_get_csv_dataset_variable_text_pads_to_batch_max(tmp_path):
+    csv_path = _make_csv(tmp_path, n=2)
+    df = pd.read_csv(csv_path, sep="\t")
+    df["caption"] = ["x", "longer"]
+    df.to_csv(csv_path, sep="\t", index=False)
+
+    args = types.SimpleNamespace(
+        train_data=str(csv_path),
+        val_data=str(csv_path),
+        csv_img_key="filepath",
+        csv_caption_key="caption",
+        csv_separator="\t",
+        distributed=False,
+        batch_size=2,
+        workers=0,
+        variable_text=True,
+    )
+
+    info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=util_test.VariableTokenizer())
+    batch = next(iter(info.dataloader))
+
+    assert batch["text"].shape == (2, len("longer") + 1)
+    assert batch["text"][0, -1].item() == 99
+    # Padding is right-padded with pad_token_id to the batch-max real length; text_valid is always emitted
+    # (tasks select the batch keys they consume).
+    valid = (batch["text"] != util_test.VariableTokenizer.pad_token_id)
+    assert torch.equal(batch["text_valid"], valid)
+    assert valid.tolist() == [
+        [True, True, False, False, False, False, False],
+        [True, True, True, True, True, True, True],
+    ]
 
 
 @pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
