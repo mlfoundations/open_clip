@@ -139,7 +139,11 @@ def test_create_task_dispatches_clap(monkeypatch):
     )
     task = open_clip.create_task(args, model)
     assert isinstance(task, CLAPTask)
+    # The DDP unused-param search is requested only for feature-fusion towers (their fusion modules run
+    # conditionally per batch); the stub tower's cfg declares enable_fusion=True. Static towers return {}.
     assert task.ddp_extra_kwargs() == {"find_unused_parameters": True}
+    model.audio.cfg.enable_fusion = False
+    assert task.ddp_extra_kwargs() == {}
 
 
 def test_factory_dispatches_audio_config_to_clap(tmp_path, monkeypatch):
