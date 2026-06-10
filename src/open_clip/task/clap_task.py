@@ -127,4 +127,11 @@ class CLAPTask(TrainingTask):
                 model.logit_scale.clamp_(0, max_val)
 
     def ddp_extra_kwargs(self):
-        return {"find_unused_parameters": True}
+        # HTSAT feature-fusion towers exercise their fusion modules only for batches containing 'longer' clips,
+        # so those params receive no grads on all-short batches and DDP must search for unused parameters.
+        # Static audio towers (no fusion, NaFlexClap) skip the search -- it costs an extra graph traversal
+        # every step (and PyTorch warns when nothing unused is found).
+        model = unwrap_model(self.trainable_module)
+        if any(getattr(m, "enable_fusion", False) for m in model.modules()):
+            return {"find_unused_parameters": True}
+        return {}
