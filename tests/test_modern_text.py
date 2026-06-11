@@ -264,24 +264,68 @@ def test_init_scheme_depth_scaled_output_projections():
     w12 = torch.stack([b.mlp.w12.weight for b in m.blocks])
     w3 = torch.stack([b.mlp.w3.weight for b in m.blocks])
 
-    # Empirical std within ~15% of target (averaged over all layers -> tight).
+    # Empirical std within ~15% of target (averaged over all layers -> tight). w12 carries the 1.22x SwiGLU
+    # correction (gate product u*silu(v) loses ~2.4x variance vs the GELU hidden the scheme assumes).
     assert qkv.std().item() == pytest.approx(attn_std, rel=0.15)
     assert attn_proj.std().item() == pytest.approx(proj_std, rel=0.15)
-    assert w12.std().item() == pytest.approx(fc_std, rel=0.15)
+    assert w12.std().item() == pytest.approx(fc_std * 1.22, rel=0.15)
     assert w3.std().item() == pytest.approx(proj_std, rel=0.15)
     # The depth term must actually shrink the output projections relative to the input projections.
     assert attn_proj.std().item() < 0.5 * qkv.std().item()
 
-    # RMSNorm / qk_norm weights are ones; all block + pool biases are zero.
+    # RMSNorm / qk_norm weights are ones; block + pool biases are zero except the attention gate.
     for b in m.blocks:
         assert torch.equal(b.norm1.weight, torch.ones_like(b.norm1.weight))
         assert torch.equal(b.attn.q_norm.weight, torch.ones_like(b.attn.q_norm.weight))
-        for bias in (b.attn.qkv.bias, b.attn.proj.bias, b.attn.gate.bias, b.mlp.w12.bias, b.mlp.w3.bias):
+        for bias in (b.attn.qkv.bias, b.attn.proj.bias, b.mlp.w12.bias, b.mlp.w3.bias):
             assert torch.count_nonzero(bias) == 0
     assert torch.count_nonzero(m.pool.q.bias) == 0
     assert torch.count_nonzero(m.pool.kv.bias) == 0
-    # Gated attention starts half-open: gate bias 0 -> sigmoid(0) = 0.5.
-    assert torch.equal(m.blocks[0].attn.gate.bias, torch.zeros_like(m.blocks[0].attn.gate.bias))
+    # Gated attention starts mostly open: gate bias 1 -> sigmoid(1) ~= 0.73 (near-transparent at init).
+    assert torch.equal(m.blocks[0].attn.gate.bias, torch.ones_like(m.blocks[0].attn.gate.bias))
+
+
+def test_init_scheme_sandwich_uses_flat_init():
+    """Sandwich norm placement switches block matrices to flat N(0, 0.02): the post-norms undo depth scaling,
+    so the depth-scaled out-proj std must NOT be applied."""
+    torch.manual_seed(0)
+    layers = 12
+    m = _make_modern_text(pool_type="map", layers=layers, norm_placement="sandwich")
+    qkv = torch.stack([b.attn.qkv.weight for b in m.blocks])
+    attn_proj = torch.stack([b.attn.proj.weight for b in m.blocks])
+    w12 = torch.stack([b.mlp.w12.weight for b in m.blocks])
+    assert qkv.std().item() == pytest.approx(0.02, rel=0.15)
+    assert attn_proj.std().item() == pytest.approx(0.02, rel=0.15)  # flat, not 0.02 * (2*12)**-0.5
+    assert w12.std().item() == pytest.approx(0.02, rel=0.15)  # no swiglu correction under flat init
+    # Head/readout init is scheme-independent (CLIP convention), not flattened.
+    assert m.pool.q.weight.std().item() == pytest.approx(m.width ** -0.5, rel=0.2)
+    assert m.text_projection.weight.std().item() == pytest.approx(m.width ** -0.5, rel=0.2)
+
+
+def test_init_scheme_zero_init_residual():
+    """zero_init_residual zeroes the residual out-projs (blocks start as identity); inputs keep their std."""
+    m = _make_modern_text(zero_init_residual=True)
+    for b in m.blocks:
+        assert torch.count_nonzero(b.attn.proj.weight) == 0
+        assert torch.count_nonzero(b.mlp.w3.weight) == 0
+        assert torch.count_nonzero(b.attn.qkv.weight) > 0
+        assert torch.count_nonzero(b.mlp.w12.weight) > 0
+    # Identity blocks at init: token outputs equal the (normed) embeddings regardless of depth.
+    text = _right_padded_batch([5, 3], total_len=6)
+    one = _make_modern_text(zero_init_residual=True, layers=1)
+    deep = _make_modern_text(zero_init_residual=True, layers=4)
+    deep.load_state_dict({k: v for k, v in one.state_dict().items() if k in deep.state_dict()
+                          and deep.state_dict()[k].shape == v.shape}, strict=False)
+    with torch.no_grad():
+        x1, _, _ = one._encode_tokens(text)
+        x4, _, _ = deep._encode_tokens(text)
+    assert torch.allclose(x1, x4, atol=1e-6)
+
+
+def test_register_tokens_blank_slate_init():
+    """Registers follow the timm cls/reg convention: near-zero init (std 1e-6), not 0.02."""
+    m = _make_modern_text(reg_tokens=4)
+    assert m.reg_tokens.abs().max().item() < 1e-4
 
 
 # ---------------------------------------------------------------------------

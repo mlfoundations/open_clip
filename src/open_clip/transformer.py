@@ -1317,46 +1317,66 @@ class ModernTextTransformer(nn.Module):
             with torch.no_grad():
                 self.token_embedding.weight[self.pad_id].zero_()
         if self.reg_tokens is not None:
-            nn.init.normal_(self.reg_tokens, std=0.02)
+            # timm cls/reg token convention: near-zero so registers start as blank slates that attention
+            # cannot initially key onto, growing only as needed.
+            nn.init.normal_(self.reg_tokens, std=1e-6)
 
-        # Block weights follow the open_clip TextTransformer / GPT-2 convention: input projections at
-        # ``width**-0.5``, and the residual *output* projections (attn ``proj``, SwiGLU ``w3`` / GELU ``c_proj``)
-        # additionally scaled by ``(2*layers)**-0.5`` so the residual-stream variance does not grow with depth.
-        # RMSNorm / qk_norm weights stay at 1.0 (set in their constructors); all biases are zeroed. This replaces
-        # PyTorch's default ``kaiming_uniform_(a=sqrt(5))``, which both uses the wrong scale and skips the depth term.
-        attn_std = self.width ** -0.5
-        proj_std = attn_std * ((2 * self.layers) ** -0.5)
-        fc_std = (2 * self.width) ** -0.5
+        # Block init scheme:
+        # - 'pre' norm (default): GPT-2 / CLIP convention -- inputs at `width**-0.5`, residual out-projs
+        #   (`proj`, `w3` / `c_proj`) scaled by `(2*layers)**-0.5` to keep residual variance flat with depth.
+        # - 'sandwich' norm: flat N(0, 0.02) (OLMo2-style); the post-norms undo depth scaling anyway.
+        # - `zero_init_residual`: out-projs zeroed -> identity blocks at init; supersedes the depth factor
+        #   (overlaps with `ls_init_value` -- prefer one or the other).
+        # Norm weights stay 1.0 (set in constructors); biases zeroed except the attention gate.
+        sandwich = getattr(self.cfg, "norm_placement", "pre") == "sandwich"
+        zero_residual = bool(getattr(self.cfg, "zero_init_residual", False))
+        attn_std = 0.02 if sandwich else self.width ** -0.5
+        fc_std = 0.02 if sandwich else (2 * self.width) ** -0.5
+        proj_std = 0.02 if sandwich else attn_std * ((2 * self.layers) ** -0.5)
+        # SwiGLU correction ('pre' scheme only): the gate product `u * silu(v)` carries ~2.4x less variance at
+        # init than the GELU hidden `fc_std` assumes; 1.22x on `w12` (MC-calibrated, width-independent since
+        # pre-act var is exactly 1/2 under this scheme) restores parity.
+        swiglu_fc_std = fc_std if sandwich else fc_std * 1.22
+
+        def init_residual_out(weight):
+            if zero_residual:
+                nn.init.zeros_(weight)
+            else:
+                nn.init.normal_(weight, std=proj_std)
+
         for block in self.blocks:
             attn = block.attn
             nn.init.normal_(attn.qkv.weight, std=attn_std)
             nn.init.zeros_(attn.qkv.bias)
-            nn.init.normal_(attn.proj.weight, std=proj_std)
+            init_residual_out(attn.proj.weight)
             if attn.proj.bias is not None:
                 nn.init.zeros_(attn.proj.bias)
             if attn.gate is not None:
-                # Match the timm / GenLIP gated-attention default: bias 0 -> sigmoid(0)=0.5 (half-open) at init.
+                # Mostly-open gate at init: bias 1 -> sigmoid(1) ~= 0.73, so gating starts near-transparent
+                # (a half-open 0.5 gate halves attention output magnitude, fighting the residual init scheme).
                 nn.init.normal_(attn.gate.weight, std=attn_std)
-                nn.init.zeros_(attn.gate.bias)
+                nn.init.ones_(attn.gate.bias)
             if attn.vr_lambda is not None:
                 nn.init.constant_(attn.vr_lambda, 0.5)  # equal layer-0 / current-layer value mix at init
             mlp = block.mlp
             if isinstance(mlp, SwiGLU):
-                nn.init.normal_(mlp.w12.weight, std=fc_std)
+                nn.init.normal_(mlp.w12.weight, std=swiglu_fc_std)
                 nn.init.zeros_(mlp.w12.bias)
-                nn.init.normal_(mlp.w3.weight, std=proj_std)
+                init_residual_out(mlp.w3.weight)
                 nn.init.zeros_(mlp.w3.bias)
-            else:  # nn.Sequential GELU MLP (c_fc, act, c_proj)
+            else:  # nn.Sequential MLP (c_fc, act, c_proj)
                 nn.init.normal_(mlp.c_fc.weight, std=fc_std)
                 nn.init.zeros_(mlp.c_fc.bias)
-                nn.init.normal_(mlp.c_proj.weight, std=proj_std)
+                init_residual_out(mlp.c_proj.weight)
                 nn.init.zeros_(mlp.c_proj.bias)
 
         # MAP attentive-pool projections (the learned ``query`` is already initialized in ModernTextPool.__init__).
+        # The pool/head init is scheme-independent: the block-init choice (flat/sandwich, zero-residual) only
+        # governs the residual stream, not the readout.
         if getattr(self.pool, "query", None) is not None:
-            nn.init.normal_(self.pool.q.weight, std=attn_std)
+            nn.init.normal_(self.pool.q.weight, std=self.width ** -0.5)
             nn.init.zeros_(self.pool.q.bias)
-            nn.init.normal_(self.pool.kv.weight, std=attn_std)
+            nn.init.normal_(self.pool.kv.weight, std=self.width ** -0.5)
             nn.init.zeros_(self.pool.kv.bias)
 
         if self.text_projection is not None:

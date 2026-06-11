@@ -127,7 +127,10 @@ class CLIPTextCfg:
     norm_eps: float = 1e-6
     attn_gated: bool = False
     pre_norm: bool = False  # normalize embeddings (after register concat) before block 0 (timm ViT norm_pre)
-    norm_placement: str = "pre"  # "pre" or "sandwich" (extra norm on sublayer outputs, Gemma-2 style)
+    # "pre" or "sandwich" (extra norm on sublayer outputs, Gemma-2 style). Sandwich also switches block init
+    # to flat N(0, 0.02) (OLMo2-style): the post-norms renormalize sublayer outputs, undoing depth scaling.
+    norm_placement: str = "pre"
+    zero_init_residual: bool = False  # zero the residual out-projs (attn proj, mlp out): blocks start as identity
     reg_tokens: int = 0  # learned register tokens prepended to the sequence and excluded from pooling
     value_residual: bool = False  # mix each layer's V with layer-0 V via a learned per-layer scalar (ResFormer)
 
