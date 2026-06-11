@@ -5,7 +5,15 @@
 
 > ⚠️ **Main branch training stack notice**
 >
-> `main` now uses the post-refactor training stack by default. Training is organized around `TrainingTask` wrappers, dict-based batches, FSDP2 support, NaFlex image pipelines, CLAP audio models, and multiple `torch.compile` strategies. **For the older release-stable training API, pin to the [`v3` branch](https://github.com/mlfoundations/open_clip/tree/v3) or the latest 3.x release on PyPI.** Inference usage of pretrained image/text models is still intended to be compatible, but training scripts and downstream integrations should review the changes below before upgrading.
+> `main` now uses the post-refactor training stack by default. Training is organized around `TrainingTask` wrappers, dict-based batches, FSDP2 support, NaFlex image/audio pipelines, and multiple `torch.compile` strategies. The scope has grown well beyond the original refactor and now includes several new model families. **For the older release-stable training API, pin to the [`v3` branch](https://github.com/mlfoundations/open_clip/tree/v3) or the latest 3.x release on PyPI.** Inference usage of pretrained image/text models is still intended to be compatible, but training scripts and downstream integrations should review the changes below before upgrading.
+>
+> **New / experimental model families on `main`:**
+> - **NaFlex CLIP** — variable-resolution/aspect image towers (timm `naflexvit`) with token-budget batching (`--use-naflex`, `naflex_*` configs)
+> - **NaFlex CLAP** — audio-text contrastive training with variable-duration audio (`naflexclap_*` configs)
+> - **NaFlex GenLIP / GenLAP** — generative image/audio captioning with prefix-LM attention and packed `[media ; text]` rows (`naflexgenlip_*`, `naflexgenlap_*` configs, tiktoken text)
+> - **Modern text tower** — `text_cfg.text_arch="modern"`: RoPE, SwiGLU/ReLU², RMSNorm, masked pooling (`eos`/`mean`/`map`), with optional qk-norm, gated attention, register tokens, sandwich norm, value residuals, and zero-init residual (`moderntext-*` configs)
+> - **Variable-length text** — `text_cfg.variable_text=true` pads captions to the per-batch max instead of a fixed context length (works with the modern tower and HF towers)
+> - **Hugging Face ModernBERT text towers** — e.g. `gte-modernbert-base-ViT-B-32-256`
 >
 > **Breaking changes — training CLI:**
 > - `--horovod` removed (Horovod support deleted; DDP/FSDP2 only)
@@ -17,8 +25,10 @@
 > - `--fsdp-no-reshard-after-forward`, `--fsdp-offload-cpu`
 > - `--fsdp-checkpoint {full,sharded}` — full gathers to rank-0 as a single `.pt`; `sharded` uses DCP per-rank shards (faster, lower memory)
 > - `--torchcompile-strategy {task,model,step}` — choose whether `torch.compile` captures task forward/loss, the underlying model, or the full single-batch train step
-> - `--use-naflex` and `--naflex-*` flags — enable NaFlex variable-aspect image pipelines for compatible timm/OpenCLIP ViT-family models
+> - `--use-naflex` and `--naflex-*` flags — enable NaFlex variable-aspect image pipelines for compatible timm/OpenCLIP ViT-family models (token-budget batching via `--naflex-seq-lens` / `--naflex-max-tokens-per-batch`; the same machinery drives the NaFlex audio and generative models)
 > - `--audio-*` and `--audio-zeroshot-*` flags — enable CLAP audio preprocessing/training and Hugging Face audio zero-shot evaluation
+> - `--length-bucketing`, `--bucket-pool`, `--bucket-chunk` — reorder the train stream by sample length (caption and/or audio tokens) to tighten per-batch padding; the bucket pool holds raw, undecoded samples
+> - `--text-pad-multiple` — round per-batch variable-text length up to a multiple, bounding the distinct sequence lengths `torch.compile` sees (text-axis analogue of `--naflex-pad-multiple`)
 >
 > **Breaking changes — Python API:**
 > - `trace_model` removed from the top-level `open_clip` namespace
@@ -26,12 +36,16 @@
 > - Training pipeline wraps `model + loss` in a `TrainingTask` subclass (`CLIPTask`, `SigLIPTask`, `CoCaTask`, `DistillCLIPTask`, `CLAPTask`). Code that previously called `train_one_epoch(model, loss, ...)` or `evaluate(model, ...)` directly should switch to passing a task. `create_loss(args)` remains available as a standalone loss factory for non-task training loops.
 > - Data pipelines emit dict batches instead of tuples. Image/text loaders use `{"image": ..., "text": ...}`; CLAP audio loaders use `{"audio": ..., "text": ...}`. Tuple-style image/text calls through `task(images, texts)` still work via a backward-compat path, but downstream code that iterates a dataloader directly should read the named keys.
 > - CoCa's autoregressive label shift moved out of `coca_model.py` and into `CoCaTask`. `coca_model.forward()` no longer performs the `[:, :-1]` / `[:, 1:]` slicing — callers that relied on that behavior outside training should handle labels themselves.
+> - `CLIPTextCfg.eos_id` no longer defaults to `2` (that value is only correct for XLM-style vocabs). Configs using `pool_type="eos"` must set `eos_id` explicitly, and `get_tokenizer` now validates `eos_id`/`pad_id` against the resolved tokenizer, raising on mismatch instead of pooling/masking silently wrong positions.
+> - `HFTokenizer` no longer fabricates `pad_token_id=0` when the underlying tokenizer has no pad token (id 0 is a real token in most BPE vocabs); variable-text setups fail fast instead. It also forces `padding_side='right'`, which all OpenCLIP pooling/masking assumes.
+> - `MaxPooler` (`hf_pooler_type="max_pooler"`) mask polarity fixed — it previously max-pooled over the padding positions instead of the valid ones.
+> - WebDataset pipelines now assemble as `tokenize -> [length bucketing] -> decode -> transform` so the bucket pool holds raw bytes instead of decoded images/waveforms (10-50x less dataloader-worker memory). The old decode-first assembly is preserved in `open_clip_train.legacy_data` (no bucketing/NaFlex) and used by `legacy_main`.
 >
 > **Dependency bump:** Minimum `torch>=2.6` (was `>=2.0`). This is the version where `torch.load(weights_only=True)` became the default — all checkpoint loads in this repo now pass `weights_only=True` explicitly with no `weights_only=False` fallback. If you're resuming training with a custom optimizer that pickles non-allowlisted Python types, register them via `torch.serialization.add_safe_globals([...])` before calling `load_checkpoint`.
 >
 > **Checkpoint compatibility:** Existing pretrained `.pt` checkpoints load without changes. Training checkpoints saved on `main` include a `state_dict` key that's compatible with prior versions; EMA, optimizer state, and optional training counters are also preserved. `0-D` vs `1-D` scalar reshape from the FSDP path is reconciled on load, so you can resume a DDP-trained checkpoint under FSDP2 and vice versa.
 >
-> **Legacy training entry point:** `python -m open_clip_train.legacy_main` remains available for older image/text training scripts that need the pre-task loop. It does not support the full task-era feature set (for example FSDP2, EMA, CLAP audio training, or the task/step `torch.compile` integration), and should be treated as a compatibility shim rather than the path for new training work.
+> **Legacy training entry point:** `python -m open_clip_train.legacy_main` remains available for older image/text training scripts that need the pre-task loop, and pairs with the frozen decode-first data pipelines in `open_clip_train.legacy_data`. It does not support the full task-era feature set (for example FSDP2, EMA, CLAP audio training, NaFlex, length bucketing, or the task/step `torch.compile` integration), and should be treated as a compatibility shim rather than the path for new training work.
 
 Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training).
 
