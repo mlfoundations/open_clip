@@ -164,3 +164,26 @@ def test_create_task_dispatches_genlap_and_trains():
     task.train()
     losses = task({"audio": audio, "text": text, "text_valid": text_valid})
     assert "caption_loss" in losses and "loss" in losses and torch.isfinite(losses["loss"])
+
+
+def test_genlap_pre_norm_per_modality_streams():
+    """audio_naflex_cfg.pre_norm / text_cfg.pre_norm mirror GenLIP's per-modality pre-trunk norms; default off
+    keeps state dicts unchanged."""
+    import copy
+
+    cfg = copy.deepcopy(open_clip.get_model_config(CONFIG_1D))
+    base = NaFlexGenLap(**cfg)
+    assert isinstance(base.audio_embed.norm_pre, torch.nn.Identity)
+    assert isinstance(base.text_norm_pre, torch.nn.Identity)
+    assert not any('norm_pre' in k for k in base.state_dict())
+
+    cfg['audio_naflex_cfg']['pre_norm'] = True
+    cfg['text_cfg']['pre_norm'] = True
+    model = NaFlexGenLap(**cfg).eval()
+    assert isinstance(model.audio_embed.norm_pre, torch.nn.LayerNorm)
+    assert isinstance(model.text_norm_pre, torch.nn.LayerNorm)
+    audio = _audio_batch(model)
+    text, text_valid = _text(model.pad_id)
+    with torch.no_grad():
+        loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)['loss']
+    assert torch.isfinite(loss)

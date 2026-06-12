@@ -46,6 +46,7 @@ class NaFlexGenLipVisionCfg:
     in_chans: int = 3
     proj_bias: bool = True
     input_norm: bool = False  # apply LayerNorm to the flat patch input before projection
+    pre_norm: bool = False  # LayerNorm on the projected patch embeddings before the trunk (stream equalization)
     pool_type: str = 'avg'  # masked pooling used for vision-encoder-only feature extraction
 
 
@@ -58,6 +59,7 @@ class NaFlexGenLipTextCfg:
     eos_id: int = 100277
     tokenizer_type: str = 'tiktoken'
     tiktoken_name: str = 'cl100k_base'
+    pre_norm: bool = False  # LayerNorm on the width-projected token embeddings before the trunk
 
 
 @dataclass
@@ -338,16 +340,19 @@ class GenLipTrunk(nn.Module):
 class GenLipPatchEmbed(nn.Module):
     """Linear patch embedding over pre-patchified inputs ``[B, N, P*P*C]`` (no position embedding)."""
 
-    def __init__(self, vision_cfg: NaFlexGenLipVisionCfg, width: int):
+    def __init__(self, vision_cfg: NaFlexGenLipVisionCfg, width: int, norm_eps: float = 1e-6):
         super().__init__()
         patch_dim = vision_cfg.patch_size * vision_cfg.patch_size * vision_cfg.in_chans
         self.norm_input = nn.LayerNorm(patch_dim) if vision_cfg.input_norm else None
         self.proj = nn.Linear(patch_dim, width, bias=vision_cfg.proj_bias)
+        # Optional post-projection norm: equalizes this modality's stream scale entering the shared trunk
+        # (pre-norm blocks only normalize branch inputs; the residual stream carries raw embed scales).
+        self.norm_pre = nn.LayerNorm(width, eps=norm_eps) if vision_cfg.pre_norm else nn.Identity()
 
     def forward(self, patches: torch.Tensor) -> torch.Tensor:
         if self.norm_input is not None:
             patches = self.norm_input(patches)
-        return self.proj(patches)
+        return self.norm_pre(self.proj(patches))
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -465,13 +470,13 @@ def pack_prefix_sequence(
 def packed_caption_loss(model, prefix_emb, prefix_valid, block_pos, text, text_valid):
     """Fused autoregressive caption CE over the packed ``[valid prefix ; valid text ; PAD]`` layout.
 
-    Shared by GenLIP and GenLAP (``model`` supplies ``in_proj``/``text_embed``/``rotary``/``trunk``/``out_proj``/
+    Shared by GenLIP and GenLAP (``model`` supplies ``embed_text``/``rotary``/``trunk``/``out_proj``/
     ``lm_head``). ``prefix_emb`` is the embedded image/audio tokens; ``block_pos`` is the standard block MRoPE
     position ids ``(3, B, Np+Nt)``. The trunk runs on the compacted sequence (length ``max_i(k_i+m_i)``), and
     the loss gathers each row's text-predicting window ``[k_i-1, k_i+m_i-1)`` -- so the first caption token is
     predicted from the last *valid* prefix token (not a padding slot, as the fixed-block layout would).
     """
-    text_emb = model.in_proj(model.text_embed(text))
+    text_emb = model.embed_text(text)
     combined, pos, attn_mask, k, m = pack_prefix_sequence(
         prefix_emb, prefix_valid, block_pos, text_emb, text_valid,
     )
@@ -664,10 +669,12 @@ class NaFlexGenLip(nn.Module):
         self.context_length = text_cfg.context_length
 
         # image side
-        self.patch_embed = GenLipPatchEmbed(vision_cfg, width)
+        self.patch_embed = GenLipPatchEmbed(vision_cfg, width, norm_eps=genlip_cfg.layer_norm_eps)
         # text side
         self.text_embed = nn.Embedding(text_cfg.vocab_size, text_embed_dim, padding_idx=text_cfg.pad_id)
         self.in_proj = nn.Linear(text_embed_dim, width) if text_embed_dim != width else nn.Identity()
+        # Optional pre-trunk norm on the text stream (see GenLipPatchEmbed.norm_pre).
+        self.text_norm_pre = nn.LayerNorm(width, eps=genlip_cfg.layer_norm_eps) if text_cfg.pre_norm else nn.Identity()
         self.out_proj = nn.Linear(width, text_embed_dim) if text_embed_dim != width else nn.Identity()
         self.lm_head = nn.Linear(text_embed_dim, text_cfg.vocab_size, bias=False)  # untied
 
@@ -709,6 +716,10 @@ class NaFlexGenLip(nn.Module):
         features = self.visual(image)
         return F.normalize(features, dim=-1) if normalize else features
 
+    def embed_text(self, text: torch.Tensor) -> torch.Tensor:
+        """Token ids -> trunk-width text stream (embedding, width projection, optional pre-trunk norm)."""
+        return self.text_norm_pre(self.in_proj(self.text_embed(text)))
+
     def _encode(
             self,
             image: Dict[str, torch.Tensor],
@@ -722,7 +733,7 @@ class NaFlexGenLip(nn.Module):
         """
         patch_valid = image['patch_valid']
         img_emb = self.patch_embed(image['patches'])  # (B, Ni, width)
-        txt_emb = self.in_proj(self.text_embed(text))  # (B, Lt, width)
+        txt_emb = self.embed_text(text)  # (B, Lt, width)
         h = torch.cat([img_emb, txt_emb], dim=1)  # (B, S, width)
 
         attn_mask = build_prefix_lm_mask(patch_valid, text_valid)

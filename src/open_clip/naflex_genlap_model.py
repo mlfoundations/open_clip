@@ -124,10 +124,12 @@ class NaFlexGenLap(nn.Module):
         self.context_length = text_cfg.context_length
 
         # audio side
-        self.audio_embed = MelPatchEmbed(audio_naflex_cfg, width)
+        self.audio_embed = MelPatchEmbed(audio_naflex_cfg, width, norm_eps=genlap_cfg.layer_norm_eps)
         # text side (identical to GenLIP)
         self.text_embed = nn.Embedding(text_cfg.vocab_size, text_embed_dim, padding_idx=text_cfg.pad_id)
         self.in_proj = nn.Linear(text_embed_dim, width) if text_embed_dim != width else nn.Identity()
+        # Optional pre-trunk norm on the text stream (see MelPatchEmbed.norm_pre).
+        self.text_norm_pre = nn.LayerNorm(width, eps=genlap_cfg.layer_norm_eps) if text_cfg.pre_norm else nn.Identity()
         self.out_proj = nn.Linear(width, text_embed_dim) if text_embed_dim != width else nn.Identity()
         self.lm_head = nn.Linear(text_embed_dim, text_cfg.vocab_size, bias=False)  # untied
         # downstream audio-encoder projector (Identity when embed_dim == width)
@@ -158,6 +160,10 @@ class NaFlexGenLap(nn.Module):
         """``(name, module)`` pairs to wrap for FSDP / activation checkpointing (trunk blocks)."""
         return [(f"trunk.layers.{i}", block) for i, block in enumerate(self.trunk.layers)]
 
+    def embed_text(self, text: torch.Tensor) -> torch.Tensor:
+        """Token ids -> trunk-width text stream (embedding, width projection, optional pre-trunk norm)."""
+        return self.text_norm_pre(self.in_proj(self.text_embed(text)))
+
     def encode_audio(self, audio: Dict[str, torch.Tensor], normalize: bool = False) -> torch.Tensor:
         """Audio-only bidirectional pass -> pooled features (the downstream encoder; no text)."""
         patch_valid = audio['patch_valid']
@@ -180,7 +186,7 @@ class NaFlexGenLap(nn.Module):
         """Run the shared trunk over ``[audio_patches ; caption_tokens]``; returns ``(hidden, audio_seq_len)``."""
         patch_valid = audio['patch_valid']
         aud_emb = self.audio_embed(audio['patches'])           # (B, Ni, width)
-        txt_emb = self.in_proj(self.text_embed(text))          # (B, Lt, width)
+        txt_emb = self.embed_text(text)                        # (B, Lt, width)
         h = torch.cat([aud_emb, txt_emb], dim=1)               # (B, S, width)
 
         attn_mask = build_prefix_lm_mask(patch_valid, text_valid)
