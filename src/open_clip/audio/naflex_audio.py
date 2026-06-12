@@ -44,6 +44,7 @@ class AudioNaFlexCfg:
     patch_time: int = 4        # p_t: time frames per patch
     in_chans: int = 1          # mel channels (1 = log-mel energy; >1 to stack delta / delta-delta)
     input_norm: bool = False   # LayerNorm over the flattened patch before projection
+    pre_norm: bool = False     # LayerNorm on the projected patch embeddings before the trunk
     proj_bias: bool = True
     # How mel_to_patches fills the final partial time patch (T not a multiple of patch_time, for variable-length
     # audio). "floor" = per-clip mel min (quiet relative to the clip); "silence" = absolute dB silence floor
@@ -186,15 +187,18 @@ def mel_to_patches(
 class MelPatchEmbed(nn.Module):
     """Linear embedding of flattened mel patches -> trunk width (audio analog of ``GenLipPatchEmbed``)."""
 
-    def __init__(self, cfg: AudioNaFlexCfg, width: int):
+    def __init__(self, cfg: AudioNaFlexCfg, width: int, norm_eps: float = 1e-6):
         super().__init__()
         self.norm_input = nn.LayerNorm(cfg.patch_dim) if cfg.input_norm else None
         self.proj = nn.Linear(cfg.patch_dim, width, bias=cfg.proj_bias)
+        # Optional post-projection norm: equalizes the audio stream's scale entering the shared trunk
+        # (mirrors GenLipPatchEmbed.norm_pre).
+        self.norm_pre = nn.LayerNorm(width, eps=norm_eps) if cfg.pre_norm else nn.Identity()
 
     def forward(self, patches: torch.Tensor) -> torch.Tensor:
         if self.norm_input is not None:
             patches = self.norm_input(patches)
-        return self.proj(patches)
+        return self.norm_pre(self.proj(patches))
 
 
 class AudioNaFlexPatchify:

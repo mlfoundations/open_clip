@@ -455,3 +455,26 @@ def test_overfit_single_batch():
         opt.step()
     l1 = task(batch)['loss'].item()
     assert l1 < 0.5 * l0, f"expected overfit, got {l0:.3f} -> {l1:.3f}"
+
+
+def test_pre_norm_per_modality_streams():
+    """Optional per-modality pre-trunk norms (vision_cfg.pre_norm / text_cfg.pre_norm): off by default with no
+    new state-dict keys (paper-faithful baseline); on, each modality's projected stream is normed entering the
+    shared trunk (block pre-norms only normalize branch inputs -- the residual stream carries raw embed scales)."""
+    import copy
+
+    cfg = copy.deepcopy(open_clip.get_model_config(TEST_MODEL))
+    base = NaFlexGenLip(**cfg)
+    assert isinstance(base.patch_embed.norm_pre, torch.nn.Identity)
+    assert isinstance(base.text_norm_pre, torch.nn.Identity)
+    assert not any('norm_pre' in k for k in base.state_dict())  # existing checkpoints unaffected
+
+    cfg['vision_cfg']['pre_norm'] = True
+    cfg['text_cfg']['pre_norm'] = True
+    model = NaFlexGenLip(**cfg).eval()
+    assert isinstance(model.patch_embed.norm_pre, torch.nn.LayerNorm)
+    assert isinstance(model.text_norm_pre, torch.nn.LayerNorm)
+    batch = _make_batch(model.pad_id)
+    with torch.no_grad():
+        out = model(**batch, compute_loss=True)
+    assert torch.isfinite(out['loss'])
