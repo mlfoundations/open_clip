@@ -18,6 +18,7 @@ class NaFlexDataConfig:
     train_patch_sizes: Tuple[Tuple[int, int], ...] = ((16, 16),)
     train_patch_size_probs: Optional[Tuple[float, ...]] = None
     train_seq_lens: Tuple[int, ...] = (128, 256, 576, 784, 1024)
+    train_seq_len_probs: Optional[Tuple[float, ...]] = None
     train_num_image_tokens: Optional[int] = None
     max_tokens_per_batch: int = 4096 * 4
     batch_divisor: int = 8
@@ -30,6 +31,7 @@ class NaFlexDataConfig:
             patch_sizes: Optional[Sequence[PatchSize]] = None,
             patch_size_probs: Optional[Sequence[float]] = None,
             seq_lens: Optional[Sequence[int]] = None,
+            seq_len_probs: Optional[Sequence[float]] = None,
             train_num_image_tokens: Optional[int] = None,
             max_tokens_per_batch: int = 4096 * 4,
             batch_divisor: int = 8,
@@ -49,6 +51,19 @@ class NaFlexDataConfig:
             raise ValueError("NaFlex sequence lengths must contain at least one value.")
         if not all(seq_len > 0 for seq_len in train_seq_lens):
             raise ValueError("NaFlex sequence lengths must be positive.")
+
+        # Weights stay aligned to ``train_seq_lens`` (user order here); the scheduler pairs + sorts them with the
+        # seq-lens, so the alignment survives its ``sorted(set(...))``. Unset -> uniform sampling (legacy).
+        train_seq_len_probs = None
+        if seq_len_probs is not None:
+            if len(seq_len_probs) != len(train_seq_lens):
+                raise ValueError("NaFlex seq-len probabilities must match seq-lens length.")
+            if not all(prob >= 0 for prob in seq_len_probs):
+                raise ValueError("NaFlex seq-len probabilities must be non-negative.")
+            prob_sum = float(sum(seq_len_probs))
+            if prob_sum <= 0:
+                raise ValueError("NaFlex seq-len probabilities must sum to a positive value.")
+            train_seq_len_probs = tuple(float(prob) / prob_sum for prob in seq_len_probs)
 
         train_patch_size_probs = None
         if patch_size_probs is not None:
@@ -87,6 +102,7 @@ class NaFlexDataConfig:
             train_patch_sizes=train_patch_sizes,
             train_patch_size_probs=train_patch_size_probs,
             train_seq_lens=train_seq_lens,
+            train_seq_len_probs=train_seq_len_probs,
             train_num_image_tokens=train_num_image_tokens,
             max_tokens_per_batch=max_tokens_per_batch,
             batch_divisor=batch_divisor,

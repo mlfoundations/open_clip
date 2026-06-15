@@ -107,6 +107,7 @@ def create_naflex_data_config_from_args(
         patch_sizes=patch_sizes,
         patch_size_probs=getattr(args, 'naflex_patch_size_probs', None),
         seq_lens=seq_lens,
+        seq_len_probs=getattr(args, 'naflex_seq_len_probs', None),
         train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
         max_tokens_per_batch=getattr(args, 'naflex_max_tokens_per_batch', 4096 * 4),
         batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
@@ -347,6 +348,7 @@ class NaFlexBatchScheduler:
             patch_size_choices: Optional[Sequence[PatchSize]] = None,
             patch_size_choice_probs: Optional[Sequence[float]] = None,
             seq_lens: Sequence[int] = (128, 256, 576, 784, 1024),
+            seq_len_choice_probs: Optional[Sequence[float]] = None,
             max_tokens_per_batch: int = 4096 * 4,
             transform_factory: Optional[Callable[..., Callable]] = None,
             seed: int = 42,
@@ -370,7 +372,20 @@ class NaFlexBatchScheduler:
         if transform_factory is None:
             raise ValueError("NaFlex batching requires a transform factory.")
 
-        self.seq_lens = sorted(set(int(seq_len) for seq_len in seq_lens))
+        # Sampling weights (optional) stay aligned to ``self.seq_lens``: pair with the seq-lens, then sort+dedupe
+        # by seq-len so the canonical sort can't desync them. ``None`` -> uniform sampling (legacy randint).
+        if seq_len_choice_probs is not None:
+            if len(seq_len_choice_probs) != len(seq_lens):
+                raise ValueError("`seq_len_choice_probs` must match `seq_lens` length.")
+            pairs = sorted({int(s): float(p) for s, p in zip(seq_lens, seq_len_choice_probs)}.items())
+            self.seq_lens = [s for s, _ in pairs]
+            total = float(sum(p for _, p in pairs))
+            if total <= 0:
+                raise ValueError("`seq_len_choice_probs` must sum to a positive value.")
+            self.seq_len_probs = [p / total for _, p in pairs]
+        else:
+            self.seq_lens = sorted(set(int(seq_len) for seq_len in seq_lens))
+            self.seq_len_probs = None
         if not self.seq_lens:
             raise ValueError("NaFlex batching requires at least one sequence length.")
         if not all(seq_len > 0 for seq_len in self.seq_lens):
@@ -445,7 +460,12 @@ class NaFlexBatchScheduler:
             self._create_schedule_from_num_tokens(int(train_num_tokens))
 
     def _next_seq_len(self, generator: torch.Generator) -> int:
-        seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=generator).item()
+        # Seeded generator -> deterministic + identical across ranks, so the schedule stays DDP-synced.
+        if self.seq_len_probs is None:
+            seq_idx = torch.randint(0, len(self.seq_lens), (1,), generator=generator).item()
+        else:
+            probs = torch.tensor(self.seq_len_probs, dtype=torch.float32)
+            seq_idx = int(torch.multinomial(probs, 1, generator=generator).item())
         return self.seq_lens[seq_idx]
 
     def _create_schedule_from_num_samples(self, num_samples: int) -> None:
@@ -639,6 +659,7 @@ class NaFlexBatcher:
             patch_size_choices: Optional[Sequence[PatchSize]] = None,
             patch_size_choice_probs: Optional[Sequence[float]] = None,
             seq_lens: Sequence[int] = (128, 256, 576, 784, 1024),
+            seq_len_choice_probs: Optional[Sequence[float]] = None,
             max_tokens_per_batch: int = 4096 * 4,
             transform_factory: Optional[Callable[..., Callable]] = None,
             seed: int = 42,
@@ -664,6 +685,7 @@ class NaFlexBatcher:
             patch_size_choices=patch_size_choices,
             patch_size_choice_probs=patch_size_choice_probs,
             seq_lens=seq_lens,
+            seq_len_choice_probs=seq_len_choice_probs,
             max_tokens_per_batch=max_tokens_per_batch,
             transform_factory=transform_factory,
             seed=seed,
@@ -736,6 +758,7 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             patch_size_choices: Optional[Sequence[PatchSize]] = None,
             patch_size_choice_probs: Optional[Sequence[float]] = None,
             seq_lens: Sequence[int] = (128, 256, 576, 784, 1024),
+            seq_len_choice_probs: Optional[Sequence[float]] = None,
             max_tokens_per_batch: int = 4096 * 4,
             transform_factory: Optional[Callable[..., Callable]] = None,
             seed: int = 42,
@@ -769,6 +792,7 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             patch_size_choices=patch_size_choices,
             patch_size_choice_probs=patch_size_choice_probs,
             seq_lens=seq_lens,
+            seq_len_choice_probs=seq_len_choice_probs,
             max_tokens_per_batch=max_tokens_per_batch,
             transform_factory=transform_factory,
             seed=seed,
