@@ -131,7 +131,7 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
         # clamp is tiny eager bookkeeping after the optimizer update.
         loss_scale = get_naflex_loss_scale(batch, args, task)
         with autocast():
-            losses = task(batch)
+            losses, report = task(batch)
             total_loss = losses["loss"]
         if loss_scale != 1.0:
             total_loss = total_loss * loss_scale
@@ -139,7 +139,7 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
         if grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(clip_params, grad_clip_norm, norm_type=2.0)
         optimizer.step()
-        return losses
+        return losses, report
 
     return train_step
 
@@ -181,7 +181,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
     if args.accum_freq == 1:
         optimizer.zero_grad()
         with autocast():
-            losses = task(batch)
+            losses, report = task(batch)
             total_loss = losses["loss"]
 
         loss_scale = get_naflex_loss_scale(batch, args, task)
@@ -190,7 +190,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
         backward(total_loss, scaler)
 
         _finish_eager_train_step(task, optimizer, scaler, args)
-        return losses, task.batch_size(batch), accum_state
+        return losses, report, task.batch_size(batch), accum_state
 
     accum_batches, accum_features = accum_state
 
@@ -242,7 +242,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
                 model_out = task.trainable_module(**batch_j)
 
                 inputs_no_accum = {}
-                inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                inputs_no_accum["logit_scale"] = model_out.pop("logit_scale")
                 if "logit_bias" in model_out:
                     inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
 
@@ -251,12 +251,11 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
                     accumulated = accum_features[key]
                     inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
 
-                losses = task.compute_accum_loss(inputs, inputs_no_accum, accum_batches)
+                losses, report = task.compute_accum_loss(inputs, inputs_no_accum, accum_batches)
                 del inputs
                 del inputs_no_accum
                 total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
                 losses["loss"] = total_loss
-                losses["logit_scale"] = logit_scale
 
             loss_scale = get_naflex_loss_scale(batch_j, args, task)
             if loss_scale != 1.0:
@@ -268,7 +267,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
 
     step_batch_size = sum(task.batch_size(accum_batch) for accum_batch in accum_batches)
     _finish_eager_train_step(task, optimizer, scaler, args)
-    return losses, step_batch_size, ([], {})
+    return losses, report, step_batch_size, ([], {})
 
 
 def is_naflex_batch(batch):
@@ -353,7 +352,7 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
         data_time_m.update(time.time() - end)
         if train_step is not None:
             optimizer.zero_grad()
-            losses = train_step(batch)
+            losses, report = train_step(batch)
             task.clamp_logit_scale()
             step_batch_size = task.batch_size(batch)
         else:
@@ -368,7 +367,7 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
             )
             if result is None:
                 continue
-            losses, step_batch_size, accum_state = result
+            losses, report, step_batch_size, accum_state = result
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -386,8 +385,11 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                     losses_m[key] = AverageMeter()
                 losses_m[key].update(val.item(), step_batch_size)
 
-            logit_scale = losses.get("logit_scale", None)
+            # logit_scale / logit_bias are per-step report scalars (not loss terms), logged once from `report`.
+            logit_scale = report.get("logit_scale", None)
             logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
+            logit_bias = report.get("logit_bias", None)
+            logit_bias_scalar = logit_bias.item() if logit_bias is not None else None
             loss_log = " ".join(
                 [
                     f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
@@ -414,6 +416,8 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                 "scale": logit_scale_scalar,
                 "lr": learning_rate,
             }
+            if logit_bias_scalar is not None:
+                log_data["bias"] = logit_bias_scalar
             log_data.update({name:val.val for name,val in losses_m.items()})
 
             log_data = {"train/" + name: val for name, val in log_data.items()}

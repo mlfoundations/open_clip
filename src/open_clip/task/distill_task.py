@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -50,14 +50,13 @@ class DistillCLIPTask(ImageTextTask):
         self.teacher.eval()
         return self
 
-    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         model_out = self.trainable_module(**batch)
-        logit_scale = model_out["logit_scale"]
+        report = self._report(model_out)  # capture before the dist_* merge
         with torch.no_grad():
             teacher_out = self.teacher(**batch)
         model_out.update({f'dist_{k}': v for k, v in teacher_out.items()})
         losses = self.loss(**model_out, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
-        losses["logit_scale"] = logit_scale
-        return losses
+        return losses, report

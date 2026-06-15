@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -53,15 +53,14 @@ class CLAPTask(TrainingTask):
             inputs["logit_bias"] = model_out["logit_bias"]
         return inputs
 
-    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         model_out = self.trainable_module(audio=batch["audio"], text=batch["text"])
         loss_inputs = self._loss_inputs(model_out)
-        logit_scale = loss_inputs["logit_scale"]
         losses = self.loss(**loss_inputs, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith("_loss"))
         losses["loss"] = total_loss
-        losses["logit_scale"] = logit_scale
-        return losses
+        # Report from raw model_out (the source of truth for logit_scale/logit_bias) — uniform with clip/coca.
+        return losses, self._report(model_out)
 
     def eval_forward(self, batch: Dict[str, torch.Tensor]):
         inputs = {key: batch[key] for key in self.data_keys if key in batch}
@@ -73,7 +72,8 @@ class CLAPTask(TrainingTask):
             "text_features": inputs["text_features"],
             **inputs_no_accum,
         }
-        return self.loss(**loss_inputs, output_dict=True)
+        losses = self.loss(**loss_inputs, output_dict=True)
+        return losses, self._report(inputs_no_accum)
 
     def create_dummy_batch(
             self,

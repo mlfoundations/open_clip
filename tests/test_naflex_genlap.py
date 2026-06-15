@@ -162,7 +162,7 @@ def test_create_task_dispatches_genlap_and_trains():
     audio = _audio_batch(model)
     text, text_valid = _text(model.pad_id)
     task.train()
-    losses = task({"audio": audio, "text": text, "text_valid": text_valid})
+    losses, _ = task({"audio": audio, "text": text, "text_valid": text_valid})
     assert "caption_loss" in losses and "loss" in losses and torch.isfinite(losses["loss"])
 
 

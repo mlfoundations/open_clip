@@ -30,11 +30,12 @@ class TinyTask(TrainingTask):
     def training_forward(self, batch):
         out = self.trainable_module(**batch)
         loss = F.cross_entropy(out["logits"], batch["target"])
-        return {
+        losses = {
             "loss": loss,
             "ce_loss": loss,
             "logits": out["logits"],
         }
+        return losses, {}  # no logit_scale/logit_bias to report
 
     def clamp_logit_scale(self):
         pass
@@ -56,7 +57,7 @@ def test_task_compile_keeps_task_methods_and_compiles_train_eval_forward():
     assert task._compiled_eval_forward is not None
     assert task.batch_size(_batch()) == 4
 
-    losses = task(_batch())
+    losses, _ = task(_batch())
     losses["loss"].backward()
 
     task.eval()
@@ -76,7 +77,7 @@ def test_task_compile_model_compiles_trainable_module_only():
 
     assert hasattr(task.trainable_module, "_orig_mod")
     assert task._compiled_training_forward is None
-    assert task(_batch())["loss"].isfinite()
+    assert task(_batch())[0]["loss"].isfinite()
 
 
 @pytest.mark.skipif(not hasattr(torch, "compile"), reason="requires torch.compile")
@@ -90,7 +91,7 @@ def test_compiled_train_step_runs_forward_backward_and_optimizer_step():
     compiled_step = _get_compiled_train_step(state, nullcontext, args)
 
     before = task.trainable_module.linear.weight.detach().clone()
-    losses = compiled_step(_batch())
+    losses, _ = compiled_step(_batch())
 
     assert state.compiled_train_step is compiled_step
     assert not hasattr(task, "_compiled_train_step")
@@ -108,7 +109,7 @@ def test_compiled_train_step_handles_grad_clip():
     args = SimpleNamespace(torchcompile_backend="eager", torchcompile_mode=None, grad_clip_norm=0.01)
     compiled_step = _get_compiled_train_step(state, nullcontext, args)
 
-    losses = compiled_step(_batch())
+    losses, _ = compiled_step(_batch())
     grad_norms = [
         param.grad.detach().norm(2)
         for param in task.trainable_module.parameters()

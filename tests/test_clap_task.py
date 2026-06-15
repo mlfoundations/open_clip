@@ -77,10 +77,11 @@ def _patch_audio_tower(monkeypatch):
 
 def test_clap_task_training_forward_returns_loss():
     task = CLAPTask(TinyCLAPLike())
-    losses = task(_batch())
+    losses, report = task(_batch())
     assert losses["loss"].isfinite()
     assert "contrastive_loss" in losses
-    assert "logit_scale" in losses
+    assert "logit_scale" in report
+    assert "logit_scale" not in losses
 
 
 def test_clap_task_eval_forward_keeps_audio_features_key():
@@ -116,8 +117,9 @@ def test_clap_task_accum_loss_maps_audio_features_to_clip_loss():
         "audio_features": torch.nn.functional.normalize(torch.randn(4, 4), dim=-1),
         "text_features": torch.nn.functional.normalize(torch.randn(4, 4), dim=-1),
     }
-    losses = task.compute_accum_loss(inputs, {"logit_scale": torch.tensor(1.0)}, [])
+    losses, report = task.compute_accum_loss(inputs, {"logit_scale": torch.tensor(1.0)}, [])
     assert losses["contrastive_loss"].isfinite()
+    assert "logit_scale" in report
 
 
 def test_create_task_dispatches_clap(monkeypatch):
