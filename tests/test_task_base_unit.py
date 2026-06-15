@@ -155,7 +155,7 @@ def test_create_dummy_batch_uses_configured_naflex_shape():
 def test_forward_dict_arg():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     task.train()
-    losses = task(_batch())
+    losses, _ = task(_batch())
     assert "loss" in losses and "contrastive_loss" in losses
 
 
@@ -163,7 +163,7 @@ def test_forward_positional_args():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     task.train()
     b = _batch()
-    losses = task(b["image"], b["text"])
+    losses, _ = task(b["image"], b["text"])
     assert "loss" in losses
 
 
@@ -171,7 +171,7 @@ def test_forward_kwargs():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     task.train()
     b = _batch()
-    losses = task(image=b["image"], text=b["text"])
+    losses, _ = task(image=b["image"], text=b["text"])
     assert "loss" in losses
 
 
@@ -180,7 +180,7 @@ def test_forward_mixed_positional_and_kwargs():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     task.train()
     b = _batch()
-    losses = task(b["image"], text=b["text"])
+    losses, _ = task(b["image"], text=b["text"])
     assert "loss" in losses
 
 
@@ -189,9 +189,9 @@ def test_forward_all_modes_equivalent():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     task.train()
     b = _batch()
-    d = task(b)["loss"]
-    t = task(b["image"], b["text"])["loss"]
-    k = task(image=b["image"], text=b["text"])["loss"]
+    d = task(b)[0]["loss"]
+    t = task(b["image"], b["text"])[0]["loss"]
+    k = task(image=b["image"], text=b["text"])[0]["loss"]
     assert torch.allclose(d, t) and torch.allclose(t, k)
 
 

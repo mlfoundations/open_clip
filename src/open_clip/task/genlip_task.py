@@ -105,8 +105,9 @@ class GenLipTask(ImageTextTask):
         losses["loss"] = sum(v for k, v in losses.items() if k.endswith("_loss"))
         return losses
 
-    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        return self._loss_forward(self.trainable_module, batch)
+    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
+        # Generative (LM) task: no logit_scale/logit_bias to report.
+        return self._loss_forward(self.trainable_module, batch), {}
 
     def eval_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return self._loss_forward(self.get_trainable_module(use_ema=True), batch)

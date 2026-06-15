@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -52,19 +52,22 @@ class CoCaTask(ImageTextTask):
             "logit_scale": model_out["logit_scale"],
         }
 
-    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         model_out = self.trainable_module(**batch)
         loss_input = self._build_loss_inputs(model_out, batch)
         losses = self.loss(**loss_input, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
-        losses["logit_scale"] = loss_input["logit_scale"]
-        return losses
+        # Report from model_out (not loss_input): _build_loss_inputs drops logit_bias, which CoCaLoss can't take
+        # but we still want to log. Matches the accum path, which captures bias from inputs_no_accum before dropping.
+        return losses, self._report(model_out)
 
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         all_texts = torch.cat([b["text"] for b in accum_batches])
         inputs["labels"] = all_texts[:, 1:]
         inputs["logits"] = inputs["logits"][:, :-1]
+        report = self._report(inputs_no_accum)  # capture before dropping logit_bias for the loss call
         # CoCaLoss doesn't accept logit_bias
         inputs_no_accum.pop("logit_bias", None)
-        return self.loss(**inputs, **inputs_no_accum, output_dict=True)
+        losses = self.loss(**inputs, **inputs_no_accum, output_dict=True)
+        return losses, report

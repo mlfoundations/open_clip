@@ -85,19 +85,19 @@ def test_clip_task_loss_aggregation():
     """total loss sums only keys ending in '_loss', not 'debug_metric'."""
     task = CLIPTask(TinyModel(), loss=DummyClipLoss())
     task.train()
-    losses = task(_batch())
+    losses, report = task(_batch())
     # contrastive_loss=1.0, debug_metric should NOT be summed
     assert abs(losses["loss"].item() - 1.0) < 1e-6
-    assert "logit_scale" in losses
+    assert "logit_scale" in report
 
 
-def test_clip_task_logit_scale_in_output():
-    """logit_scale is included in the loss dict for logging."""
+def test_clip_task_logit_scale_in_report():
+    """logit_scale is returned in the report dict for logging, NOT the loss dict."""
     task = CLIPTask(TinyModel(), loss=DummyClipLoss())
     task.train()
-    losses = task(_batch())
-    assert "logit_scale" in losses
-    assert losses["logit_scale"].item() == 10.0
+    losses, report = task(_batch())
+    assert "logit_scale" not in losses
+    assert report["logit_scale"].item() == 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def test_coca_training_forward_produces_loss():
     model = TinyModel(has_logits=True)
     task = CoCaTask(model, loss=DummyCoCaLoss())
     task.train()
-    losses = task(_batch())
+    losses, _ = task(_batch())
     assert "loss" in losses
     # contrastive_loss (1.0) + caption_loss (0.5) = 1.5
     assert abs(losses["loss"].item() - 1.5) < 1e-6
@@ -149,7 +149,7 @@ def test_coca_compute_accum_loss_concatenates_batches():
     }
     inputs_no_accum = {"logit_scale": out1["logit_scale"]}
 
-    losses = task.compute_accum_loss(inputs, inputs_no_accum, accum_batches)
+    losses, _ = task.compute_accum_loss(inputs, inputs_no_accum, accum_batches)
     assert "contrastive_loss" in losses
     # Check that labels were built from concatenated texts
     # 4 samples total, shifted by 1 => (4, seq-1) labels

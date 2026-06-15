@@ -454,13 +454,26 @@ class TrainingTask(nn.Module):
             return sd
         return unwrap_model(self.trainable_module).state_dict()
 
+    @staticmethod
+    def _report(source: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Per-step scalars to LOG (not loss terms): ``logit_scale``, and ``logit_bias`` when present.
+
+        Returned as the second element of ``training_forward``/``compute_accum_loss``'s ``(losses, report)`` so the
+        train loop logs them once, instead of smuggling them through the loss dict (where the generic loss meter
+        would double-log the scale).
+        """
+        return {key: source[key] for key in ("logit_scale", "logit_bias") if key in source}
+
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         """Compute loss from accumulated features for gradient accumulation.
 
         Override in subclasses that need to derive training targets from
         raw batch dicts (e.g. autoregressive label creation in CoCa).
+
+        Returns ``(losses, report)`` — see :meth:`_report`.
         """
-        return self.loss(**inputs, **inputs_no_accum, output_dict=True)
+        losses = self.loss(**inputs, **inputs_no_accum, output_dict=True)
+        return losses, self._report(inputs_no_accum)
 
     def eval_forward(self, batch: Dict[str, torch.Tensor]):
         return self.get_trainable_module(use_ema=True)(**batch)
@@ -485,5 +498,6 @@ class TrainingTask(nn.Module):
             forward_fn = self._compiled_training_forward or self.training_forward
         return forward_fn(batch)
 
-    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
+        """Run the train-time forward. Subclasses return ``(losses, report)`` — see :meth:`_report`."""
         raise NotImplementedError

@@ -164,7 +164,7 @@ def test_create_task_and_forward():
     assert type(task).__name__ == 'GenLipTask'
     batch = _make_batch(task.pad_id)
     task.train()
-    losses = task(batch)
+    losses, _ = task(batch)
     assert 'caption_loss' in losses and 'loss' in losses
     assert torch.isfinite(losses['loss'])
     assert task.batch_size(batch) == batch['image']['patches'].shape[0]
@@ -447,13 +447,13 @@ def test_overfit_single_batch():
     batch = _make_batch(task.pad_id)
     task.train()
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    l0 = task(batch)['loss'].item()
+    l0 = task(batch)[0]['loss'].item()
     for _ in range(80):
         opt.zero_grad()
-        loss = task(batch)['loss']
+        loss = task(batch)[0]['loss']
         loss.backward()
         opt.step()
-    l1 = task(batch)['loss'].item()
+    l1 = task(batch)[0]['loss'].item()
     assert l1 < 0.5 * l0, f"expected overfit, got {l0:.3f} -> {l1:.3f}"
 
 

@@ -97,8 +97,9 @@ def test_naflexclap_create_task_contrastive():
 
     batch = {"audio": _audio_batch(b=2), "text": torch.randint(0, model.vocab_size, (2, model.context_length))}
     task.train()
-    losses = task(batch)
+    losses, report = task(batch)
     assert "contrastive_loss" in losses and "loss" in losses and torch.isfinite(losses["loss"])
+    assert "logit_scale" in report and "logit_scale" not in losses
 
 
 def test_naflexclap_dummy_batch_is_patch_dict():
