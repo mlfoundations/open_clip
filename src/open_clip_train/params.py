@@ -622,7 +622,23 @@ def parse_args(args):
         "--log-every-n-steps",
         type=int,
         default=100,
-        help="Log every n steps to tensorboard/console/wandb.",
+        help="Log every n steps to the console (the human-readable line).",
+    )
+    parser.add_argument(
+        "--log-metric-every-n-steps",
+        type=int,
+        default=10,
+        help="Log scalars to tensorboard/wandb every n steps (denser than the console for smooth curves). "
+             "Set 1 to log every step. The loss is all-reduced across ranks here so the logged value is the "
+             "true global-batch loss (under --local-loss each rank only sees a 1/world_size slice).",
+    )
+    parser.add_argument(
+        "--train-loss-ema-samples",
+        type=int,
+        default=50000,
+        help="Smoothing horizon (in samples) for the console loss EMA shown in parentheses. Robust to batch "
+             "size / accum / world size / NaFlex packing. 0 disables it (console parentheses revert to the "
+             "epoch running average).",
     )
     parser.add_argument(
         "--coca-caption-loss-weight",
@@ -816,6 +832,10 @@ def parse_args(args):
     # scheduler (standard CLAP / synthetic / plain CLIP) also reject non-positive values.
     if args.text_pad_multiple is not None and args.text_pad_multiple <= 0:
         raise ValueError(f"--text-pad-multiple must be > 0 when set, got {args.text_pad_multiple}.")
+
+    # A negative EMA horizon would make the decay exp(-n/h) > 1 and diverge the EMA; 0 disables it.
+    if args.train_loss_ema_samples < 0:
+        raise ValueError(f"--train-loss-ema-samples must be >= 0 (0 disables), got {args.train_loss_ema_samples}.")
 
     # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
     # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).

@@ -6,7 +6,7 @@ _logger = logging.getLogger(__name__)
 import os
 import time
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import torch
@@ -44,6 +44,8 @@ class TrainState:
     global_step: int = 0
     samples_seen: int = 0
     compiled_train_step: Optional[Callable] = None
+    # Persistent cross-epoch loss EMA meters (runtime logging state; intentionally not checkpointed).
+    losses_ema: dict = field(default_factory=dict)
 
 
 def estimate_train_state_counters(epoch: int, data: dict, args) -> tuple[int, int]:
@@ -91,6 +93,25 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+class SampleWeightedEMA:
+    """Sample-count-weighted EMA of a scalar.
+
+    The smoothing horizon is expressed in samples (``ema_samples``), so it is invariant to batch size, gradient
+    accumulation, world size, and NaFlex packing -- ``decay = exp(-n / ema_samples)`` per update of ``n`` samples.
+    The first observation seeds ``value`` directly (no cold-start ramp from 0), which keeps logs clean after a
+    ``--resume`` since this is runtime-only logging state and is not checkpointed.
+    """
+
+    def __init__(self, ema_samples: float):
+        self.ema_samples = float(ema_samples)
+        self.value = None
+
+    def update(self, val, n):
+        decay = math.exp(-n / self.ema_samples)
+        self.value = val if self.value is None else decay * self.value + (1.0 - decay) * val
+        return self.value
 
 
 def postprocess_clip_output(model_out):
@@ -340,6 +361,14 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
     data_time_m = AverageMeter()
     end = time.time()
     num_samples = 0
+    # Log the global-batch loss: under --local-loss each rank's loss is a 1/world_size slice (generative LM losses
+    # are likewise per-rank), so all-reduce-mean at log time. Mean is a no-op when ranks already agree.
+    reduce_loss = args.distributed and args.world_size > 1
+    ema_samples = getattr(args, "train_loss_ema_samples", 0)
+    metric_every = max(1, getattr(args, "log_metric_every_n_steps", args.log_every_n_steps))
+    # Global samples observed at the previous EMA update (seeded from the persistent counter so the EMA horizon
+    # stays continuous across epochs); the EMA decays by the sample delta between metric logs.
+    prev_metric_samples = state.samples_seen
     for i, batch in enumerate(dataloader):
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
@@ -375,66 +404,100 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
         num_samples += step_batch_size * args.world_size
         state.global_step = step + 1
         state.samples_seen += step_batch_size * args.world_size
-        if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
-            samples_per_epoch = dataloader.num_samples
-            percent_complete = 100.0 * batch_count / num_batches_per_epoch
+        last_batch = batch_count == num_batches_per_epoch
+        is_console_step = (i_accum % args.log_every_n_steps == 0) or last_batch
+        is_metric_step = (i_accum % metric_every == 0) or is_console_step
 
-            # NOTE loss is coarsely sampled, just master node and per log update
-            for key, val in losses.items():
-                if key not in losses_m:
-                    losses_m[key] = AverageMeter()
-                losses_m[key].update(val.item(), step_batch_size)
+        if is_metric_step:
+            # Reduce the loss across ranks so the logged value is the true global-batch loss. Collective -> ALL
+            # ranks call it (the rank-synced schedule keeps them in lockstep); detach()+clone() since backward
+            # already ran and all_reduce mutates in place. Mean is a no-op when ranks already agree.
+            reduced = {key: val.detach().float().clone() for key, val in losses.items()}
+            if reduce_loss:
+                for v in reduced.values():
+                    dist.all_reduce(v)
+                    v /= args.world_size
 
-            # logit_scale / logit_bias are per-step report scalars (not loss terms), logged once from `report`.
-            logit_scale = report.get("logit_scale", None)
-            logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
-            logit_bias = report.get("logit_bias", None)
-            logit_bias_scalar = logit_bias.item() if logit_bias is not None else None
-            loss_log = " ".join(
-                [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
-                    for loss_name, loss_m in losses_m.items()
-                ]
-            )
-            samples_per_second = step_batch_size * args.world_size / batch_time_m.val
-            samples_per_second_per_gpu = step_batch_size / batch_time_m.val
-            learning_rate = get_learning_rate(optimizer)
-            _logger.info(
-                f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
-                f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
-                f"LR: {learning_rate:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
-            )
+            if is_master(args):
+                n_ema = state.samples_seen - prev_metric_samples  # global samples since the previous EMA update
+                prev_metric_samples = state.samples_seen
+                for key, v in reduced.items():
+                    vi = v.item()
+                    losses_m.setdefault(key, AverageMeter()).update(vi, step_batch_size)
+                    if ema_samples and n_ema > 0:
+                        state.losses_ema.setdefault(key, SampleWeightedEMA(ema_samples)).update(vi, n_ema)
 
-            # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
-            log_data = {
-                "data_time": data_time_m.val,
-                "batch_time": batch_time_m.val,
-                "samples_per_second": samples_per_second,
-                "samples_per_second_per_gpu": samples_per_second_per_gpu,
-                "scale": logit_scale_scalar,
-                "lr": learning_rate,
-            }
-            if logit_bias_scalar is not None:
-                log_data["bias"] = logit_bias_scalar
-            log_data.update({name:val.val for name,val in losses_m.items()})
+                # logit_scale / logit_bias are per-step report scalars (not loss terms), logged once from `report`.
+                logit_scale = report.get("logit_scale", None)
+                logit_scale_scalar = logit_scale.item() if logit_scale is not None else 0.0
+                logit_bias = report.get("logit_bias", None)
+                logit_bias_scalar = logit_bias.item() if logit_bias is not None else None
+                samples_per_second = step_batch_size * args.world_size / batch_time_m.val
+                samples_per_second_per_gpu = step_batch_size / batch_time_m.val
+                learning_rate = get_learning_rate(optimizer)
 
-            log_data = {"train/" + name: val for name, val in log_data.items()}
+                # Raw scalars to tensorboard/wandb at the (dense) metric cadence (see the per-loss block below).
+                log_data = {
+                    "data_time": data_time_m.val,
+                    "batch_time": batch_time_m.val,
+                    "samples_per_second": samples_per_second,
+                    "samples_per_second_per_gpu": samples_per_second_per_gpu,
+                    "logit_scale": logit_scale_scalar,
+                    "lr": learning_rate,
+                }
+                if logit_bias_scalar is not None:
+                    log_data["logit_bias"] = logit_bias_scalar
+                # Raw current value only -- dashboards do their own smoothing, so the EMA stays console-only (add
+                # train/<loss>_ema behind an explicit flag if a deterministic logged series is ever wanted). The
+                # epoch running average is NOT logged per-step (half-formed mid-epoch); it goes out once per epoch.
+                for name, m in losses_m.items():
+                    log_data[name] = m.val
+                log_data = {"train/" + name: val for name, val in log_data.items()}
 
-            if tb_writer is not None:
-                for name, val in log_data.items():
-                    tb_writer.add_scalar(name, val, step)
+                if tb_writer is not None:
+                    for name, val in log_data.items():
+                        tb_writer.add_scalar(name, val, step)
 
-            if args.wandb:
-                assert wandb is not None, 'Please install wandb.'
-                log_data['step'] = step  # for backwards compatibility
-                wandb.log(log_data, step=step)
+                if args.wandb:
+                    assert wandb is not None, 'Please install wandb.'
+                    log_data['step'] = step  # for backwards compatibility
+                    wandb.log(log_data, step=step)
 
-            # resetting batch / data time meters per log window
-            batch_time_m.reset()
-            data_time_m.reset()
+                # Console at the (sparse) cadence. Parentheses show the cross-epoch EMA trend (the epoch average
+                # moves to the End-epoch summary line); falls back to the epoch avg when the EMA is disabled.
+                if is_console_step:
+                    samples_per_epoch = dataloader.num_samples
+                    percent_complete = 100.0 * batch_count / num_batches_per_epoch
+                    loss_log = " ".join(
+                        f"{name.capitalize()}: {m.val:#.5g} "
+                        f"({(state.losses_ema[name].value if ema_samples else m.avg):#.5g})"
+                        for name, m in losses_m.items()
+                    )
+                    _logger.info(
+                        f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
+                        f"Data (t): {data_time_m.avg:.3f} "
+                        f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
+                        f"LR: {learning_rate:5f} "
+                        f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
+                    )
+
+                # reset batch / data time meters per metric window
+                batch_time_m.reset()
+                data_time_m.reset()
     # end for
+    if is_master(args) and losses_m:
+        summary = "  ".join(f"Avg {name.capitalize()}: {m.avg:#.5g}" for name, m in losses_m.items())
+        _logger.info(f"End epoch {epoch} | {summary}")
+        # One epoch-average point per epoch (distinct, sparse series from the dense per-step curve). Logged at the
+        # epoch's final step so it merges with that step's record rather than starting a new one.
+        last_step = num_batches_per_epoch * (epoch + 1) - 1
+        epoch_log = {f"train/{name}_epoch_avg": m.avg for name, m in losses_m.items()}
+        if tb_writer is not None:
+            for name, val in epoch_log.items():
+                tb_writer.add_scalar(name, val, last_step)
+        if args.wandb:
+            assert wandb is not None, 'Please install wandb.'
+            wandb.log({**epoch_log, "epoch": epoch}, step=last_step)
 
 
 def zero_shot_eval_all(task, data, epoch, args, tokenizer=None):
