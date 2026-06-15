@@ -734,6 +734,15 @@ def parse_args(args):
         help="Sequence lengths to sample for NaFlex training. Eval pads/crops to the largest value."
     )
     parser.add_argument(
+        "--naflex-seq-len-probs",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Per-batch sampling weights for --naflex-seq-lens (same length/order; normalized). Uniform if "
+             "unset. NOTE: weights are per BATCH; since B scales as budget/seq_len, a smaller seq-len holds more "
+             "rows, so the per-SAMPLE skew toward short seq-lens is stronger than the weights suggest."
+    )
+    parser.add_argument(
         "--naflex-max-tokens-per-batch",
         type=int,
         default=4096 * 4,
