@@ -133,6 +133,13 @@ class CLIPTextCfg:
     zero_init_residual: bool = False  # zero the residual out-projs (attn proj, mlp out): blocks start as identity
     reg_tokens: int = 0  # learned register tokens prepended to the sequence and excluded from pooling
     value_residual: bool = False  # mix each layer's V with layer-0 V via a learned per-layer scalar (ResFormer)
+    # Linear biases (default off, modern LLaMA/PaLM convention). attention_bias: qkv, attn out-proj, gate, and the
+    # MAP-pool q/kv. mlp_bias: the SwiGLU/GELU/ReLU^2 MLP. (The final text_projection bias is `proj_bias`.)
+    attention_bias: bool = False
+    mlp_bias: bool = False
+    # Gate-bias override (gated attention only): None inherits attention_bias; True/False force it on/off. Lets the
+    # mostly-open gate init (sigmoid(1)~=0.73) survive attention_bias=False -- the one bias worth keeping there.
+    gate_bias: Optional[bool] = None
 
     # HuggingFace specific text tower config
     hf_model_name: Optional[str] = None
