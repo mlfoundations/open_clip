@@ -292,7 +292,9 @@ def test_init_scheme_depth_scaled_output_projections():
 
 def test_linear_bias_flags():
     """attention_bias / mlp_bias gate every Linear bias (default off = modern); proj_bias is the head, separate."""
-    off = _make_modern_text(pool_type="map", attn_gated=True)  # defaults: attention_bias=False, mlp_bias=False
+    # Defaults are tri-state None on the shared cfg; the modern tower resolves None -> off (no bias).
+    assert CLIPTextCfg().attention_bias is None and CLIPTextCfg().mlp_bias is None
+    off = _make_modern_text(pool_type="map", attn_gated=True)  # None -> modern default off
     b = off.blocks[0]
     for layer in (b.attn.qkv, b.attn.proj, b.attn.gate, off.pool.q, off.pool.kv, b.mlp.w12, b.mlp.w3):
         assert layer.bias is None
@@ -351,7 +353,9 @@ def test_map_pool_qk_norm():
 
 def test_block_qk_norm_follows_norm_type():
     """The block attention's qk-norm uses the model's norm_layer (default RMSNorm), not a hardcoded type."""
-    attn = _make_modern_text(qk_norm=True).blocks[0].attn
+    # norm_type is tri-state on the shared cfg; the modern tower resolves None -> rmsnorm.
+    assert CLIPTextCfg().norm_type is None
+    attn = _make_modern_text(qk_norm=True).blocks[0].attn  # no norm_type override -> None -> rmsnorm
     assert type(attn.q_norm).__name__ == "ModernRMSNorm"
     assert type(attn.k_norm).__name__ == "ModernRMSNorm"
     ln = _make_modern_text(qk_norm=True, norm_type="layernorm").blocks[0].attn

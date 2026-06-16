@@ -1285,12 +1285,14 @@ class ModernTextTransformer(nn.Module):
         self.pad_id = cfg.pad_id
         self.eos_id = cfg.eos_id
 
-        if cfg.norm_type == "rmsnorm":
+        # norm_type is tri-state on the shared cfg (None = arch default); the modern tower defaults to RMSNorm.
+        norm_type = cfg.norm_type if cfg.norm_type is not None else "rmsnorm"
+        if norm_type == "rmsnorm":
             norm_layer = lambda dim: ModernRMSNorm(dim, eps=cfg.norm_eps)
-        elif cfg.norm_type == "layernorm":
+        elif norm_type == "layernorm":
             norm_layer = lambda dim: LayerNorm(dim, eps=cfg.norm_eps)
         else:
-            raise ValueError(f"unknown modern text norm_type={cfg.norm_type!r}")
+            raise ValueError(f"unknown modern text norm_type={norm_type!r}")
 
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.width, padding_idx=cfg.pad_id)
         # Learned register tokens: prepended to the sequence (always valid) and excluded from pooling. In
@@ -1309,9 +1311,11 @@ class ModernTextTransformer(nn.Module):
         # Embedding norm before block 0 (timm ViT pre_norm / norm_pre; ModernBERT embeddings.norm), applied
         # after register concat.
         self.norm_pre = norm_layer(cfg.width) if getattr(cfg, "pre_norm", False) else nn.Identity()
-        # Linear biases default off (modern); attention_bias covers qkv/proj/gate + MAP q/kv, mlp_bias the MLP.
-        attention_bias = bool(getattr(cfg, "attention_bias", False))
-        mlp_bias = bool(getattr(cfg, "mlp_bias", False))
+        # attention_bias/mlp_bias are tri-state on the shared cfg (None = arch default). This is the modern tower,
+        # so None resolves off; bool() collapses None/False -> False, True -> True. attention_bias covers
+        # qkv/proj/gate + MAP q/kv, mlp_bias the MLP.
+        attention_bias = bool(getattr(cfg, "attention_bias", None))
+        mlp_bias = bool(getattr(cfg, "mlp_bias", None))
         # Gate-bias override: None inherits attention_bias; True/False force on/off so the mostly-open gate init
         # stays available with attention_bias off (see init_parameters).
         gate_bias_cfg = getattr(cfg, "gate_bias", None)
