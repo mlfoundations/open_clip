@@ -19,6 +19,7 @@ import open_clip
 from open_clip import CLIPTextCfg, CLIPVisionCfg, ModernTextTransformer
 from open_clip.factory import _validate_special_tokens
 from open_clip.model import CLIP
+from open_clip.transformer import LayerNorm, ModernRMSNorm
 from open_clip.tokenizer import SimpleTokenizer
 from open_clip_train.audio_data import _audio_collate
 from open_clip_train.data import collate_variable_text_dicts
@@ -253,7 +254,11 @@ def test_init_scheme_depth_scaled_output_projections():
     scaled by (2*layers)**-0.5; norms = 1.0; biases = 0. (Catches a fallback to PyTorch's default Linear init.)"""
     torch.manual_seed(0)
     layers = 12
-    m = _make_modern_text(attention_mode="causal", pool_type="map", qk_norm=True, attn_gated=True, layers=layers)
+    # Force biases on so the zero-init checks below exercise that path (they default off now).
+    m = _make_modern_text(
+        attention_mode="causal", pool_type="map", qk_norm=True, attn_gated=True, layers=layers,
+        attention_bias=True, mlp_bias=True,
+    )
     width = m.width
     attn_std = width ** -0.5
     proj_std = attn_std * ((2 * layers) ** -0.5)
@@ -283,6 +288,95 @@ def test_init_scheme_depth_scaled_output_projections():
     assert torch.count_nonzero(m.pool.kv.bias) == 0
     # Gated attention starts mostly open: gate bias 1 -> sigmoid(1) ~= 0.73 (near-transparent at init).
     assert torch.equal(m.blocks[0].attn.gate.bias, torch.ones_like(m.blocks[0].attn.gate.bias))
+
+
+def test_linear_bias_flags():
+    """attention_bias / mlp_bias gate every Linear bias (default off = modern); proj_bias is the head, separate."""
+    off = _make_modern_text(pool_type="map", attn_gated=True)  # defaults: attention_bias=False, mlp_bias=False
+    b = off.blocks[0]
+    for layer in (b.attn.qkv, b.attn.proj, b.attn.gate, off.pool.q, off.pool.kv, b.mlp.w12, b.mlp.w3):
+        assert layer.bias is None
+
+    on = _make_modern_text(pool_type="map", attn_gated=True, attention_bias=True, mlp_bias=True)
+    b = on.blocks[0]
+    for layer in (b.attn.qkv, b.attn.proj, b.attn.gate, on.pool.q, on.pool.kv):  # attention_bias group
+        assert layer.bias is not None
+    for layer in (b.mlp.w12, b.mlp.w3):  # mlp_bias group
+        assert layer.bias is not None
+
+    # The two flags are independent.
+    attn_only = _make_modern_text(pool_type="map", attn_gated=True, attention_bias=True, mlp_bias=False)
+    assert attn_only.blocks[0].attn.qkv.bias is not None
+    assert attn_only.blocks[0].mlp.w12.bias is None
+
+
+def test_gate_bias_override():
+    """gate_bias is tri-state: None inherits attention_bias; True/False force the gate's own bias on/off."""
+    # Default (None) follows attention_bias.
+    assert _make_modern_text(attn_gated=True, attention_bias=False).blocks[0].attn.gate.bias is None
+    assert _make_modern_text(attn_gated=True, attention_bias=True).blocks[0].attn.gate.bias is not None
+
+    # Force ON with attention_bias off: gate keeps a bias, and it is inited mostly-open (==1 -> sigmoid~=0.73)
+    # while qkv/proj stay bias-free.
+    forced_on = _make_modern_text(attn_gated=True, attention_bias=False, gate_bias=True).blocks[0].attn
+    assert forced_on.qkv.bias is None and forced_on.proj.bias is None
+    assert forced_on.gate.bias is not None
+    assert torch.allclose(forced_on.gate.bias, torch.ones_like(forced_on.gate.bias))
+
+    # Force OFF with attention_bias on: qkv/proj keep biases, gate does not.
+    forced_off = _make_modern_text(attn_gated=True, attention_bias=True, gate_bias=False).blocks[0].attn
+    assert forced_off.qkv.bias is not None
+    assert forced_off.gate.bias is None
+
+
+def test_map_pool_qk_norm():
+    """cfg.qk_norm threads into the MAP pool's attention (same bf16-stability guard as the blocks)."""
+    on = _make_modern_text(pool_type="map", qk_norm=True)
+    assert type(on.pool.q_norm).__name__ == "ModernRMSNorm"
+    assert type(on.pool.k_norm).__name__ == "ModernRMSNorm"
+    off = _make_modern_text(pool_type="map", qk_norm=False)
+    assert isinstance(off.pool.q_norm, torch.nn.Identity)
+    assert isinstance(off.pool.k_norm, torch.nn.Identity)
+    # The pool no longer carries a redundant kv pre-norm (ln_final already normalises the pool input).
+    assert not hasattr(on.pool, "norm")
+    # qk-norm follows the model's norm type rather than being hardcoded to RMSNorm.
+    ln = _make_modern_text(pool_type="map", qk_norm=True, norm_type="layernorm")
+    assert type(ln.pool.q_norm).__name__ == "LayerNorm"
+    assert type(ln.pool.k_norm).__name__ == "LayerNorm"
+    # forward still finite with the pool qk-norm active
+    with torch.no_grad():
+        out = on(_right_padded_batch([14, 9, 6], total_len=14))
+    assert torch.isfinite(out).all()
+
+
+def test_block_qk_norm_follows_norm_type():
+    """The block attention's qk-norm uses the model's norm_layer (default RMSNorm), not a hardcoded type."""
+    attn = _make_modern_text(qk_norm=True).blocks[0].attn
+    assert type(attn.q_norm).__name__ == "ModernRMSNorm"
+    assert type(attn.k_norm).__name__ == "ModernRMSNorm"
+    ln = _make_modern_text(qk_norm=True, norm_type="layernorm").blocks[0].attn
+    assert type(ln.q_norm).__name__ == "LayerNorm"
+    assert type(ln.k_norm).__name__ == "LayerNorm"
+    off = _make_modern_text(qk_norm=False).blocks[0].attn
+    assert isinstance(off.q_norm, torch.nn.Identity)
+
+
+def test_all_norms_use_config_eps():
+    """Every norm in the modern text tower is built from norm_layer, so all carry cfg.norm_eps -- including the
+    block/pool qk-norm, which previously hardcoded ModernRMSNorm's 1e-6 default and ignored the config."""
+    eps = 4.2e-5  # distinct from native defaults (LayerNorm 1e-5, ModernRMSNorm 1e-6) so a match is meaningful
+    for norm_type in ("rmsnorm", "layernorm"):
+        # All norm-bearing features on: sandwich (norm*_post), pre_norm (norm_pre), map pool + qk-norm.
+        m = _make_modern_text(
+            pool_type="map", qk_norm=True, attn_gated=True, norm_type=norm_type, norm_eps=eps,
+            norm_placement="sandwich", pre_norm=True,
+        )
+        norms = [mod for _, mod in m.named_modules() if isinstance(mod, (ModernRMSNorm, LayerNorm))]
+        assert norms, "expected norm modules in the tower"
+        assert all(mod.eps == eps for mod in norms), f"{norm_type}: a norm did not pick up cfg.norm_eps"
+        # The two that used to bypass cfg.norm_eps, called out explicitly.
+        assert m.blocks[0].attn.q_norm.eps == eps
+        assert m.pool.q_norm.eps == eps
 
 
 def test_init_scheme_sandwich_uses_flat_init():

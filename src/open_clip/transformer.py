@@ -999,10 +999,10 @@ class ModernRMSNorm(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int):
+    def __init__(self, dim: int, hidden_dim: int, bias: bool = True):
         super().__init__()
-        self.w12 = nn.Linear(dim, hidden_dim * 2)
-        self.w3 = nn.Linear(hidden_dim, dim)
+        self.w12 = nn.Linear(dim, hidden_dim * 2, bias=bias)
+        self.w3 = nn.Linear(hidden_dim, dim, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, gate = self.w12(x).chunk(2, dim=-1)
@@ -1047,25 +1047,31 @@ class ModernTextAttention(nn.Module):
             dim: int,
             heads: int,
             qk_norm: bool = False,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
             gated: bool = False,
             value_residual: bool = False,
             vr_first: bool = False,
+            bias: bool = True,
+            gate_bias: bool = True,
     ):
         super().__init__()
         if dim % heads:
             raise ValueError(f"text width {dim} must be divisible by heads {heads}.")
         self.heads = heads
         self.head_dim = dim // heads
-        self.qkv = nn.Linear(dim, dim * 3, bias=True)
-        self.q_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
-        self.k_norm = ModernRMSNorm(self.head_dim) if qk_norm else nn.Identity()
-        self.gate = nn.Linear(dim, dim, bias=True) if gated else None
+        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
+        # qk-norm over head_dim follows the model's norm type (norm_layer), default RMSNorm.
+        qk_norm_layer = norm_layer if norm_layer is not None else ModernRMSNorm
+        self.q_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        # Gate bias is decoupled from `bias` so the mostly-open init (init_parameters) can survive bias-free attn.
+        self.gate = nn.Linear(dim, dim, bias=gate_bias) if gated else None
         # Value residual (ResFormer): mix this layer's V with layer-0's V via a learned scalar,
         # v = lerp(v_first, v, vr_lambda); init 0.5 = equal mix, lambda -> 1 recovers plain attention.
         # Layer 0 only *produces* v_first (vr_first), so it gets no lambda (an unused param breaks DDP).
         self.value_residual = value_residual
         self.vr_lambda = nn.Parameter(torch.full((1,), 0.5)) if (value_residual and not vr_first) else None
-        self.proj = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim, bias=bias)
 
     def forward(
             self,
@@ -1113,6 +1119,9 @@ class ModernTextBlock(nn.Module):
             ls_init_value: Optional[float] = None,
             value_residual: bool = False,
             vr_first: bool = False,
+            attn_bias: bool = True,
+            gate_bias: bool = True,
+            mlp_bias: bool = True,
     ):
         super().__init__()
         if norm_placement not in ("pre", "sandwich"):
@@ -1120,7 +1129,15 @@ class ModernTextBlock(nn.Module):
         sandwich = norm_placement == "sandwich"
         self.norm1 = norm_layer(dim)
         self.attn = ModernTextAttention(
-            dim, heads, qk_norm=qk_norm, gated=attn_gated, value_residual=value_residual, vr_first=vr_first,
+            dim,
+            heads,
+            qk_norm=qk_norm,
+            norm_layer=norm_layer,
+            gated=attn_gated,
+            value_residual=value_residual,
+            vr_first=vr_first,
+            bias=attn_bias,
+            gate_bias=gate_bias,
         )
         # Sandwich placement (Gemma-2 style): an extra norm on each sublayer *output*, before LayerScale and
         # the residual add; widens the stable-LR range at the cost of two extra norms per block.
@@ -1129,12 +1146,12 @@ class ModernTextBlock(nn.Module):
         self.norm2 = norm_layer(dim)
         hidden = int(dim * mlp_ratio)
         if mlp_type == "swiglu":
-            self.mlp = SwiGLU(dim, hidden)
+            self.mlp = SwiGLU(dim, hidden, bias=mlp_bias)
         elif mlp_type in ("mlp", "relu2"):
             self.mlp = nn.Sequential(OrderedDict([
-                ("c_fc", nn.Linear(dim, hidden)),
+                ("c_fc", nn.Linear(dim, hidden, bias=mlp_bias)),
                 ("act", nn.GELU() if mlp_type == "mlp" else ReLUSquared()),
-                ("c_proj", nn.Linear(hidden, dim)),
+                ("c_proj", nn.Linear(hidden, dim, bias=mlp_bias)),
             ]))
         else:
             raise ValueError(f"unknown modern text mlp_type={mlp_type!r}")
@@ -1167,6 +1184,8 @@ class ModernTextPool(nn.Module):
             pool_type: str = "eos",
             heads: int = 8,
             norm_layer: Optional[Callable[[int], nn.Module]] = None,
+            bias: bool = True,
+            qk_norm: bool = False,
     ):
         super().__init__()
         self.pool_type = pool_type
@@ -1176,9 +1195,13 @@ class ModernTextPool(nn.Module):
                 raise ValueError(f"text width {width} must be divisible by MAP heads {heads}.")
             self.head_dim = width // heads
             self.query = nn.Parameter(torch.empty(1, 1, width))
-            self.q = nn.Linear(width, width)
-            self.kv = nn.Linear(width, width * 2)
-            self.norm = norm_layer(width) if norm_layer is not None else nn.Identity()
+            self.q = nn.Linear(width, width, bias=bias)
+            self.kv = nn.Linear(width, width * 2, bias=bias)
+            # qk-norm over head_dim (bf16 logit stability, as in the blocks): model norm type, default RMSNorm.
+            # No kv pre-norm -- ln_final already normalises the pool input.
+            qk_norm_layer = norm_layer if norm_layer is not None else ModernRMSNorm
+            self.q_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
+            self.k_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
             nn.init.normal_(self.query, std=width ** -0.5)
         elif pool_type in ("eos", "mean"):
             self.query = None
@@ -1209,8 +1232,9 @@ class ModernTextPool(nn.Module):
         b, l, c = x.shape
         # The learned query latent stays fp32 under static low-precision conversion; cast at use.
         q = self.q(self.query.to(x.dtype).expand(b, -1, -1)).reshape(b, 1, self.heads, self.head_dim).transpose(1, 2)
-        kv = self.kv(self.norm(x)).reshape(b, l, 2, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        kv = self.kv(x).reshape(b, l, 2, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         k, v = kv.unbind(0)
+        q, k = self.q_norm(q), self.k_norm(k)
         attn_bias = x.new_zeros((b, 1, 1, l))
         attn_bias.masked_fill_(~valid[:, None, None, :], torch.finfo(x.dtype).min)
         pooled = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, is_causal=False)
@@ -1285,6 +1309,13 @@ class ModernTextTransformer(nn.Module):
         # Embedding norm before block 0 (timm ViT pre_norm / norm_pre; ModernBERT embeddings.norm), applied
         # after register concat.
         self.norm_pre = norm_layer(cfg.width) if getattr(cfg, "pre_norm", False) else nn.Identity()
+        # Linear biases default off (modern); attention_bias covers qkv/proj/gate + MAP q/kv, mlp_bias the MLP.
+        attention_bias = bool(getattr(cfg, "attention_bias", False))
+        mlp_bias = bool(getattr(cfg, "mlp_bias", False))
+        # Gate-bias override: None inherits attention_bias; True/False force on/off so the mostly-open gate init
+        # stays available with attention_bias off (see init_parameters).
+        gate_bias_cfg = getattr(cfg, "gate_bias", None)
+        gate_bias = attention_bias if gate_bias_cfg is None else bool(gate_bias_cfg)
         self.blocks = nn.ModuleList([
             ModernTextBlock(
                 cfg.width,
@@ -1298,11 +1329,21 @@ class ModernTextTransformer(nn.Module):
                 ls_init_value=cfg.ls_init_value,
                 value_residual=getattr(cfg, "value_residual", False),
                 vr_first=(i == 0),
+                attn_bias=attention_bias,
+                gate_bias=gate_bias,
+                mlp_bias=mlp_bias,
             )
             for i in range(cfg.layers)
         ])
         self.ln_final = norm_layer(cfg.width)
-        self.pool = ModernTextPool(cfg.width, pool_type=pool_type, heads=cfg.heads, norm_layer=norm_layer)
+        self.pool = ModernTextPool(
+            cfg.width,
+            pool_type=pool_type,
+            heads=cfg.heads,
+            norm_layer=norm_layer,
+            bias=attention_bias,
+            qk_norm=cfg.qk_norm,
+        )
         self.text_projection = (
             None
             if cfg.proj_type == "none" or not output_dim
@@ -1347,37 +1388,47 @@ class ModernTextTransformer(nn.Module):
         for block in self.blocks:
             attn = block.attn
             nn.init.normal_(attn.qkv.weight, std=attn_std)
-            nn.init.zeros_(attn.qkv.bias)
+            if attn.qkv.bias is not None:
+                nn.init.zeros_(attn.qkv.bias)
             init_residual_out(attn.proj.weight)
             if attn.proj.bias is not None:
                 nn.init.zeros_(attn.proj.bias)
             if attn.gate is not None:
                 # Mostly-open gate at init: bias 1 -> sigmoid(1) ~= 0.73, so gating starts near-transparent
                 # (a half-open 0.5 gate halves attention output magnitude, fighting the residual init scheme).
+                # Needs a gate bias to exist: set gate_bias=True to keep this when attention_bias is off, else the
+                # bias-free gate falls back to sigmoid(~0) ~= 0.5.
                 nn.init.normal_(attn.gate.weight, std=attn_std)
-                nn.init.ones_(attn.gate.bias)
+                if attn.gate.bias is not None:
+                    nn.init.ones_(attn.gate.bias)
             if attn.vr_lambda is not None:
                 nn.init.constant_(attn.vr_lambda, 0.5)  # equal layer-0 / current-layer value mix at init
             mlp = block.mlp
             if isinstance(mlp, SwiGLU):
                 nn.init.normal_(mlp.w12.weight, std=swiglu_fc_std)
-                nn.init.zeros_(mlp.w12.bias)
+                if mlp.w12.bias is not None:
+                    nn.init.zeros_(mlp.w12.bias)
                 init_residual_out(mlp.w3.weight)
-                nn.init.zeros_(mlp.w3.bias)
+                if mlp.w3.bias is not None:
+                    nn.init.zeros_(mlp.w3.bias)
             else:  # nn.Sequential MLP (c_fc, act, c_proj)
                 nn.init.normal_(mlp.c_fc.weight, std=fc_std)
-                nn.init.zeros_(mlp.c_fc.bias)
+                if mlp.c_fc.bias is not None:
+                    nn.init.zeros_(mlp.c_fc.bias)
                 init_residual_out(mlp.c_proj.weight)
-                nn.init.zeros_(mlp.c_proj.bias)
+                if mlp.c_proj.bias is not None:
+                    nn.init.zeros_(mlp.c_proj.bias)
 
         # MAP attentive-pool projections (the learned ``query`` is already initialized in ModernTextPool.__init__).
         # The pool/head init is scheme-independent: the block-init choice (flat/sandwich, zero-residual) only
         # governs the residual stream, not the readout.
         if getattr(self.pool, "query", None) is not None:
             nn.init.normal_(self.pool.q.weight, std=self.width ** -0.5)
-            nn.init.zeros_(self.pool.q.bias)
+            if self.pool.q.bias is not None:
+                nn.init.zeros_(self.pool.q.bias)
             nn.init.normal_(self.pool.kv.weight, std=self.width ** -0.5)
-            nn.init.zeros_(self.pool.kv.bias)
+            if self.pool.kv.bias is not None:
+                nn.init.zeros_(self.pool.kv.bias)
 
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection.weight, std=self.width ** -0.5)
