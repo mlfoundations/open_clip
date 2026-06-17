@@ -19,6 +19,26 @@ try:
 except ImportError:
     wandb = None
 
+try:
+    import trackio
+except ImportError:
+    trackio = None
+
+
+def get_wandb_backend(args):
+    """Return the active wandb-compatible run logger (wandb or trackio), or None if neither is selected.
+
+    Both expose the same init/log/save/finish API; --report-to picks one (they are mutually exclusive). Raises
+    if the selected backend is requested but not installed.
+    """
+    if getattr(args, "trackio", False):
+        assert trackio is not None, "Please install trackio (`pip install trackio`)."
+        return trackio
+    if getattr(args, "wandb", False):
+        assert wandb is not None, "Please install wandb."
+        return wandb
+    return None
+
 from open_clip import get_input_dtype
 from open_clip_train.distributed import is_master
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
@@ -366,6 +386,7 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
     reduce_loss = args.distributed and args.world_size > 1
     ema_samples = getattr(args, "train_loss_ema_samples", 0)
     metric_every = max(1, getattr(args, "log_metric_every_n_steps", args.log_every_n_steps))
+    wb = get_wandb_backend(args)  # wandb or trackio (same API), or None
     # Global samples observed at the previous EMA update (seeded from the persistent counter so the EMA horizon
     # stays continuous across epochs); the EMA decays by the sample delta between metric logs.
     prev_metric_samples = state.samples_seen
@@ -458,10 +479,9 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                     for name, val in log_data.items():
                         tb_writer.add_scalar(name, val, step)
 
-                if args.wandb:
-                    assert wandb is not None, 'Please install wandb.'
+                if wb is not None:
                     log_data['step'] = step  # for backwards compatibility
-                    wandb.log(log_data, step=step)
+                    wb.log(log_data, step=step)
 
                 # Console at the (sparse) cadence. Parentheses show the cross-epoch EMA trend (the epoch average
                 # moves to the End-epoch summary line); falls back to the epoch avg when the EMA is disabled.
@@ -495,9 +515,8 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
         if tb_writer is not None:
             for name, val in epoch_log.items():
                 tb_writer.add_scalar(name, val, last_step)
-        if args.wandb:
-            assert wandb is not None, 'Please install wandb.'
-            wandb.log({**epoch_log, "epoch": epoch}, step=last_step)
+        if wb is not None:
+            wb.log({**epoch_log, "epoch": epoch}, step=last_step)
 
 
 def zero_shot_eval_all(task, data, epoch, args, tokenizer=None):
@@ -680,8 +699,8 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
             f.write(json.dumps(metrics))
             f.write("\n")
 
-    if args.wandb:
-        assert wandb is not None, 'Please install wandb.'
+    wb = get_wandb_backend(args)
+    if wb is not None:
         if 'train' in data:
             dataloader = data['train'].dataloader
             num_batches_per_epoch = dataloader.num_batches // args.accum_freq
@@ -689,7 +708,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         else:
             step = None
         log_data['epoch'] = epoch
-        wandb.log(log_data, step=step)
+        wb.log(log_data, step=step)
 
     return metrics
 

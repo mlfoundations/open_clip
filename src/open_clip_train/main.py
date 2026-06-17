@@ -21,6 +21,11 @@ except ImportError:
     wandb = None
 
 try:
+    import trackio
+except ImportError:
+    trackio = None
+
+try:
     import torch.utils.tensorboard as tensorboard
 except ImportError:
     tensorboard = None
@@ -47,6 +52,7 @@ from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown, te
 from open_clip_train.train import (
     TrainState,
     evaluate,
+    get_wandb_backend,
     restore_train_state_counters,
     train_one_epoch,
 )
@@ -136,9 +142,14 @@ def main(args):
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
 
-    # Setup wandb, tensorboard, checkpoint logging
+    # Setup wandb, trackio, tensorboard, checkpoint logging
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
+    args.trackio = 'trackio' in args.report_to  # local-first, wandb-compatible; not part of 'all'
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
+    if args.wandb and args.trackio:
+        raise ValueError(
+            "--report-to may enable only one of 'wandb' or 'trackio' (same API/role); tensorboard can pair with either."
+        )
     args.checkpoint_path = os.path.join(log_base_path, "checkpoints")
     if is_master(args):
         args.tensorboard_path = os.path.join(log_base_path, "tensorboard") if args.tensorboard else ''
@@ -576,26 +587,29 @@ def main(args):
         assert tensorboard is not None, "Please install tensorboard."
         writer = tensorboard.SummaryWriter(args.tensorboard_path)
 
-    if args.wandb and is_master(args):
-        assert wandb is not None, 'Please install wandb.'
-        _logger.debug('Starting wandb.')
+    wb = get_wandb_backend(args)  # wandb or trackio (same API), or None; asserts the selected one is installed
+    if wb is not None and is_master(args):
+        _logger.debug(f'Starting {wb.__name__}.')
         args.train_sz = data["train"].dataloader.num_samples
         if args.val_data is not None:
             args.val_sz = data["val"].dataloader.num_samples
         # you will have to configure this for your project!
-        wandb.init(
-            project=args.wandb_project_name,
-            name=args.name,
-            id=args.name,
-            notes=args.wandb_notes,
-            tags=[],
-            resume='auto' if args.resume == "latest" else None,
-            config=vars(args),
-        )
-        if args.debug:
-            wandb.watch(train_state.task.trainable_module, log='all')
-        wandb.save(params_file)
-        _logger.debug('Finished loading wandb.')
+        init_kwargs = dict(project=args.wandb_project_name, name=args.name, config=vars(args))
+        if wb is wandb:
+            # wandb-only run metadata; trackio's init surface is narrower so it gets just project/name/config.
+            init_kwargs.update(
+                id=args.name, notes=args.wandb_notes, tags=[],
+                resume='auto' if args.resume == "latest" else None,
+            )
+        elif wb is trackio:
+            # trackio keys resume on the run name (no separate id); reattach when open_clip is resuming.
+            init_kwargs["resume"] = "allow" if args.resume else "never"
+        wb.init(**init_kwargs)
+        if args.debug and hasattr(wb, "watch"):
+            wb.watch(train_state.task.trainable_module, log='all')
+        if hasattr(wb, "save"):
+            wb.save(params_file)
+        _logger.debug(f'Finished loading {wb.__name__}.')
 
     if args.torchcompile:
         _logger.info(f'Using torch.compile strategy={args.torchcompile_strategy}.')
@@ -730,8 +744,8 @@ def main(args):
         if args.distributed:
             torch.distributed.barrier()
 
-    if args.wandb and is_master(args):
-        wandb.finish()
+    if wb is not None and is_master(args):
+        wb.finish()
 
     # run a final sync.
     if remote_sync_process is not None:

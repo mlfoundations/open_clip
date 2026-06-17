@@ -529,7 +529,8 @@ def parse_args(args):
         "--report-to",
         default='',
         type=str,
-        help="Options are ['wandb', 'tensorboard', 'wandb,tensorboard']"
+        help="Comma-separated logging backends: 'wandb', 'trackio' (local-first, wandb-compatible), 'tensorboard'. "
+             "'wandb' and 'trackio' are mutually exclusive; either can be combined with 'tensorboard'."
     )
     parser.add_argument(
         "--wandb-notes",
