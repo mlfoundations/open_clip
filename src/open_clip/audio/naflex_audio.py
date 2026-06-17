@@ -18,7 +18,7 @@ makes the 1-D case fall out of the same builder without a separate code path.
 """
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -187,13 +187,23 @@ def mel_to_patches(
 class MelPatchEmbed(nn.Module):
     """Linear embedding of flattened mel patches -> trunk width (audio analog of ``GenLipPatchEmbed``)."""
 
-    def __init__(self, cfg: AudioNaFlexCfg, width: int, norm_eps: float = 1e-6):
+    def __init__(
+            self,
+            cfg: AudioNaFlexCfg,
+            width: int,
+            norm_eps: float = 1e-6,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
         super().__init__()
+        # norm_pre follows the trunk norm policy when supplied; defaults to LayerNorm (back-compat, e.g. CLAP).
+        if norm_layer is None:
+            norm_layer = lambda dim: nn.LayerNorm(dim, eps=norm_eps)
+        # input_norm is fixed to LayerNorm: its mean-centering is meaningful on raw (non-zero-mean) log-mel input.
         self.norm_input = nn.LayerNorm(cfg.patch_dim) if cfg.input_norm else None
         self.proj = nn.Linear(cfg.patch_dim, width, bias=cfg.proj_bias)
         # Optional post-projection norm: equalizes the audio stream's scale entering the shared trunk
         # (mirrors GenLipPatchEmbed.norm_pre).
-        self.norm_pre = nn.LayerNorm(width, eps=norm_eps) if cfg.pre_norm else nn.Identity()
+        self.norm_pre = norm_layer(width) if cfg.pre_norm else nn.Identity()
 
     def forward(self, patches: torch.Tensor) -> torch.Tensor:
         if self.norm_input is not None:

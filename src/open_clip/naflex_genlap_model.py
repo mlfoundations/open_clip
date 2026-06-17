@@ -31,6 +31,7 @@ from .naflex_genlip_model import (
     GenLipTrunk,
     NaFlexGenLipTextCfg,
     NaFlexGenLipTrunkCfg,
+    _make_norm_layer,
     build_image_attn_mask,
     build_prefix_lm_mask,
     init_genlm_weights,
@@ -123,13 +124,17 @@ class NaFlexGenLap(nn.Module):
         self.pad_id = text_cfg.pad_id
         self.context_length = text_cfg.context_length
 
+        # Shared norm policy (trunk norm_type) applied to every body norm: patch/text pre-norms and the trunk.
+        norm_layer = _make_norm_layer(genlap_cfg.norm_type, genlap_cfg.layer_norm_eps)
         # audio side
-        self.audio_embed = MelPatchEmbed(audio_naflex_cfg, width, norm_eps=genlap_cfg.layer_norm_eps)
+        self.audio_embed = MelPatchEmbed(
+            audio_naflex_cfg, width, norm_eps=genlap_cfg.layer_norm_eps, norm_layer=norm_layer,
+        )
         # text side (identical to GenLIP)
         self.text_embed = nn.Embedding(text_cfg.vocab_size, text_embed_dim, padding_idx=text_cfg.pad_id)
         self.in_proj = nn.Linear(text_embed_dim, width) if text_embed_dim != width else nn.Identity()
         # Optional pre-trunk norm on the text stream (see MelPatchEmbed.norm_pre).
-        self.text_norm_pre = nn.LayerNorm(width, eps=genlap_cfg.layer_norm_eps) if text_cfg.pre_norm else nn.Identity()
+        self.text_norm_pre = norm_layer(width) if text_cfg.pre_norm else nn.Identity()
         self.out_proj = nn.Linear(width, text_embed_dim) if text_embed_dim != width else nn.Identity()
         self.lm_head = nn.Linear(text_embed_dim, text_cfg.vocab_size, bias=False)  # untied
         # downstream audio-encoder projector (Identity when embed_dim == width)

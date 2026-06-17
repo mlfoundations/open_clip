@@ -19,7 +19,7 @@ import open_clip
 from open_clip import CLIPTextCfg, CLIPVisionCfg, ModernTextTransformer
 from open_clip.factory import _validate_special_tokens
 from open_clip.model import CLIP
-from open_clip.transformer import LayerNorm, ModernRMSNorm
+from open_clip.transformer import LayerNorm
 from open_clip.tokenizer import SimpleTokenizer
 from open_clip_train.audio_data import _audio_collate
 from open_clip_train.data import collate_variable_text_dicts
@@ -334,8 +334,8 @@ def test_gate_bias_override():
 def test_map_pool_qk_norm():
     """cfg.qk_norm threads into the MAP pool's attention (same bf16-stability guard as the blocks)."""
     on = _make_modern_text(pool_type="map", qk_norm=True)
-    assert type(on.pool.q_norm).__name__ == "ModernRMSNorm"
-    assert type(on.pool.k_norm).__name__ == "ModernRMSNorm"
+    assert type(on.pool.q_norm).__name__ == "RMSNorm"
+    assert type(on.pool.k_norm).__name__ == "RMSNorm"
     off = _make_modern_text(pool_type="map", qk_norm=False)
     assert isinstance(off.pool.q_norm, torch.nn.Identity)
     assert isinstance(off.pool.k_norm, torch.nn.Identity)
@@ -356,8 +356,8 @@ def test_block_qk_norm_follows_norm_type():
     # norm_type is tri-state on the shared cfg; the modern tower resolves None -> rmsnorm.
     assert CLIPTextCfg().norm_type is None
     attn = _make_modern_text(qk_norm=True).blocks[0].attn  # no norm_type override -> None -> rmsnorm
-    assert type(attn.q_norm).__name__ == "ModernRMSNorm"
-    assert type(attn.k_norm).__name__ == "ModernRMSNorm"
+    assert type(attn.q_norm).__name__ == "RMSNorm"
+    assert type(attn.k_norm).__name__ == "RMSNorm"
     ln = _make_modern_text(qk_norm=True, norm_type="layernorm").blocks[0].attn
     assert type(ln.q_norm).__name__ == "LayerNorm"
     assert type(ln.k_norm).__name__ == "LayerNorm"
@@ -367,15 +367,15 @@ def test_block_qk_norm_follows_norm_type():
 
 def test_all_norms_use_config_eps():
     """Every norm in the modern text tower is built from norm_layer, so all carry cfg.norm_eps -- including the
-    block/pool qk-norm, which previously hardcoded ModernRMSNorm's 1e-6 default and ignored the config."""
-    eps = 4.2e-5  # distinct from native defaults (LayerNorm 1e-5, ModernRMSNorm 1e-6) so a match is meaningful
+    block/pool qk-norm, which previously hardcoded RMSNorm's 1e-6 default and ignored the config."""
+    eps = 4.2e-5  # distinct from any native norm default (e.g. LayerNorm 1e-5) so a match is meaningful
     for norm_type in ("rmsnorm", "layernorm"):
         # All norm-bearing features on: sandwich (norm*_post), pre_norm (norm_pre), map pool + qk-norm.
         m = _make_modern_text(
             pool_type="map", qk_norm=True, attn_gated=True, norm_type=norm_type, norm_eps=eps,
             norm_placement="sandwich", pre_norm=True,
         )
-        norms = [mod for _, mod in m.named_modules() if isinstance(mod, (ModernRMSNorm, LayerNorm))]
+        norms = [mod for _, mod in m.named_modules() if isinstance(mod, (torch.nn.RMSNorm, LayerNorm))]
         assert norms, "expected norm modules in the tower"
         assert all(mod.eps == eps for mod in norms), f"{norm_type}: a norm did not pick up cfg.norm_eps"
         # The two that used to bypass cfg.norm_eps, called out explicitly.

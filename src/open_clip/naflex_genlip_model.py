@@ -25,7 +25,7 @@ sequence packing -- a batch is a set of padded rows, each row ``[one image's pat
 Attention uses torch SDPA with a dense per-sample boolean prefix-LM mask.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -79,6 +79,11 @@ class NaFlexGenLipTrunkCfg:
     hidden_act: str = 'silu'
     layer_norm_eps: float = 1e-6
     max_position_embeddings: int = 16384
+    # Modern controls (same names/intent as the moderntext tower). Biases default off; the gated attention fuses
+    # its gate into q_proj, so the gate bias rides attention_bias (no separate knob, as in Qwen3).
+    attention_bias: bool = False  # qkv + out-proj (and the fused attention gate)
+    mlp_bias: bool = False  # SwiGLU / MLP linears
+    norm_type: str = 'layernorm'  # 'layernorm' or 'rmsnorm'; resolved to a norm_layer threaded through the blocks
     # When True, the generative (compute_loss) path compacts each row to [valid prefix ; valid text ; PAD]
     # instead of the fixed [prefix-block ; text-block] layout -- removes wasted padding between the prefix and
     # text (big win for variable-length audio). Default False = current block layout (existing runs unchanged).
@@ -90,6 +95,15 @@ _ACT_FN = {
     'gelu': F.gelu,
     'relu': F.relu,
 }
+
+
+def _make_norm_layer(norm_type: str, eps: float) -> Callable[[int], nn.Module]:
+    """Resolve the trunk norm flavor to a ``dim -> Module`` factory (threaded through the blocks, moderntext-style)."""
+    if norm_type == 'layernorm':
+        return lambda dim: nn.LayerNorm(dim, eps=eps)
+    if norm_type == 'rmsnorm':
+        return lambda dim: nn.RMSNorm(dim, eps=eps)
+    raise ValueError(f"unknown genlip norm_type={norm_type!r}")
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -193,7 +207,7 @@ class GenLipRotaryEmbedding(nn.Module):
 class GenLipAttention(nn.Module):
     """Multi-head self-attention with optional gating, MRoPE, and an SDPA backend."""
 
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg):
+    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
         super().__init__()
         self.width = cfg.width
         self.num_heads = cfg.num_heads
@@ -201,10 +215,11 @@ class GenLipAttention(nn.Module):
         self.scale = self.head_dim ** -0.5
         self.gated_attention = cfg.gated_attention
 
-        self.k_proj = nn.Linear(self.width, self.width)
-        self.v_proj = nn.Linear(self.width, self.width)
-        self.q_proj = nn.Linear(self.width, self.width * 2 if self.gated_attention else self.width)
-        self.out_proj = nn.Linear(self.width, self.width)
+        # The gate is fused into q_proj (extra width chunk), so it shares q_proj's bias (Qwen3-style coupling).
+        self.k_proj = nn.Linear(self.width, self.width, bias=bias)
+        self.v_proj = nn.Linear(self.width, self.width, bias=bias)
+        self.q_proj = nn.Linear(self.width, self.width * 2 if self.gated_attention else self.width, bias=bias)
+        self.out_proj = nn.Linear(self.width, self.width, bias=bias)
 
     def forward(
             self,
@@ -246,23 +261,23 @@ class GenLipAttention(nn.Module):
 
 
 class GenLipSwiGLUFFN(nn.Module):
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg):
+    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
         super().__init__()
         self.act = _ACT_FN[cfg.hidden_act]
-        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size)
-        self.gate_fc = nn.Linear(cfg.width, cfg.intermediate_size)
-        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width)
+        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
+        self.gate_fc = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
+        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc2(self.act(self.gate_fc(x)) * self.fc1(x))
 
 
 class GenLipMLP(nn.Module):
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg):
+    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
         super().__init__()
         self.act = _ACT_FN[cfg.hidden_act]
-        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size)
-        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width)
+        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
+        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc2(self.act(self.fc1(x)))
@@ -280,12 +295,18 @@ class GenLipLayerScale(nn.Module):
 class GenLipBlock(nn.Module):
     """Pre-norm transformer block: gated attention + SwiGLU, with LayerScale and DropPath."""
 
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg):
+    def __init__(
+            self,
+            cfg: NaFlexGenLipTrunkCfg,
+            norm_layer: Callable[[int], nn.Module],
+            attn_bias: bool = True,
+            mlp_bias: bool = True,
+    ):
         super().__init__()
-        self.layer_norm1 = nn.LayerNorm(cfg.width, eps=cfg.layer_norm_eps)
-        self.self_attn = GenLipAttention(cfg)
-        self.layer_norm2 = nn.LayerNorm(cfg.width, eps=cfg.layer_norm_eps)
-        self.mlp = GenLipSwiGLUFFN(cfg) if cfg.use_swiglu_ffn else GenLipMLP(cfg)
+        self.layer_norm1 = norm_layer(cfg.width)
+        self.self_attn = GenLipAttention(cfg, bias=attn_bias)
+        self.layer_norm2 = norm_layer(cfg.width)
+        self.mlp = GenLipSwiGLUFFN(cfg, bias=mlp_bias) if cfg.use_swiglu_ffn else GenLipMLP(cfg, bias=mlp_bias)
 
         use_ls = cfg.ls_init_value is not None and cfg.ls_init_value > 1e-6
         self.layer_scale1 = GenLipLayerScale(cfg.width, cfg.ls_init_value) if use_ls else nn.Identity()
@@ -315,8 +336,12 @@ class GenLipTrunk(nn.Module):
 
     def __init__(self, cfg: NaFlexGenLipTrunkCfg):
         super().__init__()
-        self.layers = nn.ModuleList([GenLipBlock(cfg) for _ in range(cfg.depth)])
-        self.ln_post = nn.LayerNorm(cfg.width, eps=cfg.layer_norm_eps)
+        norm_layer = _make_norm_layer(cfg.norm_type, cfg.layer_norm_eps)
+        self.layers = nn.ModuleList([
+            GenLipBlock(cfg, norm_layer, attn_bias=cfg.attention_bias, mlp_bias=cfg.mlp_bias)
+            for _ in range(cfg.depth)
+        ])
+        self.ln_post = norm_layer(cfg.width)
         self.grad_checkpointing = False
 
     def forward(
@@ -340,14 +365,24 @@ class GenLipTrunk(nn.Module):
 class GenLipPatchEmbed(nn.Module):
     """Linear patch embedding over pre-patchified inputs ``[B, N, P*P*C]`` (no position embedding)."""
 
-    def __init__(self, vision_cfg: NaFlexGenLipVisionCfg, width: int, norm_eps: float = 1e-6):
+    def __init__(
+            self,
+            vision_cfg: NaFlexGenLipVisionCfg,
+            width: int,
+            norm_eps: float = 1e-6,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
         super().__init__()
         patch_dim = vision_cfg.patch_size * vision_cfg.patch_size * vision_cfg.in_chans
+        # norm_pre follows the trunk norm policy when supplied; defaults to LayerNorm (back-compat).
+        if norm_layer is None:
+            norm_layer = lambda dim: nn.LayerNorm(dim, eps=norm_eps)
+        # input_norm is fixed to LayerNorm: its mean-centering is meaningful on raw (non-zero-mean) patch input.
         self.norm_input = nn.LayerNorm(patch_dim) if vision_cfg.input_norm else None
         self.proj = nn.Linear(patch_dim, width, bias=vision_cfg.proj_bias)
         # Optional post-projection norm: equalizes this modality's stream scale entering the shared trunk
         # (pre-norm blocks only normalize branch inputs; the residual stream carries raw embed scales).
-        self.norm_pre = nn.LayerNorm(width, eps=norm_eps) if vision_cfg.pre_norm else nn.Identity()
+        self.norm_pre = norm_layer(width) if vision_cfg.pre_norm else nn.Identity()
 
     def forward(self, patches: torch.Tensor) -> torch.Tensor:
         if self.norm_input is not None:
@@ -668,13 +703,15 @@ class NaFlexGenLip(nn.Module):
         self.pad_id = text_cfg.pad_id
         self.context_length = text_cfg.context_length
 
+        # Shared norm policy (trunk norm_type) applied to every body norm: patch/text pre-norms and the trunk.
+        norm_layer = _make_norm_layer(genlip_cfg.norm_type, genlip_cfg.layer_norm_eps)
         # image side
-        self.patch_embed = GenLipPatchEmbed(vision_cfg, width, norm_eps=genlip_cfg.layer_norm_eps)
+        self.patch_embed = GenLipPatchEmbed(vision_cfg, width, norm_eps=genlip_cfg.layer_norm_eps, norm_layer=norm_layer)
         # text side
         self.text_embed = nn.Embedding(text_cfg.vocab_size, text_embed_dim, padding_idx=text_cfg.pad_id)
         self.in_proj = nn.Linear(text_embed_dim, width) if text_embed_dim != width else nn.Identity()
         # Optional pre-trunk norm on the text stream (see GenLipPatchEmbed.norm_pre).
-        self.text_norm_pre = nn.LayerNorm(width, eps=genlip_cfg.layer_norm_eps) if text_cfg.pre_norm else nn.Identity()
+        self.text_norm_pre = norm_layer(width) if text_cfg.pre_norm else nn.Identity()
         self.out_proj = nn.Linear(width, text_embed_dim) if text_embed_dim != width else nn.Identity()
         self.lm_head = nn.Linear(text_embed_dim, text_cfg.vocab_size, bias=False)  # untied
 
