@@ -488,14 +488,16 @@ def test_trunk_bias_and_norm_type_controls():
     cfg = copy.deepcopy(open_clip.get_model_config(TEST_MODEL))
     base = NaFlexGenLip(**cfg)
     blk = base.trunk.layers[0]
-    # Defaults: bias-free trunk (incl. the fused gate via q_proj) + LayerNorm.
+    # Defaults: bias-free trunk (incl. the fused gate via q_proj) + LayerNorm + qk-norm off.
     for lin in (blk.self_attn.q_proj, blk.self_attn.k_proj, blk.self_attn.out_proj, blk.mlp.fc1, blk.mlp.fc2):
         assert lin.bias is None
     assert isinstance(blk.layer_norm1, torch.nn.LayerNorm) and isinstance(base.trunk.ln_post, torch.nn.LayerNorm)
+    assert isinstance(blk.self_attn.q_norm, torch.nn.Identity) and isinstance(blk.self_attn.k_norm, torch.nn.Identity)
 
     cfg['genlip_cfg']['attention_bias'] = True
     cfg['genlip_cfg']['mlp_bias'] = True
     cfg['genlip_cfg']['norm_type'] = 'rmsnorm'
+    cfg['genlip_cfg']['qk_norm'] = True  # q/k normed over head_dim, follows norm_type (RMSNorm here)
     cfg['vision_cfg']['pre_norm'] = True  # the image prefix pre-norm must follow norm_type too (uniform policy)
     cfg['vision_cfg']['input_norm'] = True  # raw-input norm stays LayerNorm regardless of norm_type
     cfg['text_cfg']['pre_norm'] = True
@@ -504,6 +506,7 @@ def test_trunk_bias_and_norm_type_controls():
     assert blk.self_attn.q_proj.bias is not None and blk.self_attn.out_proj.bias is not None
     assert blk.mlp.fc1.bias is not None and blk.mlp.gate_fc.bias is not None
     assert isinstance(blk.layer_norm1, torch.nn.RMSNorm) and isinstance(model.trunk.ln_post, torch.nn.RMSNorm)
+    assert isinstance(blk.self_attn.q_norm, torch.nn.RMSNorm) and isinstance(blk.self_attn.k_norm, torch.nn.RMSNorm)
     # Modality + text prefix *stream* pre-norms follow the policy; the raw-input norm stays LayerNorm.
     assert isinstance(model.patch_embed.norm_pre, torch.nn.RMSNorm)
     assert isinstance(model.text_norm_pre, torch.nn.RMSNorm)
@@ -513,3 +516,8 @@ def test_trunk_bias_and_norm_type_controls():
     with torch.no_grad():
         out = model(**batch, compute_loss=True)
     assert torch.isfinite(out['loss'])
+
+    # qk-norm follows norm_type (not fixed at RMSNorm): under layernorm it is LayerNorm.
+    cfg['genlip_cfg']['norm_type'] = 'layernorm'
+    ln_attn = NaFlexGenLip(**cfg).trunk.layers[0].self_attn
+    assert isinstance(ln_attn.q_norm, torch.nn.LayerNorm) and isinstance(ln_attn.k_norm, torch.nn.LayerNorm)
