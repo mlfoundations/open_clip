@@ -9,40 +9,9 @@ from torch.utils.checkpoint import checkpoint
 
 from .utils import to_2tuple, feature_take_indices
 from .pos_embed import get_2d_sincos_pos_embed
-
-
-class LayerNormFp32(nn.LayerNorm):
-    """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
-
-    def forward(self, x: torch.Tensor):
-        orig_type = x.dtype
-        x = F.layer_norm(x.to(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
-        return x.to(orig_type)
-
-
-class LayerNorm(nn.LayerNorm):
-    """Subclass torch's LayerNorm (with cast back to input dtype)."""
-
-    def forward(self, x: torch.Tensor):
-        orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
-        return x.to(orig_type)
-
-
-class QuickGELU(nn.Module):
-    # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
-    def forward(self, x: torch.Tensor):
-        return x * torch.sigmoid(1.702 * x)
-
-
-class LayerScale(nn.Module):
-    def __init__(self, dim, init_values=1e-5, inplace=False):
-        super().__init__()
-        self.inplace = inplace
-        self.gamma = nn.Parameter(init_values * torch.ones(dim))
-
-    def forward(self, x):
-        return x.mul_(self.gamma) if self.inplace else x * self.gamma
+# Foundational layer primitives now live in layers.py; re-exported here so existing
+# `from .transformer import LayerNorm, LayerNormFp32, QuickGELU, ...` imports keep working.
+from .layers import LayerNorm, LayerNormFp32, LayerScale, QuickGELU
 
 
 class PatchDropout(nn.Module):
@@ -985,19 +954,6 @@ def text_global_pool(
     return pooled
 
 
-class ModernRMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        dtype = x.dtype
-        x_float = x.float()
-        x = x_float * torch.rsqrt(x_float.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return (x.to(dtype) * self.weight.to(dtype))
-
-
 class SwiGLU(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, bias: bool = True):
         super().__init__()
@@ -1061,7 +1017,7 @@ class ModernTextAttention(nn.Module):
         self.head_dim = dim // heads
         self.qkv = nn.Linear(dim, dim * 3, bias=bias)
         # qk-norm over head_dim follows the model's norm type (norm_layer), default RMSNorm.
-        qk_norm_layer = norm_layer if norm_layer is not None else ModernRMSNorm
+        qk_norm_layer = norm_layer if norm_layer is not None else (lambda d: nn.RMSNorm(d, eps=1e-6))
         self.q_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
         # Gate bias is decoupled from `bias` so the mostly-open init (init_parameters) can survive bias-free attn.
@@ -1199,7 +1155,7 @@ class ModernTextPool(nn.Module):
             self.kv = nn.Linear(width, width * 2, bias=bias)
             # qk-norm over head_dim (bf16 logit stability, as in the blocks): model norm type, default RMSNorm.
             # No kv pre-norm -- ln_final already normalises the pool input.
-            qk_norm_layer = norm_layer if norm_layer is not None else ModernRMSNorm
+            qk_norm_layer = norm_layer if norm_layer is not None else (lambda d: nn.RMSNorm(d, eps=1e-6))
             self.q_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
             self.k_norm = qk_norm_layer(self.head_dim) if qk_norm else nn.Identity()
             nn.init.normal_(self.query, std=width ** -0.5)
@@ -1288,7 +1244,7 @@ class ModernTextTransformer(nn.Module):
         # norm_type is tri-state on the shared cfg (None = arch default); the modern tower defaults to RMSNorm.
         norm_type = cfg.norm_type if cfg.norm_type is not None else "rmsnorm"
         if norm_type == "rmsnorm":
-            norm_layer = lambda dim: ModernRMSNorm(dim, eps=cfg.norm_eps)
+            norm_layer = lambda dim: nn.RMSNorm(dim, eps=cfg.norm_eps)
         elif norm_type == "layernorm":
             norm_layer = lambda dim: LayerNorm(dim, eps=cfg.norm_eps)
         else:

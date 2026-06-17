@@ -478,3 +478,38 @@ def test_pre_norm_per_modality_streams():
     with torch.no_grad():
         out = model(**batch, compute_loss=True)
     assert torch.isfinite(out['loss'])
+
+
+def test_trunk_bias_and_norm_type_controls():
+    """Modern trunk controls (attention_bias / mlp_bias / norm_type, same names as the moderntext tower): default
+    off + LayerNorm, opt in to bias + RMSNorm. The gate is fused into q_proj, so it shares attention_bias."""
+    import copy
+
+    cfg = copy.deepcopy(open_clip.get_model_config(TEST_MODEL))
+    base = NaFlexGenLip(**cfg)
+    blk = base.trunk.layers[0]
+    # Defaults: bias-free trunk (incl. the fused gate via q_proj) + LayerNorm.
+    for lin in (blk.self_attn.q_proj, blk.self_attn.k_proj, blk.self_attn.out_proj, blk.mlp.fc1, blk.mlp.fc2):
+        assert lin.bias is None
+    assert isinstance(blk.layer_norm1, torch.nn.LayerNorm) and isinstance(base.trunk.ln_post, torch.nn.LayerNorm)
+
+    cfg['genlip_cfg']['attention_bias'] = True
+    cfg['genlip_cfg']['mlp_bias'] = True
+    cfg['genlip_cfg']['norm_type'] = 'rmsnorm'
+    cfg['vision_cfg']['pre_norm'] = True  # the image prefix pre-norm must follow norm_type too (uniform policy)
+    cfg['vision_cfg']['input_norm'] = True  # raw-input norm stays LayerNorm regardless of norm_type
+    cfg['text_cfg']['pre_norm'] = True
+    model = NaFlexGenLip(**cfg).eval()
+    blk = model.trunk.layers[0]
+    assert blk.self_attn.q_proj.bias is not None and blk.self_attn.out_proj.bias is not None
+    assert blk.mlp.fc1.bias is not None and blk.mlp.gate_fc.bias is not None
+    assert isinstance(blk.layer_norm1, torch.nn.RMSNorm) and isinstance(model.trunk.ln_post, torch.nn.RMSNorm)
+    # Modality + text prefix *stream* pre-norms follow the policy; the raw-input norm stays LayerNorm.
+    assert isinstance(model.patch_embed.norm_pre, torch.nn.RMSNorm)
+    assert isinstance(model.text_norm_pre, torch.nn.RMSNorm)
+    assert isinstance(model.patch_embed.norm_input, torch.nn.LayerNorm)
+    assert not isinstance(model.patch_embed.norm_input, torch.nn.RMSNorm)
+    batch = _make_batch(model.pad_id)
+    with torch.no_grad():
+        out = model(**batch, compute_loss=True)
+    assert torch.isfinite(out['loss'])
