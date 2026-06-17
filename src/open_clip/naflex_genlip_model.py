@@ -84,6 +84,7 @@ class NaFlexGenLipTrunkCfg:
     attention_bias: bool = False  # qkv + out-proj (and the fused attention gate)
     mlp_bias: bool = False  # SwiGLU / MLP linears
     norm_type: str = 'layernorm'  # 'layernorm' or 'rmsnorm'; resolved to a norm_layer threaded through the blocks
+    qk_norm: bool = False  # norm q and k (over head_dim, before RoPE) for bf16 logit stability (Qwen3-style)
     # When True, the generative (compute_loss) path compacts each row to [valid prefix ; valid text ; PAD]
     # instead of the fixed [prefix-block ; text-block] layout -- removes wasted padding between the prefix and
     # text (big win for variable-length audio). Default False = current block layout (existing runs unchanged).
@@ -207,7 +208,12 @@ class GenLipRotaryEmbedding(nn.Module):
 class GenLipAttention(nn.Module):
     """Multi-head self-attention with optional gating, MRoPE, and an SDPA backend."""
 
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
+    def __init__(
+            self,
+            cfg: NaFlexGenLipTrunkCfg,
+            bias: bool = True,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
         super().__init__()
         self.width = cfg.width
         self.num_heads = cfg.num_heads
@@ -220,6 +226,10 @@ class GenLipAttention(nn.Module):
         self.v_proj = nn.Linear(self.width, self.width, bias=bias)
         self.q_proj = nn.Linear(self.width, self.width * 2 if self.gated_attention else self.width, bias=bias)
         self.out_proj = nn.Linear(self.width, self.width, bias=bias)
+        # qk-norm over head_dim (applied before RoPE) for bf16 logit stability; follows norm_type, default RMSNorm.
+        qk_norm_layer = norm_layer if norm_layer is not None else (lambda d: nn.RMSNorm(d, eps=cfg.layer_norm_eps))
+        self.q_norm = qk_norm_layer(self.head_dim) if cfg.qk_norm else nn.Identity()
+        self.k_norm = qk_norm_layer(self.head_dim) if cfg.qk_norm else nn.Identity()
 
     def forward(
             self,
@@ -248,6 +258,7 @@ class GenLipAttention(nn.Module):
         k = k.view(bs, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(bs, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        q, k = self.q_norm(q), self.k_norm(k)  # qk-norm over head_dim, before RoPE (Qwen3 order)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)  # (B, H, S, head_dim)
@@ -304,7 +315,7 @@ class GenLipBlock(nn.Module):
     ):
         super().__init__()
         self.layer_norm1 = norm_layer(cfg.width)
-        self.self_attn = GenLipAttention(cfg, bias=attn_bias)
+        self.self_attn = GenLipAttention(cfg, bias=attn_bias, norm_layer=norm_layer)
         self.layer_norm2 = norm_layer(cfg.width)
         self.mlp = GenLipSwiGLUFFN(cfg, bias=mlp_bias) if cfg.use_swiglu_ffn else GenLipMLP(cfg, bias=mlp_bias)
 
