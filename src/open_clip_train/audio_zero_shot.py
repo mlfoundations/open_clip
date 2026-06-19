@@ -16,12 +16,17 @@ from open_clip_train.zero_shot import accuracy
 
 _logger = logging.getLogger(__name__)
 
+AUDIO_ZEROSHOT_TEMPLATES_ALT = (
+    "A sound of {}.",
+    "The sound of {}.",
+    "Audio of {}.",
+    "A recording of {}.",
+    "The sound of a {}.",
+    "This is a sound of {}.",
+)
+
 AUDIO_ZEROSHOT_TEMPLATES = (
-    "a sound of {}",
-    "the sound of {}",
-    "audio of {}",
-    "a recording of {}",
-    "the sound of a {}",
+    "This is a sound of {}.",
 )
 
 
