@@ -90,6 +90,13 @@ def _clean_whitespace(x):
     return whitespace_clean(basic_clean(x))
 
 
+def _clean_whitespace_underscore(x):
+    # case- and punctuation-preserving 'whitespace' clean, plus snake_case separators -> spaces. Useful for
+    # verbatim-trained models fed machine-formatted labels (e.g. 'sea_waves' -> 'sea waves') without the
+    # lowercasing/punctuation-stripping of 'canonicalize'. Unicode normalization is inherited from basic_clean.
+    return whitespace_clean(basic_clean(x).replace("_", " "))
+
+
 def get_clean_fn(type: str):
     if type == 'canonicalize':
         return _clean_canonicalize
@@ -97,6 +104,8 @@ def get_clean_fn(type: str):
         return _clean_lower
     elif type == 'whitespace':
         return _clean_whitespace
+    elif type == 'whitespace_underscore':
+        return _clean_whitespace_underscore
     else:
         assert False, f"Invalid clean function ({type})."
 
@@ -710,6 +719,7 @@ class TikTokenTokenizer:
             context_length: Optional[int] = 256,
             add_bos: bool = True,
             add_eos: bool = True,
+            clean: Optional[str] = None,
     ):
         try:
             import tiktoken
@@ -721,6 +731,12 @@ class TikTokenTokenizer:
         self.context_length = context_length
         self.add_bos = add_bos
         self.add_eos = add_eos
+        # Optional text cleaning ('canonicalize' / 'lower' / 'whitespace' / 'whitespace_underscore'); default None =
+        # verbatim. Verbatim is required for the generative captioning path (cleaning would strip case/punctuation
+        # it must reproduce). Contrastive configs can opt in via tokenizer_kwargs: 'canonicalize' (SigLIP-style
+        # lowercase + punctuation strip) or 'whitespace_underscore' (case/punctuation-preserving, only snake_case
+        # -> spaces -- best for a verbatim-trained model fed machine-formatted labels).
+        self.clean_fn = get_clean_fn(clean) if clean else None
 
         # Reserve control ids above the base vocabulary so they never collide with body tokens.
         base = self.enc.n_vocab
@@ -733,6 +749,8 @@ class TikTokenTokenizer:
 
     def encode(self, text: str) -> List[int]:
         # encode_ordinary ignores any special-token markup in the text, treating it as plain bytes.
+        if self.clean_fn is not None:
+            text = self.clean_fn(text)
         return self.enc.encode_ordinary(text)
 
     def decode(self, tokens: List[int]) -> str:

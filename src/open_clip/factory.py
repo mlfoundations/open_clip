@@ -841,7 +841,7 @@ def get_tokenizer(
         tokenizer = TikTokenTokenizer(
             encoding_name=encoding_name,
             context_length=context_length,
-            **{k: v for k, v in tokenizer_kwargs.items() if k in ('add_bos', 'add_eos')},
+            **{k: v for k, v in tokenizer_kwargs.items() if k in ('add_bos', 'add_eos', 'clean')},
         )
 
     elif hf_tokenizer_name:
