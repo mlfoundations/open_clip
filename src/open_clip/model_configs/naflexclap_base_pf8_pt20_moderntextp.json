@@ -1,0 +1,47 @@
+{
+    "embed_dim": 512,
+    "audio_cfg": {
+        "model_type": "naflexvit",
+        "sample_rate": 48000,
+        "mel_bins": 64,
+        "window_size": 1024,
+        "hop_size": 480,
+        "fmin": 50,
+        "fmax": 14000,
+        "patch_freq": 8,
+        "patch_time": 20,
+        "in_chans": 1,
+        "rope_type": "axial",
+        "naflexvit_cfg": {
+            "embed_dim": 768,
+            "depth": 12,
+            "num_heads": 12,
+            "init_values": 1e-5,
+            "reg_tokens": 1,
+            "pre_norm": true
+        }
+    },
+    "text_cfg": {
+        "text_arch": "modern",
+        "context_length": 256,
+        "variable_text": true,
+        "vocab_size": 50260,
+        "width": 512,
+        "heads": 8,
+        "layers": 12,
+        "mlp_ratio": 2.6666667,
+        "pad_id": 50258,
+        "bos_id": 50259,
+        "eos_id": 50257,
+        "pool_type": "map",
+        "attention_mode": "bidirectional",
+        "pos_embed": "rope",
+        "mlp_type": "swiglu",
+        "norm_type": "rmsnorm",
+        "norm_eps": 1e-5,
+        "qk_norm": true,
+        "attn_gated": true,
+        "tokenizer_type": "tiktoken",
+        "tiktoken_name": "r50k_base"
+    }
+}
