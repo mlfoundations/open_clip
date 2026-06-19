@@ -1,23 +1,19 @@
 {
-    "embed_dim": 512,
+    "embed_dim": 768,
     "vision_cfg": {
         "image_size": 256,
-        "image_seq_len": 64,
-        "timm_model_name": "naflexvit_base_patch16_map",
+        "image_seq_len": 256,
+        "timm_model_name": "naflexvit_so150m2_patch16_reg1_map",
         "timm_model_pretrained": false,
-        "timm_pool": "map",
-        "timm_model_kwargs": {
-            "patch_size": 32,
-            "pos_embed_grid_size": [8, 8]
-        }
+        "timm_pool": "map"
     },
     "text_cfg": {
         "text_arch": "modern",
         "context_length": 256,
         "variable_text": true,
         "vocab_size": 50260,
-        "width": 512,
-        "heads": 8,
+        "width": 768,
+        "heads": 12,
         "layers": 12,
         "mlp_ratio": 2.6666667,
         "pad_id": 50258,

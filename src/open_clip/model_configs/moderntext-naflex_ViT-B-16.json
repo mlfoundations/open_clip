@@ -2,14 +2,10 @@
     "embed_dim": 512,
     "vision_cfg": {
         "image_size": 256,
-        "image_seq_len": 64,
+        "image_seq_len": 256,
         "timm_model_name": "naflexvit_base_patch16_map",
         "timm_model_pretrained": false,
-        "timm_pool": "map",
-        "timm_model_kwargs": {
-            "patch_size": 32,
-            "pos_embed_grid_size": [8, 8]
-        }
+        "timm_pool": "map"
     },
     "text_cfg": {
         "text_arch": "modern",
