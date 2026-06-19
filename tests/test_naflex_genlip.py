@@ -137,6 +137,35 @@ def test_tiktoken_tokenizer():
     assert (fixed[1, 4:] == tok.pad_token_id).all()
 
 
+def test_tiktoken_clean_option():
+    """TikTokenTokenizer 'clean': default None = verbatim (required for generation); contrastive configs can opt
+    into 'canonicalize' (lowercase + punctuation strip) via tokenizer_kwargs."""
+    from open_clip.tokenizer import TikTokenTokenizer
+
+    text = "Hello, WORLD!! A dog's bark."
+    verbatim = TikTokenTokenizer(encoding_name='r50k_base', context_length=32)
+    canon = TikTokenTokenizer(encoding_name='r50k_base', context_length=32, clean='canonicalize')
+    assert verbatim.decode(verbatim.encode(text)) == text  # default leaves case + punctuation intact
+    cleaned = canon.decode(canon.encode(text))
+    assert cleaned == cleaned.lower() and ',' not in cleaned and '!' not in cleaned
+
+    # The factory threads clean through tokenizer_kwargs (caller kwargs merged + whitelisted).
+    tok = get_tokenizer(TEST_MODEL, clean='canonicalize')
+    out = tok.decode(tok.encode(text))
+    assert out == out.lower() and '!' not in out
+
+    # whitespace_underscore: case/punctuation-preserving, only normalizes snake_case separators to spaces.
+    from open_clip.tokenizer import get_clean_fn
+    assert get_clean_fn('whitespace_underscore')("This is a sound of sea_waves.") == "This is a sound of sea waves."
+    assert get_clean_fn('whitespace')("sea_waves") == "sea_waves"      # 'whitespace' keeps underscores
+    assert get_clean_fn('canonicalize')("Sea_Waves!") == "sea waves"   # canon: lower + strip punct + _->space
+
+    # Both must stay picklable (serialized into dataloader workers).
+    import pickle
+    for t in (verbatim, canon):
+        assert pickle.loads(pickle.dumps(t)).encode(text) == t.encode(text)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Data collation
 # ---------------------------------------------------------------------------------------------------------------------
