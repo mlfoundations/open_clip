@@ -654,9 +654,9 @@ def test_modern_text_and_alt_builtin_configs_registered():
     assert gte["text_cfg"]["variable_text"] is True
     assert gte["text_cfg"]["hf_pooler_type"] == "cls_pooler"
     assert gte["text_cfg"]["hf_model_config"]["max_position_embeddings"] == 256
-    assert naflex["vision_cfg"]["image_size"] == 224
-    assert naflex["vision_cfg"]["image_seq_len"] == 49
-    assert naflex["vision_cfg"]["timm_model_kwargs"]["pos_embed_grid_size"] == [7, 7]
+    assert naflex["vision_cfg"]["image_size"] == 256
+    assert naflex["vision_cfg"]["image_seq_len"] == 64
+    assert naflex["vision_cfg"]["timm_model_kwargs"]["pos_embed_grid_size"] == [8, 8]
     assert naflex["text_cfg"]["text_arch"] == "modern"
     assert naflex["text_cfg"]["variable_text"] is True
 
