@@ -283,3 +283,17 @@ class AudioNaFlexTransformFactory:
 
     def __call__(self, max_seq_len: Optional[int] = None, patch_size: Any = None) -> AudioNaFlexPatchify:
         return AudioNaFlexPatchify(self.cfg, max_audio_tokens=max_seq_len)
+
+
+def naflex_audio_eval_seq_len(cfg: AudioNaFlexCfg, seconds: float = 10.0) -> int:
+    """Exact NaFlex audio-token count for ``seconds`` of audio at this model's geometry.
+
+    Runs the real (uncapped) patchify on ``seconds`` of silence rather than re-deriving the mel-frame math, so it
+    stays correct across pf/pt and the STFT center-frame off-by-one (10s -> 1001 frames, not 1000). Used as the
+    default eval cap for NaFlexClap zero-shot when neither ``--naflex-seq-lens`` nor the config's
+    ``audio_seq_len`` is set.
+    """
+    transform = AudioNaFlexTransformFactory(cfg)(max_seq_len=None)
+    num_samples = int(round(seconds * cfg.sample_rate))
+    patch_dict = transform((torch.zeros(1, num_samples), cfg.sample_rate))
+    return int(patch_dict["patches"].shape[0])

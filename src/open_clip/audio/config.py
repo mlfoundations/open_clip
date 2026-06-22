@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -28,4 +28,7 @@ class CLIPAudioCfg:
     in_chans: int = 1
     patch_pad_mode: str = "floor"  # final partial-patch fill (NaFlex audio): "floor" | "silence" | "repeat"
     rope_type: str = "axial"  # 2-D (freq, time) RoPE; 'mrope'/'' overridable (MRoPE needs naflexvit_cfg section)
+    # Eval-time audio-token CAP for NaFlexClap zero-shot (mirror of vision_cfg.image_seq_len). Audio is
+    # variable-length, so this is a max, not an exact count. None -> ~10s derived from this model's geometry.
+    audio_seq_len: Optional[int] = None
     naflexvit_cfg: Dict[str, Any] = field(default_factory=dict)  # NaFlexVitCfg overrides (embed_dim/depth/...)
