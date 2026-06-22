@@ -829,6 +829,14 @@ def parse_args(args):
 
     args = parser.parse_args(args)
 
+    # A manifest (JSON/YAML listing several WDS sources) can be passed directly as --train-data; resolve it here,
+    # before any downstream code reads train_data, so the rest of the pipeline sees fully-formed shard lists /
+    # upsampling factors / num-samples exactly as if they were typed on the CLI.
+    if args.train_data:
+        from open_clip_train.data_manifest import looks_like_manifest, load_manifest, apply_manifest_to_args
+        if looks_like_manifest(args.train_data):
+            apply_manifest_to_args(args, load_manifest(args.train_data))
+
     # Guard here (not just in NaFlexBatchScheduler) so the collate-only variable-text paths that bypass the
     # scheduler (standard CLAP / synthetic / plain CLIP) also reject non-positive values.
     if args.text_pad_multiple is not None and args.text_pad_multiple <= 0:

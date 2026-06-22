@@ -52,6 +52,7 @@ training = [
     'transformers[sentencepiece]',
     'timm>=1.0.17',
     'fsspec',
+    'pyyaml',
 ]
 audio = [
     'torchaudio',
