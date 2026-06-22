@@ -61,8 +61,9 @@ def main():
     parser.add_argument("--audio-zeroshot-target-key", default="target")
     parser.add_argument("--audio-zeroshot-class-key", default="category")
     parser.add_argument("--audio-zeroshot-workers", type=int, default=0)
-    parser.add_argument("--naflex-seq-lens", type=int, nargs="+", default=[256],
-                        help="NaFlexClap audio-token cap for the eval clips (ignored for HTSAT CLAP).")
+    parser.add_argument("--naflex-seq-lens", type=int, nargs="+", default=None,
+                        help="NaFlexClap audio-token cap for the eval clips (ignored for HTSAT CLAP). Unset -> the "
+                             "model config's audio_seq_len, else a ~10s geometry default.")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--precision", default="amp_bf16")

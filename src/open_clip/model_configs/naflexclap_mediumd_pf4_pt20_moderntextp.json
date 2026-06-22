@@ -11,6 +11,7 @@
         "patch_freq": 4,
         "patch_time": 20,
         "in_chans": 1,
+        "audio_seq_len": 816,
         "rope_type": "axial",
         "naflexvit_cfg": {
             "embed_dim": 512,

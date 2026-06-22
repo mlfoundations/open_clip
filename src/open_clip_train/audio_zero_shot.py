@@ -237,11 +237,26 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
     if getattr(model.audio.cfg, "model_type", "").lower() == "naflexvit":
         # NaFlexClap: the spectrogram-ViT tower consumes patchified mel ({patches, patch_coord, patch_valid}),
         # NOT the HTSAT {waveform, longer}. Build the NaFlex audio transform + the pad-to-seq-len collate.
-        from open_clip.audio.naflex_audio import AudioNaFlexCfg, AudioNaFlexTransformFactory
+        from open_clip.audio.naflex_audio import (
+            AudioNaFlexCfg, AudioNaFlexTransformFactory, naflex_audio_eval_seq_len)
         from open_clip_train.naflex_data import collate_naflex_dicts
 
-        seq_len = max(getattr(args, "naflex_seq_lens", None) or [256])  # audio-token cap for the eval clips
         naflex_cfg = AudioNaFlexCfg.from_clip_audio_cfg(model.audio.cfg)
+        # Audio-token cap for the eval clips: explicit --naflex-seq-lens > the model config's audio_seq_len
+        # (mirror of vision_cfg.image_seq_len) > a geometry-derived ~10s default (vs the old hardcoded 256,
+        # which truncated clips past ~6s).
+        seq_lens = getattr(args, "naflex_seq_lens", None)
+        if seq_lens:
+            seq_len = max(seq_lens)
+        elif getattr(model.audio.cfg, "audio_seq_len", None):
+            seq_len = int(model.audio.cfg.audio_seq_len)
+        else:
+            seq_len = naflex_audio_eval_seq_len(naflex_cfg, 10.0)
+        secs = (seq_len / naflex_cfg.freq_tokens) * naflex_cfg.patch_time / 100.0
+        _logger.info(
+            "NaFlex audio zero-shot: capping eval clips at %d tokens (~%.0fs at this model's geometry); longer "
+            "clips are truncated. Override with --naflex-seq-lens.", seq_len, secs,
+        )
         transform = AudioNaFlexTransformFactory(naflex_cfg)(max_seq_len=seq_len, patch_size=None)
         collate_fn = partial(collate_naflex_dicts, image_key="audio", target_key="target", max_seq_len=seq_len)
     else:
