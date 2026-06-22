@@ -5,7 +5,12 @@
         "image_seq_len": 256,
         "timm_model_name": "naflexvit_base_patch16_map",
         "timm_model_pretrained": false,
-        "timm_pool": "map"
+        "timm_pool": "map",
+        "timm_model_kwargs": {
+            "swiglu_mlp": true,
+            "mlp_ratio": 2.6666667,
+            "attn_pool_mlp_ratio": 4.0
+        }
     },
     "text_cfg": {
         "text_arch": "modern",
@@ -28,6 +33,9 @@
         "qk_norm": true,
         "attn_gated": true,
         "tokenizer_type": "tiktoken",
-        "tiktoken_name": "r50k_base"
+        "tiktoken_name": "r50k_base",
+        "tokenizer_kwargs": {
+            "clean": "whitespace"
+        }
     }
 }

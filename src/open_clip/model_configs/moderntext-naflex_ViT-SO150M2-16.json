@@ -28,6 +28,9 @@
         "qk_norm": true,
         "attn_gated": true,
         "tokenizer_type": "tiktoken",
-        "tiktoken_name": "r50k_base"
+        "tiktoken_name": "r50k_base",
+        "tokenizer_kwargs": {
+            "clean": "whitespace"
+        }
     }
 }
