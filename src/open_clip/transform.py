@@ -61,6 +61,8 @@ def merge_preprocess_kwargs(base: PreprocessCfg, **kwargs):
 
 @dataclass
 class AugmentationCfg:
+    hflip: float = 0.0
+    vflip: float = 0.0
     scale: Tuple[float, float] = (0.9, 1.0)
     ratio: Optional[Tuple[float, float]] = None
     color_jitter: Optional[Union[float, Tuple[float, float, float], Tuple[float, float, float, float]]] = None
@@ -409,15 +411,9 @@ def image_transform(
             else:
                 input_size = (3, image_size, image_size)
 
-            aug_cfg_dict.setdefault('color_jitter', None)  # disable by default
-            # drop extra non-timm items
-            aug_cfg_dict.pop('color_jitter_prob', None)
-            aug_cfg_dict.pop('gray_scale_prob', None)
-
             timm_transform_kwargs = dict(
                 input_size=input_size,
                 is_training=True,
-                hflip=0.,
                 mean=mean,
                 std=std,
                 re_mode='pixel',
