@@ -176,7 +176,7 @@ def collate_variable_text(
 
 def collate_naflex_dicts(
         batch: List[Sample],
-        image_key: str = "image",
+        primary_key: str = "image",
         target_key: str = "text",
         max_seq_len: Optional[int] = None,
         pad_id: Optional[int] = None,
@@ -187,24 +187,24 @@ def collate_naflex_dicts(
         # Variable-length captions padded within the batch. The `<target>_valid` mask is always emitted; tasks
         # select the batch keys they consume, so contrastive towers simply ignore it.
         images = NaFlexBatchScheduler._collate_images(
-            [sample[image_key] for sample in batch], max_seq_len,
+            [sample[primary_key] for sample in batch], max_seq_len,
         )
         text, text_valid = collate_variable_text(
             [sample[target_key] for sample in batch], pad_id,
             pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
         )
         return {
-            image_key: images,
+            primary_key: images,
             target_key: text,
             f"{target_key}_valid": text_valid,
         }
 
     images, targets = collate_naflex_tuples(
-        [(sample[image_key], sample[target_key]) for sample in batch],
+        [(sample[primary_key], sample[target_key]) for sample in batch],
         max_seq_len=max_seq_len,
     )
     return {
-        image_key: images,
+        primary_key: images,
         target_key: targets,
     }
 
@@ -357,7 +357,7 @@ class NaFlexBatchScheduler:
             rank: int = 0,
             world_size: int = 1,
             batch_divisor: int = 8,
-            image_key: str = "image",
+            primary_key: str = "image",
             target_key: str = "text",
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
@@ -402,7 +402,7 @@ class NaFlexBatchScheduler:
         self.batch_divisor = int(batch_divisor)
         if self.batch_divisor <= 0:
             raise ValueError("`batch_divisor` must be positive.")
-        self.image_key = image_key
+        self.primary_key = primary_key
         self.target_key = target_key
         self.pad_id = pad_id
         # Per-row text token cost added when sizing batches so the token budget counts image + text (the
@@ -621,7 +621,7 @@ class NaFlexBatchScheduler:
         targets = []
 
         for sample in samples:
-            image = sample[self.image_key]
+            image = sample[self.primary_key]
             image = transform(image) if transform is not None else image
             patch_dict = image if isinstance(image, dict) else patchify(image)
             patch_dicts.append(patch_dict)
@@ -637,13 +637,13 @@ class NaFlexBatchScheduler:
                 targets, self.pad_id, pad_multiple=self.text_pad_multiple, pad_cap=self.text_pad_cap,
             )
             return {
-                self.image_key: images,
+                self.primary_key: images,
                 self.target_key: text,
                 f"{self.target_key}_valid": text_valid,
             }
 
         return {
-            self.image_key: images,
+            self.primary_key: images,
             self.target_key: default_collate(targets),
         }
 
@@ -669,7 +669,7 @@ class NaFlexBatcher:
             world_size: int = 1,
             epoch=-1,
             batch_divisor: int = 8,
-            image_key: str = "image",
+            primary_key: str = "image",
             target_key: str = "text",
             pad_id: Optional[int] = None,
             per_row_text_tokens: int = 0,
@@ -694,7 +694,7 @@ class NaFlexBatcher:
             rank=rank,
             world_size=world_size,
             batch_divisor=batch_divisor,
-            image_key=image_key,
+            primary_key=primary_key,
             target_key=target_key,
             pad_id=pad_id,
             per_row_text_tokens=per_row_text_tokens,

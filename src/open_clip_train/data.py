@@ -271,12 +271,21 @@ def count_samples(dataloader):
 
 def filter_no_caption_or_no_image(sample):
     has_caption = ('txt' in sample)
-    has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
+    has_image = _has_image(sample)
     return has_caption and has_image
 
 
-def _has_image(sample):
-    return ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
+DEFAULT_IMAGE_KEY = "jpg;png;jpeg;webp"
+
+
+def _split_wds_keys(keys):
+    if isinstance(keys, str):
+        return tuple(k.strip() for k in keys.split(";") if k.strip())
+    return tuple(k.strip() for k in keys if isinstance(k, str) and k.strip())
+
+
+def _has_image(sample, image_keys=DEFAULT_IMAGE_KEY):
+    return any(key in sample for key in _split_wds_keys(image_keys))
 
 
 class FilterValidSample:
@@ -285,14 +294,21 @@ class FilterValidSample:
     Module-level + picklable (forkserver-safe). Two mutually-exclusive caption sources:
       - ``json_text_key`` set  -> require a ``.json`` member (caption read from a field of it).
       - otherwise              -> require one of the ``text_key`` member suffixes (``;``-separated alternatives).
+    ``image_key`` accepts the same ``;``-separated member suffix alternatives for the image.
     """
 
-    def __init__(self, text_key: str = "txt", json_text_key: Optional[str] = None):
+    def __init__(
+            self,
+            text_key: str = "txt",
+            json_text_key: Optional[str] = None,
+            image_key: str = DEFAULT_IMAGE_KEY,
+    ):
         self.json_text_key = json_text_key
-        self.text_keys = None if json_text_key else tuple(text_key.split(";"))
+        self.image_keys = _split_wds_keys(image_key)
+        self.text_keys = None if json_text_key else _split_wds_keys(text_key)
 
     def __call__(self, sample):
-        if not _has_image(sample):
+        if not _has_image(sample, self.image_keys):
             return False
         if self.json_text_key is not None:
             return 'json' in sample
@@ -302,12 +318,14 @@ class FilterValidSample:
 class JsonCaptionExtractor:
     """Set ``sample['text']`` from a field of the sample's JSON metadata (datasets without a ``.txt`` member).
 
-    Robust to the JSON being either a parsed dict or raw bytes/str (depending on the decoder), and drops the
-    raw metadata afterwards. Module-level + picklable, mirroring ``TokenizeText``.
+    ``caption_key`` may be a single key, a ``;``-separated priority string, or a list/tuple of keys. The first
+    non-empty string value wins. Robust to JSON being either a parsed dict or raw bytes/str, and drops the raw
+    metadata afterwards. Module-level + picklable, mirroring ``TokenizeText``.
     """
 
-    def __init__(self, caption_key: str, json_key: str = "json"):
+    def __init__(self, caption_key, json_key: str = "json"):
         self.caption_key = caption_key
+        self.caption_keys = _split_wds_keys(caption_key)
         self.json_key = json_key
 
     def __call__(self, sample):
@@ -317,10 +335,32 @@ class JsonCaptionExtractor:
                 meta = json.loads(meta)
             except (ValueError, TypeError):
                 meta = {}
-        caption = meta.get(self.caption_key) if isinstance(meta, dict) else None
-        sample["text"] = caption if isinstance(caption, str) else ""
+        caption = ""
+        if isinstance(meta, dict):
+            for key in self.caption_keys:
+                value = meta.get(key)
+                if isinstance(value, str) and value.strip():
+                    caption = value.strip()
+                    break
+        sample["text"] = caption
         sample.pop(self.json_key, None)
         return sample
+
+
+class FilterNonEmptyText:
+    """WebDataset filter keeping samples whose normalized text field is non-empty."""
+
+    def __init__(self, key: str = "text"):
+        self.key = key
+
+    def __call__(self, sample):
+        text = sample.get(self.key)
+        if isinstance(text, (bytes, bytearray)):
+            try:
+                text = text.decode("utf-8")
+            except UnicodeDecodeError:
+                return False
+        return isinstance(text, str) and bool(text.strip())
 
 
 def decode_pil_rgb(data):
@@ -336,9 +376,23 @@ def decode_pil_rgb(data):
         return img.convert("RGB")
 
 
+_wds_error_count = 0
+# Web-scraped sets (DFN/LAION) carry a small fraction of junk the pipeline skips -- HTML error pages saved
+# as .jpg (UnidentifiedImageError), mislabeled/oversized images (DecompressionBombError), truncated bytes.
+# A per-sample WARNING floods the log when that junk is concentrated (e.g. a dirty tail shard) or re-hit
+# under --dataset-resampled. So log the first skip + a running total every N (env OPEN_CLIP_WDS_ERROR_LOG_EVERY,
+# default 1000; set <=0 to silence the WARNING entirely). Full per-sample detail stays at DEBUG.
+_WDS_ERROR_LOG_EVERY = int(os.environ.get('OPEN_CLIP_WDS_ERROR_LOG_EVERY', '1000'))
+
+
 def log_and_continue(exn):
-    """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    _logger.warning(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    """Call in an exception handler to ignore any exception, log (rate-limited), and continue."""
+    global _wds_error_count
+    _wds_error_count += 1
+    n = _wds_error_count
+    _logger.debug(f'Handling webdataset error ({repr(exn)}). Ignoring.')
+    if _WDS_ERROR_LOG_EVERY > 0 and (n == 1 or n % _WDS_ERROR_LOG_EVERY == 0):
+        _logger.warning(f'Skipped {n} webdataset samples (decode/load errors); ignoring. Most recent: {repr(exn)}.')
     return True
 
 
@@ -520,7 +574,7 @@ def append_naflex_train_stages(
         naflex_data_config,
         transform_factory,
         tokenize_text,
-        modality_key,
+        primary_key,
         num_samples,
         num_tokens,
         args,
@@ -539,9 +593,9 @@ def append_naflex_train_stages(
     optional length bucketing -> ``decode_stage`` -> ``NaFlexBatcher``.
     ``decode_stage`` is the caller's modality-specific decode map (image bytes -> PIL / audio bytes ->
     ``(waveform, sr)``); it runs after the bucketer so the bucket pool holds raw, undecoded samples.
-    The batcher reads ``sample[modality_key]`` (``"image"`` or ``"audio"``) plus ``sample['text']`` and applies
+    The batcher reads ``sample[primary_key]`` (``"image"`` or ``"audio"``) plus ``sample['text']`` and applies
     ``transform_factory`` to produce the ``{patches, patch_coord, patch_valid}`` rows -- so audio reuses the
-    whole batching/scheduling/collation path unchanged via ``modality_key="audio"``.
+    whole batching/scheduling/collation path unchanged via ``primary_key="audio"``.
     """
     patch_size = None
     patch_size_choices = naflex_data_config.train_patch_sizes
@@ -574,7 +628,7 @@ def append_naflex_train_stages(
         world_size=args.world_size,
         epoch=shared_epoch,
         batch_divisor=naflex_data_config.batch_divisor,
-        image_key=modality_key,
+        primary_key=primary_key,
         pad_id=pad_id,
         per_row_text_tokens=per_row_text_tokens,
         pad_multiple=pad_multiple,
@@ -584,7 +638,7 @@ def append_naflex_train_stages(
     if pad_id is not None:
         _logger.info(
             f"NaFlex batch budget = {naflex_data_config.max_tokens_per_batch} modality tokens/row-batch "
-            f"({modality_key} bucket"
+            f"({primary_key} bucket"
             + (f" + text cap {per_row_text_tokens}" if per_row_text_tokens else "")
             + ")"
             + ("; length bucketing ON" if bucketer is not None else "")
@@ -701,21 +755,24 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     # same regime as the raw-sample shuffle above) -- a pool of decoded full-resolution images is 10-50x
     # larger and can OOM dataloader workers on hi-res data. One ordering for all branches, bucketed or not;
     # the decode-first assembly lives in legacy_data.py.
+    image_key = getattr(args, 'image_key', DEFAULT_IMAGE_KEY) or DEFAULT_IMAGE_KEY
     text_key = getattr(args, 'text_key', 'txt') or 'txt'
     json_text_key = getattr(args, 'json_text_key', None)
     if json_text_key:
         # Read the caption from a field of each sample's .json (datasets without a text member, e.g. monet).
         pipeline.extend([
-            wds.select(FilterValidSample(json_text_key=json_text_key)),
-            wds.rename(image="jpg;png;jpeg;webp", json="json", keep=False),
+            wds.select(FilterValidSample(json_text_key=json_text_key, image_key=image_key)),
+            wds.rename(image=image_key, json="json", keep=False),
             wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),  # parses raw bytes itself
+            wds.select(FilterNonEmptyText()),
         ])
     else:
         # Read the caption from a tar member (default 'txt'; --text-key allows alternatives like 'txt;caption').
         # Plain-text members only (TokenizeText utf-8 decodes the raw bytes); json captions use --json-text-key.
         pipeline.extend([
-            wds.select(FilterValidSample(text_key=text_key)),
-            wds.rename(image="jpg;png;jpeg;webp", text=text_key, keep=False),
+            wds.select(FilterValidSample(text_key=text_key, image_key=image_key)),
+            wds.rename(image=image_key, text=text_key, keep=False),
+            wds.select(FilterNonEmptyText()),
         ])
     decode_image = wds.map_dict(image=decode_pil_rgb, handler=log_and_continue)
 
@@ -735,7 +792,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             naflex_data_config=naflex_data_config,
             transform_factory=preprocess_img,
             tokenize_text=tokenize_text,
-            modality_key="image",
+            primary_key="image",
             num_samples=num_samples,
             num_tokens=num_image_tokens,
             args=args,

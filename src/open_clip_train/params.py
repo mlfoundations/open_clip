@@ -191,6 +191,13 @@ def parse_args(args):
         help="For csv-like datasets, the name of the key for the captions."
     )
     parser.add_argument(
+        "--image-key",
+        type=str,
+        default="jpg;png;jpeg;webp",
+        help="For image WebDataset datasets, the tar member suffix holding the image. "
+             "Accepts ';'-separated alternatives, e.g. 'jpg;png;jpeg;webp'."
+    )
+    parser.add_argument(
         "--text-key",
         type=str,
         default="txt",
@@ -202,7 +209,8 @@ def parse_args(args):
         type=str,
         default=None,
         help="For WebDataset datasets, read the caption from this field of each sample's .json member instead "
-             "of a text file (e.g. 'caption_sharegpt4v-7b'). Takes precedence over --text-key."
+             "of a text file. Accepts ';'-separated priority alternatives, e.g. "
+             "'caption_florence-2-large;caption_sharegpt4v-7b'. Takes precedence over --text-key."
     )
     parser.add_argument(
         "--imagenet-val",

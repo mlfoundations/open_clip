@@ -308,7 +308,7 @@ def get_wds_audio_dataset(
             naflex_data_config=naflex_data_config,
             transform_factory=preprocess_audio,
             tokenize_text=naflex_tokenize,
-            modality_key="audio",
+            primary_key="audio",
             num_samples=num_samples,
             num_tokens=None,
             args=args,
@@ -332,7 +332,7 @@ def get_wds_audio_dataset(
                     partial=True,
                     collation_fn=partial(
                         collate_naflex_dicts,
-                        image_key="audio",
+                        primary_key="audio",
                         max_seq_len=eval_seq_len,
                         pad_id=naflex_pad_id,
                         text_pad_multiple=text_pad_multiple,
