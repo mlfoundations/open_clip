@@ -398,7 +398,7 @@ def test_json_caption_key():
     """FilterValidSample + JsonCaptionExtractor read captions from a chosen JSON field."""
     import json as _json
     import pickle
-    from open_clip_train.data import FilterValidSample, JsonCaptionExtractor
+    from open_clip_train.data import FilterNonEmptyText, FilterValidSample, JsonCaptionExtractor
 
     # filter: member-mode requires the text member(s); json-mode requires .json (both need an image)
     assert FilterValidSample()({"txt": b"x", "jpg": b"i"})
@@ -406,7 +406,11 @@ def test_json_caption_key():
     assert not FilterValidSample()({"txt": b"x"})                           # no image
     assert FilterValidSample(text_key="caption")({"caption": b"x", "jpg": b"i"})
     assert FilterValidSample(text_key="txt;caption")({"caption": b"x", "jpg": b"i"})  # ';' alternative
+    assert FilterValidSample(image_key="ppm")({"txt": b"x", "ppm": b"i"})
+    assert FilterValidSample(text_key="caption", image_key="ppm;pgm")({"caption": b"x", "pgm": b"i"})
+    assert not FilterValidSample(image_key="ppm")({"txt": b"x", "jpg": b"i"})          # custom image key
     assert FilterValidSample(json_text_key="caption_x")({"json": b"{}", "jpg": b"i"})
+    assert FilterValidSample(json_text_key="caption_x", image_key="ppm")({"json": b"{}", "ppm": b"i"})
     assert not FilterValidSample(json_text_key="caption_x")({"jpg": b"i"})  # no json
 
     ex = JsonCaptionExtractor("caption_x")
@@ -416,9 +420,31 @@ def test_json_caption_key():
     assert out["text"] == "a cat" and "json" not in out
     out = ex({"image": object(), "json": _json.dumps(meta).encode()})
     assert out["text"] == "a cat"
-    # missing field -> empty string (sample later filtered/handled), and picklable
+    # missing field -> empty string (sample later filtered), and picklable
     assert ex({"image": object(), "json": {"other": "z"}})["text"] == ""
     assert pickle.loads(pickle.dumps(ex)) is not None
+
+    # json caption keys support ordered fallback via both ';' strings and explicit lists/tuples.
+    fallback_meta = {
+        "caption_a": "   ",
+        "caption_b": " second ",
+        "caption_c": "third",
+    }
+    assert (
+        JsonCaptionExtractor("caption_a;caption_b;caption_c")({"json": fallback_meta})["text"] == "second"
+    )
+    assert JsonCaptionExtractor(["missing", "caption_c"])({"json": fallback_meta})["text"] == "third"
+    assert JsonCaptionExtractor(("missing", "caption_a"))({"json": fallback_meta})["text"] == ""
+
+    non_empty = FilterNonEmptyText()
+    assert non_empty({"text": "caption"})
+    assert non_empty({"text": b"caption"})
+    assert not non_empty({"text": ""})
+    assert not non_empty({"text": "   "})
+    assert not non_empty({"text": b"   "})
+    assert not non_empty({"caption": "caption"})
+    assert not non_empty({"text": 1})
+    assert pickle.loads(pickle.dumps(non_empty)) is not None
 
 
 def test_fsdp_shard_modules_are_name_module_pairs():

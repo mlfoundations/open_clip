@@ -17,7 +17,7 @@ def _tokens(tok, text):
 
 
 def test_audio_naflex_batch_via_scheduler_feeds_model():
-    """End-to-end: AudioNaFlexTransformFactory + the modality-agnostic scheduler (image_key='audio') produce
+    """End-to-end: AudioNaFlexTransformFactory + the modality-agnostic scheduler (primary_key='audio') produce
     a `{audio, text, text_valid}` batch the GenLAP model consumes."""
     pytest.importorskip("torchaudio")
     from open_clip_train.naflex_data import NaFlexBatchScheduler
@@ -31,7 +31,7 @@ def test_audio_naflex_batch_via_scheduler_feeds_model():
         max_tokens_per_batch=4096,
         transform_factory=AudioNaFlexTransformFactory(cfg),
         shuffle=False,
-        image_key="audio",
+        primary_key="audio",
         pad_id=tok.pad_token_id,
         per_row_text_tokens=64,
     )

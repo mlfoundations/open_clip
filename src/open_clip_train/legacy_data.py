@@ -29,6 +29,8 @@ from torch.utils.data.dataloader import default_collate
 from open_clip_train import audio_data as _audio_data
 from open_clip_train.data import (
     DataInfo,
+    DEFAULT_IMAGE_KEY,
+    FilterNonEmptyText,
     FilterValidSample,
     JsonCaptionExtractor,
     ResampledShards2,
@@ -130,20 +132,23 @@ def get_wds_dataset_legacy(args, preprocess_img, is_train, epoch=0, floor=False,
 
     pipeline = _legacy_shard_head(args, input_shards, is_train, resampled, shared_epoch)
 
+    image_key = getattr(args, 'image_key', DEFAULT_IMAGE_KEY) or DEFAULT_IMAGE_KEY
     text_key = getattr(args, 'text_key', 'txt') or 'txt'
     json_text_key = getattr(args, 'json_text_key', None)
     if json_text_key:
         pipeline.extend([
-            wds.select(FilterValidSample(json_text_key=json_text_key)),
+            wds.select(FilterValidSample(json_text_key=json_text_key, image_key=image_key)),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", json="json", keep=False),
+            wds.rename(image=image_key, json="json", keep=False),
             wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),
+            wds.select(FilterNonEmptyText()),
         ])
     else:
         pipeline.extend([
-            wds.select(FilterValidSample(text_key=text_key)),
+            wds.select(FilterValidSample(text_key=text_key, image_key=image_key)),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", text=text_key, keep=False),
+            wds.rename(image=image_key, text=text_key, keep=False),
+            wds.select(FilterNonEmptyText()),
         ])
 
     variable_text, _, collate_fn = _legacy_text_collate(args, tokenizer)

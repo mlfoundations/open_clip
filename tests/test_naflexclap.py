@@ -126,7 +126,7 @@ def test_naflexclap_naflex_audio_batch_via_scheduler():
         max_tokens_per_batch=4096,
         transform_factory=AudioNaFlexTransformFactory(naflex_cfg),
         shuffle=False,
-        image_key="audio",
+        primary_key="audio",
         pad_id=None,             # contrastive: fixed-length text via default collate
         per_row_text_tokens=0,
     )
@@ -195,7 +195,7 @@ def test_naflexclap_audio_zero_shot_run_path():
 
     classnames = ["dog barking", "rain", "engine"]
     samples = [{"audio": transform((torch.randn(1, sr * 2), sr)), "target": i % 3} for i in range(6)]
-    batch = collate_naflex_dicts(samples, image_key="audio", target_key="target", max_seq_len=256)
+    batch = collate_naflex_dicts(samples, primary_key="audio", target_key="target", max_seq_len=256)
     assert set(batch["audio"]) >= {"patches", "patch_coord", "patch_valid"}
     assert batch["target"].shape == (6,)
 

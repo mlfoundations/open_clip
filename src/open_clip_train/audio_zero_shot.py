@@ -258,7 +258,7 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
             "clips are truncated. Override with --naflex-seq-lens.", seq_len, secs,
         )
         transform = AudioNaFlexTransformFactory(naflex_cfg)(max_seq_len=seq_len, patch_size=None)
-        collate_fn = partial(collate_naflex_dicts, image_key="audio", target_key="target", max_seq_len=seq_len)
+        collate_fn = partial(collate_naflex_dicts, primary_key="audio", target_key="target", max_seq_len=seq_len)
     else:
         audio_aug_cfg = {
             "data_trunc": getattr(args, "audio_trunc", "rand_trunc"),
