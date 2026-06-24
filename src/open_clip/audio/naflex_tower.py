@@ -31,6 +31,13 @@ class NaFlexAudioEncoder(nn.Module):
             "global_pool": "map",               # attentive pooling
             **dict(audio_cfg.naflexvit_cfg),    # embed_dim/depth/num_heads/... (and attn_gated/mrope if opted in)
         }
+        # Audio patches are channels-first (C, p_f, p_t). Today's flat-3-D, no-interpolator path is layout-agnostic
+        # (flatten + Linear), so this flag is a no-op for current models -- it only matters once the FlexiViT patch
+        # interpolator is enabled (it then tells timm to reshape [C, pf, pt]). Only pass it when the installed timm's
+        # NaFlexVitCfg supports it, so we don't hard-depend on that timm change yet (auto-enables once it lands).
+        # setdefault so an explicit naflexvit_cfg override still wins.
+        if "patchify_channels_last" in getattr(NaFlexVitCfg, "__dataclass_fields__", {}):
+            vit_kwargs.setdefault("patchify_channels_last", False)
         vit_cfg = NaFlexVitCfg(**vit_kwargs)
         self.vit = NaFlexVit(vit_cfg, in_chans=audio_cfg.in_chans, num_classes=0)
         self.embed_dim = vit_cfg.embed_dim

@@ -174,8 +174,13 @@ def mel_to_patches(
         mel = _pad_mel_time(mel, pad_frames, pad_mode)   # complete the final time patch (floor/silence/repeat fill)
 
     mel = mel.reshape(c, tt, patch_time, f, patch_freq)  # (C, Tt, p_t, F, p_f)
-    mel = mel.permute(3, 1, 0, 2, 4).contiguous()        # (F, Tt, C, p_t, p_f): freq outer, time inner
-    patches = mel.reshape(f * tt, c * patch_time * patch_freq)
+    # Grid (F, Tt): freq outer, time inner (matches patch_coord below). Within-patch flatten order is canonical
+    # (C, p_f, p_t) -- spatial order matches patch_size=(patch_freq, patch_time), so timm's patch interpolator
+    # (FlexiViT / variable-pf) resizes the right axes. NOTE: until 2026-06-24 this emitted (C, p_t, p_f) (the
+    # spatial axes transposed); checkpoints trained before then must have their audio patch-embed weight remapped
+    # -- run ``scripts/convert_audio_patch_layout.py``.
+    mel = mel.permute(3, 1, 0, 4, 2)                      # (F, Tt, C, p_f, p_t)
+    patches = mel.contiguous().reshape(f * tt, c * patch_freq * patch_time)
 
     freq_idx = torch.arange(f, device=patches.device).repeat_interleave(tt)
     time_idx = torch.arange(tt, device=patches.device).repeat(f)
