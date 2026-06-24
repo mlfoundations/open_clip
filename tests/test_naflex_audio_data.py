@@ -26,7 +26,7 @@ def test_audio_naflex_batch_via_scheduler_feeds_model():
     tok = get_tokenizer(CONFIG_1D)
     sched = NaFlexBatchScheduler(
         train_num_samples=100,
-        patch_size=(cfg.patch_time, cfg.patch_freq),  # cosmetic (audio transform returns the dict directly)
+        patch_size=(cfg.patch_freq, cfg.patch_time),  # cosmetic (audio transform returns the dict directly); (pf, pt) order
         seq_lens=(256,),
         max_tokens_per_batch=4096,
         transform_factory=AudioNaFlexTransformFactory(cfg),
