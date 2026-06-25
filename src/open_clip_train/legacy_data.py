@@ -219,7 +219,6 @@ def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floo
             audio=preprocess_audio,
             text=_audio_data._TokenizeAudioCaption(tokenizer, variable=variable_text),
         ),
-        wds.map(_audio_data._keep_audio_text),
         wds.batched(args.batch_size, partial=not is_train, collation_fn=audio_collate),
     ])
     dataset = wds.DataPipeline(*pipeline)
