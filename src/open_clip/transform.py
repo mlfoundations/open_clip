@@ -1,7 +1,7 @@
 import numbers
 import random
 import warnings
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, InitVar
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -72,8 +72,18 @@ class AugmentationCfg:
     use_timm: bool = False
 
     # params for simclr_jitter_gray
-    color_jitter_prob: float = None
-    gray_scale_prob: float = None
+    color_jitter_prob: Optional[float] = None
+    grayscale_prob: Optional[float] = None
+
+    # For backwards compatibility
+    gray_scale_prob: InitVar[Optional[float]] = None
+
+    def __post_init__(self, gray_scale_prob):
+        if gray_scale_prob is not None and self.grayscale_prob is not None:
+            raise ValueError("Only one of `gray_scale_prob` or `grayscale_prob` should be specified, not both.")
+
+        if gray_scale_prob is not None:
+            self.grayscale_prob = gray_scale_prob
 
 
 class NaFlexTransformFactory:
@@ -442,9 +452,9 @@ def image_transform(
                 train_transform.extend([
                     color_jitter(*aug_cfg.color_jitter, p=aug_cfg.color_jitter_prob)
                 ])
-            if aug_cfg.gray_scale_prob:
+            if aug_cfg.grayscale_prob:
                 train_transform.extend([
-                    gray_scale(aug_cfg.gray_scale_prob)
+                    gray_scale(aug_cfg.grayscale_prob)
                 ])
             train_transform.extend([
                 MaybeToTensor(),
