@@ -1,6 +1,7 @@
 import io
 import logging
 import math
+import os
 import random
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -33,6 +34,7 @@ __all__ = [
     "NaFlexBatchScheduler",
     "NaFlexBatcher",
     "NaFlexMapDatasetWrapper",
+    "SampleDecodeError",
     "collate_naflex_dicts",
     "collate_naflex_tuples",
     "create_naflex_data_config_from_args",
@@ -42,6 +44,21 @@ __all__ = [
     "require_naflex",
     "resolve_patch_cfg",
 ]
+
+
+# Consecutive (not total) decode failures the streaming batcher tolerates before giving up -- a sparse dirty
+# shard resets the counter on the next good sample, but a fully-corrupt stream / systematic decode bug raises
+# a diagnosable error instead of spinning forever against the infinite source. Mirrors OPEN_CLIP_WDS_ERROR_LOG_EVERY.
+_MAX_CONSECUTIVE_DECODE_FAILURES = int(os.environ.get("OPEN_CLIP_MAX_CONSECUTIVE_DECODE_FAILURES", "1000"))
+
+
+class SampleDecodeError(Exception):
+    """Raised by ``NaFlexBatchScheduler.process_sample`` when ``decode_fn`` fails on a sample's raw bytes.
+
+    The streaming batcher catches this to skip + replenish the bad sample (keeping batches exactly
+    ``batch_size``). Transform/patchify errors are intentionally NOT wrapped -- a failure there is a bug, not bad
+    data, so it propagates loudly (mirrors the old decode-only ``handler=log_and_continue`` stage).
+    """
 
 
 def require_naflex() -> None:
@@ -224,8 +241,7 @@ class CaptionLength:
         self.key = key
 
     def __call__(self, sample: Sample) -> int:
-        value = sample.get(self.key)
-        if value is None:
+        if (value := sample.get(self.key)) is None:
             return 0
         return value.shape[0] if hasattr(value, "shape") else len(value)
 
@@ -364,6 +380,7 @@ class NaFlexBatchScheduler:
             pad_multiple: Optional[int] = None,
             text_pad_multiple: Optional[int] = None,
             text_pad_cap: Optional[int] = None,
+            decode_fn: Optional[Callable] = None,
     ) -> None:
         require_naflex()
 
@@ -394,6 +411,10 @@ class NaFlexBatchScheduler:
         if self.max_tokens_per_batch <= 0:
             raise ValueError("`max_tokens_per_batch` must be positive.")
         self.transform_factory = transform_factory
+        # Optional per-modality decode (raw bytes -> PIL / (waveform, sr)) applied inside `process_sample` so the
+        # batcher accumulates small patch dicts, not `batch_size` decoded full-res samples. None -> samples are
+        # assumed already decoded (map-style / test callers).
+        self.decode_fn = decode_fn
         self.seed = int(seed)
         self.shuffle = bool(shuffle)
         self.distributed = bool(distributed)
@@ -609,24 +630,39 @@ class NaFlexBatchScheduler:
             "seq_len": max_patches,
         }
 
-    def collate_batch(
+    def process_sample(
             self,
-            samples: List[Sample],
+            sample: Sample,
             seq_len: int,
             patch_idx: int,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, torch.Tensor], Any]:
+        """Decode (optional) + transform + patchify one sample -> ``(patch_dict, target)``.
+
+        Decode is the only step wrapped: a ``decode_fn`` failure on raw bytes raises ``SampleDecodeError`` so the
+        streaming batcher can skip + replenish. ``transform`` / ``patchify`` stay unguarded -- a failure there is
+        a bug, not bad data, and should propagate (mirrors the old decode-only ``handler=log_and_continue`` stage).
+        Keeping decode in this method (rather than inlined into ``run``) frees the full-res sample on return, so
+        the batcher's accumulator never holds a decoded image -- only the small patch dicts.
+        """
         transform = self.transforms[(seq_len, patch_idx)]
         patchify = self.patchifiers[patch_idx]
-        patch_dicts = []
-        targets = []
+        primary = sample[self.primary_key]
+        if self.decode_fn is not None:
+            try:
+                primary = self.decode_fn(primary)  # raw bytes -> PIL / (waveform, sr)
+            except Exception as ex:
+                raise SampleDecodeError(repr(ex)) from ex
+        primary = transform(primary) if transform is not None else primary
+        patch_dict = primary if isinstance(primary, dict) else patchify(primary)
+        return patch_dict, sample[self.target_key]
 
-        for sample in samples:
-            primary = sample[self.primary_key]
-            primary = transform(primary) if transform is not None else primary
-            patch_dict = primary if isinstance(primary, dict) else patchify(primary)
-            patch_dicts.append(patch_dict)
-            targets.append(sample[self.target_key])
-
+    def collate_processed(
+            self,
+            patch_dicts: List[Dict[str, torch.Tensor]],
+            targets: List[Any],
+            seq_len: int,
+    ) -> Dict[str, Any]:
+        """Collate already-processed ``(patch_dict, target)`` rows into a NaFlex batch dict."""
         primary_batch = self._collate_patch_dicts(
             patch_dicts, seq_len, pad_multiple=self.pad_multiple, freq_tokens=self.pad_freq_tokens,
         )
@@ -646,6 +682,23 @@ class NaFlexBatchScheduler:
             self.primary_key: primary_batch,
             self.target_key: default_collate(targets),
         }
+
+    def collate_batch(
+            self,
+            samples: List[Sample],
+            seq_len: int,
+            patch_idx: int,
+    ) -> Dict[str, Any]:
+        """Process + collate a pre-pulled list of samples (decode happens in-loop via ``process_sample``).
+
+        The streaming ``NaFlexBatcher.run`` path drives ``process_sample`` / ``collate_processed`` directly so it
+        can skip + replenish decode failures; this stays a convenience for map-style / test callers that hold a
+        fixed sample list. With ``decode_fn=None`` it is equivalent to the pre-refactor ``collate_batch``.
+        """
+        processed = [self.process_sample(sample, seq_len, patch_idx) for sample in samples]
+        patch_dicts = [patch_dict for patch_dict, _ in processed]
+        targets = [target for _, target in processed]
+        return self.collate_processed(patch_dicts, targets, seq_len)
 
 
 class NaFlexBatcher:
@@ -676,8 +729,18 @@ class NaFlexBatcher:
             pad_multiple: Optional[int] = None,
             text_pad_multiple: Optional[int] = None,
             text_pad_cap: Optional[int] = None,
+            decode_fn: Optional[Callable] = None,
+            decode_error_handler: Optional[Callable] = None,
+            drop_last: bool = True,
     ) -> None:
         self.epoch = epoch
+        # `decode_fn` runs per-sample inside the scheduler; `decode_error_handler` (e.g. data.log_and_continue) is
+        # called by `run` to log skipped decode failures -- threaded in to avoid a naflex_data -> data import cycle.
+        # A falsy handler return re-raises (webdataset convention). `drop_last` follows PyTorch batching: True
+        # (train/DDP default) drops a trailing partial batch on source exhaustion so ranks never see a short
+        # batch; an eval caller would pass False to keep the final partial batch.
+        self.decode_error_handler = decode_error_handler
+        self.drop_last = bool(drop_last)
         self.scheduler = NaFlexBatchScheduler(
             train_num_samples=train_num_samples,
             train_num_tokens=train_num_tokens,
@@ -701,6 +764,7 @@ class NaFlexBatcher:
             pad_multiple=pad_multiple,
             text_pad_multiple=text_pad_multiple,
             text_pad_cap=text_pad_cap,
+            decode_fn=decode_fn,
         )
 
     @property
@@ -737,14 +801,38 @@ class NaFlexBatcher:
 
         for seq_len, batch_size in self.scheduler.worker_schedule(epoch):
             patch_idx = self.scheduler.sample_patch_idx(generator)
-            samples = []
-            for _ in range(batch_size):
-                sample = next(samples_iter)
+            # Decode is deferred into `process_sample`, so only one full-res sample is alive at a time -- the
+            # accumulator holds small patch dicts, not `batch_size` decoded images (the OOM that motivated this).
+            # Skip + replenish on a decode failure so every batch stays exactly `batch_size`, which DDP feature
+            # all-gather requires (equal shapes across ranks). The train source is effectively infinite
+            # (RepeatedShardList), so StopIteration is abnormal here -- `drop_last` then governs the trailing
+            # partial batch (drop for train so ranks never see a short batch; keep for eval).
+            patch_dicts: List[Dict[str, torch.Tensor]] = []
+            targets: List[Any] = []
+            consecutive_failures = 0
+            while len(patch_dicts) < batch_size:
+                try:
+                    sample = next(samples_iter)
+                except StopIteration:
+                    break
                 if not isinstance(sample, dict):
                     raise TypeError("NaFlexBatcher expects dictionary samples from the data pipeline.")
-                samples.append(sample)
-            if samples:
-                yield self.scheduler.collate_batch(samples, seq_len, patch_idx)
+                try:
+                    patch_dict, target = self.scheduler.process_sample(sample, seq_len, patch_idx)
+                except SampleDecodeError as ex:
+                    # webdataset handler convention: a falsy return (or `reraise_exception`) means stop -> re-raise;
+                    # a truthy return (e.g. `log_and_continue`) or no handler means skip + replenish this sample.
+                    if self.decode_error_handler is not None and not self.decode_error_handler(ex):
+                        raise
+                    consecutive_failures += 1
+                    if consecutive_failures > _MAX_CONSECUTIVE_DECODE_FAILURES:
+                        raise
+                    continue
+                consecutive_failures = 0
+                patch_dicts.append(patch_dict)
+                targets.append(target)
+            if len(patch_dicts) == batch_size or (patch_dicts and not self.drop_last):
+                yield self.scheduler.collate_processed(patch_dicts, targets, seq_len)
 
 
 class NaFlexMapDatasetWrapper(IterableDataset):

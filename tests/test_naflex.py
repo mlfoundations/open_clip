@@ -13,6 +13,7 @@ from open_clip_train.data import get_imagenet, get_wds_dataset
 from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
     NaFlexBatcher,
+    SampleDecodeError,
     collate_naflex_tuples,
     create_naflex_data_config_from_args,
 )
@@ -78,6 +79,115 @@ def test_naflex_batcher_returns_dict_batches():
     assert batch["image"]["patch_coord"].shape == (2, 4, 2)
     assert batch["image"]["patch_valid"].all()
     assert batch["text"].shape == (2, 1)
+
+
+# --- decode-in-loop (deferred decode + skip-and-replenish) ----------------------------------------------------
+_POISON = object()
+
+
+def _decode_to_pil(raw):
+    """Fake per-modality decode: a raw int token -> PIL; the poison sentinel raises like a corrupt byte stream."""
+    if raw is _POISON:
+        raise ValueError("corrupt bytes")
+    v = raw % 256
+    return Image.new("RGB", (32, 32), color=(v, v, v))
+
+
+def test_naflex_batcher_decode_fn_in_loop_matches_predecoded():
+    """Decoding raw samples via `decode_fn` inside the batcher loop yields the same batches as feeding
+    already-decoded PILs with `decode_fn=None` (the refactor is behavior-preserving)."""
+    common = dict(
+        train_num_samples=4, patch_size=16, seq_lens=(4,), max_tokens_per_batch=8,
+        transform_factory=_transform_factory, batch_divisor=1, shuffle=False,
+    )
+    raw = [{"image": i, "text": torch.tensor([i], dtype=torch.long)} for i in range(4)]
+    decoded = [{"image": _decode_to_pil(i), "text": torch.tensor([i], dtype=torch.long)} for i in range(4)]
+
+    b_in_loop = list(NaFlexBatcher(**common, decode_fn=_decode_to_pil).run(iter(raw)))
+    b_predecoded = list(NaFlexBatcher(**common).run(iter(decoded)))
+
+    assert len(b_in_loop) == len(b_predecoded) == 2
+    for a, b in zip(b_in_loop, b_predecoded):
+        assert torch.equal(a["image"]["patches"], b["image"]["patches"])
+        assert torch.equal(a["text"], b["text"])
+
+
+def test_naflex_batcher_skips_and_replenishes_decode_failures():
+    """A SampleDecodeError is skipped and replenished so every batch stays exactly `batch_size`, and the
+    decode_error_handler is invoked once per skipped sample."""
+    skipped = []
+    batcher = NaFlexBatcher(
+        train_num_samples=4, patch_size=16, seq_lens=(4,), max_tokens_per_batch=8,
+        transform_factory=_transform_factory, batch_divisor=1, shuffle=False,
+        decode_fn=_decode_to_pil, decode_error_handler=lambda ex: skipped.append(ex) or True,  # truthy -> skip
+    )
+
+    def src():  # infinite source; every 3rd sample is poison
+        i = 0
+        while True:
+            i += 1
+            yield {"image": (_POISON if i % 3 == 0 else i), "text": torch.tensor([i % 7], dtype=torch.long)}
+
+    batches = list(batcher.run(src()))
+    assert len(batches) == 2
+    for batch in batches:
+        assert batch["image"]["patches"].shape[0] == 2  # exactly batch_size despite the skipped poison
+    assert len(skipped) >= 1 and all(isinstance(ex, SampleDecodeError) for ex in skipped)
+
+
+def test_naflex_batcher_raises_after_consecutive_decode_failures(monkeypatch):
+    """A fully-failing decode trips the consecutive-failure guard (no infinite spin against the infinite source)."""
+    from open_clip_train import naflex_data as nd
+    monkeypatch.setattr(nd, "_MAX_CONSECUTIVE_DECODE_FAILURES", 3)
+
+    def always_fail(raw):
+        raise ValueError("decode always fails")
+
+    batcher = nd.NaFlexBatcher(
+        train_num_samples=4, patch_size=16, seq_lens=(4,), max_tokens_per_batch=8,
+        transform_factory=_transform_factory, batch_divisor=1, shuffle=False,
+        decode_fn=always_fail, decode_error_handler=lambda ex: True,  # keep skipping -> accumulate to the guard
+    )
+
+    def src():
+        i = 0
+        while True:
+            i += 1
+            yield {"image": i, "text": torch.tensor([0], dtype=torch.long)}
+
+    with pytest.raises(SampleDecodeError):
+        list(batcher.run(src()))
+
+
+def test_naflex_batcher_decode_error_handler_false_reraises():
+    """A decode_error_handler returning a falsy value re-raises immediately (webdataset handler convention),
+    instead of skipping -- so a caller can opt into fail-fast on bad data."""
+    batcher = NaFlexBatcher(
+        train_num_samples=4, patch_size=16, seq_lens=(4,), max_tokens_per_batch=8,
+        transform_factory=_transform_factory, batch_divisor=1, shuffle=False,
+        decode_fn=_decode_to_pil, decode_error_handler=lambda ex: False,
+    )
+    src = iter([{"image": _POISON, "text": torch.tensor([0], dtype=torch.long)}])
+    with pytest.raises(SampleDecodeError):
+        list(batcher.run(src))
+
+
+def test_naflex_batcher_drop_last_governs_trailing_partial_batch():
+    """On source exhaustion mid-batch, drop_last=True (train default) drops the short batch so DDP never sees an
+    uneven shape; drop_last=False (eval) keeps it. Full batches always yield."""
+    common = dict(
+        train_num_samples=4, patch_size=16, seq_lens=(4,), max_tokens_per_batch=8,  # schedule = 2 batches of 2
+        transform_factory=_transform_factory, batch_divisor=1, shuffle=False,
+    )
+
+    def three_samples():  # only 3 -> batch 0 full (2), batch 1 partial (1)
+        return iter([{"image": _decode_to_pil(i), "text": torch.tensor([i], dtype=torch.long)} for i in range(3)])
+
+    dropped = list(NaFlexBatcher(**common, drop_last=True).run(three_samples()))
+    assert len(dropped) == 1 and dropped[0]["image"]["patches"].shape[0] == 2  # partial 2nd batch dropped
+
+    kept = list(NaFlexBatcher(**common, drop_last=False).run(three_samples()))
+    assert len(kept) == 2 and kept[1]["image"]["patches"].shape[0] == 1  # partial 2nd batch kept
 
 
 def test_naflex_batcher_token_schedule_handles_distributed_padding():

@@ -279,9 +279,8 @@ DEFAULT_IMAGE_KEY = "jpg;png;jpeg;webp"
 
 
 def _split_wds_keys(keys):
-    if isinstance(keys, str):
-        return tuple(k.strip() for k in keys.split(";") if k.strip())
-    return tuple(k.strip() for k in keys if isinstance(k, str) and k.strip())
+    parts = keys.split(";") if isinstance(keys, str) else keys
+    return tuple(s for k in parts if isinstance(k, str) and (s := k.strip()))
 
 
 def _has_image(sample, image_keys=DEFAULT_IMAGE_KEY):
@@ -366,8 +365,7 @@ class JsonCaptionExtractor:
                     else _weighted_order(self.caption_keys, self.caption_weights))
             for key in keys:
                 value = meta.get(key)
-                if isinstance(value, str) and value.strip():
-                    caption = value.strip()
+                if isinstance(value, str) and (caption := value.strip()):
                     break
         return caption
 
@@ -607,7 +605,8 @@ def append_naflex_train_stages(
         pad_id,
         per_row_text_tokens,
         bucketer=None,
-        decode_stage=None,
+        decode_fn=None,
+        decode_error_handler=None,
         pad_multiple=None,
         text_pad_multiple=None,
         text_pad_cap=None,
@@ -615,9 +614,12 @@ def append_naflex_train_stages(
     """Append the modality-agnostic NaFlex train stages to ``pipeline`` and return the ``NaFlexBatcher``.
 
     Shared by the image (``get_wds_dataset``) and audio (``get_wds_audio_dataset``) pipelines: tokenize text ->
-    optional length bucketing -> ``decode_stage`` -> ``NaFlexBatcher``.
-    ``decode_stage`` is the caller's modality-specific decode map (image bytes -> PIL / audio bytes ->
-    ``(waveform, sr)``); it runs after the bucketer so the bucket pool holds raw, undecoded samples.
+    optional length bucketing -> ``NaFlexBatcher``.
+    ``decode_fn`` is the caller's modality-specific decode (image bytes -> PIL / audio bytes -> ``(waveform,
+    sr)``); the batcher applies it *inside its per-sample loop* (not as a pipeline stage) so the bucket pool AND
+    the batcher's per-batch accumulator both hold raw, undecoded samples -- only one decoded sample is alive at a
+    time (avoids accumulating ``batch_size`` full-res images -> OOM). ``decode_error_handler`` (e.g.
+    ``log_and_continue``) logs skipped decode failures.
     The batcher reads ``sample[primary_key]`` (``"image"`` or ``"audio"``) plus ``sample['text']`` and applies
     ``transform_factory`` to produce the ``{patches, patch_coord, patch_valid}`` rows -- so audio reuses the
     whole batching/scheduling/collation path unchanged via ``primary_key="audio"``.
@@ -634,8 +636,6 @@ def append_naflex_train_stages(
         # tightening per-batch-max padding. Reorder-only -> schedule / num_batches / DDP unchanged. The caller
         # owns the bucketer choice + policy (a LengthBucketer with the right length_fns per the model type).
         stages.append(bucketer)
-    if decode_stage is not None:
-        stages.append(decode_stage)
     stages.append(NaFlexBatcher(
         train_num_samples=num_samples,
         train_num_tokens=num_tokens,
@@ -659,6 +659,8 @@ def append_naflex_train_stages(
         pad_multiple=pad_multiple,
         text_pad_multiple=text_pad_multiple,
         text_pad_cap=text_pad_cap,
+        decode_fn=decode_fn,
+        decode_error_handler=decode_error_handler,
     ))
     if pad_id is not None:
         _logger.info(
@@ -828,7 +830,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=image_bucketer,
-            decode_stage=decode_image,
+            decode_fn=decode_pil_rgb,  # decode runs inside the batcher loop (one image alive at a time)
+            decode_error_handler=log_and_continue,
             pad_multiple=getattr(args, 'naflex_pad_multiple', None),
             text_pad_multiple=text_pad_multiple,
             text_pad_cap=text_pad_cap,

@@ -312,7 +312,8 @@ def get_wds_audio_dataset(
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=audio_bucketer,
-            decode_stage=decode_audio,
+            decode_fn=_decode_audio_bytes,  # decode runs inside the batcher loop (one waveform alive at a time)
+            decode_error_handler=log_and_continue,
             pad_multiple=getattr(args, "naflex_pad_multiple", None),
             text_pad_multiple=text_pad_multiple,
             text_pad_cap=text_pad_cap,
