@@ -398,6 +398,7 @@ def test_json_caption_key():
     """FilterValidSample + JsonCaptionExtractor read captions from a chosen JSON field."""
     import json as _json
     import pickle
+    import webdataset as wds
     from open_clip_train.data import FilterNonEmptyText, FilterValidSample, JsonCaptionExtractor
 
     # filter: member-mode requires the text member(s); json-mode requires .json (both need an image)
@@ -415,14 +416,18 @@ def test_json_caption_key():
 
     ex = JsonCaptionExtractor("caption_x")
     meta = {"caption_x": "a cat", "caption_y": "other", "w": 100}
-    # works from a parsed dict and from raw bytes; drops the json key afterwards
-    out = ex({"image": object(), "json": meta})
-    assert out["text"] == "a cat" and "json" not in out
-    out = ex({"image": object(), "json": _json.dumps(meta).encode()})
-    assert out["text"] == "a cat"
+    # works from a parsed dict and from raw bytes
+    assert ex(meta) == "a cat"
+    assert ex(_json.dumps(meta).encode()) == "a cat"
     # missing field -> empty string (sample later filtered), and picklable
-    assert ex({"image": object(), "json": {"other": "z"}})["text"] == ""
+    assert ex({"other": "z"}) == ""
     assert pickle.loads(pickle.dumps(ex)) is not None
+
+    # JSON caption extraction is field-level map_dict, not sample-level map. WebDataset's sample-level map
+    # re-adds __key__ from the input sample; after keep=False that becomes None and breaks default_collate.
+    sample = {"image": object(), "text": _json.dumps(meta).encode()}
+    out = next(iter(wds.map_dict(text=ex)([sample])))
+    assert out == {"image": sample["image"], "text": "a cat"}
 
     # json caption keys support ordered fallback via both ';' strings and explicit lists/tuples.
     fallback_meta = {
@@ -431,10 +436,10 @@ def test_json_caption_key():
         "caption_c": "third",
     }
     assert (
-        JsonCaptionExtractor("caption_a;caption_b;caption_c")({"json": fallback_meta})["text"] == "second"
+        JsonCaptionExtractor("caption_a;caption_b;caption_c")(fallback_meta) == "second"
     )
-    assert JsonCaptionExtractor(["missing", "caption_c"])({"json": fallback_meta})["text"] == "third"
-    assert JsonCaptionExtractor(("missing", "caption_a"))({"json": fallback_meta})["text"] == ""
+    assert JsonCaptionExtractor(["missing", "caption_c"])(fallback_meta) == "third"
+    assert JsonCaptionExtractor(("missing", "caption_a"))(fallback_meta) == ""
 
     non_empty = FilterNonEmptyText()
     assert non_empty({"text": "caption"})
@@ -445,6 +450,46 @@ def test_json_caption_key():
     assert not non_empty({"caption": "caption"})
     assert not non_empty({"text": 1})
     assert pickle.loads(pickle.dumps(non_empty)) is not None
+
+
+def test_json_caption_sampling():
+    """--json-text-key-probs draws caption keys into a weighted random priority order, then first-non-empty
+    wins; 0-weight keys stay as fallbacks, and no probs -> deterministic priority (back-compat)."""
+    import pickle
+    import random
+    from open_clip_train.data import JsonCaptionExtractor, _pad_caption_weights, _weighted_order
+
+    # _pad_caption_weights: None passthrough, tail-pad with 0, error when over-specified
+    assert _pad_caption_weights(None, 3) is None
+    assert _pad_caption_weights([0.7], 3) == [0.7, 0.0, 0.0]
+    assert _pad_caption_weights([0.7, 0.3], 2) == [0.7, 0.3]
+    with pytest.raises(ValueError):
+        _pad_caption_weights([0.1, 0.2, 0.3], 2)
+
+    # _weighted_order: 0-weight keys always sort last (fallbacks); output is a permutation (nothing dropped)
+    random.seed(0)
+    for _ in range(50):
+        order = _weighted_order(("a", "b", "c"), [0.5, 0.5, 0.0])
+        assert order[-1] == "c"
+        assert sorted(order) == ["a", "b", "c"]
+
+    meta = {"primary": "P", "secondary": "S"}
+
+    # all mass on 'primary' -> always 'primary' when present; the 0-weight key is used only as fallback
+    ex = JsonCaptionExtractor("primary;secondary", sample_probs=[1.0, 0.0])
+    random.seed(0)
+    assert all(ex(dict(meta)) == "P" for _ in range(20))
+    assert ex({"primary": "  ", "secondary": "S"}) == "S"   # primary empty -> fallback
+
+    # ~70/30 split between two present captions over seeded draws
+    ex = JsonCaptionExtractor("primary;secondary", sample_probs=[0.7, 0.3])
+    random.seed(1234)
+    picks = [ex(dict(meta)) for _ in range(2000)]
+    assert 0.65 < picks.count("P") / len(picks) < 0.75
+
+    # no probs -> deterministic priority; picklable with probs set
+    assert JsonCaptionExtractor("primary;secondary")(dict(meta)) == "P"
+    assert pickle.loads(pickle.dumps(ex)) is not None
 
 
 def test_fsdp_shard_modules_are_name_module_pairs():
