@@ -411,6 +411,8 @@ def image_transform(
             else:
                 input_size = (3, image_size, image_size)
 
+            aug_cfg_dict.setdefault('color_jitter', None)  # disable by default
+
             timm_transform_kwargs = dict(
                 input_size=input_size,
                 is_training=True,
