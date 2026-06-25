@@ -186,7 +186,7 @@ def collate_naflex_dicts(
     if pad_id is not None:
         # Variable-length captions padded within the batch. The `<target>_valid` mask is always emitted; tasks
         # select the batch keys they consume, so contrastive towers simply ignore it.
-        images = NaFlexBatchScheduler._collate_images(
+        primary_batch = NaFlexBatchScheduler._collate_patch_dicts(
             [sample[primary_key] for sample in batch], max_seq_len,
         )
         text, text_valid = collate_variable_text(
@@ -194,17 +194,17 @@ def collate_naflex_dicts(
             pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
         )
         return {
-            primary_key: images,
+            primary_key: primary_batch,
             target_key: text,
             f"{target_key}_valid": text_valid,
         }
 
-    images, targets = collate_naflex_tuples(
+    primary_batch, targets = collate_naflex_tuples(
         [(sample[primary_key], sample[target_key]) for sample in batch],
         max_seq_len=max_seq_len,
     )
     return {
-        primary_key: images,
+        primary_key: primary_batch,
         target_key: targets,
     }
 
@@ -405,10 +405,10 @@ class NaFlexBatchScheduler:
         self.primary_key = primary_key
         self.target_key = target_key
         self.pad_id = pad_id
-        # Per-row text token cost added when sizing batches so the token budget counts image + text (the
-        # worst-case caption length, i.e. the tokenizer context-length cap). 0 = image-only batch sizing
+        # Per-row text token cost added when sizing batches so the token budget counts primary + text (the
+        # worst-case caption length, i.e. the tokenizer context-length cap). 0 = primary-only batch sizing
         # (default; preserves CLIP/SigLIP behavior). GenLIP sets this to the caption cap so the budget bounds
-        # total (image+text) tokens per batch. It does NOT change the image bucket used for patchify/collation.
+        # total (primary+text) tokens per batch. It does NOT change the primary bucket used for patchify/collation.
         self.per_row_text_tokens = int(per_row_text_tokens or 0)
 
         # Native audio pads to batch max, optionally modulus-rounded for a smaller compile shape set.
@@ -479,7 +479,7 @@ class NaFlexBatchScheduler:
             seq_len = self._next_seq_len(generator)
             batch_size = calculate_naflex_batch_size(
                 tokens_per_batch=self.max_tokens_per_batch,
-                seq_len=seq_len + self.per_row_text_tokens,  # row cost = image bucket + text cap
+                seq_len=seq_len + self.per_row_text_tokens,  # row cost = primary bucket + text cap
                 max_size=remaining_samples,
                 divisor=self.batch_divisor,
                 rounding="floor",
@@ -503,7 +503,7 @@ class NaFlexBatchScheduler:
             seq_len = self._next_seq_len(generator)
             batch_size = calculate_naflex_batch_size(
                 tokens_per_batch=min(self.max_tokens_per_batch, remaining_tokens),
-                seq_len=seq_len + self.per_row_text_tokens,  # row cost = image bucket + text cap
+                seq_len=seq_len + self.per_row_text_tokens,  # row cost = primary bucket + text cap
                 divisor=self.batch_divisor,
                 rounding="floor",
             )
@@ -574,7 +574,7 @@ class NaFlexBatchScheduler:
         return int(torch.multinomial(probs, 1, generator=generator).item())
 
     @staticmethod
-    def _collate_images(
+    def _collate_patch_dicts(
             patch_dicts: List[Dict[str, torch.Tensor]],
             max_seq_len: int,
             pad_multiple: Optional[int] = None,
@@ -621,13 +621,13 @@ class NaFlexBatchScheduler:
         targets = []
 
         for sample in samples:
-            image = sample[self.primary_key]
-            image = transform(image) if transform is not None else image
-            patch_dict = image if isinstance(image, dict) else patchify(image)
+            primary = sample[self.primary_key]
+            primary = transform(primary) if transform is not None else primary
+            patch_dict = primary if isinstance(primary, dict) else patchify(primary)
             patch_dicts.append(patch_dict)
             targets.append(sample[self.target_key])
 
-        images = self._collate_images(
+        primary_batch = self._collate_patch_dicts(
             patch_dicts, seq_len, pad_multiple=self.pad_multiple, freq_tokens=self.pad_freq_tokens,
         )
         if self.pad_id is not None:
@@ -637,19 +637,19 @@ class NaFlexBatchScheduler:
                 targets, self.pad_id, pad_multiple=self.text_pad_multiple, pad_cap=self.text_pad_cap,
             )
             return {
-                self.primary_key: images,
+                self.primary_key: primary_batch,
                 self.target_key: text,
                 f"{self.target_key}_valid": text_valid,
             }
 
         return {
-            self.primary_key: images,
+            self.primary_key: primary_batch,
             self.target_key: default_collate(targets),
         }
 
 
 class NaFlexBatcher:
-    """WebDataset stage that turns image/text samples into NaFlex dict batches."""
+    """WebDataset stage that turns primary/text samples into NaFlex dict batches."""
 
     def __init__(
             self,
