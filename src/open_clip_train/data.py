@@ -308,7 +308,7 @@ class FilterValidSample:
         self.text_keys = None if json_text_key else _split_wds_keys(text_key)
 
     def __call__(self, sample):
-        if not _has_image(sample, self.image_keys):
+        if not any(key in sample for key in self.image_keys):  # image_keys pre-split in __init__
             return False
         if self.json_text_key is not None:
             return 'json' in sample

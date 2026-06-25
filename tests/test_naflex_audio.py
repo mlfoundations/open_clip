@@ -92,10 +92,10 @@ def test_mel_patch_embed_forward():
 
 
 def test_audio_patch_dicts_collate_via_existing_naflex_collator():
-    """Per-sample audio dicts are drop-in for the image NaFlex collator (variable N -> padded + valid mask)."""
+    """Per-sample audio dicts are drop-in for the NaFlex patch-dict collator (variable N -> padded + valid mask)."""
     short = mel_to_patches(_mel(t=40), patch_freq=64, patch_time=4)   # Tt=10 -> N=10
     long = mel_to_patches(_mel(t=100), patch_freq=64, patch_time=4)   # Tt=25 -> N=25
-    batch = NaFlexBatchScheduler._collate_images([short, long], max_seq_len=32)
+    batch = NaFlexBatchScheduler._collate_patch_dicts([short, long], max_seq_len=32)
     assert batch["patches"].shape == (2, 32, 64 * 4)
     assert batch["patch_coord"].shape == (2, 32, 2)
     assert batch["patch_valid"][0].sum().item() == 10  # short sample

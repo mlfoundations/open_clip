@@ -242,7 +242,7 @@ def test_audio_collate_modulus_batch_max_and_clamp():
         }
 
     dicts = [pd(104), pd(456), pd(56), pd(400)]  # batch_max = 456, cap = F*(504//F) = 504
-    collate = NaFlexBatchScheduler._collate_images
+    collate = NaFlexBatchScheduler._collate_patch_dicts
     assert collate(dicts, 504, None, None)["seq_len"] == 504          # image: pad to seq_len
     assert collate(dicts, 504, None, F)["seq_len"] == 456             # audio M=None: batch_max
     assert collate(dicts, 504, 64, F)["seq_len"] == 504               # ceil(456/64)*64=512 -> clamp to cap 504
