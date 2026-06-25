@@ -139,8 +139,11 @@ def get_wds_dataset_legacy(args, preprocess_img, is_train, epoch=0, floor=False,
         pipeline.extend([
             wds.select(FilterValidSample(json_text_key=json_text_key, image_key=image_key)),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image=image_key, json="json", keep=False),
-            wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),
+            wds.rename(image=image_key, text="json", keep=False),
+            wds.map_dict(
+                text=JsonCaptionExtractor(json_text_key, sample_probs=getattr(args, 'json_text_key_probs', None)),
+                handler=log_and_continue,
+            ),
             wds.select(FilterNonEmptyText()),
         ])
     else:

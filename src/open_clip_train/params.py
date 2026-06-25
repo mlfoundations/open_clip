@@ -210,7 +210,17 @@ def parse_args(args):
         default=None,
         help="For WebDataset datasets, read the caption from this field of each sample's .json member instead "
              "of a text file. Accepts ';'-separated priority alternatives, e.g. "
-             "'caption_florence-2-large;caption_sharegpt4v-7b'. Takes precedence over --text-key."
+             "'caption_florence-2-large;caption_sharegpt4v-7b'. Takes precedence over --text-key. Without "
+             "--json-text-key-probs the first non-empty key in order wins."
+    )
+    parser.add_argument(
+        "--json-text-key-probs",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Sampling probabilities for --json-text-key caption keys, in the same order. Captions are drawn "
+             "into a random priority order by these weights, then the first non-empty wins. Unspecified/"
+             "trailing keys default to 0 (fallback only). Need not sum to 1."
     )
     parser.add_argument(
         "--imagenet-val",

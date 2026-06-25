@@ -315,21 +315,46 @@ class FilterValidSample:
         return any(key in sample for key in self.text_keys)
 
 
-class JsonCaptionExtractor:
-    """Set ``sample['text']`` from a field of the sample's JSON metadata (datasets without a ``.txt`` member).
+def _pad_caption_weights(weights, n):
+    """Validate + pad caption sampling weights to length ``n`` (unspecified tail -> 0 = fallback only)."""
+    if weights is None:
+        return None
+    weights = [float(w) for w in weights]
+    if len(weights) > n:
+        raise ValueError(f"--json-text-key-probs has {len(weights)} entries but only {n} caption keys")
+    return weights + [0.0] * (n - len(weights))
 
-    ``caption_key`` may be a single key, a ``;``-separated priority string, or a list/tuple of keys. The first
-    non-empty string value wins. Robust to JSON being either a parsed dict or raw bytes/str, and drops the raw
-    metadata afterwards. Module-level + picklable, mirroring ``TokenizeText``.
+
+def _weighted_order(keys, weights):
+    """Per-sample priority order for caption keys: positive-weight keys sampled without replacement (P
+    proportional to weight), then zero-weight keys in their original order as fallbacks. Uses the global
+    ``random`` (per-worker seeded by the DataLoader), so it stays picklable with no instance RNG state.
+    """
+    pos = [[key, weight] for key, weight in zip(keys, weights) if weight > 0]
+    order = []
+    while pos:
+        i = random.choices(range(len(pos)), weights=[w for _, w in pos], k=1)[0]
+        order.append(pos.pop(i)[0])
+    order.extend(key for key, weight in zip(keys, weights) if weight <= 0)
+    return order
+
+
+class JsonCaptionExtractor:
+    """Extract a caption string from JSON metadata (datasets without a ``.txt`` member).
+
+    ``caption_key`` may be a single key, a ``;``-separated priority string, or a list/tuple of keys. With
+    ``sample_probs=None`` the first non-empty value in that order wins (deterministic priority). With
+    ``sample_probs`` (one weight per key, aligned; unspecified keys default to 0), the keys are drawn into a
+    random priority order weighted by those probs and the first non-empty in that order wins -- so a 0-weight
+    key still serves as a fallback. Robust to JSON being either a parsed dict or raw bytes/str. Module-level +
+    picklable, mirroring ``TokenizeText``.
     """
 
-    def __init__(self, caption_key, json_key: str = "json"):
-        self.caption_key = caption_key
+    def __init__(self, caption_key, sample_probs=None):
         self.caption_keys = _split_wds_keys(caption_key)
-        self.json_key = json_key
+        self.caption_weights = _pad_caption_weights(sample_probs, len(self.caption_keys))
 
-    def __call__(self, sample):
-        meta = sample.get(self.json_key)
+    def __call__(self, meta):
         if isinstance(meta, (bytes, bytearray, str)):
             try:
                 meta = json.loads(meta)
@@ -337,14 +362,14 @@ class JsonCaptionExtractor:
                 meta = {}
         caption = ""
         if isinstance(meta, dict):
-            for key in self.caption_keys:
+            keys = (self.caption_keys if self.caption_weights is None
+                    else _weighted_order(self.caption_keys, self.caption_weights))
+            for key in keys:
                 value = meta.get(key)
                 if isinstance(value, str) and value.strip():
                     caption = value.strip()
                     break
-        sample["text"] = caption
-        sample.pop(self.json_key, None)
-        return sample
+        return caption
 
 
 class FilterNonEmptyText:
@@ -762,8 +787,11 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         # Read the caption from a field of each sample's .json (datasets without a text member, e.g. monet).
         pipeline.extend([
             wds.select(FilterValidSample(json_text_key=json_text_key, image_key=image_key)),
-            wds.rename(image=image_key, json="json", keep=False),
-            wds.map(JsonCaptionExtractor(json_text_key), handler=log_and_continue),  # parses raw bytes itself
+            wds.rename(image=image_key, text="json", keep=False),
+            wds.map_dict(
+                text=JsonCaptionExtractor(json_text_key, sample_probs=getattr(args, 'json_text_key_probs', None)),
+                handler=log_and_continue,  # parses raw bytes itself
+            ),
             wds.select(FilterNonEmptyText()),
         ])
     else:
