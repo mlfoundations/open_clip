@@ -106,10 +106,6 @@ class AudioCaptionTokenizer:
         return self.tokenizer(caption)[0]
 
 
-def _keep_audio_text(sample):
-    return {"audio": sample["audio"], "text": sample["text"]}
-
-
 def _extract_caption(text_data):
     if isinstance(text_data, bytes):
         text_data = text_data.decode("utf-8")
@@ -349,7 +345,6 @@ def get_wds_audio_dataset(
                     audio=preprocess_audio,
                     text=_TokenizeAudioCaption(tokenizer, variable=variable_text),
                 ),
-                wds.map(_keep_audio_text),
                 wds.batched(
                     args.batch_size,
                     partial=not is_train,
