@@ -295,6 +295,7 @@ def get_wds_audio_dataset(
                 chunk=args.bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
+                prefetch_pools=getattr(args, 'bucket_prefetch_pools', 0),
             )
         # Reuse the modality-agnostic NaFlex tail; the batcher applies preprocess_audio (an
         # AudioNaFlexTransformFactory) to sample["audio"] and reads sample["text"]. Epoch by num_samples

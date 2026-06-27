@@ -198,6 +198,13 @@ def parse_args(args):
              "Accepts ';'-separated alternatives, e.g. 'jpg;png;jpeg;webp'."
     )
     parser.add_argument(
+        "--max-image-pixels",
+        type=int,
+        default=25_000_000,
+        help="Drop WebDataset images whose width*height exceeds this, checked from the header before the costly "
+             "decode. Default 25M px; 0 disables."
+    )
+    parser.add_argument(
         "--text-key",
         type=str,
         default="txt",
@@ -828,6 +835,15 @@ def parse_args(args):
         type=int,
         default=128,
         help="Run length within a sorted pool for --length-bucketing (~ a typical batch size)."
+    )
+    parser.add_argument(
+        "--bucket-prefetch-pools",
+        type=int,
+        default=0,
+        help="Experimental: run --length-bucketing's pool fill (disk read + tokenize) on a background thread, "
+             "buffering this many flushed pools ahead so it overlaps the batcher's decode instead of alternating "
+             "(smooths the disk/CPU/GPU seesaw). Buffers raw bytes -> ~pool x this many extra samples in memory. "
+             "0 (default) keeps the synchronous behavior."
     )
     parser.add_argument(
         "--naflex-pad-multiple",

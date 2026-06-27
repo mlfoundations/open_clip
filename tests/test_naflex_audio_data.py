@@ -80,6 +80,103 @@ def test_caption_length_bucketer_sorts_by_caption():
     assert [s["text"].shape[0] for s in out] == sorted(caps)  # sorted by caption length
 
 
+def test_length_bucketer_prefetch_matches_sync():
+    """The threaded prefetch path (prefetch_pools>0) yields the IDENTICAL sample sequence as the synchronous
+    path -- it only overlaps disk/decode, so ordering and contents must not change."""
+    from open_clip_train.naflex_data import CaptionLength, LengthBucketer
+
+    samples = [{"text": torch.zeros(i % 11 + 1, dtype=torch.long), "id": i} for i in range(97)]
+
+    def order(prefetch_pools):
+        bucketer = LengthBucketer(
+            length_fns=[CaptionLength("text")], pool=16, chunk=4, seed=0, epoch=0,
+            prefetch_pools=prefetch_pools,
+        )
+        return [s["id"] for s in bucketer(iter(samples))]
+
+    sync = order(0)
+    assert sorted(sync) == list(range(97))  # permutation, nothing dropped/duplicated
+    assert order(1) == sync                 # 1 pool ahead -> identical
+    assert order(2) == sync                 # deeper buffer -> still identical
+
+
+def test_length_bucketer_prefetch_propagates_upstream_error():
+    """An exception from the upstream iterator surfaces on the consumer thread, after buffered output drains."""
+    from open_clip_train.naflex_data import CaptionLength, LengthBucketer
+
+    class Boom(Exception):
+        pass
+
+    def src():
+        for i in range(4):  # exactly one pool (pool=4) before the error
+            yield {"text": torch.zeros(i + 1, dtype=torch.long), "id": i}
+        raise Boom("upstream failed")
+
+    bucketer = LengthBucketer(
+        length_fns=[CaptionLength("text")], pool=4, chunk=2, seed=0, epoch=0, prefetch_pools=1,
+    )
+    collected = []
+    with pytest.raises(Boom):
+        for sample in bucketer(src()):
+            collected.append(sample)
+    assert len(collected) == 4  # the buffered pool still drained before the error propagated
+
+
+def test_length_bucketer_prefetch_early_close_winds_down_thread():
+    """Closing the generator after a partial read must not deadlock, and the daemon producer thread winds down
+    (no leak across epochs under persistent_workers)."""
+    import threading
+    import time
+    from open_clip_train.naflex_data import CaptionLength, LengthBucketer
+
+    def src():  # infinite source
+        i = 0
+        while True:
+            i += 1
+            yield {"text": torch.zeros(i % 7 + 1, dtype=torch.long)}
+
+    baseline = threading.active_count()
+    gen = LengthBucketer(
+        length_fns=[CaptionLength("text")], pool=8, chunk=2, seed=0, epoch=0, prefetch_pools=1,
+    )(src())
+    pulled = [next(gen) for _ in range(5)]
+    assert len(pulled) == 5
+    gen.close()  # must return (no deadlock)
+
+    deadline = time.monotonic() + 3.0  # producer exits within `poll` (1s); allow margin
+    while threading.active_count() > baseline and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert threading.active_count() <= baseline  # prefetch thread is gone
+
+
+def test_prefetch_delivers_sentinel_to_slow_consumer():
+    """End-of-stream must not hang: a slow (decode-bound) consumer leaves the queue full when the producer
+    finishes, so the producer has to RETRY the done-sentinel until delivered -- dropping it on the first Full
+    leaves the consumer blocked on its final get() forever."""
+    import threading
+    import time
+    from open_clip_train.naflex_data import _prefetch
+
+    def make_pools(stop):
+        for pool in ([1, 2], [3, 4], [5, 6]):
+            yield pool
+
+    out = []
+    finished = threading.Event()
+
+    def consume():
+        # small poll + a consumer slower than poll => when the producer reaches its finally the queue is full,
+        # so the sentinel put hits Full and must be retried (not dropped).
+        for s in _prefetch(make_pools, maxsize=1, poll=0.02):
+            time.sleep(0.05)
+            out.append(s)
+        finished.set()
+
+    threading.Thread(target=consume, daemon=True).start()
+    assert finished.wait(timeout=10), "prefetch hung at end-of-stream (done sentinel dropped on a full queue)"
+    assert out == [1, 2, 3, 4, 5, 6]
+
+
 def test_generative_audio_bucketer_sorts_by_audio_plus_caption():
     """Generative GenLAP keys on the SUM audio_tokens + caption (LengthBucketer sorts by sum(length_fns))."""
     from open_clip_train.naflex_data import AudioTokenLength, CaptionLength, LengthBucketer

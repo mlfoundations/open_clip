@@ -28,6 +28,10 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+# Finite backstop for PIL's decompression-bomb guard (warn > this, error > 2x), mainly for the side paths
+# (CsvDataset, ImageFolder, legacy); the WDS path is gated tighter/earlier by --max-image-pixels in decode_pil_rgb.
+Image.MAX_IMAGE_PIXELS = 128_000_000
+
 
 class TokenizeText:
     # Module-level callable replaces inline lambdas in webdataset pipelines so
@@ -386,15 +390,22 @@ class FilterNonEmptyText:
         return isinstance(text, str) and bool(text.strip())
 
 
-def decode_pil_rgb(data):
+def decode_pil_rgb(data, max_pixels=None):
     """Decode raw image bytes to an RGB PIL image (what ``wds.decode('pilrgb')`` does, as a per-key map).
 
     Bucketed pipelines reorder samples *before* decoding so the bucket pool holds raw bytes instead of decoded
     images (10-50x smaller); this runs after the reorder. PIL sniffs the format from the byte signature, so the
     extension-keyed dispatch of ``wds.decode`` is not needed.
+
+    ``max_pixels`` (``--max-image-pixels``) is checked from the header *before* ``img.load()``: an oversized image
+    raises here -- cheap, no pixel decompression -- and is dropped by the caller's skip path (``log_and_continue``
+    or the NaFlex batcher's skip-and-replenish), rather than decompressing e.g. a 99 MP JPEG only to shrink it to
+    the training resolution. The ``Image.open`` header parse is intrinsic to decode, so the check costs nothing.
     """
     with io.BytesIO(data) as stream:
         img = Image.open(stream)
+        if max_pixels and img.width * img.height > max_pixels:
+            raise ValueError(f"image {img.width}x{img.height} exceeds --max-image-pixels ({max_pixels})")
         img.load()
         return img.convert("RGB")
 
@@ -804,7 +815,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.rename(image=image_key, text=text_key, keep=False),
             wds.select(FilterNonEmptyText()),
         ])
-    decode_image = wds.map_dict(image=decode_pil_rgb, handler=log_and_continue)
+    image_max_pixels = getattr(args, 'max_image_pixels', 0) or None  # 0 -> None (no cap; high-res runs)
+    decode_pil = partial(decode_pil_rgb, max_pixels=image_max_pixels)
+    decode_image = wds.map_dict(image=decode_pil, handler=log_and_continue)
 
     if use_naflex_train:
         # Image NaFlex resizes images to ~fill the bucket, so caption length is the only optional bucketing signal.
@@ -816,6 +829,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                 chunk=args.bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
+                prefetch_pools=getattr(args, 'bucket_prefetch_pools', 0),
             )
         naflex_batcher = append_naflex_train_stages(
             pipeline,
@@ -830,7 +844,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             pad_id=naflex_pad_id,
             per_row_text_tokens=naflex_text_cost,
             bucketer=image_bucketer,
-            decode_fn=decode_pil_rgb,  # decode runs inside the batcher loop (one image alive at a time)
+            decode_fn=decode_pil,  # decode (+ max-pixels cap) runs inside the batcher loop, one image at a time
             decode_error_handler=log_and_continue,
             pad_multiple=getattr(args, 'naflex_pad_multiple', None),
             text_pad_multiple=text_pad_multiple,
@@ -876,6 +890,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                 chunk=args.bucket_chunk,
                 seed=args.seed,
                 epoch=shared_epoch,
+                prefetch_pools=getattr(args, 'bucket_prefetch_pools', 0),
             ))
         stages.extend([
             decode_image,

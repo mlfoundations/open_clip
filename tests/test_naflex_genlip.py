@@ -492,6 +492,22 @@ def test_json_caption_sampling():
     assert pickle.loads(pickle.dumps(ex)) is not None
 
 
+def test_decode_pil_rgb_max_pixels_cap():
+    """decode_pil_rgb drops oversized images from the header (before the costly load); within-cap decodes fine."""
+    import io as _io
+    from PIL import Image as _Image
+    from open_clip_train.data import decode_pil_rgb
+
+    buf = _io.BytesIO()
+    _Image.new("RGB", (100, 80), (10, 20, 30)).save(buf, format="PNG")  # 8000 px
+    data = buf.getvalue()
+
+    assert decode_pil_rgb(data).size == (100, 80)                     # no cap -> decodes
+    assert decode_pil_rgb(data, max_pixels=20_000).size == (100, 80)  # under cap -> decodes
+    with pytest.raises(ValueError):
+        decode_pil_rgb(data, max_pixels=5_000)                        # over cap -> raises (skipped upstream)
+
+
 def test_fsdp_shard_modules_are_name_module_pairs():
     """prepare_fsdp iterates `for name, mod in shard_modules` -> must be (str, module) pairs."""
     from open_clip.naflex_genlip_model import GenLipBlock
