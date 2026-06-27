@@ -2,7 +2,9 @@ import io
 import logging
 import math
 import os
+import queue
 import random
+import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
@@ -301,6 +303,71 @@ class AudioTokenLength:
         return min(tokens, self.max_audio_tokens) if self.max_audio_tokens else tokens
 
 
+def _prefetch(
+        make_pools: Callable[[threading.Event], Iterable[List[Sample]]],
+        maxsize: int,
+        poll: float = 1.0,
+) -> Iterable[Sample]:
+    """Run a pool producer on a background thread, buffering up to ``maxsize`` flushed pools ahead, then yield
+    samples on the calling thread.
+
+    ``make_pools`` is a factory ``stop -> Iterable[List[Sample]]`` (e.g. ``LengthBucketer._pools`` bound to the
+    source). It is handed the ``stop`` event so it can abandon a half-filled pool the moment the consumer closes,
+    rather than materializing the whole pool first. Overlaps the upstream disk read + tokenize + bucketing
+    (producer thread) with the downstream decode + patchify (consumer thread, the ``NaFlexBatcher``).
+    Order-preserving: pools and samples come out in producer order, and the producer is the only thread touching
+    the source / ``rng``, so no nondeterminism is added vs the synchronous path. The thread + queue are created at
+    iteration time (in the worker), so the owning ``LengthBucketer`` stays picklable.
+    """
+    pending: "queue.Queue" = queue.Queue(maxsize=maxsize)
+    stop = threading.Event()
+    done = object()
+    box: Dict[str, BaseException] = {}
+
+    def put_blocking(item) -> bool:
+        # Retry until the item is delivered, or until the consumer closed early (`stop`). A plain put-with-timeout
+        # that drops the item on `Full` would lose it -- and dropping the `done` sentinel hangs the consumer on its
+        # final `get()` at end-of-stream when a slow (decode-bound) consumer leaves the queue full.
+        while not stop.is_set():
+            try:
+                pending.put(item, timeout=poll)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def produce():
+        try:
+            for pool in make_pools(stop):
+                if not put_blocking(pool):
+                    break  # consumer closed early
+        except BaseException as exc:  # surface upstream (tar/tokenize) errors to the consumer thread
+            box["exc"] = exc
+        finally:
+            put_blocking(done)  # deliver the sentinel reliably; no-op if the consumer already closed (`stop` set)
+
+    thread = threading.Thread(target=produce, name="naflex-bucket-prefetch", daemon=True)
+    thread.start()
+    try:
+        while True:
+            pool = pending.get()
+            if pool is done:
+                break
+            yield from pool
+    finally:
+        # Consumer stopped early (epoch boundary / worker shutdown): signal the producer (so `make_pools` bails
+        # mid-fill and `put_blocking` stops retrying) and drain the queue so a parked `put` unblocks -- the daemon
+        # thread exits within `poll` instead of leaking across epochs under persistent_workers.
+        stop.set()
+        try:
+            while True:
+                pending.get_nowait()
+        except queue.Empty:
+            pass
+    if "exc" in box:
+        raise box["exc"]
+
+
 class LengthBucketer:
     """WebDataset stage that reorders samples so similar sequence lengths batch together.
 
@@ -317,12 +384,16 @@ class LengthBucketer:
             chunk: int = 128,
             seed: int = 42,
             epoch=-1,
+            prefetch_pools: int = 0,
     ):
         self.length_fns = list(length_fns) if length_fns else [CaptionLength()]
         self.pool = max(1, int(pool))
         self.chunk = max(1, int(chunk))
         self.seed = int(seed)
         self.epoch = epoch
+        # 0 (default) -> synchronous fill-then-drain (unchanged). >0 -> run the upstream read/bucketing on a
+        # background thread, buffering this many flushed pools ahead so disk fill overlaps the decode drain.
+        self.prefetch_pools = max(0, int(prefetch_pools))
 
     def _epoch(self) -> int:
         if hasattr(self.epoch, "get_value"):
@@ -339,10 +410,29 @@ class LengthBucketer:
         for chunk in chunks:
             yield from chunk
 
+    def _pools(self, src: Iterable[Sample], rng: random.Random, stop=None) -> Iterable[List[Sample]]:
+        """Flushed pools as materialized lists -- the prefetch producer drives this on a background thread.
+        Reuses ``_flush`` so the sort/chunk ordering is identical to the synchronous path. ``stop`` (the prefetch
+        event) is checked between samples so a half-filled pool is abandoned promptly when the consumer closes,
+        instead of reading/tokenizing a whole pool first."""
+        buffer: List[Sample] = []
+        for sample in src:
+            if stop is not None and stop.is_set():
+                return
+            buffer.append(sample)
+            if len(buffer) >= self.pool:
+                yield list(self._flush(buffer, rng))
+                buffer = []
+        if buffer:
+            yield list(self._flush(buffer, rng))
+
     def __call__(self, src: Iterable[Sample]):
         worker = torch.utils.data.get_worker_info()
         worker_id = worker.id if worker is not None else 0
         rng = random.Random(self.seed + self._epoch() * 131 + worker_id)
+        if self.prefetch_pools > 0:
+            yield from _prefetch(lambda stop: self._pools(src, rng, stop), maxsize=self.prefetch_pools)
+            return
         buffer: List[Sample] = []
         for sample in src:
             buffer.append(sample)
