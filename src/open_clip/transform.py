@@ -1,7 +1,7 @@
 import numbers
 import random
 import warnings
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, InitVar
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -61,6 +61,8 @@ def merge_preprocess_kwargs(base: PreprocessCfg, **kwargs):
 
 @dataclass
 class AugmentationCfg:
+    hflip: float = 0.0
+    vflip: float = 0.0
     scale: Tuple[float, float] = (0.9, 1.0)
     ratio: Optional[Tuple[float, float]] = None
     color_jitter: Optional[Union[float, Tuple[float, float, float], Tuple[float, float, float, float]]] = None
@@ -70,8 +72,18 @@ class AugmentationCfg:
     use_timm: bool = False
 
     # params for simclr_jitter_gray
-    color_jitter_prob: float = None
-    gray_scale_prob: float = None
+    color_jitter_prob: Optional[float] = None
+    grayscale_prob: Optional[float] = None
+
+    # For backwards compatibility
+    gray_scale_prob: InitVar[Optional[float]] = None
+
+    def __post_init__(self, gray_scale_prob):
+        if gray_scale_prob is not None and self.grayscale_prob is not None:
+            raise ValueError("Only one of `gray_scale_prob` or `grayscale_prob` should be specified, not both.")
+
+        if gray_scale_prob is not None:
+            self.grayscale_prob = gray_scale_prob
 
 
 class NaFlexTransformFactory:
@@ -410,14 +422,10 @@ def image_transform(
                 input_size = (3, image_size, image_size)
 
             aug_cfg_dict.setdefault('color_jitter', None)  # disable by default
-            # drop extra non-timm items
-            aug_cfg_dict.pop('color_jitter_prob', None)
-            aug_cfg_dict.pop('gray_scale_prob', None)
 
             timm_transform_kwargs = dict(
                 input_size=input_size,
                 is_training=True,
-                hflip=0.,
                 mean=mean,
                 std=std,
                 re_mode='pixel',
@@ -444,9 +452,9 @@ def image_transform(
                 train_transform.extend([
                     color_jitter(*aug_cfg.color_jitter, p=aug_cfg.color_jitter_prob)
                 ])
-            if aug_cfg.gray_scale_prob:
+            if aug_cfg.grayscale_prob:
                 train_transform.extend([
-                    gray_scale(aug_cfg.gray_scale_prob)
+                    gray_scale(aug_cfg.grayscale_prob)
                 ])
             train_transform.extend([
                 MaybeToTensor(),
