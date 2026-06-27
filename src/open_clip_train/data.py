@@ -922,7 +922,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=args.workers > 0,
+        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
     )
 
     # FIXME not clear which approach is better, with_epoch before vs after dataloader?
@@ -1026,7 +1026,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
             shuffle=False,
             num_workers=args.workers,
             pin_memory=True,
-            persistent_workers=args.workers > 0,
+            persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
         )
         num_workers = max(1, args.workers)
         dataloader.num_samples = dataset.num_samples_for_workers(num_workers)
