@@ -269,6 +269,15 @@ def parse_args(args):
         "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
+        "--persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep DataLoader workers alive across epochs (faster epoch starts). Use --no-persistent-workers to "
+             "tear them down each epoch -- frees the training data-loading buffers (shuffle/bucket pools, prefetch "
+             "threads) before zero-shot eval, avoiding the train->eval memory spike; the re-warm cost is small "
+             "relative to large epochs. No effect when --workers 0."
+    )
+    parser.add_argument(
         "--batch-size", type=int, default=64, help="Batch size per GPU. Ignored for NaFlex WebDataset training."
     )
     parser.add_argument(

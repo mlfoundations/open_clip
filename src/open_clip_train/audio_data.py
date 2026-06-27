@@ -383,7 +383,7 @@ def get_wds_audio_dataset(
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=args.workers > 0,
+        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
         **_audio_loader_kwargs(args),
     )
     dataloader.num_batches = num_batches

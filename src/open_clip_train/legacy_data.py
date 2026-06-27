@@ -183,7 +183,7 @@ def get_wds_dataset_legacy(args, preprocess_img, is_train, epoch=0, floor=False,
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=args.workers > 0,
+        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
     )
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
@@ -243,7 +243,7 @@ def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floo
         batch_size=None,
         shuffle=False,
         num_workers=args.workers,
-        persistent_workers=args.workers > 0,
+        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
         **_audio_data._audio_loader_kwargs(args),
     )
     dataloader.num_batches = num_batches
