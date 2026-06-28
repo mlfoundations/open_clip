@@ -244,7 +244,11 @@ class SimpleTokenizer(object):
         return bpe_tokens
 
     def decode(self, tokens, skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if hasattr(tokens, 'tolist'):
+            tokens = tokens.tolist()
         if skip_special_tokens:
+            if self.eot_token_id in tokens:
+                tokens = tokens[:tokens.index(self.eot_token_id)]
             tokens = [t for t in tokens if t not in self.all_special_ids]
         text = ''.join([self.decoder.get(token, '') for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
