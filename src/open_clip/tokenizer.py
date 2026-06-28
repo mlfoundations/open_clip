@@ -139,6 +139,22 @@ def canonicalize_text(
     return text.strip()
 
 
+def clean_up_tokenization(text):
+    text = (
+        text.replace(" .", ".")
+        .replace(" ?", "?")
+        .replace(" !", "!")
+        .replace(" ,", ",")
+        .replace(" ' ", "'")
+        .replace(" n't", "n't")
+        .replace(" 'm", "'m")
+        .replace(" 's", "'s")
+        .replace(" 've", "'ve")
+        .replace(" 're", "'re")
+    )
+    return text
+
+
 class SimpleTokenizer(object):
     def __init__(
             self,
@@ -227,10 +243,26 @@ class SimpleTokenizer(object):
             bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
         return bpe_tokens
 
-    def decode(self, tokens):
-        text = ''.join([self.decoder[token] for token in tokens])
+    def decode(self, tokens, skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if hasattr(tokens, 'tolist'):
+            tokens = tokens.tolist()
+        if skip_special_tokens:
+            if self.eot_token_id in tokens:
+                tokens = tokens[:tokens.index(self.eot_token_id)]
+            tokens = [t for t in tokens if t not in self.all_special_ids]
+        text = ''.join([self.decoder.get(token, '') for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
+        if clean_up_tokenization_spaces:
+            text = clean_up_tokenization(text)
         return text
+
+    def batch_decode(self, sequences: Union[List[List[int]], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(sequences, torch.Tensor):
+            sequences = sequences.tolist()
+        return [
+            self.decode(seq, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            for seq in sequences
+        ]
 
     def __call__(
             self,
@@ -294,9 +326,16 @@ class SimpleTokenizer(object):
 _tokenizer = SimpleTokenizer()
 
 
-def decode(output_ids: torch.Tensor):
-    output_ids = output_ids.cpu().numpy()
-    return _tokenizer.decode(output_ids)
+def decode(output_ids: Union[torch.Tensor, List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+    if isinstance(output_ids, torch.Tensor):
+        output_ids = output_ids.cpu().numpy().tolist()
+    return _tokenizer.decode(output_ids, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+
+
+def batch_decode(sequences: Union[List[List[int]], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+    if isinstance(sequences, torch.Tensor):
+        sequences = sequences.cpu().numpy().tolist()
+    return _tokenizer.batch_decode(sequences, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
 
 
 def tokenize(texts: Union[str, List[str]], context_length: int = DEFAULT_CONTEXT_LENGTH) -> torch.LongTensor:
@@ -505,6 +544,16 @@ class HFTokenizer:
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
+    def decode(self, tokens: Union[List[int], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(tokens, torch.Tensor):
+            tokens = tokens.tolist()
+        return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+
+    def batch_decode(self, sequences: Union[List[List[int]], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(sequences, torch.Tensor):
+            sequences = sequences.tolist()
+        return self.tokenizer.batch_decode(sequences, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+
     def __call__(
             self,
             texts: Union[str, List[str]],
@@ -674,6 +723,16 @@ class SigLipTokenizer:
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
+    def decode(self, tokens: Union[List[int], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(tokens, torch.Tensor):
+            tokens = tokens.tolist()
+        return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+
+    def batch_decode(self, sequences: Union[List[List[int]], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(sequences, torch.Tensor):
+            sequences = sequences.tolist()
+        return self.tokenizer.batch_decode(sequences, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+
     def __call__(
             self,
             texts: Union[str, List[str]],
@@ -753,9 +812,41 @@ class TikTokenTokenizer:
             text = self.clean_fn(text)
         return self.enc.encode_ordinary(text)
 
-    def decode(self, tokens: List[int]) -> str:
-        body = [t for t in tokens if t < self.enc.n_vocab]
-        return self.enc.decode(body)
+    def decode(self, tokens: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False) -> str:
+        if skip_special_tokens:
+            body = [t for t in tokens if t < self.enc.n_vocab]
+            text = self.enc.decode(body)
+        else:
+            parts = []
+            current_chunk = []
+            for t in tokens:
+                if t < self.enc.n_vocab:
+                    current_chunk.append(t)
+                else:
+                    if current_chunk:
+                        parts.append(self.enc.decode(current_chunk))
+                        current_chunk = []
+                    if t == self.eot_token_id:
+                        parts.append("<|endoftext|>")
+                    elif t == self.pad_token_id:
+                        parts.append("<|pad|>")
+                    elif t == self.bos_token_id:
+                        parts.append("<|startoftext|>")
+            if current_chunk:
+                parts.append(self.enc.decode(current_chunk))
+            text = "".join(parts)
+
+        if clean_up_tokenization_spaces:
+            text = clean_up_tokenization(text)
+        return text
+
+    def batch_decode(self, sequences: Union[List[List[int]], torch.Tensor], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = False):
+        if isinstance(sequences, torch.Tensor):
+            sequences = sequences.tolist()
+        return [
+            self.decode(seq, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            for seq in sequences
+        ]
 
     def _wrap(self, ids: List[int]) -> List[int]:
         if self.add_bos:
