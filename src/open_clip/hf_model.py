@@ -142,6 +142,11 @@ class HFTextEncoder(nn.Module):
         else:
             self.config.torch_dtype = None
 
+        # Expose the pad id this tower masks with (see forward) so parent models can derive their
+        # pad handling (loss ignore_index, generation defaults) from the tower. None when the HF
+        # config reserves no pad token; consumers fall back to the historical 0 convention.
+        self.pad_id = getattr(self.config, 'pad_token_id', None)
+
         # Resolve construction kwargs from the *explicit* pooler_type only, before defaulting: pooler_type=None
         # has always built the tower without the HF pooling layer (the old `uses_transformer_pooler` was False
         # for None), so existing checkpoints have no transformer.pooler.* keys. The arch-default pooler is
@@ -197,8 +202,13 @@ class HFTextEncoder(nn.Module):
                 nn.Linear(output_dim, output_dim, bias=True),
             )
 
-    def forward(self, x: TensorType):
-        attn_mask = (x != self.config.pad_token_id).long()
+    def forward(self, x: TensorType, attention_mask: Optional[TensorType] = None):
+        if attention_mask is not None:
+            # data-layer provided validity ([B, L], True/1 = real token)
+            attn_mask = attention_mask.long()
+        else:
+            # pad-value fallback: the id this tower's HF config reserves for padding
+            attn_mask = (x != self.config.pad_token_id).long()
         out = self.transformer(input_ids=x, attention_mask=attn_mask)
         pooled_out = self.pooler(out, attn_mask)
         projected = self.proj(pooled_out)

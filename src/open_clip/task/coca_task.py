@@ -3,11 +3,19 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from .base_task import unwrap_model
 from .image_text_task import ImageTextTask
 
 
 class CoCaTask(ImageTextTask):
-    """CoCa training task wrapping model + CoCaLoss."""
+    """CoCa / MaMMUT training task wrapping model + CoCaLoss.
+
+    Caption labels are AR-shifted and masked to -100 at invalid positions using the batch
+    ``text_valid`` ([B, L] bool/int, True/1 = real token). Batches without a mask fall back to
+    the pad-value derivation ``text != model.pad_id`` -- exact for tokenizers with a reserved pad,
+    and the historical convention (which also drops genuine tokens equal to the fill id, e.g.
+    SimpleTokenizer id 0) otherwise.
+    """
 
     def __init__(
             self,
@@ -27,6 +35,8 @@ class CoCaTask(ImageTextTask):
             verbose: bool = True,
     ):
         super().__init__(model, device=device, dtype=dtype, verbose=verbose)
+        # pad-value fallback for batches without a text_valid mask (see _caption_labels)
+        self.pad_id = getattr(unwrap_model(model), 'pad_id', 0)
         if loss is not None:
             self.loss = loss
         elif default_loss:
@@ -34,6 +44,7 @@ class CoCaTask(ImageTextTask):
             self.loss = CoCaLoss(
                 caption_loss_weight=caption_loss_weight,
                 clip_loss_weight=clip_loss_weight,
+                pad_id=None,  # labels arrive pre-masked to -100 (built in _caption_labels)
                 local_loss=local_loss,
                 gather_with_grad=gather_with_grad,
                 cache_labels=cache_labels,
@@ -42,13 +53,28 @@ class CoCaTask(ImageTextTask):
             )
         # else: eval-only construction, no self.loss attribute
 
+    def _caption_labels(
+            self,
+            text: torch.Tensor,
+            text_valid: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """AR-shifted caption labels with invalid positions masked to -100."""
+        valid = text_valid.bool() if text_valid is not None else text != self.pad_id
+        return text[:, 1:].masked_fill(~valid[:, 1:], -100)
+
+    def create_dummy_batch(self, *args, **kwargs):
+        batch = super().create_dummy_batch(*args, **kwargs)
+        # explicit all-valid mask: dummy tokens are random, so pad-value fallback would be noise
+        batch["text_valid"] = torch.ones_like(batch["text"], dtype=torch.bool)
+        return batch
+
     def _build_loss_inputs(self, model_out, batch):
-        """Build CoCaLoss inputs with autoregressive shift."""
+        """Build CoCaLoss inputs with autoregressive shift and -100 label masking."""
         return {
             "image_features": model_out["image_features"],
             "text_features": model_out["text_features"],
             "logits": model_out["logits"][:, :-1],
-            "labels": batch["text"][:, 1:],
+            "labels": self._caption_labels(batch["text"], batch.get("text_valid")),
             "logit_scale": model_out["logit_scale"],
         }
 
@@ -64,7 +90,12 @@ class CoCaTask(ImageTextTask):
 
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         all_texts = torch.cat([b["text"] for b in accum_batches])
-        inputs["labels"] = all_texts[:, 1:]
+        # derive validity per batch (masks may be present for some accum batches and not others)
+        all_valid = torch.cat([
+            b["text_valid"].bool() if b.get("text_valid") is not None else b["text"] != self.pad_id
+            for b in accum_batches
+        ])
+        inputs["labels"] = self._caption_labels(all_texts, all_valid)
         inputs["logits"] = inputs["logits"][:, :-1]
         report = self._report(inputs_no_accum)  # capture before dropping logit_bias for the loss call
         # CoCaLoss doesn't accept logit_bias

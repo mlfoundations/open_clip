@@ -69,6 +69,41 @@ def test_create_task_coca_model_name_case_insensitive():
     assert isinstance(task, CoCaTask)
 
 
+def test_create_task_mammut_model_returns_coca_task():
+    """MaMMUT shares the CoCa output contract, so it trains via CoCaTask/CoCaLoss."""
+    model = open_clip.create_model('mammut_ViT-B-32')
+    args = _make_args(model='mammut_ViT-B-32', coca_caption_loss_weight=1.0)
+    task = create_task(args, model=model)
+    assert isinstance(task, CoCaTask)
+    assert isinstance(task.loss, CoCaLoss)
+    assert task.loss.caption_loss_weight == 1.0
+
+
+def test_create_task_dispatches_on_model_type_not_name():
+    """hf-hub:/local-dir:/renamed configs don't carry an arch hint in args.model; dispatch must
+    key on the built model instance or the caption loss silently disappears."""
+    model = open_clip.create_model('coca_ViT-B-32')
+    args = _make_args(model='hf-hub:someorg/my-renamed-captioner')
+    task = create_task(args, model=model)
+    assert isinstance(task, CoCaTask)
+    assert isinstance(task.loss, CoCaLoss)
+
+
+def test_create_task_and_loss_dispatch_unwrap_wrapped_models():
+    """isinstance dispatch must see through torch.compile (and DDP) wrappers."""
+    import torch
+    from open_clip import create_loss
+
+    model = open_clip.create_model('coca_ViT-B-32')
+    compiled = torch.compile(model)
+    args = _make_args(model='hf-hub:someorg/my-renamed-captioner')
+    task = create_task(args, model=compiled)
+    assert isinstance(task, CoCaTask)
+    loss = create_loss(args, model=compiled)
+    assert isinstance(loss, CoCaLoss)
+    assert loss.pad_id == 0  # pad attr read through the wrapper
+
+
 def test_create_task_distill_returns_distill_task():
     student = open_clip.create_model('RN50')
     teacher = open_clip.create_model('RN50')

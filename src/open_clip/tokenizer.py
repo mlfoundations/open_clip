@@ -8,7 +8,7 @@ import os
 import random
 import string
 from functools import lru_cache, partial
-from typing import Callable, List, Optional, Union, Dict
+from typing import Callable, Dict, List, Optional, Tuple, Union
 import warnings
 
 import ftfy
@@ -237,7 +237,8 @@ class SimpleTokenizer(object):
             texts: Union[str, List[str]],
             context_length: Optional[int] = None,
             pad: bool = True,
-    ) -> torch.LongTensor:
+            output_mask: bool = False,
+    ) -> Union[torch.LongTensor, Tuple[torch.LongTensor, torch.Tensor]]:
         """ Returns the tokenized representation of given input string(s)
 
         Parameters
@@ -246,10 +247,14 @@ class SimpleTokenizer(object):
             An input string or a list of input strings to tokenize
         context_length : int
             The context length to use; all CLIP models use 77 as the context length
+        output_mask : bool
+            Also return a [B, L] bool attention mask (True = real token, HF polarity). Length-derived,
+            so it stays exact even though this tokenizer pads with 0, a real vocab token.
 
         Returns
         -------
-        A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length]
+        A two-dimensional tensor containing the resulting tokens, shape = [number of input strings, context_length],
+        plus the attention mask when ``output_mask`` is set.
         """
         if isinstance(texts, str):
             texts = [texts]
@@ -266,13 +271,20 @@ class SimpleTokenizer(object):
 
         if self.reduction_fn is not None:
             # use reduction strategy for tokenize if set, otherwise default to truncation below
-            return self.reduction_fn(
+            result = self.reduction_fn(
                 texts,
                 context_length=context_length,
                 sot_token_id=self.sot_token_id,
                 eot_token_id=self.eot_token_id,
                 encode_fn=self.encode,
             )
+            if output_mask:
+                # true lengths are not tracked through the reduction fns; positions through the first
+                # eot are valid by the right-padded contract (eot is a special id never emitted mid-text)
+                eot = result == self.eot_token_id
+                mask = eot.cumsum(dim=-1) - eot.long() == 0
+                return result, mask
+            return result
 
         all_tokens = [[self.sot_token_id] + self.encode(text) + [self.eot_token_id] for text in texts]
         truncated = []
@@ -287,6 +299,14 @@ class SimpleTokenizer(object):
 
         for i, tokens in enumerate(all_tokens):
             result[i, :len(tokens)] = torch.tensor(tokens)
+
+        if output_mask:
+            # exact length-based validity: this tokenizer has no reserved pad (fills with 0, a real
+            # vocab token), so a value-derived mask cannot distinguish pad fill from genuine id-0 tokens
+            mask = torch.zeros_like(result, dtype=torch.bool)
+            for i, tokens in enumerate(all_tokens):
+                mask[i, :len(tokens)] = True
+            return result, mask
 
         return result
 
@@ -510,7 +530,8 @@ class HFTokenizer:
             texts: Union[str, List[str]],
             context_length: Optional[int] = None,
             pad: bool = True,
-    ) -> Union[torch.Tensor, List[torch.Tensor]]:
+            output_mask: bool = False,
+    ) -> Union[torch.Tensor, List[torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if isinstance(texts, str):
@@ -520,6 +541,12 @@ class HFTokenizer:
         assert context_length, 'Please set a valid context length in class init or call.'
 
         texts = [self.clean_fn(text) for text in texts]
+
+        if output_mask and (not pad or self.tokenizer_mode == 'clips'):
+            raise ValueError(
+                "output_mask=True requires pad=True and the standard tokenizer mode "
+                "(variable-length collation derives its own validity)."
+            )
 
         # Handle different tokenization modes
         if self.tokenizer_mode == 'clips':
@@ -534,16 +561,21 @@ class HFTokenizer:
                 return_tensors='pt' if pad else None,
             )
             input_ids = encoded.input_ids if pad else encoded["input_ids"]
+            attn_mask = encoded.attention_mask.bool() if (pad and output_mask) else None
 
             if self.strip_sep_token:
                 # pad_token_id can legitimately be None (no reserved pad token); fall back to the historical 0.
                 fill_id = 0 if self.pad_token_id is None else self.pad_token_id
                 if pad:
+                    sep_positions = input_ids == self.tokenizer.sep_token_id
                     input_ids = torch.where(
-                        input_ids == self.tokenizer.sep_token_id,
+                        sep_positions,
                         torch.full_like(input_ids, fill_id),
                         input_ids,
                     )
+                    if attn_mask is not None:
+                        # stripped sep positions carry fill, not content
+                        attn_mask = attn_mask & ~sep_positions
                 else:
                     input_ids = [
                         [fill_id if token == self.tokenizer.sep_token_id else token for token in tokens]
@@ -552,6 +584,9 @@ class HFTokenizer:
 
             if not pad:
                 return [torch.tensor(tokens, dtype=torch.long) for tokens in input_ids]
+
+            if attn_mask is not None:
+                return input_ids, attn_mask
 
             return input_ids
 
@@ -679,9 +714,14 @@ class SigLipTokenizer:
             texts: Union[str, List[str]],
             context_length: Optional[int] = None,
             pad: bool = True,
+            output_mask: bool = False,
     ) -> Union[torch.Tensor, List[torch.Tensor]]:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
+        if output_mask:
+            # SigLIP pads with the eos id (pad == eos), so a value-derived mask cannot separate the
+            # terminal eos from padding; no generative config uses this tokenizer.
+            raise NotImplementedError("SigLipTokenizer does not support output_mask.")
         if isinstance(texts, str):
             texts = [texts]
 
@@ -769,7 +809,8 @@ class TikTokenTokenizer:
             texts: Union[str, List[str]],
             context_length: Optional[int] = None,
             pad: bool = True,
-    ) -> Union[torch.LongTensor, List[torch.LongTensor]]:
+            output_mask: bool = False,
+    ) -> Union[torch.LongTensor, List[torch.LongTensor], Tuple[torch.LongTensor, torch.Tensor]]:
         """Tokenize text(s).
 
         Args:
@@ -778,10 +819,15 @@ class TikTokenTokenizer:
                 Used for truncation in both modes and for padding in fixed mode.
             pad: When True return a padded ``[N, context_length]`` tensor; when False return a list of
                 variable-length 1-D tensors.
+            output_mask: Also return a [N, context_length] bool attention mask (True = real token,
+                HF polarity). Requires ``pad=True``. Exact: the pad id is reserved above the vocab.
         """
         if isinstance(texts, str):
             texts = [texts]
         context_length = context_length or self.context_length
+
+        if output_mask and not pad:
+            raise ValueError("output_mask=True requires pad=True (variable-length collation derives its own validity).")
 
         all_tokens = [self._wrap(self.encode(text)) for text in texts]
         if context_length is not None:
@@ -801,4 +847,8 @@ class TikTokenTokenizer:
         result = torch.full((len(all_tokens), context_length), self.pad_token_id, dtype=torch.long)
         for i, tokens in enumerate(all_tokens):
             result[i, :len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+
+        if output_mask:
+            return result, result != self.pad_token_id
+
         return result

@@ -17,6 +17,7 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .clap_model import CLAP
 from .coca_model import CoCa
+from .mammut_model import MaMMUT
 from .naflex_genlip_model import NaFlexGenLip
 from .naflex_genlap_model import NaFlexGenLap
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
@@ -63,7 +64,12 @@ def _rescan_model_configs():
             # GenLAP: generative audio model with a NaFlex spectrogram prefix (front-end key is
             # 'audio_naflex_cfg', NOT 'audio_cfg' which is the CLAP key).
             has_genlap = all(a in model_cfg for a in ('embed_dim', 'genlap_cfg', 'text_cfg'))
-            if has_vision or has_audio or has_genlap:
+            # MaMMUT: single text decoder in multimodal_cfg, no separate text_cfg
+            has_mammut = (
+                all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'multimodal_cfg'))
+                and 'text_cfg' not in model_cfg
+            )
+            if has_vision or has_audio or has_genlap or has_mammut:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -151,6 +157,37 @@ def _get_hf_config(
     return config
 
 
+def _convert_legacy_mammut_cfg(model_cfg: dict) -> dict:
+    """Translate a LAION open_clip_mammut fork config into the current MaMMUT schema.
+
+    The fork configured its text decoder via ``text_cfg`` with ``does_full_decoding`` /
+    ``cross_attn_ratio`` flags. Here the decoder lives in ``multimodal_cfg`` (with no
+    ``text_cfg``), so fork-format configs (e.g. hf-hub openMaMMUT repos) are remapped,
+    with legacy pooling / masking defaults preserving the original numerics.
+    Non-MaMMUT configs pass through unchanged.
+    """
+    text_cfg = model_cfg.get('text_cfg')
+    if not isinstance(text_cfg, dict) or 'multimodal_cfg' in model_cfg:
+        return model_cfg
+    if not (text_cfg.get('does_full_decoding') or 'cross_attn_ratio' in text_cfg):
+        return model_cfg
+    if text_cfg.get('has_mlp') is False:
+        raise ValueError(
+            "Legacy MaMMUT configs with has_mlp=False (MLP folded into cross-attn blocks) are not supported."
+        )
+    multimodal_cfg = {
+        k: v for k, v in text_cfg.items()
+        if k not in ('does_full_decoding', 'output_tokens', 'has_mlp')
+    }
+    # legacy behaviour: unmasked mean pool over all positions, no pad attention mask, no text projection
+    multimodal_cfg.setdefault('pool_type', 'avg_all')
+    multimodal_cfg.setdefault('use_pad_mask', False)
+    multimodal_cfg.setdefault('proj_type', 'none')
+    out_cfg = {k: v for k, v in model_cfg.items() if k not in ('text_cfg', 'custom_text')}
+    out_cfg['multimodal_cfg'] = multimodal_cfg
+    return out_cfg
+
+
 def get_model_config(model_name):
     """ Fetch model config from schema specified location or local library configs.
     """
@@ -159,10 +196,10 @@ def get_model_config(model_name):
         local_path = Path(model_id) / 'open_clip_config.json'
         with open(local_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        return config.get('model_cfg', config)
+        return _convert_legacy_mammut_cfg(config.get('model_cfg', config))
     elif loc == 'hf-hub':
         config = _get_hf_config(model_id)
-        return config.get('model_cfg', config)
+        return _convert_legacy_mammut_cfg(config.get('model_cfg', config))
     elif model_name in _MODEL_CONFIGS:
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
@@ -444,7 +481,9 @@ def create_model(
     # Apply model config overrides
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
-    text_cfg = model_cfg['text_cfg']
+    model_cfg = _convert_legacy_mammut_cfg(model_cfg)
+    # MaMMUT models have no text_cfg, the decoder in multimodal_cfg is the text tower
+    text_cfg = model_cfg.get('text_cfg') or model_cfg.get('multimodal_cfg') or {}
     is_audio_model = 'audio_cfg' in model_cfg
     vision_cfg = model_cfg.get('vision_cfg', {})
     if force_quick_gelu:
@@ -526,7 +565,10 @@ def create_model(
             custom_text_requested or force_custom_text or is_hf_text_model or
             is_modern_text_model or is_variable_text_model
         )
-        if custom_text:
+        if "multimodal_cfg" in model_cfg and "text_cfg" not in model_cfg:
+            # single text decoder serving both contrastive & caption passes
+            model_class = MaMMUT
+        elif custom_text:
             if "multimodal_cfg" in model_cfg:
                 model_class = CoCa
             else:
@@ -702,17 +744,24 @@ def create_model(
     return model
 
 
-def _validate_special_tokens(text_config: dict, tokenizer) -> None:
+def _validate_special_tokens(text_config: dict, tokenizer, generative: bool = False) -> None:
     """Fail fast when a config's special token ids disagree with the resolved tokenizer.
 
     eos: ``pool_type == 'eos'`` (and the modern text arch's ``'argmax'``, which remaps to eos pooling) requires
     an explicit ``eos_id`` matching the tokenizer's eos/eot id -- ``eos_id`` has no config default because a
     wrong id pools silently wrong positions, which is far harder to notice than this error.
 
-    pad: towers mask via ``text != pad_id`` while collators fill with the tokenizer's pad id, so an explicit
-    ``pad_id`` that drifts from the tokenizer corrupts masks/pooling silently. ``variable_text`` additionally
-    requires the tokenizer to have a reserved pad id at all (also enforced at data setup by ``get_text_pad_id``;
-    checked here so it fails at tokenizer resolution rather than deep in the data pipeline).
+    pad: ``pad_id`` is the id that *fills padding positions* -- towers mask via ``text != pad_id`` while
+    collators/tokenizers fill with the tokenizer's pad id, so an explicit ``pad_id`` that drifts from the
+    tokenizer corrupts masks/pooling silently. (For SimpleTokenizer there is no reserved pad token at all:
+    it fills with 0, which is also a real vocab token -- the historical CLIP convention.) ``variable_text``
+    additionally requires the tokenizer to have a reserved pad id at all (also enforced at data setup by
+    ``get_text_pad_id``; checked here so it fails at tokenizer resolution rather than deep in the data
+    pipeline).
+
+    generative: models with a caption/LM loss consume ``pad_id`` as the loss ignore_index, so a generative
+    config paired with a tokenizer that reserves a nonzero pad must declare ``pad_id`` explicitly -- the
+    unset default (0) would silently train the caption loss on padding tokens (e.g. roberta pad=1).
     """
     pool_type = text_config.get('pool_type', 'argmax')
     uses_eos = pool_type == 'eos' or (text_config.get('text_arch') == 'modern' and pool_type == 'argmax')
@@ -741,6 +790,25 @@ def _validate_special_tokens(text_config: dict, tokenizer) -> None:
             f"text_cfg.pad_id ({pad_id}) does not match the resolved tokenizer's pad token id "
             f"({tokenizer_pad}); pad masks and per-batch padding would disagree."
         )
+    if generative:
+        if pad_id is not None and int(pad_id) != 0 and tokenizer_pad is None:
+            # e.g. pad_id copied from an HF config onto a SimpleTokenizer model: the tokenizer fills
+            # padding with 0 while masks/labels would key on pad_id -- silent training corruption.
+            raise ValueError(
+                f"text_cfg.pad_id ({pad_id}) is set but the resolved tokenizer has no reserved pad "
+                f"token (it fills padding with 0); the pad-value fallback mask and the actual fill "
+                f"would disagree."
+            )
+        if pad_id is None and tokenizer_pad is not None and int(tokenizer_pad) != 0:
+            # the training pipeline supplies attention_mask for generative models, so this only
+            # affects the pad-value fallback paths (direct encode_text, custom loops without masks)
+            warnings.warn(
+                f"Generative model config does not set pad_id but the tokenizer reserves a nonzero "
+                f"pad token ({tokenizer_pad}); pad-value fallback masking (used when no "
+                f"attention_mask is provided) will assume 0 and disagree with the actual padding. "
+                f"Set text_cfg/multimodal_cfg pad_id explicitly.",
+                UserWarning,
+            )
 
 
 def get_tokenizer(
@@ -818,7 +886,14 @@ def get_tokenizer(
         return SimpleTokenizer(context_length=context_length or DEFAULT_CONTEXT_LENGTH, **kwargs)
 
     # Safely access text_cfg even if config is {} (from non-builtin name case)
-    text_config = config.get('text_cfg', {})
+    # MaMMUT models carry their text/tokenizer settings in multimodal_cfg instead
+    text_config = config.get('text_cfg')
+    if not text_config:
+        text_config = config.get('multimodal_cfg') or {}
+        if text_config and 'pool_type' not in text_config:
+            # MultimodalCfg defaults pool_type to 'avg' (not CLIPTextCfg's 'argmax'); make that explicit so
+            # _validate_special_tokens doesn't apply the argmax->eos rules to a mean-pooled MaMMUT decoder.
+            text_config = dict(text_config, pool_type='avg')
 
     # Resolve context length: argument > config > default
     if context_length is None:
@@ -881,7 +956,10 @@ def get_tokenizer(
             **tokenizer_kwargs,
         )
 
-    _validate_special_tokens(text_config, tokenizer)
+    # generative models (caption/LM loss) consume pad_id as the loss ignore_index -- require it explicit
+    # when the tokenizer reserves a nonzero pad (see _validate_special_tokens)
+    generative = any(k in config for k in ('multimodal_cfg', 'genlip_cfg', 'genlap_cfg'))
+    _validate_special_tokens(text_config, tokenizer, generative=generative)
 
     return tokenizer
 
@@ -927,13 +1005,30 @@ def _use_loss_label_cache(args):
     )
 
 
-def create_loss(args):
+def create_loss(args, model: Optional[torch.nn.Module] = None):
     """Construct a loss module from training args.
 
     Standalone factory for users running their own training loops. The
     training pipeline in this repo uses ``create_task()`` instead, which
     wraps model + loss and handles EMA/FSDP/checkpointing.
+
+    Args:
+        args: training args namespace (model name, loss weights, distributed settings).
+        model: optional model instance. When given, loss dispatch keys on the built model type
+            (name checks miss hf-hub:/local-dir:/renamed configs) and model-dependent settings
+            (e.g. ``pad_id`` for the CoCa/MaMMUT caption loss on raw labels) come from its
+            attributes. Config-by-name resolution is deliberately not attempted (hub / local-dir
+            configs and model_kwargs overrides make it unreliable) -- pass the model when possible.
     """
+    if model is not None:
+        from .task import unwrap_model
+        model = unwrap_model(model)  # see through torch.compile / DDP wrappers for isinstance + attrs
+        is_captioning = isinstance(model, (CoCa, MaMMUT))
+        is_genlip = isinstance(model, (NaFlexGenLip, NaFlexGenLap))
+    else:
+        is_captioning = "coca" in args.model.lower() or "mammut" in args.model.lower()
+        is_genlip = "genlip" in args.model.lower() or "genlap" in args.model.lower()
+
     cache_labels = _use_loss_label_cache(args)
     if args.distill:
         return DistillClipLoss(
@@ -943,17 +1038,20 @@ def create_loss(args):
             rank=args.rank,
             world_size=args.world_size,
         )
-    elif "coca" in args.model.lower():
+    elif is_captioning:
         return CoCaLoss(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
+            # standalone loops pass raw (unmasked) labels, so keep the legacy value-based ignore,
+            # keyed to the model's pad id when available; the task path masks labels to -100 instead
+            pad_id=getattr(model, 'pad_id', 0) if model is not None else 0,
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=cache_labels,
             rank=args.rank,
             world_size=args.world_size,
         )
-    elif "genlip" in args.model.lower() or "genlap" in args.model.lower():
+    elif is_genlip:
         return GenLipLoss()
     elif args.siglip:
         return SigLipLoss(
@@ -987,11 +1085,14 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     Returns:
         A TrainingTask subclass instance.
     """
-    from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, GenLapTask, DistillCLIPTask, CLAPTask
+    from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, GenLapTask, DistillCLIPTask, CLAPTask, unwrap_model
 
     cache_labels = _use_loss_label_cache(args)
     shared = dict(rank=args.rank, world_size=args.world_size)
-    if isinstance(model, CLAP):
+    # dispatch on the unwrapped model type (external callers may pass torch.compile / DDP wrapped
+    # models); the task itself still wraps the model as provided
+    model_unwrapped = unwrap_model(model)
+    if isinstance(model_unwrapped, CLAP):
         if args.distill:
             raise ValueError("CLAP distillation is not supported in this integration.")
         task = CLAPTask(
@@ -1009,7 +1110,10 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             cache_labels=cache_labels,
             **shared,
         )
-    elif "coca" in args.model.lower():
+    elif isinstance(model_unwrapped, (CoCa, MaMMUT)):
+        # dispatch on the built model type, not args.model -- hf-hub:/local-dir:/renamed configs would
+        # silently fall through a name check to CLIPTask and drop the caption loss.
+        # MaMMUT shares the CoCa output contract (contrastive features + full-length caption logits).
         task = CoCaTask(
             model,
             caption_loss_weight=args.coca_caption_loss_weight,
@@ -1019,9 +1123,9 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             cache_labels=cache_labels,
             **shared,
         )
-    elif "genlap" in args.model.lower():
+    elif isinstance(model_unwrapped, NaFlexGenLap):
         task = GenLapTask(model)
-    elif "genlip" in args.model.lower():
+    elif isinstance(model_unwrapped, NaFlexGenLip):
         task = GenLipTask(model)
     elif args.siglip:
         task = SigLIPTask(

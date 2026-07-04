@@ -19,6 +19,7 @@ class _SimpleConfig:
         self.is_encoder_decoder = False
         self.vocab_size = vocab_size
         self._attn_implementation = "eager"
+        self._experts_implementation = None  # probed by transformers >= 5.x decode optimization
 
     def get_text_config(self, decoder=False):
         return self

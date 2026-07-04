@@ -28,6 +28,8 @@ from .transformer import (
     VisionTransformer,
     TextTransformer,
     ModernTextTransformer,
+    MultimodalTransformer,
+    MultimodalDecoder,
     text_global_pool,
     lock_text_tower,
 )
@@ -92,6 +94,10 @@ class CLIPTextCfg:
     mlp_ratio: float = 4.0
     ls_init_value: Optional[float] = None  # layer scale initial value
     embed_cls: bool = False
+    # id that fills padding positions (tower masking, caption-loss ignore_index, generation default).
+    # 0 is the historical CLIP/SimpleTokenizer fill convention (no reserved pad token; 0 is a real vocab
+    # token). Tokenizers with a reserved pad (roberta=1, tiktoken=100278, ...) require this to match;
+    # generative configs must set it explicitly then (validated in get_tokenizer).
     pad_id: int = 0
     bos_id: Optional[int] = None
     # Only used for pool_type == 'eos' (and the modern text arch 'argmax' remap). No default on purpose: it must
@@ -750,17 +756,23 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
                 if tensor is not None:
                     tensor.data = tensor.data.to(dtype)
 
-        if isinstance(l, (CLIP, TextTransformer)):
-            # convert text nn.Parameter projections
-            attr = getattr(l, "text_projection", None)
-            if attr is not None:
-                attr.data = attr.data.to(dtype)
+        if isinstance(l, (CLIP, TextTransformer, MultimodalTransformer, MultimodalDecoder)):
+            # convert text nn.Parameter projections / heads (nn.Linear variants are handled above)
+            for attr_name in ("text_projection", "lm_head"):
+                attr = getattr(l, attr_name, None)
+                if attr is not None and isinstance(attr, nn.Parameter):
+                    attr.data = attr.data.to(dtype)
 
         if isinstance(l, VisionTransformer):
             # convert vision nn.Parameter projections
             attr = getattr(l, "proj", None)
             if attr is not None:
                 attr.data = attr.data.to(dtype)
+
+        # MaMMUT model-level image->text kv projection (raw nn.Parameter)
+        attr = getattr(l, "map_viz2txt_kv", None)
+        if attr is not None:
+            attr.data = attr.data.to(dtype)
 
     model.apply(_convert_weights)
 

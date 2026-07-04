@@ -146,7 +146,7 @@ class CoCaLoss(ClipLoss):
             self,
             caption_loss_weight,
             clip_loss_weight,
-            pad_id=0,  # pad_token for open_clip custom tokenizer
+            pad_id=0,  # deprecated legacy convenience, see below; pass None with -100 masked labels
             local_loss=False,
             gather_with_grad=False,
             cache_labels=False,
@@ -163,7 +163,13 @@ class CoCaLoss(ClipLoss):
 
         self.clip_loss_weight = clip_loss_weight
         self.caption_loss_weight = caption_loss_weight
-        self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
+        # Preferred contract (pad_id=None): labels arrive with invalid positions already masked to -100
+        # (built task-side from the batch attention_mask; see CoCaTask). pad_id is the legacy value-based
+        # convenience: when set, label positions equal to pad_id are additionally ignored -- note this
+        # also drops genuine tokens sharing the pad value (e.g. SimpleTokenizer id 0). Default kept at 0
+        # for backward compat with external callers passing raw (unmasked) labels.
+        self.pad_id = pad_id
+        self.caption_loss = nn.CrossEntropyLoss(ignore_index=-100)
 
     def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
         if self.clip_loss_weight:
@@ -172,6 +178,8 @@ class CoCaLoss(ClipLoss):
         else:
             clip_loss = torch.tensor(0, device=logits.device)
 
+        if self.pad_id is not None:
+            labels = labels.masked_fill(labels == self.pad_id, -100)
         caption_loss = self.caption_loss(
             logits.permute(0, 2, 1),
             labels,

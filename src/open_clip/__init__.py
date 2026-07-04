@@ -1,6 +1,7 @@
 from .version import __version__
 
 from .coca_model import CoCa
+from .mammut_model import MaMMUT
 from .naflex_genlip_model import NaFlexGenLip
 from .naflex_genlap_model import NaFlexGenLap
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD

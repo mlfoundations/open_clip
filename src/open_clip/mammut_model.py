@@ -1,3 +1,16 @@
+""" MaMMUT model (https://arxiv.org/abs/2303.16839)
+
+A single vision encoder paired with a single text decoder that is used in two passes:
+a bi-directional pass without cross-attention for contrastive learning, and a causally
+masked pass with cross-attention over image tokens for caption generation.
+
+Ported from the LAION fork (https://github.com/LAION-AI/open_clip_mammut) with fixes:
+masked mean text pooling (pads excluded from pooling and attention), a properly scaled
+init for the image->decoder projection, a distinct lm_head vs contrastive projection,
+and no wasted vocab-head matmul in the contrastive pass. The original behaviour remains
+reachable via config flags (pool_type='avg_all', use_pad_mask=False) for compatibility
+with released openMaMMUT weights.
+"""
 from typing import Dict, List, Optional, Union
 
 import logging
@@ -5,53 +18,56 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
-from dataclasses import dataclass
 
 _logger = logging.getLogger(__name__)
 
+from .coca_model import MultimodalCfg
+from .model import CLIPVisionCfg, _build_vision_tower
 from .transformer import (
     LayerNormFp32,
     LayerNorm,
     QuickGELU,
-    MultimodalTransformer,
+    ModernMultimodalDecoder,
+    MultimodalDecoder,
 )
-from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
 
-@dataclass
-class MultimodalCfg(CLIPTextCfg):
-    mlp_ratio: int = 4
-    dim_head: int = 64
-    heads: int = 8
-    n_queries: int = 256
-    attn_pooler_heads: int = 8
-    # MaMMUT decoder (MultimodalDecoder) fields, ignored by the CoCa decoder builder
-    cross_attn_ratio: int = 1  # one cross-attn block per N self-attn layers (2 -> after layers 0, 2, 4, ...)
-    use_pad_mask: bool = True  # mask pad tokens from attention in the bi-directional contrastive pass (legacy: False)
-    pool_type: str = 'avg'  # contrastive pool: 'avg' masked mean excl pads | 'avg_all' mean incl pads (legacy)
-    proj_type: str = 'none'  # contrastive text projection; 'none' (paper/legacy) requires embed_dim == width
-    tie_lm_head: bool = False  # share lm_head weight with token_embedding (modern decoder only)
-
-
-def _build_text_decoder_tower(
-        embed_dim,
-        multimodal_cfg,
+def _build_multimodal_decoder_tower(
+        embed_dim: int,
+        multimodal_cfg: MultimodalCfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
-    act_layer = QuickGELU if quick_gelu else nn.GELU
-    norm_layer = (
-        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
-    )
+    if multimodal_cfg.proj_type == 'none' and embed_dim != multimodal_cfg.width:
+        raise ValueError(
+            f"MaMMUT with proj_type='none' requires embed_dim == decoder width, "
+            f"got embed_dim={embed_dim}, width={multimodal_cfg.width}. "
+            f"Set multimodal_cfg.proj_type='linear' to decouple them."
+        )
 
-    decoder = MultimodalTransformer(
+    if multimodal_cfg.text_arch == 'modern':
+        # modern decoder is cfg-driven and ignores quick_gelu / cast_dtype norm selection
+        # (act/norm come from mlp_type / norm_type, matching ModernTextTransformer)
+        return ModernMultimodalDecoder(multimodal_cfg, output_dim=embed_dim)
+
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+
+    decoder = MultimodalDecoder(
         context_length=multimodal_cfg.context_length,
+        vocab_size=multimodal_cfg.vocab_size,
         width=multimodal_cfg.width,
         heads=multimodal_cfg.heads,
         layers=multimodal_cfg.layers,
+        mlp_ratio=multimodal_cfg.mlp_ratio,
         ls_init_value=multimodal_cfg.ls_init_value,
+        cross_attn_ratio=multimodal_cfg.cross_attn_ratio,
         output_dim=embed_dim,
+        proj_type=multimodal_cfg.proj_type,
+        pool_type=multimodal_cfg.pool_type,
+        use_pad_mask=multimodal_cfg.use_pad_mask,
+        pad_id=multimodal_cfg.pad_id,
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
@@ -59,12 +75,11 @@ def _build_text_decoder_tower(
     return decoder
 
 
-class CoCa(nn.Module):
+class MaMMUT(nn.Module):
     def __init__(
             self,
-            embed_dim,
+            embed_dim: int,
             multimodal_cfg: MultimodalCfg,
-            text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
@@ -75,21 +90,7 @@ class CoCa(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
-        text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
-
-        self.text = _build_text_tower(
-            embed_dim=embed_dim,
-            text_cfg=text_cfg,
-            quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype,
-        )
-
-        vocab_size = (
-            text_cfg.vocab_size  # for hf models
-            if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
-            else text_cfg.vocab_size
-        )
 
         self.visual = _build_vision_tower(
             embed_dim=embed_dim,
@@ -98,12 +99,16 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.text_decoder = _build_text_decoder_tower(
-            vocab_size,
+        self.text = _build_multimodal_decoder_tower(
+            embed_dim=embed_dim,
             multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
+
+        # projects image tokens to decoder width for cross-attention k/v
+        self.map_viz2txt_kv = nn.Parameter(torch.empty(vision_cfg.width, multimodal_cfg.width))
+        nn.init.normal_(self.map_viz2txt_kv, std=vision_cfg.width ** -0.5)
 
         lshape = [1] if nonscalar_logit_scale else []
         self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
@@ -111,126 +116,45 @@ class CoCa(nn.Module):
             self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
         else:
             self.logit_bias = None
-
-        # pad id is derived from the text tower (the id it masks with: text_cfg.pad_id for native
-        # towers, the transformers config pad_token_id for HF towers) so loss ignore_index and
-        # generation defaults stay consistent with tower masking and tokenizer padding. The 0
-        # fallback is the historical CLIP fill convention (SimpleTokenizer reserves no pad token;
-        # 0 is a real vocab token).
-        pad_id = getattr(self.text, 'pad_id', None)
-        self.pad_id = 0 if pad_id is None else int(pad_id)
+        # pad id is derived from the text tower (which gets it from multimodal_cfg.pad_id) so
+        # masking/pooling, generation defaults, and the caption loss ignore_index (via create_task)
+        # all share one source -- same pattern as CoCa / GenLIP
+        self.pad_id = self.text.pad_id
 
         self.context_length = multimodal_cfg.context_length
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.visual.set_grad_checkpointing(enable, impl=impl)
         self.text.set_grad_checkpointing(enable, impl=impl)
-        self.text_decoder.set_grad_checkpointing(enable, impl=impl)
+
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = set()
+        if hasattr(self.visual, 'no_weight_decay'):
+            for n in self.visual.no_weight_decay():
+                no_wd.add('visual.' + n)
+        for n in self.text.no_weight_decay():
+            no_wd.add('text.' + n)
+        return no_wd
 
     def _encode_image(self, images, normalize: bool = True):
-        image_latent, tokens_embs = self.visual(images)
+        image_latent, token_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        return image_latent, tokens_embs
+        return image_latent, token_embs
 
     def _encode_text(self, text, text_valid=None, normalize: bool = True):
         # text towers keep the HF-style attention_mask kwarg (single-sequence scope); the parent
         # multimodal interface names the mask by modality (text_valid, alongside NaFlex patch_valid)
-        text_latent, token_emb = self.text(text, attention_mask=text_valid)
+        text_latent = self.text(text, attention_mask=text_valid, mode='contrastive')
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
-        return text_latent, token_emb
+        return text_latent
 
     def encode_image(self, images, normalize: bool = True):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
     def encode_text(self, text, text_valid=None, normalize: bool = True):
-        text_latent, _ = self._encode_text(text, text_valid=text_valid, normalize=normalize)
-        return text_latent
-
-    def forward_intermediates(
-            self,
-            image: Optional[torch.Tensor] = None,
-            text: Optional[torch.Tensor] = None,
-            text_valid: Optional[torch.Tensor] = None,
-            image_indices: Optional[Union[int, List[int]]] = None,
-            text_indices: Optional[Union[int, List[int]]] = None,
-            stop_early: bool = False,
-            normalize: bool = True,
-            normalize_intermediates: bool = False,
-            intermediates_only: bool = False,
-            image_output_fmt: str = 'NCHW',
-            image_output_extra_tokens: bool = False,
-            text_output_fmt: str = 'NLC',
-            text_output_extra_tokens: bool = False,
-            output_logits: bool = False,
-            output_logit_scale_bias: bool = False,
-    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
-        """ Forward features that returns intermediates.
-
-        Args:
-            image: Input image tensor
-            text: Input text tensor
-            text_valid: Optional [B, L] bool/int text validity (True/1 = real token); pad-value fallback when absent
-            image_indices: For image tower, Take last n blocks if int, all if None, select matching indices if sequence
-            text_indices: Take last n blocks if int, all if None, select matching indices if sequence
-            stop_early: Stop iterating over blocks when last desired intermediate hit
-            normalize: L2 Normalize final image and text features (if present)
-            normalize_intermediates: Apply final encoder norm layer to all intermediates (if possible)
-            intermediates_only: Only return intermediate features, do not return final features
-            image_output_fmt: Shape of intermediate image feature outputs
-            image_output_extra_tokens: Return both prefix and spatial intermediate tokens
-            text_output_fmt: Shape of intermediate text feature outputs
-            text_output_extra_tokens: Return both prefix and spatial intermediate tokens
-            output_logits: Include logits in output
-            output_logit_scale_bias: Include the logit scale bias in the output
-        Returns:
-
-        """
-        output = {}
-        if intermediates_only:
-            # intermediates only disables final feature normalization, and include logits
-            normalize = False
-            output_logits = False
-        if output_logits:
-            assert False, 'FIXME, needs implementing'
-
-        if image is not None:
-            image_output = self.visual.forward_intermediates(
-                image,
-                indices=image_indices,
-                stop_early=stop_early,
-                normalize_intermediates=normalize_intermediates,
-                intermediates_only=intermediates_only,
-                output_fmt=image_output_fmt,
-                output_extra_tokens=image_output_extra_tokens,
-            )
-            if normalize and "image_features" in image_output:
-                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
-            output.update(image_output)
-
-        if text is not None:
-            text_output = self.text.forward_intermediates(
-                text,
-                attention_mask=text_valid,
-                indices=text_indices,
-                stop_early=stop_early,
-                normalize_intermediates=normalize_intermediates,
-                intermediates_only=intermediates_only,
-                output_fmt=text_output_fmt,
-                output_extra_tokens=text_output_extra_tokens,
-            )
-            if normalize and "text_features" in text_output:
-                text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
-            output.update(text_output)
-
-        # FIXME text decoder
-        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
-        if output_logit_scale_bias:
-            output["logit_scale"] = logit_scale_exp
-            if self.logit_bias is not None:
-                output['logit_bias'] = self.logit_bias
-
-        return output
+        return self._encode_text(text, text_valid=text_valid, normalize=normalize)
 
     def forward(
             self,
@@ -241,21 +165,24 @@ class CoCa(nn.Module):
             image_embs: Optional[torch.Tensor] = None,
     ):
         """text_valid: optional [B, L] bool/int text validity (True/1 = real token), consumed by the
-        text tower's pad/cls masking (passed down as its HF-style ``attention_mask``); validity falls
-        back to ``text != pad_id`` when absent. Caption logits are causal over right-padded text and
-        need no mask; label masking for the caption loss happens task-side."""
+        contrastive pass (attention + pooling, passed to the decoder as its HF-style
+        ``attention_mask``); validity falls back to ``text != pad_id`` when absent, and legacy
+        configs ignore it (see MultimodalDecoder). The caption pass is causal over right-padded
+        text; label masking happens task-side."""
         if image is not None and (image_latent is None or image_embs is None):
             image_latent, image_embs = self._encode_image(image)
 
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
 
-        text_latent, token_embs = self._encode_text(text, text_valid=text_valid)
+        text_latent = self._encode_text(text, text_valid=text_valid)
 
         if image_latent is None:
             return {"text_features": text_latent}
 
-        logits = self.text_decoder(image_embs, token_embs)
+        # caption pass: causal self-attention w/ cross-attention over projected image tokens
+        image_kv = image_embs @ self.map_viz2txt_kv
+        logits = self.text(text, image_embs=image_kv, mode='caption')
 
         out_dict = {
             "image_features": image_latent,
@@ -312,7 +239,8 @@ class CoCa(nn.Module):
         pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
 
         with torch.no_grad():
-            image_latent, image_embs = self._encode_image(image)
+            _, image_embs = self._encode_image(image)
+            image_kv = image_embs @ self.map_viz2txt_kv
 
             squeeze_output = False
             if text is None:
@@ -327,12 +255,12 @@ class CoCa(nn.Module):
             was_training = self.training
             self.eval()
 
-            vocab_size = self.text.token_embedding.weight.shape[0]
             wrapper = MultimodalGenerationWrapper(
-                text_encoder_fn=lambda ids: self._encode_text(ids)[1],
-                text_decoder_fn=self.text_decoder,
-                image_embs=image_embs,
-                vocab_size=vocab_size,
+                # the decoder embeds token ids internally, so pass ids straight through
+                text_encoder_fn=lambda ids: ids,
+                text_decoder_fn=lambda img_kv, ids: self.text(ids, image_embs=img_kv, mode='caption'),
+                image_embs=image_kv,
+                vocab_size=self.text.vocab_size,
                 pad_token_id=pad_token_id,
                 eos_token_id=eos_token_id,
                 bos_token_id=sot_token_id,
@@ -380,7 +308,7 @@ class CoCa(nn.Module):
             output = wrapper.generate(
                 text,
                 generation_config=generation_config,
-                image_embs=image_embs,
+                image_embs=image_kv,
             )
 
             if fixed_output_length and output.shape[1] < seq_len:
@@ -398,4 +326,3 @@ class CoCa(nn.Module):
 
             self.train(was_training)
             return output
-

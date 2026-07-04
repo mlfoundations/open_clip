@@ -156,9 +156,10 @@ def profile_model(model_name, batch_size=1, profiler='torch', device="cuda"):
     model_cfg = open_clip.get_model_config(model_name)
     if model_cfg:
         vision_cfg = open_clip.CLIPVisionCfg(**model_cfg['vision_cfg'])
-        text_cfg = open_clip.CLIPTextCfg(**model_cfg['text_cfg'])
+        # MaMMUT models have no text_cfg, the decoder in multimodal_cfg is the text tower
+        text_cfg_dict = model_cfg.get('text_cfg') or model_cfg.get('multimodal_cfg') or {}
         results['image_width'] = int(vision_cfg.width)
-        results['text_width'] = int(text_cfg.width)
+        results['text_width'] = int(text_cfg_dict.get('width', 0))
         results['embed_dim'] = int(model_cfg['embed_dim'])
     else:
         results['image_width'] = 0

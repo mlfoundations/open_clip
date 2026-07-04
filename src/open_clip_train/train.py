@@ -40,6 +40,7 @@ def get_wandb_backend(args):
     return None
 
 from open_clip import get_input_dtype
+from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
@@ -628,7 +629,12 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                             F.cross_entropy(logits_per_text, labels)
                         ) / 2
                         cumulative_loss += total_loss * batch_size
-                        gen_loss = maybe_compute_generative_loss(model_out, texts=batch.get("text"))
+                        gen_loss = maybe_compute_generative_loss(
+                            model_out,
+                            texts=batch.get("text"),
+                            text_valid=batch.get("text_valid"),
+                            pad_id=getattr(get_model_from_task(task), 'pad_id', 0),
+                        )
                     else:
                         gen_loss = model_out.get("caption_loss", model_out.get("loss"))
 
@@ -712,8 +718,12 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
 
     return metrics
 
-def maybe_compute_generative_loss(model_out, texts=None, pad_id=0):
+def maybe_compute_generative_loss(model_out, texts=None, text_valid=None, pad_id=0):
     if "logits" in model_out and texts is not None:
         logits = model_out["logits"][:, :-1]
         labels = texts[:, 1:]
-        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=pad_id)
+        # invalid label positions -> -100: from the batch attention mask when the pipeline emits one,
+        # else the pad-value fallback (which also drops genuine tokens equal to the fill id)
+        valid = text_valid[:, 1:].bool() if text_valid is not None else labels != pad_id
+        labels = labels.masked_fill(~valid, -100)
+        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=-100)

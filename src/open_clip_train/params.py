@@ -676,16 +676,25 @@ def parse_args(args):
              "epoch running average).",
     )
     parser.add_argument(
+        "--text-attention-mask",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Emit a per-sample text attention mask (True = real token) from the tokenizer into batches, "
+             "consumed by generative models for attention/pooling and -100 caption-label masking. "
+             "Default (unset) auto-enables for CoCa/MaMMUT models and stays off otherwise (CLIP-style "
+             "contrastive models don't consume it)."
+    )
+    parser.add_argument(
         "--coca-caption-loss-weight",
         type=float,
         default=2.0,
-        help="Weight assigned to caption loss in CoCa."
+        help="Weight assigned to caption loss in CoCa / MaMMUT (MaMMUT paper uses 1.0)."
     )
     parser.add_argument(
         "--coca-contrastive-loss-weight",
         type=float,
         default=1.0,
-        help="Weight assigned to contrastive loss when training CoCa."
+        help="Weight assigned to contrastive loss when training CoCa / MaMMUT."
     )
     parser.add_argument(
         "--remote-sync",

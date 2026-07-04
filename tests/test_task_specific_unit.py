@@ -106,7 +106,7 @@ def test_clip_task_logit_scale_in_report():
 
 
 def test_coca_build_loss_inputs_autoregressive_shift():
-    """_build_loss_inputs applies the correct autoregressive shift."""
+    """_build_loss_inputs applies the correct autoregressive shift and -100 label masking."""
     model = TinyModel(has_logits=True)
     task = CoCaTask(model, loss=DummyCoCaLoss())
     b = _batch(bs=2, seq=5)
@@ -115,7 +115,18 @@ def test_coca_build_loss_inputs_autoregressive_shift():
     # logits shifted: [:, :-1], labels shifted: text[:, 1:]
     assert loss_input["logits"].shape[1] == b["text"].shape[1] - 1
     assert loss_input["labels"].shape[1] == b["text"].shape[1] - 1
-    assert torch.equal(loss_input["labels"], b["text"][:, 1:])
+    # without a text_valid mask, validity falls back to text != pad_id (0): shifted labels match
+    # the text at valid positions and are -100 at fallback-pad positions
+    shifted = b["text"][:, 1:]
+    expected = shifted.masked_fill(shifted == 0, -100)
+    assert torch.equal(loss_input["labels"], expected)
+    # with an explicit text_valid mask, validity follows the mask (value collisions ignored)
+    mask = torch.ones_like(b["text"], dtype=torch.bool)
+    mask[:, -1] = False
+    loss_input = task._build_loss_inputs(model_out, {**b, "text_valid": mask})
+    expected = shifted.clone()
+    expected[:, -1] = -100
+    assert torch.equal(loss_input["labels"], expected)
 
 
 def test_coca_training_forward_produces_loss():

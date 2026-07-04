@@ -261,6 +261,20 @@ def convert_mobile_clip_state_dict(model: CustomTextCLIP, state_dict, fastvit = 
     return out_dict
 
 
+def convert_mammut_state_dict(model, state_dict):
+    """Convert a LAION open_clip_mammut fork checkpoint to the current MaMMUT layout.
+
+    The fork repurposed the decoder's ``text_projection`` as the vocab head; here that
+    weight lives in ``lm_head`` (a pure rename, [width, vocab_size], no transpose).
+    All other keys align by construction. Only applicable when ``text.lm_head`` is
+    absent -- current checkpoints can hold both ``text.lm_head`` and a real
+    ``text.text_projection`` (classic decoder w/ proj_type='linear').
+    """
+    out_dict = dict(state_dict)
+    out_dict['text.lm_head'] = out_dict.pop('text.text_projection')
+    return out_dict
+
+
 def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
     if 'image_encoder.model.patch_embed.0.rbr_conv.0.conv.weight' in state_dict:
         # Apple MobileCLIP s1 & s2 state_dicts (s0 and b not currently supported)
@@ -268,4 +282,13 @@ def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
     if 'image_encoder.model.patch_emb.0.block.conv.weight' in state_dict:
         # convert b model
         state_dict = convert_mobile_clip_state_dict(model, state_dict, fastvit=False)
+    if (
+        'map_viz2txt_kv' in state_dict
+        and 'text.text_projection' in state_dict
+        and 'text.lm_head' not in state_dict
+    ):
+        # LAION open_clip_mammut fork MaMMUT checkpoint (text_projection is the repurposed vocab
+        # head there; current checkpoints always carry text.lm_head, plus optionally a real
+        # text.text_projection contrastive projection)
+        state_dict = convert_mammut_state_dict(model, state_dict)
     return state_dict

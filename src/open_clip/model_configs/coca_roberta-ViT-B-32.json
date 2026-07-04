@@ -12,6 +12,7 @@
         "hf_tokenizer_name": "roberta-base",
         "hf_proj_type": "linear",
         "width": 768,
+        "pad_id": 1,
         "output_tokens": true
     },
     "multimodal_cfg": {

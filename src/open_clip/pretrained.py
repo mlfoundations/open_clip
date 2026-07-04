@@ -438,6 +438,10 @@ _coca_VITL14 = dict(
     mscoco_finetuned_laion2b_s13b_b90k=_pcfg(hf_hub='laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k/')
 )
 
+_mammut_VITL14 = dict(
+    datacomp1b_s12_8b_b180k=_pcfg(hf_hub='laion/openMaMMUT-ViT-L-14-DataComp-1.4B-s12.8B-b180K/'),
+)
+
 _CLAP_HTSAT_TINY_ROBERTA = dict(
     laion=_clapcfg(
         hf_hub='laion/clap-htsat-unfused/pytorch_model.bin',
@@ -484,6 +488,8 @@ _PRETRAINED = {
 
     "coca_ViT-B-32": _coca_VITB32,
     "coca_ViT-L-14": _coca_VITL14,
+
+    "mammut_ViT-L-14": _mammut_VITL14,
 
     "CLAP-HTSAT-tiny-Roberta-base": _CLAP_HTSAT_TINY_ROBERTA,
     "CLAP-HTSAT-tiny-Roberta-base-fused": _CLAP_HTSAT_TINY_ROBERTA_FUSED,
