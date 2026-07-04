@@ -40,7 +40,7 @@ class TokenizeText:
     def __init__(self, tokenizer, variable: bool = False, output_mask: bool = False):
         self.tokenizer = tokenizer
         self.variable = variable
-        # output_mask: emit a per-sample bool attention mask (True = real token) alongside the tokens,
+        # output_mask: emit a per-sample bool validity mask (batch key "text_valid", True = real token),
         # consumed by generative models (attention/pooling + -100 caption-label masking). Only the
         # sample-level entry point (map_sample) emits it; __call__ always returns tokens only, so
         # value-level pipeline stages (wds.map_dict) are unaffected. Mutually exclusive with variable
@@ -60,7 +60,7 @@ class TokenizeText:
         return self.tokenizer(text)[0]
 
     def map_sample(self, sample):
-        # Sample-level map (wds.map) so the attention mask can ride alongside the tokens.
+        # Sample-level map (wds.map) so the text_valid mask can ride alongside the tokens.
         text = sample["text"]
         if isinstance(text, bytes):
             text = text.decode('utf-8')

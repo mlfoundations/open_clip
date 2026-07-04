@@ -679,10 +679,10 @@ def parse_args(args):
         "--text-attention-mask",
         default=None,
         action=argparse.BooleanOptionalAction,
-        help="Emit a per-sample text attention mask (True = real token) from the tokenizer into batches, "
-             "consumed by generative models for attention/pooling and -100 caption-label masking. "
-             "Default (unset) auto-enables for CoCa/MaMMUT models and stays off otherwise (CLIP-style "
-             "contrastive models don't consume it)."
+        help="Emit a per-sample text validity mask (batch key 'text_valid', True = real token) from the "
+             "tokenizer into batches, consumed by generative models for attention/pooling and -100 "
+             "caption-label masking. Default (unset) auto-enables for CoCa/MaMMUT models (not distilled) "
+             "and stays off otherwise (CLIP-style contrastive models don't consume it)."
     )
     parser.add_argument(
         "--coca-caption-loss-weight",

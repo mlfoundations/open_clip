@@ -1,7 +1,8 @@
 """pad_id consistency across generative text models.
 
-The chain under test: tokenizer fills -> text tower masks (tower owns pad_id) ->
-model derives model.pad_id from its tower -> task/loss/eval/generate read the model attr.
+The chain under test: tokenizer fills -> text tower masks (tower owns pad_id) -> model derives
+model.pad_id from its tower -> tasks/eval use it only as the fallback validity derivation when no
+text_valid mask is supplied (labels are -100 masked; generation reads it as the fill default).
 """
 import types
 
@@ -235,6 +236,34 @@ def test_tokenize_text_map_sample():
     tt_plain = TokenizeText(SimpleTokenizer())
     sample_plain = tt_plain.map_sample({'text': 'a dog'})
     assert 'text_valid' not in sample_plain
+
+
+def test_use_pad_mask_ignored_warnings():
+    """Config values that towers accept but do not honor must warn rather than silently no-op."""
+    import warnings as _warnings
+    from open_clip.transformer import TextTransformer
+
+    # causal tower without embed_cls: use_pad_mask is truly dropped -> warn
+    with pytest.warns(UserWarning, match='use_pad_mask'):
+        TextTransformer(context_length=8, vocab_size=32, width=32, heads=2, layers=1, use_pad_mask=True)
+    # bidirectional: honored, no warning
+    with _warnings.catch_warnings():
+        _warnings.simplefilter('error')
+        TextTransformer(context_length=8, vocab_size=32, width=32, heads=2, layers=1,
+                        use_pad_mask=True, no_causal_mask=True, pool_type='first')
+    # embed_cls (CoCa): the cls-additive mask includes pad masking regardless -> no warning
+    with _warnings.catch_warnings():
+        _warnings.simplefilter('error')
+        TextTransformer(context_length=8, vocab_size=32, width=32, heads=2, layers=1,
+                        use_pad_mask=True, embed_cls=True)
+
+    # modern MaMMUT decoder ignores use_pad_mask=False (no legacy modern weights) -> warn
+    with pytest.warns(UserWarning, match='use_pad_mask'):
+        _tiny_mammut(text_arch='modern', use_pad_mask=False)
+    # classic decoder honors it (legacy openMaMMUT mode): no warning
+    with _warnings.catch_warnings():
+        _warnings.simplefilter('error')
+        _tiny_mammut(pool_type='avg_all', use_pad_mask=False)
 
 
 def test_maybe_compute_generative_loss_respects_pad_id():

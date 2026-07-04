@@ -27,6 +27,8 @@ models_to_test = models_to_test.difference({
         'coca_base',
         'coca_ViT-B-32',
         'coca_roberta-ViT-B-32',
+        'coca2_ViT-B-32',
+        'coca2-moderntext_ViT-B-32',
         'mammut_ViT-L-14',
 })
 

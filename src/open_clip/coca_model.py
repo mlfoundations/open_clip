@@ -13,6 +13,7 @@ from .transformer import (
     LayerNormFp32,
     LayerNorm,
     QuickGELU,
+    ModernMultimodalTransformer,
     MultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
@@ -39,7 +40,13 @@ def _build_text_decoder_tower(
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
 ):
+    # NOTE: CoCa passes the vocab size as ``embed_dim`` -- the decoder's output projection is the vocab head.
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+
+    if multimodal_cfg.text_arch == 'modern':
+        # modern decoder is cfg-driven; act/norm come from mlp_type / norm_type (quick_gelu N/A)
+        return ModernMultimodalTransformer(multimodal_cfg, vocab_size=embed_dim)
+
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm

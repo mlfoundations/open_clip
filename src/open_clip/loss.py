@@ -164,7 +164,7 @@ class CoCaLoss(ClipLoss):
         self.clip_loss_weight = clip_loss_weight
         self.caption_loss_weight = caption_loss_weight
         # Preferred contract (pad_id=None): labels arrive with invalid positions already masked to -100
-        # (built task-side from the batch attention_mask; see CoCaTask). pad_id is the legacy value-based
+        # (built task-side from the batch text_valid mask; see CoCaTask). pad_id is the legacy value-based
         # convenience: when set, label positions equal to pad_id are additionally ignored -- note this
         # also drops genuine tokens sharing the pad value (e.g. SimpleTokenizer id 0). Default kept at 0
         # for backward compat with external callers passing raw (unmasked) labels.

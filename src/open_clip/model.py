@@ -94,6 +94,10 @@ class CLIPTextCfg:
     mlp_ratio: float = 4.0
     ls_init_value: Optional[float] = None  # layer scale initial value
     embed_cls: bool = False
+    # correct cls/pad additive-mask construction for CoCa (legacy False = historical off-by-one where the
+    # mask is built as if the cls token were at the front while it is appended at the end)
+    correct_cls_mask: bool = False
+    use_pad_mask: bool = False  # mask pad keys in bi-directional (no_causal_mask) mode
     # id that fills padding positions (tower masking, caption-loss ignore_index, generation default).
     # 0 is the historical CLIP/SimpleTokenizer fill convention (no reserved pad token; 0 is a real vocab
     # token). Tokenizers with a reserved pad (roberta=1, tiktoken=100278, ...) require this to match;
@@ -126,6 +130,10 @@ class CLIPTextCfg:
 
     # ModernTextTransformer settings (text_arch == "modern")
     attention_mode: str = "causal"  # "causal" or "bidirectional"
+    # Zero-init + gradient-freeze the pad row of the token embedding (nn.Embedding padding_idx). Tri-state:
+    # None = arch default (True, matching existing modern text runs). Set False when the pad id collides
+    # with a real vocab token (SimpleTokenizer fills with 0 == '!'), where freezing would corrupt it.
+    freeze_pad_embed: Optional[bool] = None
     pos_embed: str = "rope"
     rope_temperature: float = 10000.0
     mlp_type: str = "swiglu"  # "swiglu", "mlp" (GELU), or "relu2" (squared-ReLU)
@@ -300,7 +308,9 @@ def _build_text_tower(
             ls_init_value=text_cfg.ls_init_value,
             output_dim=embed_dim,
             embed_cls=text_cfg.embed_cls,
+            correct_cls_mask=text_cfg.correct_cls_mask,
             no_causal_mask=text_cfg.no_causal_mask,
+            use_pad_mask=text_cfg.use_pad_mask,
             pad_id=text_cfg.pad_id,
             eos_id=text_cfg.eos_id,
             pool_type=text_cfg.pool_type,

@@ -340,18 +340,20 @@ def main(args):
 
     # Resolve --text-attention-mask before params logging so the recorded value reflects what the
     # data pipeline actually emits. Auto: generative image-text models consume text validity masks
-    # (attention/pooling + -100 caption-label masking); dispatch on the built model type.
+    # (attention/pooling + -100 caption-label masking). Mirror create_task dispatch: model type,
+    # EXCEPT distillation, which takes precedence over CoCa/MaMMUT and yields a DistillCLIPTask
+    # that does not consume the batch key.
     from open_clip import CoCa, MaMMUT
-    _mask_consumer = isinstance(unwrap_model(model), (CoCa, MaMMUT))
+    _mask_consumer = isinstance(unwrap_model(model), (CoCa, MaMMUT)) and not args.distill
     if args.text_attention_mask is None:
         args.text_attention_mask = _mask_consumer
     elif args.text_attention_mask and not _mask_consumer:
         # fail fast: other tasks don't accept the batch key -- e.g. CLIPTask silently drops it in
         # training_forward but the grad-accumulation path would crash on the unexpected key
         raise ValueError(
-            "--text-attention-mask requires a model that consumes text validity masks "
-            "(CoCa / MaMMUT); GenLIP/GenLAP and variable-text pipelines derive validity in their "
-            "collators, and CLIP-style contrastive tasks do not use one."
+            "--text-attention-mask requires a task that consumes text validity masks "
+            "(CoCa / MaMMUT, without --distill); GenLIP/GenLAP and variable-text pipelines derive "
+            "validity in their collators, and CLIP-style contrastive tasks do not use one."
         )
 
     if is_master(args):

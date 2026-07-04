@@ -89,11 +89,11 @@ def _right_padded_batch(lengths, total_len):
     return text
 
 
-def _old_attn_inputs(self, text, dtype, num_prefix=0):
+def _old_attn_inputs(self, text, dtype, num_prefix=0, attention_mask=None):
     """Reference: a full ``[B, 1, L, L]`` additive mask (causal AND valid), is_causal=False."""
     assert num_prefix == 0  # reference path is register-free
     b, l = text.shape
-    valid = self._valid_mask(text)
+    valid = self._valid_mask(text, attention_mask)
     allowed = valid[:, None, None, :].expand(b, 1, l, l).clone()
     if self.cfg.attention_mode == "causal":
         causal = torch.ones(l, l, dtype=torch.bool).tril()

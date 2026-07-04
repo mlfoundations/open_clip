@@ -583,6 +583,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         # compute respectively.
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
+        gen_loss_pad_id = getattr(get_model_from_task(task), 'pad_id', 0)
         all_primary_features, all_text_features = [], []
         with torch.inference_mode():
             i = 0
@@ -633,7 +634,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                             model_out,
                             texts=batch.get("text"),
                             text_valid=batch.get("text_valid"),
-                            pad_id=getattr(get_model_from_task(task), 'pad_id', 0),
+                            pad_id=gen_loss_pad_id,
                         )
                     else:
                         gen_loss = model_out.get("caption_loss", model_out.get("loss"))

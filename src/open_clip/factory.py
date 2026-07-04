@@ -559,8 +559,6 @@ def create_model(
         model_class = CLAP
     else:
         custom_text_requested = model_cfg.pop('custom_text', False)
-        if is_modern_text_model and "multimodal_cfg" in model_cfg:
-            raise ValueError("text_arch='modern' is not supported for CoCa / multimodal_cfg models.")
         custom_text = (
             custom_text_requested or force_custom_text or is_hf_text_model or
             is_modern_text_model or is_variable_text_model
