@@ -224,6 +224,28 @@ def test_naflex_batcher_pads_schedule_to_worker_count():
     assert batcher.num_samples_for_workers(4) == 4
 
 
+def test_naflex_batcher_worker_padded_sample_count_matches_shuffled_epochs():
+    """Padding before shuffling keeps the advertised worker-padded sample count stable across epochs."""
+    batcher = NaFlexBatcher(
+        train_num_samples=17,
+        patch_size=16,
+        seq_lens=(4, 8, 16),
+        seq_len_choice_probs=(1, 2, 1),
+        max_tokens_per_batch=32,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        seed=7,
+        shuffle=True,
+    )
+
+    expected_samples = batcher.num_samples_for_workers(4)
+    expected_batches = batcher.num_batches_for_workers(4)
+    for epoch in range(5):
+        schedule = batcher.scheduler.epoch_schedule(epoch, num_workers=4)
+        assert len(schedule) == expected_batches
+        assert sum(batch_size for _, batch_size in schedule) == expected_samples
+
+
 def test_image_transform_naflex_returns_timm_transform_factory():
     factory = image_transform(
         32,

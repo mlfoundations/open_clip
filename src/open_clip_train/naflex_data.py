@@ -641,9 +641,9 @@ class NaFlexBatchScheduler:
 
     def epoch_schedule(self, epoch: int, num_workers: int = 1) -> List[Tuple[int, int]]:
         schedule = list(self._canonical_batch_schedule)
+        schedule = self.pad_schedule_for_workers(schedule, max(1, num_workers))
         if self.shuffle:
             random.Random(self.seed + epoch).shuffle(schedule)
-        schedule = self.pad_schedule_for_workers(schedule, max(1, num_workers))
         return schedule
 
     @staticmethod
