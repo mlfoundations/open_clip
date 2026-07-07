@@ -639,9 +639,14 @@ class NaFlexBatchScheduler:
     def __len__(self) -> int:
         return self.num_batches
 
+    def _worker_padded_schedule(self, num_workers: int) -> List[Tuple[int, int]]:
+        return self.pad_schedule_for_workers(
+            list(self._canonical_batch_schedule),
+            max(1, num_workers),
+        )
+
     def epoch_schedule(self, epoch: int, num_workers: int = 1) -> List[Tuple[int, int]]:
-        schedule = list(self._canonical_batch_schedule)
-        schedule = self.pad_schedule_for_workers(schedule, max(1, num_workers))
+        schedule = self._worker_padded_schedule(num_workers)
         if self.shuffle:
             random.Random(self.seed + epoch).shuffle(schedule)
         return schedule
@@ -668,11 +673,10 @@ class NaFlexBatchScheduler:
         return schedule[worker_id::num_workers]
 
     def num_batches_for_workers(self, num_workers: int) -> int:
-        schedule = self.pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
-        return len(schedule)
+        return len(self._worker_padded_schedule(num_workers))
 
     def num_samples_for_workers(self, num_workers: int) -> int:
-        schedule = self.pad_schedule_for_workers(list(self._canonical_batch_schedule), max(1, num_workers))
+        schedule = self._worker_padded_schedule(num_workers)
         num_samples_per_rank = sum(batch_size for _, batch_size in schedule)
         if self.distributed:
             return num_samples_per_rank * self.world_size
