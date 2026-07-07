@@ -160,6 +160,21 @@ def test_mammut_generate(mm_cfg):
     assert out.dtype == torch.long
 
 
+def test_mammut_generate_uses_resolved_cfg_special_ids():
+    pytest.importorskip('transformers')
+    model = _tiny_model(dict(MULTIMODAL_CFG, bos_id=1, eos_id=2))
+    image, _ = _tiny_batch()
+    out = model.generate(
+        image,
+        generation_type='top_k',
+        seq_len=8,
+        min_seq_len=3,
+    )
+    assert out.shape[0] == 2
+    assert out.shape[1] <= 8
+    assert torch.equal(out[:, 0], torch.full_like(out[:, 0], 1))
+
+
 def test_mammut_legacy_pooling_pad_sensitive():
     """Legacy flags (avg_all, no pad mask) must keep reproducing the original
     (pad-contaminated) behaviour for released openMaMMUT weight compat."""
@@ -318,6 +333,64 @@ def test_convert_legacy_mammut_cfg_rejects_has_mlp():
     cfg = {'embed_dim': 512, 'vision_cfg': {}, 'text_cfg': {'does_full_decoding': True, 'has_mlp': False}}
     with pytest.raises(ValueError, match='has_mlp'):
         _convert_legacy_mammut_cfg(cfg)
+
+
+def test_get_tokenizer_hub_branch_applies_legacy_mammut_shim(monkeypatch, tmp_path):
+    """Config translation happens at ingestion (_get_hf_config), so get_tokenizer's hf-hub branch
+    sees the same schema create_model does: a fork-format config (text_cfg + does_full_decoding)
+    resolves via multimodal_cfg, and the generative pad validation applies (here: reserved roberta
+    pad=1 with no declared pad_id warns)."""
+    import json
+    from open_clip import factory
+
+    fork_cfg = {
+        'model_cfg': {
+            'embed_dim': 768,
+            'vision_cfg': {'image_size': 224, 'layers': 2, 'width': 768, 'patch_size': 32},
+            'text_cfg': {
+                'context_length': 77, 'vocab_size': 50265, 'width': 768, 'heads': 12, 'layers': 2,
+                'hf_tokenizer_name': 'roberta-base',
+                'output_tokens': True, 'cross_attn_ratio': 2, 'does_full_decoding': True,
+            },
+            'custom_text': True,
+        },
+    }
+    cfg_path = tmp_path / 'open_clip_config.json'
+    cfg_path.write_text(json.dumps(fork_cfg))
+    # patch the download, not _get_hf_config: the ingestion translation must be exercised
+    monkeypatch.setattr(factory, 'download_pretrained_from_hf',
+                        lambda model_id, filename=None, cache_dir=None: str(cfg_path))
+    with pytest.warns(UserWarning, match='pad-value fallback'):
+        tokenizer = open_clip.get_tokenizer('hf-hub:fake/fork-mammut')
+    assert tokenizer.pad_token_id == 1
+
+
+def test_add_model_config_translates_fork_format(tmp_path):
+    """The builtin registry door also translates: a fork-format json added via add_model_config
+    registers as a MaMMUT config (previously it registered raw and crashed CLIPTextCfg on
+    does_full_decoding); an unsupported fork variant warns and is skipped without breaking the scan."""
+    import json
+    from open_clip.mammut_model import MaMMUT
+
+    fork = {
+        'embed_dim': 64,
+        'vision_cfg': {'image_size': 64, 'layers': 2, 'width': 64, 'patch_size': 32,
+                       'output_tokens': True, 'pool_type': 'avg_all', 'final_ln_after_pool': True},
+        'text_cfg': {'context_length': 16, 'vocab_size': 64, 'width': 64, 'heads': 2, 'layers': 2,
+                     'output_tokens': True, 'cross_attn_ratio': 2, 'does_full_decoding': True},
+        'custom_text': True,
+    }
+    (tmp_path / 'forkfmt-mammut-tiny.json').write_text(json.dumps(fork))
+    bad = dict(fork, text_cfg=dict(fork['text_cfg'], has_mlp=False))
+    (tmp_path / 'forkfmt-mammut-bad.json').write_text(json.dumps(bad))
+
+    with pytest.warns(UserWarning, match='has_mlp'):
+        open_clip.add_model_config(tmp_path)
+    cfg = open_clip.get_model_config('forkfmt-mammut-tiny')
+    assert 'multimodal_cfg' in cfg and 'text_cfg' not in cfg
+    assert open_clip.get_model_config('forkfmt-mammut-bad') is None
+    model = open_clip.create_model('forkfmt-mammut-tiny')
+    assert isinstance(model, MaMMUT)
 
 
 def test_mammut_factory_create():

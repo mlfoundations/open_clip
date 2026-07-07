@@ -13,13 +13,10 @@ with released openMaMMUT weights.
 """
 from typing import Dict, List, Optional, Union
 
-import logging
 import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
-
-_logger = logging.getLogger(__name__)
 
 from .coca_model import MultimodalCfg
 from .model import CLIPVisionCfg, _build_vision_tower
@@ -68,6 +65,8 @@ def _build_multimodal_decoder_tower(
         pool_type=multimodal_cfg.pool_type,
         use_pad_mask=multimodal_cfg.use_pad_mask,
         pad_id=multimodal_cfg.pad_id,
+        bos_id=multimodal_cfg.bos_id,
+        eos_id=multimodal_cfg.eos_id,
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
@@ -120,6 +119,8 @@ class MaMMUT(nn.Module):
         # masking/pooling, generation defaults, and the caption loss ignore_index (via create_task)
         # all share one source -- same pattern as CoCa / GenLIP
         self.pad_id = self.text.pad_id
+        self.bos_id = getattr(self.text, 'bos_id', None)
+        self.eos_id = getattr(self.text, 'eos_id', None)
 
         self.context_length = multimodal_cfg.context_length
 
@@ -209,120 +210,45 @@ class MaMMUT(nn.Module):
         sot_token_id=None,
         num_beams=6,
         num_beam_groups=3,
-        min_seq_len=5,
-        stopping_criteria=None,
-        repetition_penalty=1.0,
-        fixed_output_length=False,
-        generation_config=None,
+            min_seq_len=5,
+            stopping_criteria=None,
+            repetition_penalty=1.0,
+            fixed_output_length=False,
+            generation_config=None,
+            text_valid=None,
     ):
-        assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
-        if stopping_criteria is not None:
-            import warnings
-            warnings.warn(
-                "stopping_criteria is deprecated and ignored. Use "
-                "generation_config=GenerationConfig(...) for full control.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         try:
-            from .generation import MultimodalGenerationWrapper
-            from transformers import GenerationConfig as GC
+            from .generation import generate_multimodal
         except (ImportError, Exception) as e:
             raise RuntimeError(
                 "Please install transformers for generate functionality. "
                 "`pip install transformers`."
             ) from e
 
-        device = image.device
-        sot_token_id = 49406 if sot_token_id is None else sot_token_id
-        eos_token_id = 49407 if eos_token_id is None else eos_token_id
-        pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
-
-        with torch.no_grad():
-            _, image_embs = self._encode_image(image)
-            image_kv = image_embs @ self.map_viz2txt_kv
-
-            squeeze_output = False
-            if text is None:
-                text = torch.full(
-                    (image.shape[0], 1), sot_token_id,
-                    device=device, dtype=torch.long,
-                )
-            elif text.dim() == 1:
-                text = text.unsqueeze(0)
-                squeeze_output = True
-
-            was_training = self.training
-            self.eval()
-
-            wrapper = MultimodalGenerationWrapper(
-                # the decoder embeds token ids internally, so pass ids straight through
-                text_encoder_fn=lambda ids: ids,
-                text_decoder_fn=lambda img_kv, ids: self.text(ids, image_embs=img_kv, mode='caption'),
-                image_embs=image_kv,
-                vocab_size=self.text.vocab_size,
-                pad_token_id=pad_token_id,
-                eos_token_id=eos_token_id,
-                bos_token_id=sot_token_id,
-            )
-
-            if generation_config is None:
-                # seq_len / min_seq_len are *total* sequence lengths (including
-                # the prompt) to match the original API semantics.
-                gen_kwargs = dict(
-                    max_length=seq_len,
-                    min_length=min_seq_len,
-                    repetition_penalty=repetition_penalty,
-                    eos_token_id=eos_token_id,
-                    pad_token_id=pad_token_id,
-                    use_cache=False,
-                )
-                if generation_type == "beam_search":
-                    if num_beam_groups > 1:
-                        _logger.warning(
-                            "Group beam search (num_beam_groups > 1) requires the "
-                            "transformers community extension. Falling back to "
-                            "standard beam search (num_beam_groups=1). Pass a "
-                            "GenerationConfig directly for full control."
-                        )
-                        num_beam_groups = 1
-                    gen_kwargs.update(
-                        num_beams=num_beams,
-                        num_beam_groups=num_beam_groups,
-                    )
-                elif generation_type == "top_p":
-                    gen_kwargs.update(do_sample=True, top_p=top_p, temperature=temperature)
-                elif generation_type == "top_k":
-                    gen_kwargs.update(do_sample=True, top_k=top_k, temperature=temperature)
-                else:
-                    raise ValueError(
-                        f"generation_type must be one of 'beam_search', 'top_p', 'top_k', "
-                        f"got {generation_type!r}"
-                    )
-                generation_config = GC(**gen_kwargs)
-            else:
-                # KV-cache is not supported yet; force off regardless of what
-                # the caller set to avoid cache-related errors.
-                generation_config.use_cache = False
-
-            output = wrapper.generate(
-                text,
-                generation_config=generation_config,
-                image_embs=image_kv,
-            )
-
-            if fixed_output_length and output.shape[1] < seq_len:
-                pad_len = seq_len - output.shape[1]
-                output = torch.cat(
-                    (output, torch.full(
-                        (output.shape[0], pad_len), pad_token_id,
-                        device=device, dtype=output.dtype,
-                    )),
-                    dim=1,
-                )
-
-            if squeeze_output:
-                output = output.squeeze(0)
-
-            self.train(was_training)
-            return output
+        return generate_multimodal(
+            self,
+            image=image,
+            image_embs_fn=lambda images: self._encode_image(images)[1] @ self.map_viz2txt_kv,
+            # the decoder embeds token ids internally, so pass ids straight through
+            text_encoder_fn=lambda ids: ids,
+            text_decoder_fn=lambda img_kv, ids: self.text(ids, image_embs=img_kv, mode='caption'),
+            decoder=self.text,
+            text=text,
+            text_valid=text_valid,
+            seq_len=seq_len,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            generation_type=generation_type,
+            top_p=top_p,
+            top_k=top_k,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            sot_token_id=sot_token_id,
+            num_beams=num_beams,
+            num_beam_groups=num_beam_groups,
+            min_seq_len=min_seq_len,
+            stopping_criteria=stopping_criteria,
+            repetition_penalty=repetition_penalty,
+            fixed_output_length=fixed_output_length,
+            generation_config=generation_config,
+        )

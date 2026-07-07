@@ -146,6 +146,12 @@ class HFTextEncoder(nn.Module):
         # pad handling (loss ignore_index, generation defaults) from the tower. None when the HF
         # config reserves no pad token; consumers fall back to the historical 0 convention.
         self.pad_id = getattr(self.config, 'pad_token_id', None)
+        self.bos_id = getattr(self.config, 'bos_token_id', None)
+        if self.bos_id is None:
+            self.bos_id = getattr(self.config, 'cls_token_id', None)
+        self.eos_id = getattr(self.config, 'eos_token_id', None)
+        if self.eos_id is None:
+            self.eos_id = getattr(self.config, 'sep_token_id', None)
 
         # Resolve construction kwargs from the *explicit* pooler_type only, before defaulting: pooler_type=None
         # has always built the tower without the HF pooling layer (the old `uses_transformer_pooler` was False
@@ -206,6 +212,8 @@ class HFTextEncoder(nn.Module):
         if attention_mask is not None:
             # data-layer provided validity ([B, L], True/1 = real token)
             attn_mask = attention_mask.long()
+        elif self.config.pad_token_id is None:
+            attn_mask = torch.ones_like(x, dtype=torch.long)
         else:
             # pad-value fallback: the id this tower's HF config reserves for padding
             attn_mask = (x != self.config.pad_token_id).long()

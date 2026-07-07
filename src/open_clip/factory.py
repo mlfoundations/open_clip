@@ -44,6 +44,52 @@ def _natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
 
 
+def _convert_legacy_mammut_cfg(model_cfg: dict) -> dict:
+    """Translate a LAION open_clip_mammut fork config into the current MaMMUT schema.
+
+    The fork configured its text decoder via ``text_cfg`` with ``does_full_decoding`` /
+    ``cross_attn_ratio`` flags. Here the decoder lives in ``multimodal_cfg`` (with no
+    ``text_cfg``), so fork-format configs (e.g. hf-hub openMaMMUT repos) are remapped,
+    with legacy pooling / masking defaults preserving the original numerics.
+    Non-MaMMUT configs pass through unchanged.
+    """
+    text_cfg = model_cfg.get('text_cfg')
+    if not isinstance(text_cfg, dict) or 'multimodal_cfg' in model_cfg:
+        return model_cfg
+    if not (text_cfg.get('does_full_decoding') or 'cross_attn_ratio' in text_cfg):
+        return model_cfg
+    if text_cfg.get('has_mlp') is False:
+        raise ValueError(
+            "Legacy MaMMUT configs with has_mlp=False (MLP folded into cross-attn blocks) are not supported."
+        )
+    multimodal_cfg = {
+        k: v for k, v in text_cfg.items()
+        if k not in ('does_full_decoding', 'output_tokens', 'has_mlp')
+    }
+    # legacy behaviour: unmasked mean pool over all positions, no pad attention mask, no text projection
+    multimodal_cfg.setdefault('pool_type', 'avg_all')
+    multimodal_cfg.setdefault('use_pad_mask', False)
+    multimodal_cfg.setdefault('proj_type', 'none')
+    out_cfg = {k: v for k, v in model_cfg.items() if k not in ('text_cfg', 'custom_text')}
+    out_cfg['multimodal_cfg'] = multimodal_cfg
+    return out_cfg
+
+
+def _translate_external_config(config: dict) -> dict:
+    """Normalize an externally sourced config (hf-hub / local-dir / user config file).
+
+    Applies fork-format translations (currently: legacy MaMMUT) to the model cfg whether it is
+    stored under a ``model_cfg`` key (full open_clip_config.json) or at the top level (bare model
+    config / registry file). Config translation happens once at ingestion; every consumer
+    (create_model, get_tokenizer, get_model_config, the builtin registry) sees one schema.
+    """
+    if 'model_cfg' in config:
+        config = dict(config)
+        config['model_cfg'] = _convert_legacy_mammut_cfg(config['model_cfg'])
+        return config
+    return _convert_legacy_mammut_cfg(config)
+
+
 def _rescan_model_configs():
     global _MODEL_CONFIGS
 
@@ -59,6 +105,12 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
+            try:
+                model_cfg = _translate_external_config(model_cfg)
+            except ValueError as e:
+                # one unsupported user config file must not break the whole registry scan
+                warnings.warn(f"Skipping model config {cf}: {e}")
+                continue
             has_vision = all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg'))
             has_audio = all(a in model_cfg for a in ('embed_dim', 'audio_cfg', 'text_cfg'))
             # GenLAP: generative audio model with a NaFlex spectrogram prefix (front-end key is
@@ -154,38 +206,7 @@ def _get_hf_config(
     )
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    return config
-
-
-def _convert_legacy_mammut_cfg(model_cfg: dict) -> dict:
-    """Translate a LAION open_clip_mammut fork config into the current MaMMUT schema.
-
-    The fork configured its text decoder via ``text_cfg`` with ``does_full_decoding`` /
-    ``cross_attn_ratio`` flags. Here the decoder lives in ``multimodal_cfg`` (with no
-    ``text_cfg``), so fork-format configs (e.g. hf-hub openMaMMUT repos) are remapped,
-    with legacy pooling / masking defaults preserving the original numerics.
-    Non-MaMMUT configs pass through unchanged.
-    """
-    text_cfg = model_cfg.get('text_cfg')
-    if not isinstance(text_cfg, dict) or 'multimodal_cfg' in model_cfg:
-        return model_cfg
-    if not (text_cfg.get('does_full_decoding') or 'cross_attn_ratio' in text_cfg):
-        return model_cfg
-    if text_cfg.get('has_mlp') is False:
-        raise ValueError(
-            "Legacy MaMMUT configs with has_mlp=False (MLP folded into cross-attn blocks) are not supported."
-        )
-    multimodal_cfg = {
-        k: v for k, v in text_cfg.items()
-        if k not in ('does_full_decoding', 'output_tokens', 'has_mlp')
-    }
-    # legacy behaviour: unmasked mean pool over all positions, no pad attention mask, no text projection
-    multimodal_cfg.setdefault('pool_type', 'avg_all')
-    multimodal_cfg.setdefault('use_pad_mask', False)
-    multimodal_cfg.setdefault('proj_type', 'none')
-    out_cfg = {k: v for k, v in model_cfg.items() if k not in ('text_cfg', 'custom_text')}
-    out_cfg['multimodal_cfg'] = multimodal_cfg
-    return out_cfg
+    return _translate_external_config(config)
 
 
 def get_model_config(model_name):
@@ -195,11 +216,11 @@ def get_model_config(model_name):
     if loc == 'local-dir':
         local_path = Path(model_id) / 'open_clip_config.json'
         with open(local_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        return _convert_legacy_mammut_cfg(config.get('model_cfg', config))
+            config = _translate_external_config(json.load(f))
+        return config.get('model_cfg', config)
     elif loc == 'hf-hub':
-        config = _get_hf_config(model_id)
-        return _convert_legacy_mammut_cfg(config.get('model_cfg', config))
+        config = _get_hf_config(model_id)  # translated at ingestion
+        return config.get('model_cfg', config)
     elif model_name in _MODEL_CONFIGS:
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
@@ -393,7 +414,7 @@ def create_model(
             try:
                 # Try loading and parsing the JSON config
                 with open(local_config_path, 'r', encoding='utf-8') as f:
-                    local_json_config = json.load(f)
+                    local_json_config = _translate_external_config(json.load(f))
                 # Check if the required 'model_cfg' key is present
                 if 'model_cfg' in local_json_config:
                     # Load model config and merge preprocess config
@@ -481,8 +502,8 @@ def create_model(
     # Apply model config overrides
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
-    model_cfg = _convert_legacy_mammut_cfg(model_cfg)
     # MaMMUT models have no text_cfg, the decoder in multimodal_cfg is the text tower
+    # (external configs are translated at ingestion: _get_hf_config / local-dir load / registry scan)
     text_cfg = model_cfg.get('text_cfg') or model_cfg.get('multimodal_cfg') or {}
     is_audio_model = 'audio_cfg' in model_cfg
     vision_cfg = model_cfg.get('vision_cfg', {})
@@ -845,7 +866,7 @@ def get_tokenizer(
                 with open(local_config_path, 'r', encoding='utf-8') as f:
                     local_json_config = json.load(f)
                 if 'model_cfg' in local_json_config:
-                    config = local_json_config['model_cfg']
+                    config = _translate_external_config(local_json_config)['model_cfg']
                 else:
                     raise ValueError(f"Local config {local_config_path} missing 'model_cfg'.")
             except Exception as e:
@@ -860,7 +881,7 @@ def get_tokenizer(
         config_err = ''
         try:
             # Fetch config from HF Hub
-            hf_config = _get_hf_config(model_id, cache_dir=cache_dir)
+            hf_config = _get_hf_config(model_id, cache_dir=cache_dir)  # translated at ingestion
             config = hf_config.get('model_cfg', None)
             if not config:
                 config_err = 'model_cfg key not found'

@@ -41,6 +41,7 @@ def _modern_cfg(**kwargs):
         layers=2,
         mlp_ratio=2.0,
         pad_id=0,
+        bos_id=1,
         eos_id=2,
         pool_type="eos",
         attention_mode="causal",
@@ -496,8 +497,8 @@ def test_modern_text_public_surface_and_lock():
     assert model.eos_id == 2
     assert model.token_embedding.num_embeddings == 64
     assert model.text_projection.out_features == 16
+    assert model.bos_id == 1  # public special-token attr (generation derivation), declared in cfg
     assert not hasattr(model, "text_arch")
-    assert not hasattr(model, "bos_id")
     assert not hasattr(model, "attention_mode")
     assert not hasattr(model, "pool_type")
     assert not hasattr(model, "attn_mask")

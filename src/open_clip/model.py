@@ -312,6 +312,7 @@ def _build_text_tower(
             no_causal_mask=text_cfg.no_causal_mask,
             use_pad_mask=text_cfg.use_pad_mask,
             pad_id=text_cfg.pad_id,
+            bos_id=text_cfg.bos_id,
             eos_id=text_cfg.eos_id,
             pool_type=text_cfg.pool_type,
             proj_type=text_cfg.proj_type,

@@ -1458,8 +1458,11 @@ class ModernTextTransformer(nn.Module):
                 f"modern text RoPE head dim must be even, got width / heads = {cfg.width // cfg.heads}."
             )
 
-        # Public text-tower API used by CustomTextCLIP/CLAP, tokenizer checks, and training setup. Keep the rest
-        # in cfg or private fields so config knobs do not become accidental model attributes.
+        # Public text-tower API used by CustomTextCLIP/CLAP, tokenizer checks, training setup, and generation
+        # token-id resolution. The tokenizer contract is public (context/vocab sizes and the pad/bos/eos special
+        # token ids -- bos is passthrough here but part of the cross-tower contract; HFTextEncoder normalizes it
+        # from cls, classic TextTransformer retains no cfg). Keep architecture knobs in cfg or private fields so
+        # they do not become accidental model attributes.
         self.context_length = cfg.context_length
         self.num_pos = cfg.context_length
         self.vocab_size = cfg.vocab_size
@@ -1467,6 +1470,7 @@ class ModernTextTransformer(nn.Module):
         self.layers = cfg.layers
         self.output_dim = output_dim
         self.pad_id = cfg.pad_id
+        self.bos_id = cfg.bos_id
         self.eos_id = cfg.eos_id
 
         # norm_type is tri-state on the shared cfg (None = arch default); the modern tower defaults to RMSNorm.
@@ -1803,6 +1807,7 @@ class TextTransformer(nn.Module):
             use_pad_mask: bool = False,
             correct_cls_mask: bool = False,
             pad_id: int = 0,
+            bos_id: Optional[int] = None,
             eos_id: int = 2,
             pool_type: str = 'argmax',
             proj_type: str = 'linear',
@@ -1827,6 +1832,7 @@ class TextTransformer(nn.Module):
         self.output_dim = output_dim
         self.heads = heads
         self.pad_id = pad_id
+        self.bos_id = bos_id
         self.eos_id = eos_id
         self.pool_type = pool_type
         self.use_pad_mask = use_pad_mask and no_causal_mask  # only use in bi‑dir mode
@@ -2132,6 +2138,8 @@ class MultimodalTransformer(Transformer):
             norm_layer=norm_layer,
         )
         self.context_length = context_length
+        self.output_dim = output_dim
+        self.vocab_size = output_dim
         self.cross_attn = nn.ModuleList([
             ResidualAttentionBlock(
                 width,
@@ -2150,23 +2158,52 @@ class MultimodalTransformer(Transformer):
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
+        self.init_parameters()
+
     def init_parameters(self):
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
-        fc_std = (2 * self.transformer.width) ** -0.5
-        for block in self.transformer.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+        # Two-phase init so this doubles as a full materializer for meta-device / to_empty() flows
+        # (FSDP deferred init): every submodule with a self-contained default init (norms, LayerScale,
+        # Linear, ...) resets itself via the standard reset_parameters() protocol, then the CLIP
+        # scheme overrides the weights it prescribes. Only Attention's raw parameters need explicit
+        # handling (its reset is the private _reset_parameters, skipped by the sweep on purpose --
+        # the scheme covers every tensor it owns).
+        for module in self.modules():
+            if module is not self and hasattr(module, 'reset_parameters'):
+                module.reset_parameters()
+
+        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
+        attn_std = self.width ** -0.5
+        fc_std = (2 * self.width) ** -0.5
+        for block in list(self.resblocks) + list(self.cross_attn):
+            attn = block.attn
+            if attn.in_proj_weight is not None:
+                nn.init.normal_(attn.in_proj_weight, std=attn_std)
+            else:
+                nn.init.normal_(attn.q_proj_weight, std=attn_std)
+                nn.init.normal_(attn.k_proj_weight, std=attn_std)
+                nn.init.normal_(attn.v_proj_weight, std=attn_std)
+            if attn.in_proj_bias is not None:
+                nn.init.zeros_(attn.in_proj_bias)
+            if attn.logit_scale is not None:
+                nn.init.constant_(attn.logit_scale, math.log(10))
+            if attn.head_scale is not None:
+                nn.init.ones_(attn.head_scale)
+            nn.init.normal_(attn.out_proj.weight, std=proj_std)
+            if attn.out_proj.bias is not None:
+                nn.init.zeros_(attn.out_proj.bias)
             nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            if block.mlp.c_fc.bias is not None:
+                nn.init.zeros_(block.mlp.c_fc.bias)
             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        for block in self.transformer.cross_attn:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+            if block.mlp.c_proj.bias is not None:
+                nn.init.zeros_(block.mlp.c_proj.bias)
 
         if self.text_projection is not None:
-            nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+            nn.init.normal_(self.text_projection, std=self.width ** -0.5)
+
+        if self.attn_mask is not None:
+            mask = self.build_attention_mask().to(device=self.attn_mask.device, dtype=self.attn_mask.dtype)
+            self.attn_mask.copy_(mask)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
@@ -2254,6 +2291,8 @@ class MultimodalDecoder(nn.Module):
             pool_type: str = 'avg',
             use_pad_mask: bool = True,
             pad_id: int = 0,
+            bos_id: Optional[int] = None,
+            eos_id: Optional[int] = None,
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = LayerNorm,
     ):
@@ -2266,6 +2305,8 @@ class MultimodalDecoder(nn.Module):
         self.heads = heads
         self.layers = layers
         self.pad_id = pad_id
+        self.bos_id = bos_id
+        self.eos_id = eos_id
         self.pool_type = pool_type
         self.use_pad_mask = use_pad_mask
         self.grad_checkpointing = False
@@ -2491,6 +2532,7 @@ class ModernMultimodalDecoder(nn.Module):
         self.layers = cfg.layers
         self.output_dim = output_dim
         self.pad_id = cfg.pad_id
+        self.bos_id = cfg.bos_id
         self.eos_id = cfg.eos_id
         self.grad_checkpointing = False
 
@@ -2720,6 +2762,9 @@ class ModernMultimodalTransformer(nn.Module):
         self.vocab_size = vocab_size if vocab_size is not None else cfg.vocab_size
         self.width = cfg.width
         self.layers = cfg.layers
+        self.pad_id = cfg.pad_id
+        self.bos_id = cfg.bos_id
+        self.eos_id = cfg.eos_id
         self.grad_checkpointing = False
 
         cross_attn_ratio = getattr(cfg, 'cross_attn_ratio', 1)

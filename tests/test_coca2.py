@@ -7,7 +7,7 @@ import torch
 
 import open_clip
 from open_clip.coca_model import CoCa
-from open_clip.transformer import ModernMultimodalTransformer, ModernTextTransformer
+from open_clip.transformer import ModernMultimodalTransformer, ModernTextTransformer, MultimodalTransformer
 
 TINY_KW = dict(
     embed_dim=64,
@@ -113,6 +113,52 @@ def test_coca2_config():
     assert model.visual.attn_pool_contrastive is not None
 
 
+def test_multimodal_transformer_calls_init_parameters_from_constructor(monkeypatch):
+    calls = 0
+    original = MultimodalTransformer.init_parameters
+
+    def wrapped(self):
+        nonlocal calls
+        calls += 1
+        original(self)
+
+    monkeypatch.setattr(MultimodalTransformer, 'init_parameters', wrapped)
+    MultimodalTransformer(width=32, layers=1, heads=4, context_length=8, output_dim=64)
+
+    assert calls == 1
+
+
+def test_multimodal_transformer_init_parameters_external_after_to_empty():
+    with torch.device('meta'):
+        model = MultimodalTransformer(
+            width=32,
+            layers=2,
+            heads=4,
+            context_length=8,
+            output_dim=64,
+            ls_init_value=0.25,
+        )
+    model.to_empty(device='cpu')
+    model.init_parameters()
+
+    for name, param in model.named_parameters():
+        assert torch.isfinite(param).all(), name
+    assert torch.allclose(model.ln_final.weight, torch.ones_like(model.ln_final.weight))
+    assert torch.allclose(model.ln_final.bias, torch.zeros_like(model.ln_final.bias))
+    assert torch.allclose(model.resblocks[0].ln_1.weight, torch.ones_like(model.resblocks[0].ln_1.weight))
+    assert torch.allclose(model.resblocks[0].ln_1.bias, torch.zeros_like(model.resblocks[0].ln_1.bias))
+    assert torch.allclose(model.cross_attn[0].ln_1_kv.weight, torch.ones_like(model.cross_attn[0].ln_1_kv.weight))
+    assert torch.allclose(model.resblocks[0].attn.in_proj_bias, torch.zeros_like(model.resblocks[0].attn.in_proj_bias))
+    assert torch.allclose(
+        model.resblocks[0].attn.out_proj.bias,
+        torch.zeros_like(model.resblocks[0].attn.out_proj.bias),
+    )
+    assert torch.allclose(model.resblocks[0].mlp.c_fc.bias, torch.zeros_like(model.resblocks[0].mlp.c_fc.bias))
+    assert torch.allclose(model.resblocks[0].ls_1.gamma, torch.full_like(model.resblocks[0].ls_1.gamma, 0.25))
+    assert model.text_projection.std() > 0
+    assert torch.allclose(model.attn_mask, model.build_attention_mask())
+
+
 def test_coca2_moderntext_config():
     model = open_clip.create_model('coca2-moderntext_ViT-B-32').eval()
     assert isinstance(model, CoCa)
@@ -135,7 +181,7 @@ def test_coca2_moderntext_config():
 def _tiny_modern_coca(seed=0):
     modern = dict(
         text_arch='modern', context_length=16, vocab_size=64, width=64, heads=2, layers=2,
-        pool_type='eos', eos_id=2, freeze_pad_embed=False, output_tokens=True,
+        pool_type='eos', bos_id=1, eos_id=2, freeze_pad_embed=False, output_tokens=True,
     )
     kw = {k: dict(v) if isinstance(v, dict) else v for k, v in TINY_KW.items()}
     kw['text_cfg'] = dict(modern)
@@ -182,9 +228,108 @@ def test_modern_coca_generate():
     out = model.generate(
         torch.randn(2, 3, 64, 64),
         generation_type='top_k', seq_len=8, min_seq_len=3,
-        sot_token_id=1, eos_token_id=2, pad_token_id=0,
     )
     assert out.shape[0] == 2 and out.shape[1] <= 8
+    assert torch.equal(out[:, 0], torch.full_like(out[:, 0], 1))
+
+
+def test_coca_generate_with_non_native_text_tower_no_token_embedding():
+    pytest.importorskip('transformers')
+
+    class NoTokenEmbeddingText(torch.nn.Module):
+        pad_id = 0
+        bos_id = 1
+        eos_id = 2
+        vocab_size = 64
+
+        def forward(self, ids, attention_mask=None):
+            token_embs = torch.zeros(ids.shape[0], ids.shape[1], 64, device=ids.device)
+            text_latent = torch.zeros(ids.shape[0], 64, device=ids.device)
+            return text_latent, token_embs
+
+    model = _tiny_coca(attentional_pool='cascade').eval()
+    model.text = NoTokenEmbeddingText()
+    model.pad_id = model.text.pad_id
+    model.bos_id = model.text.bos_id
+    model.eos_id = model.text.eos_id
+
+    out = model.generate(
+        torch.randn(2, 3, 64, 64),
+        generation_type='top_k',
+        seq_len=8,
+        min_seq_len=3,
+    )
+    assert out.shape[0] == 2 and out.shape[1] <= 8
+    assert torch.equal(out[:, 0], torch.full_like(out[:, 0], 1))
+
+
+def test_coca_generate_keeps_provided_prompt_and_trims_common_padding():
+    pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    image = torch.randn(2, 3, 64, 64)
+
+    prompt = torch.tensor([[5, 6], [7, 8]])
+    out = model.generate(image, text=prompt, generation_type='top_k', seq_len=8, min_seq_len=3)
+    assert torch.equal(out[:, :2], prompt)
+
+    padded = torch.tensor([[5, 6, 0, 0], [7, 8, 0, 0]])
+    valid = torch.tensor([[1, 1, 0, 0], [1, 1, 0, 0]], dtype=torch.bool)
+    out = model.generate(
+        image,
+        text=padded,
+        text_valid=valid,
+        generation_type='top_k',
+        seq_len=8,
+        min_seq_len=3,
+    )
+    assert torch.equal(out[:, :2], prompt)
+
+
+def test_coca_generate_rejects_variable_length_padded_prompts():
+    pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    padded = torch.tensor([[5, 6, 0], [7, 0, 0]])
+    valid = torch.tensor([[1, 1, 0], [1, 0, 0]], dtype=torch.bool)
+    with pytest.raises(ValueError, match="same valid length"):
+        model.generate(
+            torch.randn(2, 3, 64, 64),
+            text=padded,
+            text_valid=valid,
+            generation_type='top_k',
+            seq_len=8,
+            min_seq_len=3,
+        )
+
+
+def test_coca_generate_validates_requested_lengths():
+    pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    image = torch.randn(2, 3, 64, 64)
+    with pytest.raises(ValueError, match="max_seq_len"):
+        model.generate(image, generation_type='top_k', seq_len=8, max_seq_len=4, min_seq_len=3)
+    with pytest.raises(ValueError, match="context_length"):
+        model.generate(image, generation_type='top_k', seq_len=20, min_seq_len=3)
+
+
+def test_coca_generate_copies_generation_config_and_fills_special_ids():
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    config = transformers.GenerationConfig(
+        max_length=8,
+        min_length=3,
+        do_sample=True,
+        top_k=1,
+        bos_token_id=None,
+        eos_token_id=None,
+        pad_token_id=None,
+        use_cache=True,
+    )
+    out = model.generate(torch.randn(2, 3, 64, 64), generation_config=config)
+    assert out.shape[0] == 2 and out.shape[1] <= 8
+    assert config.bos_token_id is None
+    assert config.eos_token_id is None
+    assert config.pad_token_id is None
+    assert config.use_cache is True
 
 
 def test_create_task_dispatch_coca2():
