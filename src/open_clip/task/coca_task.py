@@ -25,6 +25,7 @@ class CoCaTask(ImageTextTask):
             default_loss: bool = True,
             caption_loss_weight: float = 2.0,
             clip_loss_weight: float = 1.0,
+            fused_caption_loss: bool = False,
             local_loss: bool = False,
             gather_with_grad: bool = False,
             cache_labels: bool = True,
@@ -37,6 +38,10 @@ class CoCaTask(ImageTextTask):
         super().__init__(model, device=device, dtype=dtype, verbose=verbose)
         # pad-value fallback for batches without a text_valid mask (see _caption_labels)
         self.pad_id = getattr(unwrap_model(model), 'pad_id', 0)
+        # fused: labels are passed INTO the model forward, which computes caption_loss via
+        # fused_linear_cross_entropy (no [B, L, V] logits materialized); CoCaLoss then only
+        # applies the loss weighting. Legacy (False): model returns logits, CoCaLoss computes CE.
+        self.fused_caption_loss = bool(fused_caption_loss)
         if loss is not None:
             self.loss = loss
         elif default_loss:
@@ -70,16 +75,25 @@ class CoCaTask(ImageTextTask):
 
     def _build_loss_inputs(self, model_out, batch):
         """Build CoCaLoss inputs with autoregressive shift and -100 label masking."""
-        return {
+        inputs = {
             "image_features": model_out["image_features"],
             "text_features": model_out["text_features"],
-            "logits": model_out["logits"][:, :-1],
-            "labels": self._caption_labels(batch["text"], batch.get("text_valid")),
             "logit_scale": model_out["logit_scale"],
         }
+        if "caption_loss" in model_out:
+            # fused path: the model already reduced the caption term (labels went into forward)
+            inputs["caption_loss"] = model_out["caption_loss"]
+        else:
+            inputs["logits"] = model_out["logits"][:, :-1]
+            inputs["labels"] = self._caption_labels(batch["text"], batch.get("text_valid"))
+        return inputs
 
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
-        model_out = self.trainable_module(**batch)
+        if self.fused_caption_loss:
+            labels = self._caption_labels(batch["text"], batch.get("text_valid"))
+            model_out = self.trainable_module(**batch, labels=labels)
+        else:
+            model_out = self.trainable_module(**batch)
         loss_input = self._build_loss_inputs(model_out, batch)
         losses = self.loss(**loss_input, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
@@ -89,6 +103,13 @@ class CoCaTask(ImageTextTask):
         return losses, self._report(model_out)
 
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
+        if self.fused_caption_loss:
+            # The accum feature-cache replays micro-batches against cached contrastive features; the
+            # fused caption term would need per-micro-batch loss accumulation weighted by valid-token
+            # counts to stay exact. Not wired yet -- use the legacy (logits) path with --accum-freq.
+            raise NotImplementedError(
+                "fused caption loss does not support --accum-freq > 1 yet; "
+                "drop --fused-caption-loss or set --accum-freq 1")
         all_texts = torch.cat([b["text"] for b in accum_batches])
         # derive validity per batch (masks may be present for some accum batches and not others)
         all_valid = torch.cat([

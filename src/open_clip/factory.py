@@ -1137,6 +1137,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             model,
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
+            fused_caption_loss=getattr(args, 'fused_caption_loss', False),
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=cache_labels,

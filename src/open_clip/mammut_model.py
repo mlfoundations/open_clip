@@ -19,6 +19,7 @@ from torch.nn import functional as F
 import numpy as np
 
 from .coca_model import MultimodalCfg
+from .loss import fused_linear_cross_entropy
 from .model import CLIPVisionCfg, _build_vision_tower
 from .transformer import (
     LayerNormFp32,
@@ -164,12 +165,17 @@ class MaMMUT(nn.Module):
             text_valid: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
+            labels: Optional[torch.Tensor] = None,
     ):
         """text_valid: optional [B, L] bool/int text validity (True/1 = real token), consumed by the
         contrastive pass (attention + pooling, passed to the decoder as its HF-style
         ``attention_mask``); validity falls back to ``text != pad_id`` when absent, and legacy
         configs ignore it (see MultimodalDecoder). The caption pass is causal over right-padded
-        text; label masking happens task-side."""
+        text; label masking happens task-side.
+
+        labels: optional [B, L-1] AR-shifted caption labels (-100 = ignore, task-built). When
+        given, the caption pass returns ``caption_loss`` computed via the fused linear
+        cross-entropy (full-vocab logits are never materialized) instead of ``logits``."""
         if image is not None and (image_latent is None or image_embs is None):
             image_latent, image_embs = self._encode_image(image)
 
@@ -183,14 +189,27 @@ class MaMMUT(nn.Module):
 
         # caption pass: causal self-attention w/ cross-attention over projected image tokens
         image_kv = image_embs @ self.map_viz2txt_kv
-        logits = self.text(text, image_embs=image_kv, mode='caption')
 
         out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
-            "logits": logits,
             "logit_scale": self.logit_scale.exp(),
         }
+        if labels is not None:
+            # fused caption loss: hidden positions [0, L-1) predict tokens [1, L) (same shift the
+            # task applies to logits on the legacy path)
+            hidden = self.text(text, image_embs=image_kv, mode='caption', return_hidden=True)
+            pred = hidden[:, :-1]
+            weight, bias = self.text.lm_head_params
+            out_dict["caption_loss"] = fused_linear_cross_entropy(
+                pred.reshape(-1, pred.shape[-1]),
+                weight,
+                labels.reshape(-1),
+                bias=bias,
+                ignore_index=-100,
+            )
+        else:
+            out_dict["logits"] = self.text(text, image_embs=image_kv, mode='caption')
         if self.logit_bias is not None:
             out_dict["logit_bias"] = self.logit_bias
         return out_dict

@@ -171,19 +171,38 @@ class CoCaLoss(ClipLoss):
         self.pad_id = pad_id
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=-100)
 
-    def forward(self, image_features, text_features, logits, labels, logit_scale, output_dict=False):
+    def forward(
+            self,
+            image_features,
+            text_features,
+            logits=None,
+            labels=None,
+            logit_scale=None,
+            caption_loss=None,
+            output_dict=False,
+    ):
+        """Two ways to supply the caption term (positional order preserves legacy callers):
+
+        * legacy: ``logits`` [B, L, V] + ``labels`` [B, L] -- CE computed here (materialized logits);
+        * fused: ``caption_loss`` scalar precomputed by the model via ``fused_linear_cross_entropy``
+          (see CoCa/MaMMUT ``forward(labels=...)``) -- only the loss weighting is applied here.
+        """
+        assert logit_scale is not None, 'logit_scale is required'
         if self.clip_loss_weight:
             clip_loss = super().forward(image_features, text_features, logit_scale)
             clip_loss = self.clip_loss_weight * clip_loss
         else:
-            clip_loss = torch.tensor(0, device=logits.device)
+            clip_loss = torch.tensor(0, device=image_features.device)
 
-        if self.pad_id is not None:
-            labels = labels.masked_fill(labels == self.pad_id, -100)
-        caption_loss = self.caption_loss(
-            logits.permute(0, 2, 1),
-            labels,
-        )
+        if caption_loss is None:
+            assert logits is not None and labels is not None, \
+                'CoCaLoss needs (logits, labels) when the model does not supply caption_loss'
+            if self.pad_id is not None:
+                labels = labels.masked_fill(labels == self.pad_id, -100)
+            caption_loss = self.caption_loss(
+                logits.permute(0, 2, 1),
+                labels,
+            )
         caption_loss = caption_loss * self.caption_loss_weight
 
         if output_dict:

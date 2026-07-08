@@ -697,6 +697,15 @@ def parse_args(args):
         help="Weight assigned to contrastive loss when training CoCa / MaMMUT."
     )
     parser.add_argument(
+        "--fused-caption-loss",
+        default=False,
+        action="store_true",
+        help="CoCa / MaMMUT: compute the caption loss inside the model via chunked fused "
+             "linear cross-entropy (never materializes the [B, L, vocab] logits; large memory "
+             "saving at big batch). Loss values match the default (logits) path exactly. "
+             "Not yet supported with --accum-freq > 1."
+    )
+    parser.add_argument(
         "--remote-sync",
         type=str,
         default=None,

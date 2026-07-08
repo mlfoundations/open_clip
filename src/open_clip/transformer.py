@@ -2222,7 +2222,13 @@ class MultimodalTransformer(Transformer):
     ):
         assert False, "Not currently implemented for MultimodalTransformer w/ xattn"
 
-    def forward(self, image_embs, text_embs):
+    @property
+    def lm_head_params(self):
+        # CoCa builds this tower with output_dim=vocab_size, so text_projection IS the vocab head.
+        # (weight, bias) in F.linear convention ([vocab, width]) for the fused caption-loss path.
+        return self.text_projection.t(), None
+
+    def forward(self, image_embs, text_embs, return_hidden: bool = False):
         # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
         # and cache_position. When past_key_values is not None, only process
         # new positions for self-attention (concatenate past K/V).
@@ -2242,6 +2248,9 @@ class MultimodalTransformer(Transformer):
                 text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
 
         out = self.ln_final(text_embs)
+        if return_hidden:
+            # pre-head hidden for the fused caption loss (pairs with lm_head_weight/bias)
+            return out
         if self.text_projection is not None:
             out = out @ self.text_projection
 
@@ -2400,12 +2409,18 @@ class MultimodalDecoder(nn.Module):
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         return {'positional_embedding'}
 
+    @property
+    def lm_head_params(self):
+        # (weight, bias) in F.linear convention ([vocab, width]) for the fused caption-loss path.
+        return self.lm_head.t(), None
+
     def forward(
             self,
             text: torch.Tensor,
             attention_mask: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
             mode: str = 'caption',
+            return_hidden: bool = False,
     ):
         """attention_mask: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
         contrastive pass (attention key mask + masked mean pool); the caption pass is causal over
@@ -2457,6 +2472,9 @@ class MultimodalDecoder(nn.Module):
                 pooled = pooled @ self.text_projection
             return pooled
 
+        if return_hidden:
+            # pre-head hidden for the fused caption loss (pairs with lm_head_params)
+            return x
         return x @ self.lm_head
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
@@ -2666,12 +2684,19 @@ class ModernMultimodalDecoder(nn.Module):
             no_wd.add("pool.query")
         return no_wd
 
+    @property
+    def lm_head_params(self):
+        # (weight, bias) in F.linear convention for the fused caption-loss path (weight may be
+        # tied to token_embedding via tie_lm_head; the property returns whatever the head uses).
+        return self.lm_head.weight, self.lm_head.bias
+
     def forward(
             self,
             text: torch.Tensor,
             attention_mask: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
             mode: str = 'caption',
+            return_hidden: bool = False,
     ):
         """attention_mask: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
         contrastive pass (attention key bias + pooling); the caption pass is causal over right-padded
@@ -2717,6 +2742,9 @@ class ModernMultimodalDecoder(nn.Module):
                 pooled = self.text_projection(pooled)
             return pooled
 
+        if return_hidden:
+            # pre-head hidden for the fused caption loss (pairs with lm_head_params)
+            return x
         return self.lm_head(x)
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
@@ -2835,7 +2863,12 @@ class ModernMultimodalTransformer(nn.Module):
     def get_cast_dtype(self) -> torch.dtype:
         return self.blocks[0].get_weight_dtype() if self.blocks else self.lm_head.weight.dtype
 
-    def forward(self, image_embs: torch.Tensor, text_embs: torch.Tensor) -> torch.Tensor:
+    @property
+    def lm_head_params(self):
+        # (weight, bias) in F.linear convention for the fused caption-loss path.
+        return self.lm_head.weight, self.lm_head.bias
+
+    def forward(self, image_embs: torch.Tensor, text_embs: torch.Tensor, return_hidden: bool = False) -> torch.Tensor:
         # (image_embs, text_embs) argument order matches MultimodalTransformer / the CoCa call site
         x = text_embs
         rope_embed = self.rope(x.shape[1], x.device, x.dtype) if self.rope is not None else None
@@ -2850,6 +2883,9 @@ class ModernMultimodalTransformer(nn.Module):
                     context=image_embs,
                 )
         x = self.ln_final(x)
+        if return_hidden:
+            # pre-head hidden for the fused caption loss (pairs with lm_head_params)
+            return x
         return self.lm_head(x)
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
