@@ -9,6 +9,7 @@ from PIL import Image
 import torch
 from torchvision import transforms
 
+from open_clip.tokenizer import SimpleTokenizer
 from open_clip_train.data import get_wds_dataset
 from open_clip_train.params import parse_args
 from open_clip_train.main import random_seed
@@ -62,7 +63,7 @@ def build_params(input_shards, seed=0):
     args.train_num_samples = TRAIN_NUM_SAMPLES
     args.dataset_resampled = True
     args.seed = seed
-    args.workers = 1
+    args.workers = 0
     args.world_size = 1
     args.batch_size = 1
     random_seed(seed)
@@ -158,7 +159,7 @@ def test_wds_variable_text_pads_to_batch_max():
     args, preprocess_img, _ = build_params(input_shards)
     args.train_num_samples = 2
     args.dataset_resampled = False
-    args.workers = 0
+    args.workers = 1
     args.batch_size = 2
     args.variable_text = True
 
@@ -184,7 +185,7 @@ def test_wds_variable_text_pad_multiple_rounds_seq_len():
     args, preprocess_img, _ = build_params(input_shards)
     args.train_num_samples = 2
     args.dataset_resampled = False
-    args.workers = 0
+    args.workers = 1
     args.batch_size = 2
     args.variable_text = True
     args.text_pad_multiple = 8
@@ -192,6 +193,25 @@ def test_wds_variable_text_pad_multiple_rounds_seq_len():
     dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=util_test.VariableTokenizer())
     batch = next(iter(dataset.dataloader))
     assert batch["text"].shape[1] % 8 == 0  # --text-pad-multiple rounds the batch sequence length
+
+
+def test_wds_fixed_text_attention_mask_does_not_add_none_key():
+    input_dir = build_inputs('fixed_text_attention_mask')
+    input_shards = os.path.join(input_dir, 'test_data_000.tar')
+    args, preprocess_img, _ = build_params(input_shards)
+    args.train_num_samples = 2
+    args.dataset_resampled = False
+    args.workers = 0
+    args.batch_size = 2
+    args.text_attention_mask = True
+
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=SimpleTokenizer())
+    batch = next(iter(dataset.dataloader))
+
+    assert set(batch) == {"image", "text", "text_valid"}
+    assert batch["image"].shape[0] == 2
+    assert batch["text"].shape == batch["text_valid"].shape
+    assert batch["text_valid"].dtype == torch.bool
 
 
 def test_wds_variable_text_length_bucketing_standard_vit():

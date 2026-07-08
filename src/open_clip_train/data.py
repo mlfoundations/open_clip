@@ -25,7 +25,7 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableDataset, get_worker_info
 from torch.utils.data.dataloader import default_collate
 from torch.utils.data.distributed import DistributedSampler
-from webdataset.filters import _shuffle
+from webdataset.filters import _shuffle, pipelinefilter, reraise_exception
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
 # Finite backstop for PIL's decompression-bomb guard (warn > this, error > 2x), mainly for the side paths
@@ -71,6 +71,25 @@ class TokenizeText:
         else:
             sample["text"] = self(text)
         return sample
+
+
+def _map_no_key(data, f, handler=reraise_exception):
+    """Like wds.map, but do not synthesize __key__ on dict outputs."""
+    for sample in data:
+        try:
+            result = f(sample)
+        except Exception as exn:
+            if handler(exn):
+                continue
+            else:
+                break
+        if result is None:
+            continue
+        yield result
+
+
+map_no_key = pipelinefilter(_map_no_key)
+
 
 from open_clip_train.naflex_data import (
     CaptionLength,
@@ -897,20 +916,23 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         ])
         dataset = wds.DataPipeline(*pipeline)
     else:
-        collate_fn = (
-            partial(
+        if text_variable:
+            collate_fn = partial(
                 collate_variable_text_dicts,
                 pad_id=text_pad_id,
                 text_pad_multiple=text_pad_multiple,
                 text_pad_cap=text_pad_cap,
             )
-            if text_variable else default_collate
-        )
+        else:
+            collate_fn = default_collate
         # Tokenize -> [bucket] -> decode -> transform -> batch. Bucketing reorders by caption length so
         # similar-length captions batch together: tighter per-batch-max text padding and fewer distinct
         # text shapes (stacks with --text-pad-multiple).
         # Sample-level map when emitting attention masks (the mask needs its own sample key).
-        stages = [wds.map(tokenize_text.map_sample) if output_text_mask else wds.map_dict(text=tokenize_text)]
+        stages = [
+            map_no_key(tokenize_text.map_sample, handler=log_and_continue)
+            if output_text_mask else wds.map_dict(text=tokenize_text)
+        ]
         if use_bucketing:
             stages.append(LengthBucketer(
                 length_fns=[CaptionLength(key="text")],
