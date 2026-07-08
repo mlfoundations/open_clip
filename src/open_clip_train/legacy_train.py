@@ -158,14 +158,20 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             for j in range(args.accum_freq):
                 images = accum_images[j]
                 texts = accum_texts[j]
+                is_last_step = j == args.accum_freq - 1
                 with autocast():
                     model_out = model(images, texts)
                     model_out = _coca_apply_ar_shift(model_out, texts)
 
+                    # detach logit_scale/bias on all but the last step: they are live on every
+                    # accumulation step against the full-effective-batch loss, so each backward would
+                    # otherwise contribute a full d(loss)/d(logit_scale) -- accum_freq copies in total
                     inputs_no_accum = {}
-                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                    logit_scale = model_out.pop("logit_scale")
+                    inputs_no_accum["logit_scale"] = logit_scale if is_last_step else logit_scale.detach()
                     if "logit_bias" in model_out:
-                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+                        logit_bias = model_out.pop("logit_bias")
+                        inputs_no_accum["logit_bias"] = logit_bias if is_last_step else logit_bias.detach()
 
                     inputs = {}
                     for key, val in accum_features.items():

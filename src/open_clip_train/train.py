@@ -283,10 +283,15 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
             with autocast():
                 model_out = task.trainable_module(**batch_j)
 
+                # detach logit_scale/bias on all but the last step: they are live on every
+                # accumulation step against the full-effective-batch loss, so each backward would
+                # otherwise contribute a full d(loss)/d(logit_scale) -- accum_freq copies in total
                 inputs_no_accum = {}
-                inputs_no_accum["logit_scale"] = model_out.pop("logit_scale")
+                logit_scale = model_out.pop("logit_scale")
+                inputs_no_accum["logit_scale"] = logit_scale if is_last_step else logit_scale.detach()
                 if "logit_bias" in model_out:
-                    inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+                    logit_bias = model_out.pop("logit_bias")
+                    inputs_no_accum["logit_bias"] = logit_bias if is_last_step else logit_bias.detach()
 
                 inputs = {}
                 for key, val in accum_features.items():
