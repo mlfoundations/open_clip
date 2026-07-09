@@ -145,9 +145,9 @@ class MaMMUT(nn.Module):
         return image_latent, token_embs
 
     def _encode_text(self, text, text_valid=None, normalize: bool = True):
-        # text towers keep the HF-style attention_mask kwarg (single-sequence scope); the parent
-        # multimodal interface names the mask by modality (text_valid, alongside NaFlex patch_valid)
-        text_latent = self.text(text, attention_mask=text_valid, mode='contrastive')
+        # the multimodal decoder boundary uses modality names: text_valid for its intrinsic text
+        # sequence (alongside context/context_valid for the generic cross-attention side)
+        text_latent = self.text(text, text_valid=text_valid, mode='contrastive')
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent
 
@@ -168,8 +168,8 @@ class MaMMUT(nn.Module):
             labels: Optional[torch.Tensor] = None,
     ):
         """text_valid: optional [B, L] bool/int text validity (True/1 = real token), consumed by the
-        contrastive pass (attention + pooling, passed to the decoder as its HF-style
-        ``attention_mask``); validity falls back to ``text != pad_id`` when absent, and legacy
+        contrastive pass (attention + pooling, passed straight through to the decoder's
+        ``text_valid``); validity falls back to ``text != pad_id`` when absent, and legacy
         configs ignore it (see MultimodalDecoder). The caption pass is causal over right-padded
         text; label masking happens task-side.
 
@@ -198,7 +198,7 @@ class MaMMUT(nn.Module):
         if labels is not None:
             # fused caption loss: hidden positions [0, L-1) predict tokens [1, L) (same shift the
             # task applies to logits on the legacy path)
-            hidden = self.text(text, image_embs=image_kv, mode='caption', return_hidden=True)
+            hidden = self.text(text, context=image_kv, mode='caption', return_hidden=True)
             pred = hidden[:, :-1]
             weight, bias = self.text.lm_head_params
             out_dict["caption_loss"] = fused_linear_cross_entropy(
@@ -209,7 +209,7 @@ class MaMMUT(nn.Module):
                 ignore_index=-100,
             )
         else:
-            out_dict["logits"] = self.text(text, image_embs=image_kv, mode='caption')
+            out_dict["logits"] = self.text(text, context=image_kv, mode='caption')
         if self.logit_bias is not None:
             out_dict["logit_bias"] = self.logit_bias
         return out_dict
@@ -250,7 +250,7 @@ class MaMMUT(nn.Module):
             image_embs_fn=lambda images: self._encode_image(images)[1] @ self.map_viz2txt_kv,
             # the decoder embeds token ids internally, so pass ids straight through
             text_encoder_fn=lambda ids: ids,
-            text_decoder_fn=lambda img_kv, ids: self.text(ids, image_embs=img_kv, mode='caption'),
+            text_decoder_fn=lambda img_kv, ids: self.text(ids, context=img_kv, mode='caption'),
             decoder=self.text,
             text=text,
             text_valid=text_valid,

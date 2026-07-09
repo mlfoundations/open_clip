@@ -32,7 +32,7 @@ from .naflex_genlip_model import (
     NaFlexGenLipTextCfg,
     NaFlexGenLipTrunkCfg,
     _make_norm_layer,
-    build_image_attn_mask,
+    build_patch_attn_mask,
     build_prefix_lm_mask,
     init_genlm_weights,
     packed_caption_loss,
@@ -173,7 +173,7 @@ class NaFlexGenLap(nn.Module):
         """Audio-only bidirectional pass -> pooled features (the downstream encoder; no text)."""
         patch_valid = audio['patch_valid']
         x = self.audio_embed(audio['patches'])
-        attn_mask = build_image_attn_mask(patch_valid)
+        attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_audio_position_ids(audio['patch_coord'], patch_valid, rope_1d=self.rope_1d)
         cos, sin = self.rotary(x, pos)
         x = self.trunk(x, attn_mask, cos, sin)  # ln_post applied inside trunk

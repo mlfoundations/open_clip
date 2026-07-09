@@ -9,7 +9,7 @@ from open_clip import create_task, get_tokenizer
 from open_clip.naflex_genlip_model import (
     NaFlexGenLip,
     apply_interleaved_mrope,
-    build_image_attn_mask,
+    build_patch_attn_mask,
     build_mrope_position_ids,
     build_prefix_lm_mask,
 )
@@ -110,7 +110,7 @@ def test_encode_image():
     assert torch.isfinite(feats).all()
     # image-only full attention mask is symmetric over valid patches
     pv = batch['image']['patch_valid']
-    m = build_image_attn_mask(pv)[0, 0]
+    m = build_patch_attn_mask(pv)[0, 0]
     assert m[0, :].sum() == int(pv[0].sum())
 
 

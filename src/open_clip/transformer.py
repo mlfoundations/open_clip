@@ -314,7 +314,10 @@ class ResidualAttentionBlock(nn.Module):
     ):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
-        attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
+        if attn_mask is not None and attn_mask.dtype != torch.bool:
+            # align additive (float) masks with compute dtype; bool masks pass through untouched
+            # (SDPA and the manual masked_fill path both consume bool directly)
+            attn_mask = attn_mask.to(q_x.dtype)
         return self.attn(q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask)
 
     def forward(
@@ -1068,7 +1071,7 @@ class ModernTextAttention(nn.Module):
             self,
             x: torch.Tensor,
             rope_embed: Optional[torch.Tensor] = None,
-            key_bias: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None,
             is_causal: bool = False,
             v_first: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -1089,7 +1092,7 @@ class ModernTextAttention(nn.Module):
             k = _apply_rope_1d(k, rope_embed)
         # Causal mode passes is_causal (no mask tensor); bidirectional passes a [B, 1, 1, L] key-pad bias. SDPA
         # forbids both at once, and the two are mutually exclusive here (see ModernTextTransformer._attn_inputs).
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=key_bias, is_causal=is_causal)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
         out = out.transpose(1, 2).reshape(b, l, c)
         if self.gate is not None:
             out = out * self.gate(x).sigmoid()
@@ -1097,10 +1100,12 @@ class ModernTextAttention(nn.Module):
 
 
 class ModernTextCrossAttention(nn.Module):
-    """Cross-attention sublayer for the modern multimodal decoder: text queries over a dense
-    context (image tokens). No RoPE (text and context positions have no shared coordinate
-    system), no value residual (a self-attention stream concept), and no mask (the context
-    is dense)."""
+    """Cross-attention sublayer for the modern multimodal decoder: text queries over a token
+    context (e.g. image tokens). No RoPE (text and context positions have no shared coordinate
+    system) and no value residual (a self-attention stream concept). ``context_attn_mask``
+    (SDPA contract: bool True = attend, or float additive; broadcastable to
+    ``[B, H, L_text, L_ctx]``) masks context keys when the context carries padding
+    (e.g. NaFlex patch batches); ``None`` = dense context."""
 
     def __init__(
             self,
@@ -1127,14 +1132,19 @@ class ModernTextCrossAttention(nn.Module):
         self.gate = nn.Linear(dim, dim, bias=gate_bias) if gated else None
         self.proj = nn.Linear(dim, dim, bias=bias)
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+    def forward(
+            self,
+            x: torch.Tensor,
+            context: torch.Tensor,
+            context_attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         b, l, c = x.shape
         n = context.shape[1]
         q = self.q(x).reshape(b, l, self.heads, self.head_dim).transpose(1, 2)
         kv = self.kv(context).reshape(b, n, 2, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         k, v = kv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
-        out = F.scaled_dot_product_attention(q, k, v)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=context_attn_mask)
         out = out.transpose(1, 2).reshape(b, l, c)
         if self.gate is not None:
             out = out * self.gate(x).sigmoid()
@@ -1201,12 +1211,12 @@ class ModernTextBlock(nn.Module):
             self,
             x: torch.Tensor,
             rope_embed: Optional[torch.Tensor] = None,
-            key_bias: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None,
             is_causal: bool = False,
             v_first: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         attn_out, v_first = self.attn(
-            self.norm1(x), rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
+            self.norm1(x), rope_embed=rope_embed, attn_mask=attn_mask, is_causal=is_causal, v_first=v_first,
         )
         x = x + self.ls1(self.norm1_post(attn_out))
         x = x + self.ls2(self.norm2_post(self.mlp(self.norm2(x))))
@@ -1278,17 +1288,18 @@ class ModernTextDecoderBlock(ModernTextBlock):
             self,
             x: torch.Tensor,
             rope_embed: Optional[torch.Tensor] = None,
-            key_bias: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None,
             is_causal: bool = False,
             v_first: Optional[torch.Tensor] = None,
             context: Optional[torch.Tensor] = None,
+            context_attn_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         attn_out, v_first = self.attn(
-            self.norm1(x), rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
+            self.norm1(x), rope_embed=rope_embed, attn_mask=attn_mask, is_causal=is_causal, v_first=v_first,
         )
         x = x + self.ls1(self.norm1_post(attn_out))
         if self.xattn is not None and context is not None:
-            x = x + self.ls_x(self.norm_x_post(self.xattn(self.norm_x(x), context)))
+            x = x + self.ls_x(self.norm_x_post(self.xattn(self.norm_x(x), context, context_attn_mask)))
         x = x + self.ls2(self.norm2_post(self.mlp(self.norm2(x))))
         return x, v_first
 
@@ -1624,7 +1635,7 @@ class ModernTextTransformer(nn.Module):
             num_prefix: int = 0,
             attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[bool, Optional[torch.Tensor], torch.Tensor]:
-        """Resolve SDPA attention inputs for this batch as ``(is_causal, key_bias, valid)``.
+        """Resolve SDPA attention inputs for this batch as ``(is_causal, attn_mask, valid)``.
 
         The branch is on the static attention mode (no data-dependent control flow, so torch.compile
         sees one graph per mode):
@@ -1646,9 +1657,9 @@ class ModernTextTransformer(nn.Module):
         key_valid = valid
         if num_prefix:
             key_valid = torch.cat([valid.new_ones(b, num_prefix), valid], dim=1)
-        key_bias = torch.zeros((b, 1, 1, l + num_prefix), device=text.device, dtype=dtype)
-        key_bias.masked_fill_(~key_valid[:, None, None, :], torch.finfo(dtype).min)
-        return False, key_bias, valid
+        attn_mask = torch.zeros((b, 1, 1, l + num_prefix), device=text.device, dtype=dtype)
+        attn_mask.masked_fill_(~key_valid[:, None, None, :], torch.finfo(dtype).min)
+        return False, attn_mask, valid
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.blocks[0].get_weight_dtype() if self.blocks else self.token_embedding.weight.dtype
@@ -1718,7 +1729,7 @@ class ModernTextTransformer(nn.Module):
         if self.reg_tokens is not None:
             x = torch.cat([self.reg_tokens.to(x.dtype).expand(x.shape[0], -1, -1), x], dim=1)
         x = self.norm_pre(x)
-        is_causal, key_bias, valid = self._attn_inputs(
+        is_causal, attn_mask, valid = self._attn_inputs(
             text, x.dtype, num_prefix=self.num_reg, attention_mask=attention_mask)
         rope_embed = self.rope(x.shape[1], x.device, x.dtype) if self.rope is not None else None
         blocks = self.blocks if stop_index is None else self.blocks[:stop_index + 1]
@@ -1726,10 +1737,10 @@ class ModernTextTransformer(nn.Module):
         v_first = None
         for i, block in enumerate(blocks):
             if self.grad_checkpointing:
-                x, v_first = checkpoint(block, x, rope_embed, key_bias, is_causal, v_first, use_reentrant=False)
+                x, v_first = checkpoint(block, x, rope_embed, attn_mask, is_causal, v_first, use_reentrant=False)
             else:
                 x, v_first = block(
-                    x, rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
+                    x, rope_embed=rope_embed, attn_mask=attn_mask, is_causal=is_causal, v_first=v_first,
                 )
             if take_indices is not None and i in take_indices:
                 intermediates.append(x)
@@ -2115,6 +2126,24 @@ class TextTransformer(nn.Module):
         return pooled
 
 
+def context_attn_mask_from_valid(context_valid: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    """[B, L_ctx] bool/int validity (True/1 = real K/V token) -> SDPA bool mask [B, 1, 1, L_ctx].
+
+    SDPA accepts bool (True = attend) or float additive masks; validity passes straight through as
+    bool. Broadcastable against [B, H, L_q, L_ctx] attention on both the modern SDPA path and the
+    classic ``Attention`` module (bool and additive handled there too)."""
+    if context_valid is None:
+        return None
+    valid = context_valid.bool()
+    # branchless all-invalid guard: a fully masked row yields NaN attention on fused SDPA
+    # backends -- force one valid position instead (same policy as the decoders' _valid_mask)
+    empty = ~valid.any(dim=1, keepdim=True)
+    first = torch.zeros_like(valid)
+    first[:, 0] = True
+    valid = valid | (empty & first)
+    return valid[:, None, None, :]
+
+
 class MultimodalTransformer(Transformer):
     def __init__(
             self,
@@ -2228,13 +2257,17 @@ class MultimodalTransformer(Transformer):
         # (weight, bias) in F.linear convention ([vocab, width]) for the fused caption-loss path.
         return self.text_projection.t(), None
 
-    def forward(self, image_embs, text_embs, return_hidden: bool = False):
+    def forward(self, context, text_embs, context_valid=None, return_hidden: bool = False):
+        """context: [B, L_ctx, D] cross-attention K/V tokens (modality-agnostic; the caller names the
+        modality). context_valid: optional [B, L_ctx] bool/int, True/1 = real token -- masks padded
+        context keys (e.g. NaFlex patch batches)."""
         # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
         # and cache_position. When past_key_values is not None, only process
         # new positions for self-attention (concatenate past K/V).
-        # Cross-attention K/V from image_embs are constant per generation and
+        # Cross-attention K/V from context are constant per generation and
         # can be cached once.
         seq_len = text_embs.shape[1]
+        context_attn_mask = context_attn_mask_from_valid(context_valid)
 
         for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
             if self.grad_checkpointing:
@@ -2242,10 +2275,10 @@ class MultimodalTransformer(Transformer):
                 text_embs = checkpoint(
                     resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len], use_reentrant=False)
                 text_embs = checkpoint(
-                    cross_attn, text_embs, image_embs, image_embs, None, use_reentrant=False)
+                    cross_attn, text_embs, context, context, context_attn_mask, use_reentrant=False)
             else:
                 text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
-                text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
+                text_embs = cross_attn(text_embs, k_x=context, v_x=context, attn_mask=context_attn_mask)
 
         out = self.ln_final(text_embs)
         if return_hidden:
@@ -2385,10 +2418,10 @@ class MultimodalDecoder(nn.Module):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def _valid_mask(self, text: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def _valid_mask(self, text: torch.Tensor, text_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
         """[B, L] bool validity (True = real token): the provided attention mask, else pad-value fallback.
         Guarantees at least one valid position per row so degenerate all-invalid rows do not yield NaNs."""
-        valid = attention_mask.bool() if attention_mask is not None else text != self.pad_id
+        valid = text_valid.bool() if text_valid is not None else text != self.pad_id
         empty = ~valid.any(dim=1, keepdim=True)
         first = torch.zeros_like(valid)
         first[:, 0] = True
@@ -2417,20 +2450,25 @@ class MultimodalDecoder(nn.Module):
     def forward(
             self,
             text: torch.Tensor,
-            attention_mask: Optional[torch.Tensor] = None,
-            image_embs: Optional[torch.Tensor] = None,
+            text_valid: Optional[torch.Tensor] = None,
+            context: Optional[torch.Tensor] = None,
+            context_valid: Optional[torch.Tensor] = None,
             mode: str = 'caption',
             return_hidden: bool = False,
     ):
-        """attention_mask: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
+        """text_valid: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
         contrastive pass (attention key mask + masked mean pool); the caption pass is causal over
         right-padded text so it never needs one. Legacy configs (pool_type='avg_all',
         use_pad_mask=False) ignore it entirely, preserving original openMaMMUT numerics. When absent,
-        validity falls back to ``text != pad_id``."""
+        validity falls back to ``text != pad_id``.
+
+        context / context_valid: [B, L_ctx, D] cross-attention K/V tokens and their optional
+        [B, L_ctx] validity (True/1 = real) -- modality-agnostic; the caller names the modality."""
         if mode == 'caption':
-            assert image_embs is not None, 'image_embs are required for the caption pass'
+            assert context is not None, 'context tokens are required for the caption pass'
         elif mode == 'contrastive':
-            assert image_embs is None, 'the contrastive pass does not cross-attend, do not pass image_embs'
+            assert context is None and context_valid is None, \
+                'the contrastive pass does not cross-attend, do not pass context/context_valid'
         else:
             raise ValueError(f'Unknown mode {mode!r}, expected "contrastive" or "caption"')
 
@@ -2444,8 +2482,9 @@ class MultimodalDecoder(nn.Module):
             attn_mask = self.attn_mask[:seq_len, :seq_len]
         else:
             if self.use_pad_mask or self.pool_type == 'avg':
-                valid = self._valid_mask(text, attention_mask)
+                valid = self._valid_mask(text, text_valid)
             attn_mask = self._build_pad_mask(valid, x.dtype) if self.use_pad_mask else None
+        context_attn_mask = context_attn_mask_from_valid(context_valid)
 
         for idx, resblock in enumerate(self.resblocks):
             if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -2455,9 +2494,9 @@ class MultimodalDecoder(nn.Module):
             if mode == 'caption' and idx % self.cross_step == 0:
                 cross_attn = self.cross_attn[idx // self.cross_step]
                 if self.grad_checkpointing and not torch.jit.is_scripting():
-                    x = checkpoint(cross_attn, x, image_embs, image_embs, None, use_reentrant=False)
+                    x = checkpoint(cross_attn, x, context, context, context_attn_mask, use_reentrant=False)
                 else:
-                    x = cross_attn(x, k_x=image_embs, v_x=image_embs)
+                    x = cross_attn(x, k_x=context, v_x=context, attn_mask=context_attn_mask)
 
         x = self.ln_final(x)
 
@@ -2661,10 +2700,10 @@ class ModernMultimodalDecoder(nn.Module):
         if not self.tie_lm_head:
             nn.init.normal_(self.lm_head.weight, std=self.width ** -0.5)
 
-    def _valid_mask(self, text: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """[B, L] bool validity (True = real token): the provided attention mask, else pad-value fallback."""
-        if attention_mask is not None:
-            valid = attention_mask.bool()
+    def _valid_mask(self, text: torch.Tensor, text_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """[B, L] bool validity (True = real token): the provided text_valid mask, else pad-value fallback."""
+        if text_valid is not None:
+            valid = text_valid.bool()
         elif self.pad_id is None:
             return torch.ones_like(text, dtype=torch.bool)
         else:
@@ -2693,18 +2732,23 @@ class ModernMultimodalDecoder(nn.Module):
     def forward(
             self,
             text: torch.Tensor,
-            attention_mask: Optional[torch.Tensor] = None,
-            image_embs: Optional[torch.Tensor] = None,
+            text_valid: Optional[torch.Tensor] = None,
+            context: Optional[torch.Tensor] = None,
+            context_valid: Optional[torch.Tensor] = None,
             mode: str = 'caption',
             return_hidden: bool = False,
     ):
-        """attention_mask: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
+        """text_valid: optional [B, L] bool/int, True/1 = real token (HF polarity). Consumed by the
         contrastive pass (attention key bias + pooling); the caption pass is causal over right-padded
-        text so it never needs one. When absent, validity falls back to ``text != pad_id``."""
+        text so it never needs one. When absent, validity falls back to ``text != pad_id``.
+
+        context / context_valid: [B, L_ctx, D] cross-attention K/V tokens and their optional
+        [B, L_ctx] validity (True/1 = real) -- modality-agnostic; the caller names the modality."""
         if mode == 'caption':
-            assert image_embs is not None, 'image_embs are required for the caption pass'
+            assert context is not None, 'context tokens are required for the caption pass'
         elif mode == 'contrastive':
-            assert image_embs is None, 'the contrastive pass does not cross-attend, do not pass image_embs'
+            assert context is None and context_valid is None, \
+                'the contrastive pass does not cross-attend, do not pass context/context_valid'
         else:
             raise ValueError(f'Unknown mode {mode!r}, expected "contrastive" or "caption"')
 
@@ -2715,23 +2759,25 @@ class ModernMultimodalDecoder(nn.Module):
         valid = None
         if mode == 'caption':
             # right padding + causal masking keep pads out of real positions; skip the mask tensor
-            is_causal, key_bias = True, None
+            is_causal, attn_mask = True, None
         else:
             is_causal = False
-            valid = self._valid_mask(text, attention_mask)
-            key_bias = torch.zeros((text.shape[0], 1, 1, text.shape[1]), device=text.device, dtype=x.dtype)
-            key_bias.masked_fill_(~valid[:, None, None, :], torch.finfo(x.dtype).min)
+            valid = self._valid_mask(text, text_valid)
+            attn_mask = torch.zeros((text.shape[0], 1, 1, text.shape[1]), device=text.device, dtype=x.dtype)
+            attn_mask.masked_fill_(~valid[:, None, None, :], torch.finfo(x.dtype).min)
+        context_attn_mask = context_attn_mask_from_valid(context_valid)
 
         rope_embed = self.rope(x.shape[1], x.device, x.dtype) if self.rope is not None else None
         v_first = None
         for block in self.blocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 x, v_first = checkpoint(
-                    block, x, rope_embed, key_bias, is_causal, v_first, image_embs, use_reentrant=False)
+                    block, x, rope_embed, attn_mask, is_causal, v_first, context, context_attn_mask,
+                    use_reentrant=False)
             else:
                 x, v_first = block(
-                    x, rope_embed=rope_embed, key_bias=key_bias, is_causal=is_causal, v_first=v_first,
-                    context=image_embs,
+                    x, rope_embed=rope_embed, attn_mask=attn_mask, is_causal=is_causal, v_first=v_first,
+                    context=context, context_attn_mask=context_attn_mask,
                 )
 
         x = self.ln_final(x)
@@ -2868,19 +2914,28 @@ class ModernMultimodalTransformer(nn.Module):
         # (weight, bias) in F.linear convention for the fused caption-loss path.
         return self.lm_head.weight, self.lm_head.bias
 
-    def forward(self, image_embs: torch.Tensor, text_embs: torch.Tensor, return_hidden: bool = False) -> torch.Tensor:
-        # (image_embs, text_embs) argument order matches MultimodalTransformer / the CoCa call site
+    def forward(
+            self,
+            context: torch.Tensor,
+            text_embs: torch.Tensor,
+            context_valid: Optional[torch.Tensor] = None,
+            return_hidden: bool = False,
+    ) -> torch.Tensor:
+        # (context, text_embs) argument order matches MultimodalTransformer / the CoCa call site.
+        # context_valid: optional [B, L_ctx] bool/int, True/1 = real token -- masks padded context keys.
         x = text_embs
+        context_attn_mask = context_attn_mask_from_valid(context_valid)
         rope_embed = self.rope(x.shape[1], x.device, x.dtype) if self.rope is not None else None
         v_first = None
         for block in self.blocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 x, v_first = checkpoint(
-                    block, x, rope_embed, None, True, v_first, image_embs, use_reentrant=False)
+                    block, x, rope_embed, None, True, v_first, context, context_attn_mask,
+                    use_reentrant=False)
             else:
                 x, v_first = block(
-                    x, rope_embed=rope_embed, key_bias=None, is_causal=True, v_first=v_first,
-                    context=image_embs,
+                    x, rope_embed=rope_embed, attn_mask=None, is_causal=True, v_first=v_first,
+                    context=context, context_attn_mask=context_attn_mask,
                 )
         x = self.ln_final(x)
         if return_hidden:

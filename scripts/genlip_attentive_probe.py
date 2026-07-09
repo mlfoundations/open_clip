@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader, Subset
 
 from open_clip import create_model_and_transforms
 from open_clip.naflex_config import NaFlexDataConfig
-from open_clip.naflex_genlip_model import build_image_attn_mask, build_image_position_ids
+from open_clip.naflex_genlip_model import build_patch_attn_mask, build_image_position_ids
 from open_clip_train.naflex_data import collate_naflex_tuples, create_naflex_eval_transform
 from timm.layers import AttentionPoolLatent
 
@@ -63,7 +63,7 @@ def extract_patch_features(visual, image, device, autocast):
     with autocast():
         x = visual.patch_embed(patches)
         cos, sin = visual.rotary(x, build_image_position_ids(coord, valid))
-        x = visual.trunk(x, build_image_attn_mask(valid), cos, sin)  # [B, Ni, width], ln_post inside
+        x = visual.trunk(x, build_patch_attn_mask(valid), cos, sin)  # [B, Ni, width], ln_post inside
     return x, valid
 
 

@@ -16,8 +16,8 @@ MODELS = [
     'coca_ViT-B-32',                # classic MultimodalTransformer head (text_projection Parameter)
     'coca2_ViT-B-32',               # coca2, classic text_arch
     'coca2-moderntext_ViT-B-32',    # coca2, modern text_arch (ModernMultimodalTransformer, nn.Linear head)
-    'mammut_ViT-B-32',              # classic MultimodalDecoder head (lm_head Parameter)
-    'mammut-moderntext_ViT-B-32',   # ModernMultimodalDecoder head (nn.Linear, maybe tied)
+    'mammut2_ViT-B-32',              # classic MultimodalDecoder head (lm_head Parameter)
+    'mammut2-moderntext_ViT-B-32',   # ModernMultimodalDecoder head (nn.Linear, maybe tied)
 ]
 
 

@@ -41,7 +41,7 @@ def test_training_coca():
     ])
 
 @pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
-@pytest.mark.parametrize("model_name", ['mammut_ViT-B-32', 'mammut-moderntext_ViT-B-32'])
+@pytest.mark.parametrize("model_name", ['mammut2_ViT-B-32', 'mammut2-moderntext_ViT-B-32'])
 def test_training_mammut(model_name):
     main([
     '--save-frequency', '1',

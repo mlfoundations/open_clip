@@ -71,8 +71,8 @@ def test_create_task_coca_model_name_case_insensitive():
 
 def test_create_task_mammut_model_returns_coca_task():
     """MaMMUT shares the CoCa output contract, so it trains via CoCaTask/CoCaLoss."""
-    model = open_clip.create_model('mammut_ViT-B-32')
-    args = _make_args(model='mammut_ViT-B-32', coca_caption_loss_weight=1.0)
+    model = open_clip.create_model('mammut2_ViT-B-32')
+    args = _make_args(model='mammut2_ViT-B-32', coca_caption_loss_weight=1.0)
     task = create_task(args, model=model)
     assert isinstance(task, CoCaTask)
     assert isinstance(task.loss, CoCaLoss)

@@ -94,7 +94,7 @@ def test_validate_special_tokens_generative_pad_rules():
 
 def test_get_tokenizer_generative_validation_builtin_configs():
     """Shipped generative configs resolve cleanly under the stricter validation."""
-    for name in ('coca_ViT-B-32', 'mammut_ViT-B-32', 'mammut-moderntext_ViT-B-32'):
+    for name in ('coca_ViT-B-32', 'mammut2_ViT-B-32', 'mammut2-moderntext_ViT-B-32'):
         tokenizer = open_clip.get_tokenizer(name)
         assert tokenizer is not None
 

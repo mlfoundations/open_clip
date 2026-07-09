@@ -96,7 +96,7 @@ def test_mammut_decoder_mode_is_explicit(mm_cfg):
     _, text = _tiny_batch()
     image_kv = torch.randn(2, 5, 64)
     with pytest.raises(AssertionError):
-        model.text(text, image_embs=image_kv, mode='contrastive')
+        model.text(text, context=image_kv, mode='contrastive')
     with pytest.raises(AssertionError):
         model.text(text, mode='caption')
     with pytest.raises(ValueError):
@@ -394,11 +394,11 @@ def test_add_model_config_translates_fork_format(tmp_path):
 
 
 def test_mammut_factory_create():
-    model = open_clip.create_model('mammut_ViT-B-32')
+    model = open_clip.create_model('mammut2_ViT-B-32')
     assert isinstance(model, MaMMUT)
     assert isinstance(model.text, MultimodalDecoder)
     assert model.context_length == 77
-    tokenizer = open_clip.get_tokenizer('mammut_ViT-B-32')
+    tokenizer = open_clip.get_tokenizer('mammut2_ViT-B-32')
     assert tokenizer.context_length == 77
 
 
@@ -457,10 +457,10 @@ def test_mammut_pad_id_propagation(mm_cfg):
 # ---- modern decoder specifics ----
 
 def test_mammut_modern_factory_create():
-    model = open_clip.create_model('mammut-moderntext_ViT-B-32')
+    model = open_clip.create_model('mammut2-moderntext_ViT-B-32')
     assert isinstance(model, MaMMUT)
     assert isinstance(model.text, ModernMultimodalDecoder)
-    tokenizer = open_clip.get_tokenizer('mammut-moderntext_ViT-B-32')
+    tokenizer = open_clip.get_tokenizer('mammut2-moderntext_ViT-B-32')
     assert tokenizer.context_length == 77
 
 

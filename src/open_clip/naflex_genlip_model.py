@@ -539,8 +539,8 @@ def packed_caption_loss(model, prefix_emb, prefix_valid, block_pos, text, text_v
     )
 
 
-def build_image_attn_mask(patch_valid: torch.Tensor) -> torch.Tensor:
-    """Full bidirectional mask over valid image patches (vision-encoder-only mode), ``(B, 1, Ni, Ni)``."""
+def build_patch_attn_mask(patch_valid: torch.Tensor) -> torch.Tensor:
+    """Full bidirectional mask over valid patch tokens (encoder-only mode), ``(B, 1, Ni, Ni)``."""
     pv = patch_valid.bool()
     b, ni = pv.shape
     allowed = (pv[:, :, None] & pv[:, None, :]).clone()
@@ -667,7 +667,7 @@ class NaFlexGenLipVisualAdapter(nn.Module):
         patch_valid = image['patch_valid']
 
         x = self.patch_embed(patches)
-        attn_mask = build_image_attn_mask(patch_valid)
+        attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_image_position_ids(patch_coord, patch_valid)
         cos, sin = self.rotary(x, pos)
         x = self.trunk(x, attn_mask, cos, sin)  # ln_post applied inside trunk
