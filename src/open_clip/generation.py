@@ -96,19 +96,24 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
             self,
             input_ids,
             image_embs=None,
+            context_valid=None,
             **kwargs,
     ):
         # TODO(kv-cache): When past_key_values is not None, slice input_ids
         # to only the last token and forward past_key_values + cache_position.
-        return {
+        inputs = {
             "input_ids": input_ids,
             "image_embs": image_embs if image_embs is not None else self._image_embs,
         }
+        if context_valid is not None:
+            inputs["context_valid"] = context_valid
+        return inputs
 
     def forward(
             self,
             input_ids: torch.Tensor,
             image_embs: Optional[torch.Tensor] = None,
+            context_valid: Optional[torch.Tensor] = None,
             **kwargs,  # absorb cache_position, attention_mask, etc.
     ) -> CausalLMOutputWithPast:
         if image_embs is None:
@@ -119,7 +124,11 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
         # decoder.  The cross-attention K/V (image_embs) are constant and can
         # be cached once.
         token_embs = self._text_encoder_fn(input_ids)
-        logits = self._text_decoder_fn(image_embs, token_embs)
+        if context_valid is not None:
+            # 3-arg form only when masking is in play; 2-arg decoder fns stay compatible
+            logits = self._text_decoder_fn(image_embs, token_embs, context_valid)
+        else:
+            logits = self._text_decoder_fn(image_embs, token_embs)
         return CausalLMOutputWithPast(logits=logits, past_key_values=None)
 
     def _reorder_cache(self, past_key_values, beam_idx):
@@ -429,7 +438,12 @@ def generate_multimodal(
     model.eval()
     try:
         with torch.no_grad():
+            # image_embs_fn may return either embs or (embs, context_valid) -- NaFlex token-mode
+            # towers surface patch validity so padded K/V get masked in cross-attention
             image_embs = image_embs_fn(image)
+            context_valid = None
+            if isinstance(image_embs, tuple):
+                image_embs, context_valid = image_embs
             prompt, squeeze_output = prepare_generation_prompt(
                 text=text,
                 text_valid=text_valid,
@@ -455,10 +469,15 @@ def generate_multimodal(
                 eos_token_id=eos_token_id,
                 bos_token_id=sot_token_id,
             )
+            generate_kwargs = dict(image_embs=image_embs)
+            if context_valid is not None:
+                # passed as a model kwarg (not a closure) so HF beam search expands it
+                # alongside image_embs via _expand_inputs_for_generation
+                generate_kwargs['context_valid'] = context_valid
             output = wrapper.generate(
                 prompt,
                 generation_config=generation_config,
-                image_embs=image_embs,
+                **generate_kwargs,
             )
 
             target_len = getattr(generation_config, 'max_length', None) or seq_len

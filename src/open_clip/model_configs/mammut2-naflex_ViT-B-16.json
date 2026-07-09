@@ -1,0 +1,19 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "timm_model_name": "naflexvit_base_patch16_gap",
+        "timm_pool": "avg",
+        "timm_proj": "linear",
+        "output_tokens": true,
+        "image_size": 256,
+        "image_seq_len": 256
+    },
+    "multimodal_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12,
+        "cross_attn_ratio": 2
+    }
+}

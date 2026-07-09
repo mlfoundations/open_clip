@@ -39,11 +39,16 @@ class TimmModel(nn.Module):
             patch_drop: Optional[float] = None,
             pretrained: bool = False,
             model_kwargs: Optional[dict] = None,
+            output_tokens: bool = False,
     ):
         super().__init__()
         if timm is None:
             raise RuntimeError("Please install the latest timm (`pip install timm`) to use timm based models.")
         self.image_size = to_2tuple(image_size)
+        # output_tokens: forward returns {'pooled', 'patch_tokens', 'patch_valid'} via the trunk's
+        # forward_features/forward_head split -- the token sequence consumed by multimodal
+        # decoders (CoCa/MaMMUT cross-attention). Requires an NLC-style trunk.
+        self.output_tokens = output_tokens
 
         # setup kwargs that may not be common across all models
         timm_kwargs = {}
@@ -55,6 +60,8 @@ class TimmModel(nn.Module):
             timm_kwargs.update(model_kwargs)
 
         custom_pool = pool in ('abs_attn', 'rot_attn')
+        if output_tokens and custom_pool:
+            raise ValueError('output_tokens is not supported with custom attention pooling (abs_attn/rot_attn).')
         if proj:
             assert proj in ("linear", "mlp", "none")
         extra_proj = proj in ("linear", "mlp")
@@ -243,6 +250,38 @@ class TimmModel(nn.Module):
             _logger.info(f"timm model {self.trunk.__class__.__name__} does not have set_input_size method. Skipping.")
 
     def forward(self, x):
-        x = self.trunk(x)
-        x = self.head(x)
-        return x
+        if not self.output_tokens:
+            x = self.trunk(x)
+            x = self.head(x)
+            return x
+
+        # Token-output mode: intercept between forward_features and forward_head so the
+        # final token sequence is surfaced alongside the (masked-)pooled feature.
+        # 'patch_tokens' are the contextualized tokens at patch positions -- prefix (cls/reg)
+        # tokens stripped so they stay 1:1 with the patch-only 'patch_valid' (registers are
+        # deliberately excluded from the cross-attention context). Distinct key from the raw
+        # input 'patches' and the trunk features dict's prefix-inclusive 'patches'.
+        num_prefix = getattr(self.trunk, 'num_prefix_tokens', 0)
+        if isinstance(x, dict):
+            # NaFlex patch dict; keyword args -- forward_features positional order is
+            # (patches, patch_coord, patch_valid) which invites misbinding
+            features = self.trunk.forward_features(
+                x['patches'],
+                patch_coord=x.get('patch_coord'),
+                patch_valid=x.get('patch_valid'),
+                attn_mask=x.get('attn_mask'),
+            )
+            tokens = features['patches']
+            patch_valid = features['patch_valid']  # post patch-dropout gathering
+            pooled = self.trunk.forward_head(**features)
+        else:
+            tokens = self.trunk.forward_features(x)
+            if not (isinstance(tokens, torch.Tensor) and tokens.ndim == 3):
+                raise ValueError('output_tokens requires an NLC-style trunk (got non-[B, N, C] features).')
+            patch_valid = None
+            pooled = self.trunk.forward_head(tokens)
+        return {
+            'pooled': self.head(pooled),
+            'patch_tokens': tokens[:, num_prefix:],
+            'patch_valid': patch_valid,
+        }

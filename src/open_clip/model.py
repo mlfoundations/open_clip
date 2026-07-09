@@ -209,6 +209,7 @@ def _build_vision_tower(
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
             model_kwargs=vision_cfg.timm_model_kwargs,
+            output_tokens=vision_cfg.output_tokens,
         )
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width

@@ -106,9 +106,12 @@ class MaMMUT(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        # projects image tokens to decoder width for cross-attention k/v
-        self.map_viz2txt_kv = nn.Parameter(torch.empty(vision_cfg.width, multimodal_cfg.width))
-        nn.init.normal_(self.map_viz2txt_kv, std=vision_cfg.width ** -0.5)
+        # projects image tokens to decoder width for cross-attention k/v. Token width comes
+        # from the trunk when the tower is timm-based (vision_cfg.width is unreliable there),
+        # else from the config.
+        vision_width = getattr(getattr(self.visual, 'trunk', None), 'num_features', None) or vision_cfg.width
+        self.map_viz2txt_kv = nn.Parameter(torch.empty(vision_width, multimodal_cfg.width))
+        nn.init.normal_(self.map_viz2txt_kv, std=vision_width ** -0.5)
 
         lshape = [1] if nonscalar_logit_scale else []
         self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
@@ -140,9 +143,16 @@ class MaMMUT(nn.Module):
         return no_wd
 
     def _encode_image(self, images, normalize: bool = True):
-        image_latent, token_embs = self.visual(images)
+        # native towers (output_tokens) return the (pooled, tokens) tuple; timm token-mode
+        # towers return {'pooled', 'patch_tokens', 'patch_valid'} -- normalize to a 3-tuple
+        # with None validity for native
+        out = self.visual(images)
+        if isinstance(out, dict):
+            image_latent, image_embs, image_embs_valid = out['pooled'], out['patch_tokens'], out['patch_valid']
+        else:
+            image_latent, image_embs, image_embs_valid = (*out, None)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
-        return image_latent, token_embs
+        return image_latent, image_embs, image_embs_valid
 
     def _encode_text(self, text, text_valid=None, normalize: bool = True):
         # the multimodal decoder boundary uses modality names: text_valid for its intrinsic text
@@ -152,11 +162,16 @@ class MaMMUT(nn.Module):
         return text_latent
 
     def encode_image(self, images, normalize: bool = True):
-        image_latent, _ = self._encode_image(images, normalize=normalize)
+        image_latent, _, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
     def encode_text(self, text, text_valid=None, normalize: bool = True):
         return self._encode_text(text, text_valid=text_valid, normalize=normalize)
+
+    def _generation_image_context(self, images):
+        """Image context for generation: (projected K/V, patch validity or None) from one encode."""
+        _, image_embs, image_embs_valid = self._encode_image(images)
+        return image_embs @ self.map_viz2txt_kv, image_embs_valid
 
     def forward(
             self,
@@ -165,6 +180,7 @@ class MaMMUT(nn.Module):
             text_valid: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
+            image_embs_valid: Optional[torch.Tensor] = None,
             labels: Optional[torch.Tensor] = None,
     ):
         """text_valid: optional [B, L] bool/int text validity (True/1 = real token), consumed by the
@@ -173,14 +189,23 @@ class MaMMUT(nn.Module):
         configs ignore it (see MultimodalDecoder). The caption pass is causal over right-padded
         text; label masking happens task-side.
 
+        image_embs_valid: optional [B, N_img] bool/int validity for ``image_embs`` (True/1 = real
+        patch token). Produced by NaFlex token-mode towers (padded patch batches) and threaded to
+        the caption pass as the decoder's ``context_valid``; supply it alongside precomputed
+        ``image_embs`` or padded K/V silently join cross-attention. None = dense tokens.
+
         labels: optional [B, L-1] AR-shifted caption labels (-100 = ignore, task-built). When
         given, the caption pass returns ``caption_loss`` computed via the fused linear
         cross-entropy (full-vocab logits are never materialized) instead of ``logits``."""
         if image is not None and (image_latent is None or image_embs is None):
-            image_latent, image_embs = self._encode_image(image)
+            image_latent, image_embs, image_embs_valid = self._encode_image(image)
 
         if text is None:
-            return {"image_features": image_latent, "image_embs": image_embs}
+            return {
+                "image_features": image_latent,
+                "image_embs": image_embs,
+                "image_embs_valid": image_embs_valid,
+            }
 
         text_latent = self._encode_text(text, text_valid=text_valid)
 
@@ -198,7 +223,9 @@ class MaMMUT(nn.Module):
         if labels is not None:
             # fused caption loss: hidden positions [0, L-1) predict tokens [1, L) (same shift the
             # task applies to logits on the legacy path)
-            hidden = self.text(text, context=image_kv, mode='caption', return_hidden=True)
+            hidden = self.text(
+                text, context=image_kv, context_valid=image_embs_valid,
+                mode='caption', return_hidden=True)
             pred = hidden[:, :-1]
             weight, bias = self.text.lm_head_params
             out_dict["caption_loss"] = fused_linear_cross_entropy(
@@ -209,7 +236,8 @@ class MaMMUT(nn.Module):
                 ignore_index=-100,
             )
         else:
-            out_dict["logits"] = self.text(text, context=image_kv, mode='caption')
+            out_dict["logits"] = self.text(
+                text, context=image_kv, context_valid=image_embs_valid, mode='caption')
         if self.logit_bias is not None:
             out_dict["logit_bias"] = self.logit_bias
         return out_dict
@@ -247,10 +275,11 @@ class MaMMUT(nn.Module):
         return generate_multimodal(
             self,
             image=image,
-            image_embs_fn=lambda images: self._encode_image(images)[1] @ self.map_viz2txt_kv,
+            image_embs_fn=self._generation_image_context,
             # the decoder embeds token ids internally, so pass ids straight through
             text_encoder_fn=lambda ids: ids,
-            text_decoder_fn=lambda img_kv, ids: self.text(ids, context=img_kv, mode='caption'),
+            text_decoder_fn=lambda img_kv, ids, valid=None: self.text(
+                ids, context=img_kv, context_valid=valid, mode='caption'),
             decoder=self.text,
             text=text,
             text_valid=text_valid,

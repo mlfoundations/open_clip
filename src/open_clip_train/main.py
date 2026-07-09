@@ -395,15 +395,19 @@ def main(args):
         backend=args.torchcompile_backend,
         mode=args.torchcompile_mode,
     )
+    naflex_multimodal = args.use_naflex and isinstance(unwrap_model(model), (CoCa, MaMMUT))
     if args.torchcompile and args.distributed and not args.fsdp and (
-            args.grad_checkpointing or getattr(args, 'genlip', False)
+            args.grad_checkpointing or getattr(args, 'genlip', False) or naflex_multimodal
     ):
         # The DDP dynamo optimizer splits the graph into submodules at gradient-bucket boundaries. That
-        # breaks under (a) grad checkpointing and (b) GenLIP's dynamic sequence length (image patches +
-        # variable caption length = `const + symbol`): a submodule receives the concatenated tensor but
-        # not the input that binds the symbol, so Inductor can't recover it ("expected [sN] to have been
-        # codegen-ed"). Disable the split so the whole forward compiles as one symbol-consistent graph.
-        reason = 'grad checkpointing' if args.grad_checkpointing else 'genlip dynamic shapes'
+        # breaks under (a) grad checkpointing and (b) dynamic cross-bucket sequence lengths (image patches +
+        # variable caption length = `const + symbol`, hit by GenLIP and by CoCa/MaMMUT under NaFlex data):
+        # a submodule receives the concatenated tensor but not the input that binds the symbol, so Inductor
+        # can't recover it ("expected [sN] to have been codegen-ed"). Disable the split so the whole forward
+        # compiles as one symbol-consistent graph.
+        reason = ('grad checkpointing' if args.grad_checkpointing
+                  else 'genlip dynamic shapes' if getattr(args, 'genlip', False)
+                  else 'naflex multimodal dynamic shapes')
         _logger.info(f'Disabling DDP dynamo optimizer ({reason}).')
         torch._dynamo.config.optimize_ddp = False
 
