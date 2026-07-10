@@ -178,8 +178,8 @@ class CoCaLoss(ClipLoss):
             logits=None,
             labels=None,
             logit_scale=None,
-            caption_loss=None,
             output_dict=False,
+            caption_loss=None,
     ):
         """Two ways to supply the caption term:
 
@@ -187,8 +187,6 @@ class CoCaLoss(ClipLoss):
         * fused: ``caption_loss`` scalar precomputed by the model via ``fused_linear_cross_entropy``
           (see CoCa/MaMMUT ``forward(labels=...)``) -- only the loss weighting is applied here.
 
-        Breaking positional API note: ``caption_loss`` was inserted before ``output_dict``. Callers
-        that previously supplied ``output_dict`` as the sixth positional argument must pass it by keyword.
         """
         assert logit_scale is not None, 'logit_scale is required'
         if self.clip_loss_weight:

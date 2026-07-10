@@ -688,7 +688,7 @@ def append_naflex_train_stages(
 
     stages = [
         map_no_key(tokenize_text.map_sample, handler=log_and_continue)
-        if tokenize_text.output_mask else wds.map_dict(text=tokenize_text)
+        if getattr(tokenize_text, 'output_mask', False) else wds.map_dict(text=tokenize_text)
     ]
     if bucketer is not None:
         # Reorder samples so similar lengths batch together (text for image, audio_tokens for audio),
