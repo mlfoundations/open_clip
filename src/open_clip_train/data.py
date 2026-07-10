@@ -685,6 +685,10 @@ def append_naflex_train_stages(
     if not naflex_data_config.variable_patch_size:
         patch_size = patch_size_choices[0]
         patch_size_choices = None
+    max_tokens_per_batch = naflex_data_config.resolve_max_tokens_per_batch(
+        args.batch_size,
+        per_row_text_tokens=per_row_text_tokens,
+    )
 
     stages = [
         map_no_key(tokenize_text.map_sample, handler=log_and_continue)
@@ -703,7 +707,7 @@ def append_naflex_train_stages(
         patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
         seq_lens=naflex_data_config.train_seq_lens,
         seq_len_choice_probs=naflex_data_config.train_seq_len_probs,
-        max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+        max_tokens_per_batch=max_tokens_per_batch,
         transform_factory=transform_factory,
         seed=args.seed,
         shuffle=True,
@@ -721,14 +725,14 @@ def append_naflex_train_stages(
         decode_fn=decode_fn,
         decode_error_handler=decode_error_handler,
     ))
-    if pad_id is not None:
-        _logger.info(
-            f"NaFlex batch budget = {naflex_data_config.max_tokens_per_batch} modality tokens/row-batch "
-            f"({primary_key} bucket"
-            + (f" + text cap {per_row_text_tokens}" if per_row_text_tokens else "")
-            + ")"
-            + ("; length bucketing ON" if bucketer is not None else "")
-        )
+    budget_source = "explicit" if naflex_data_config.max_tokens_per_batch is not None else "inferred"
+    _logger.info(
+        f"NaFlex batch budget = {max_tokens_per_batch} tokens/local batch ({budget_source}; "
+        f"{primary_key} bucket"
+        + (f" + text cap {per_row_text_tokens}" if per_row_text_tokens else "")
+        + ")"
+        + ("; length bucketing ON" if bucketer is not None else "")
+    )
     pipeline.extend(stages)
     return pipeline[-1]
 
@@ -1058,6 +1062,10 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         # GenLIP includes caption-token cap in the batch budget; other variable-text towers only need padding.
         naflex_pad_id = text_pad_id if (genlip_text or variable_text) else None
         naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
+        max_tokens_per_batch = naflex_data_config.resolve_max_tokens_per_batch(
+            args.batch_size,
+            per_row_text_tokens=naflex_text_cost,
+        )
         dataset = NaFlexMapDatasetWrapper(
             dataset,
             train_num_tokens=naflex_data_config.train_num_image_tokens,
@@ -1066,7 +1074,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
             patch_size_choice_probs=naflex_data_config.train_patch_size_probs,
             seq_lens=naflex_data_config.train_seq_lens,
             seq_len_choice_probs=naflex_data_config.train_seq_len_probs,
-            max_tokens_per_batch=naflex_data_config.max_tokens_per_batch,
+            max_tokens_per_batch=max_tokens_per_batch,
             transform_factory=preprocess_fn,
             seed=args.seed,
             shuffle=True,

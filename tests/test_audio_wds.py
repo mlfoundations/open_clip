@@ -130,8 +130,11 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
     args.bucket_chunk = 2
     preprocess_audio = AudioNaFlexTransformFactory(model.audio_cfg)  # genlap audio_cfg is already AudioNaFlexCfg
     naflex_data_config = NaFlexDataConfig.resolve(
-        patch_sizes=[16], seq_lens=(256,), max_tokens_per_batch=2560, batch_divisor=1,
+        patch_sizes=[16], seq_lens=(256,), batch_divisor=1,
     )
+    assert naflex_data_config.resolve_max_tokens_per_batch(
+        args.batch_size, per_row_text_tokens=tokenizer.context_length,
+    ) == args.batch_size * (256 + tokenizer.context_length)
 
     info = get_wds_audio_dataset(
         args, preprocess_audio, is_train=True, tokenizer=tokenizer, naflex_data_config=naflex_data_config,
@@ -142,6 +145,7 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
     pd = model.audio_cfg.in_chans * model.audio_cfg.patch_freq * model.audio_cfg.patch_time
     assert batch["audio"]["patches"].shape[-1] == pd
     b = batch["audio"]["patches"].shape[0]
+    assert b == args.batch_size  # inferred budget includes text cost, so max audio bucket keeps the reference B
     assert batch["text"].shape[0] == b and batch["audio"]["patch_valid"].shape[0] == b
 
     loss = model(

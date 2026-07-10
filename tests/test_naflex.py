@@ -363,6 +363,7 @@ def test_naflex_loss_scale_defaults_to_none():
     args = parse_args([])
 
     assert args.naflex_loss_scale == "none"
+    assert args.naflex_max_tokens_per_batch is None
 
 
 def test_naflex_loss_scale_uses_actual_batch_size():
@@ -423,7 +424,6 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
         naflex_patch_sizes=[16],
         naflex_patch_size_probs=None,
         naflex_seq_lens=[4],
-        naflex_max_tokens_per_batch=8,
         naflex_batch_divisor=1,
         seed=0,
         workers=0,

@@ -35,6 +35,17 @@ def test_naflex_data_config_accepts_explicit_eval_seq_len():
     assert config.eval_config == ((16, 16), 576)
 
 
+def test_naflex_data_config_infers_budget_from_longest_row_cost():
+    config = NaFlexDataConfig.resolve(seq_lens=[128, 256, 1024])
+
+    assert config.max_tokens_per_batch is None
+    assert config.resolve_max_tokens_per_batch(batch_size=32) == 32 * 1024
+    assert config.resolve_max_tokens_per_batch(batch_size=32, per_row_text_tokens=77) == 32 * (1024 + 77)
+
+    explicit = NaFlexDataConfig.resolve(seq_lens=[128, 1024], max_tokens_per_batch=12345)
+    assert explicit.resolve_max_tokens_per_batch(batch_size=32, per_row_text_tokens=77) == 12345
+
+
 def test_siglip2_naflex_configs_default_to_384_dense_and_576_tokens():
     for model_name in ("ViT-B-16-SigLIP2-naflex", "ViT-SO400M-16-SigLIP2-naflex"):
         vision_cfg = open_clip.get_model_config(model_name)["vision_cfg"]

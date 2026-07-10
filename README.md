@@ -22,6 +22,7 @@
 > - `--horovod` removed (Horovod support deleted; DDP/FSDP2 only)
 > - `--torchscript` and `--trace` removed (`torch.jit` is being deprecated upstream)
 > - Default `--precision` changed from `amp` → `amp_bf16` (silent behavior change; pass `--precision amp` explicitly to keep fp16 AMP)
+> - `--naflex-max-tokens-per-batch` now defaults to unset. The local token budget is inferred as `--batch-size * max(--naflex-seq-lens)`; GenLIP/GenLAP also include their caption-token cap in the per-row cost. Pass an explicit token budget to preserve older runs that relied on the previous `16384` default.
 >
 > **New training CLI flags (opt-in):**
 > - `--fsdp` — use FSDP2 (`fully_shard`) instead of DDP

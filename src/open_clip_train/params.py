@@ -278,7 +278,9 @@ def parse_args(args):
              "relative to large epochs. No effect when --workers 0."
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size per GPU. Ignored for NaFlex WebDataset training."
+        "--batch-size", type=int, default=64,
+        help="Batch size per GPU. For NaFlex training, this is the reference batch size at the longest configured "
+             "sequence when --naflex-max-tokens-per-batch is unset (before --naflex-batch-divisor rounding)."
     )
     parser.add_argument(
         "--epochs", type=int, default=32, help="Number of epochs to train for."
@@ -814,10 +816,10 @@ def parse_args(args):
     parser.add_argument(
         "--naflex-max-tokens-per-batch",
         type=int,
-        default=4096 * 4,
-        help="Maximum tokens per local NaFlex batch. For GenLIP each row costs image_seq_len + "
-             "--naflex-max-text-tokens, so this is a total (image+text) token budget; for image-only "
-             "models it counts image tokens."
+        default=None,
+        help="Maximum tokens per local NaFlex batch. When unset, inferred as --batch-size times the largest "
+             "--naflex-seq-lens row cost; GenLIP/GenLAP row cost also includes the caption-token cap. "
+             "An explicit value overrides this inference."
     )
     parser.add_argument(
         "--naflex-max-text-tokens",

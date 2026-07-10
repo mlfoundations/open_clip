@@ -20,7 +20,7 @@ class NaFlexDataConfig:
     train_seq_lens: Tuple[int, ...] = (128, 256, 576, 784, 1024)
     train_seq_len_probs: Optional[Tuple[float, ...]] = None
     train_num_image_tokens: Optional[int] = None
-    max_tokens_per_batch: int = 4096 * 4
+    max_tokens_per_batch: Optional[int] = None
     batch_divisor: int = 8
     eval_patch_size: Tuple[int, int] = (16, 16)
     eval_seq_len: int = 1024
@@ -33,7 +33,7 @@ class NaFlexDataConfig:
             seq_lens: Optional[Sequence[int]] = None,
             seq_len_probs: Optional[Sequence[float]] = None,
             train_num_image_tokens: Optional[int] = None,
-            max_tokens_per_batch: int = 4096 * 4,
+            max_tokens_per_batch: Optional[int] = None,
             batch_divisor: int = 8,
             eval_patch_size: Optional[PatchSize] = None,
             eval_seq_len: Optional[int] = None,
@@ -82,9 +82,10 @@ class NaFlexDataConfig:
         if train_num_image_tokens is not None and train_num_image_tokens <= 0:
             raise ValueError("NaFlex train image token count must be positive.")
 
-        max_tokens_per_batch = int(max_tokens_per_batch)
-        if max_tokens_per_batch <= 0:
-            raise ValueError("NaFlex max image tokens per batch must be positive.")
+        if max_tokens_per_batch is not None:
+            max_tokens_per_batch = int(max_tokens_per_batch)
+            if max_tokens_per_batch <= 0:
+                raise ValueError("NaFlex max tokens per batch must be positive.")
 
         batch_divisor = int(batch_divisor)
         if batch_divisor <= 0:
@@ -113,6 +114,18 @@ class NaFlexDataConfig:
     @property
     def variable_patch_size(self) -> bool:
         return len(self.train_patch_sizes) > 1
+
+    def resolve_max_tokens_per_batch(self, batch_size: int, per_row_text_tokens: int = 0) -> int:
+        """Return the explicit budget or infer one at the longest configured sequence length."""
+        if self.max_tokens_per_batch is not None:
+            return self.max_tokens_per_batch
+        batch_size = int(batch_size)
+        per_row_text_tokens = int(per_row_text_tokens)
+        if batch_size <= 0:
+            raise ValueError("NaFlex batch size must be positive when inferring the token budget.")
+        if per_row_text_tokens < 0:
+            raise ValueError("NaFlex per-row text token cost must be non-negative.")
+        return batch_size * (max(self.train_seq_lens) + per_row_text_tokens)
 
     @property
     def eval_config(self) -> Tuple[Tuple[int, int], int]:

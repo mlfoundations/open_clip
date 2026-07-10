@@ -128,7 +128,7 @@ def create_naflex_data_config_from_args(
         seq_lens=seq_lens,
         seq_len_probs=getattr(args, 'naflex_seq_len_probs', None),
         train_num_image_tokens=getattr(args, 'naflex_num_train_image_tokens', None),
-        max_tokens_per_batch=getattr(args, 'naflex_max_tokens_per_batch', 4096 * 4),
+        max_tokens_per_batch=getattr(args, 'naflex_max_tokens_per_batch', None),
         batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
         eval_seq_len=default_eval_seq_len if seq_lens is None else None,
     )
