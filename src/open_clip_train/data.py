@@ -686,7 +686,10 @@ def append_naflex_train_stages(
         patch_size = patch_size_choices[0]
         patch_size_choices = None
 
-    stages = [wds.map_dict(text=tokenize_text)]
+    stages = [
+        map_no_key(tokenize_text.map_sample, handler=log_and_continue)
+        if tokenize_text.output_mask else wds.map_dict(text=tokenize_text)
+    ]
     if bucketer is not None:
         # Reorder samples so similar lengths batch together (text for image, audio_tokens for audio),
         # tightening per-batch-max padding. Reorder-only -> schedule / num_batches / DDP unchanged. The caller
@@ -899,9 +902,15 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         dataset = wds.DataPipeline(*pipeline)
         num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
     elif use_naflex_eval:
-        pipeline.extend([
-            decode_image,
-            wds.map_dict(image=preprocess_img, text=tokenize_text),
+        pipeline.append(decode_image)
+        if output_text_mask:
+            pipeline.extend([
+                map_no_key(tokenize_text.map_sample, handler=log_and_continue),
+                wds.map_dict(image=preprocess_img),
+            ])
+        else:
+            pipeline.append(wds.map_dict(image=preprocess_img, text=tokenize_text))
+        pipeline.append(
             wds.batched(
                 args.batch_size,
                 partial=True,
@@ -912,8 +921,8 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                     text_pad_multiple=text_pad_multiple,
                     text_pad_cap=text_pad_cap,
                 ),
-            ),
-        ])
+            )
+        )
         dataset = wds.DataPipeline(*pipeline)
     else:
         if text_variable:

@@ -6,8 +6,14 @@ import pytest
 import torch
 
 import open_clip
-from open_clip.coca_model import CoCa
-from open_clip.transformer import ModernMultimodalTransformer, ModernTextTransformer, MultimodalTransformer
+from open_clip.coca_model import CoCa, MultimodalCfg
+from open_clip.transformer import (
+    ModernMultimodalDecoder,
+    ModernMultimodalTransformer,
+    ModernTextTransformer,
+    MultimodalDecoder,
+    MultimodalTransformer,
+)
 
 TINY_KW = dict(
     embed_dim=64,
@@ -139,9 +145,13 @@ def test_multimodal_transformer_init_parameters_external_after_to_empty():
             ls_init_value=0.25,
         )
     model.to_empty(device='cpu')
+    with torch.no_grad():
+        for param in model.parameters():
+            param.fill_(torch.nan)
     model.init_parameters()
 
     for name, param in model.named_parameters():
+        assert not param.is_meta, name
         assert torch.isfinite(param).all(), name
     assert torch.allclose(model.ln_final.weight, torch.ones_like(model.ln_final.weight))
     assert torch.allclose(model.ln_final.bias, torch.zeros_like(model.ln_final.bias))
@@ -157,6 +167,69 @@ def test_multimodal_transformer_init_parameters_external_after_to_empty():
     assert torch.allclose(model.resblocks[0].ls_1.gamma, torch.full_like(model.resblocks[0].ls_1.gamma, 0.25))
     assert model.text_projection.std() > 0
     assert torch.allclose(model.attn_mask, model.build_attention_mask())
+
+
+def _modern_init_cfg():
+    return MultimodalCfg(
+        text_arch='modern',
+        context_length=8,
+        vocab_size=64,
+        width=32,
+        heads=4,
+        layers=2,
+        pool_type='map',
+        proj_type='linear',
+        proj_bias=True,
+        bos_id=1,
+        eos_id=2,
+        pad_id=0,
+        qk_norm=True,
+        attn_gated=True,
+        value_residual=True,
+        ls_init_value=0.25,
+    )
+
+
+@pytest.mark.parametrize('factory', [
+    pytest.param(
+        lambda: MultimodalDecoder(
+            context_length=8,
+            vocab_size=64,
+            width=32,
+            heads=4,
+            layers=2,
+            output_dim=16,
+            proj_type='linear',
+            ls_init_value=0.25,
+        ),
+        id='classic-mammut',
+    ),
+    pytest.param(
+        lambda: ModernMultimodalDecoder(_modern_init_cfg(), output_dim=16),
+        id='modern-mammut',
+    ),
+    pytest.param(
+        lambda: ModernMultimodalTransformer(_modern_init_cfg()),
+        id='modern-coca',
+    ),
+    pytest.param(
+        lambda: ModernTextTransformer(_modern_init_cfg(), output_dim=16),
+        id='modern-text',
+    ),
+])
+def test_decoder_init_parameters_covers_all_parameters_after_to_empty(factory):
+    with torch.device('meta'):
+        model = factory()
+    model.to_empty(device='cpu')
+    with torch.no_grad():
+        for param in model.parameters():
+            param.fill_(torch.nan)
+
+    model.init_parameters()
+
+    for name, param in model.named_parameters():
+        assert not param.is_meta, name
+        assert torch.isfinite(param).all(), name
 
 
 def test_coca2_moderntext_config():
@@ -330,6 +403,60 @@ def test_coca_generate_copies_generation_config_and_fills_special_ids():
     assert config.eos_token_id is None
     assert config.pad_token_id is None
     assert config.use_cache is True
+
+
+def test_coca_generate_honors_max_new_tokens_from_generation_config():
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    prompt = torch.tensor([[5, 6], [7, 8]])
+    config = transformers.GenerationConfig(
+        max_new_tokens=2,
+        do_sample=True,
+        top_k=1,
+    )
+
+    out = model.generate(
+        torch.randn(2, 3, 64, 64),
+        text=prompt,
+        seq_len=3,
+        min_seq_len=5,
+        fixed_output_length=True,
+        generation_config=config,
+    )
+
+    assert out.shape == (2, 4)
+    assert torch.equal(out[:, :2], prompt)
+
+
+def test_coca_generate_validates_effective_max_new_tokens_length():
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    config = transformers.GenerationConfig(max_new_tokens=15, do_sample=True, top_k=1)
+
+    with pytest.raises(ValueError, match='context_length'):
+        model.generate(
+            torch.randn(2, 3, 64, 64),
+            text=torch.tensor([[5, 6], [7, 8]]),
+            generation_config=config,
+        )
+
+
+def test_coca_generate_custom_max_length_is_independent_of_legacy_seq_len():
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    prompt = torch.tensor([[3, 4, 5, 6, 7, 8], [9, 10, 11, 12, 13, 14]])
+    config = transformers.GenerationConfig(max_length=8, do_sample=True, top_k=1)
+
+    out = model.generate(
+        torch.randn(2, 3, 64, 64),
+        text=prompt,
+        seq_len=4,
+        min_seq_len=5,
+        generation_config=config,
+    )
+
+    assert out.shape[1] <= 8
+    assert torch.equal(out[:, :6], prompt)
 
 
 def test_create_task_dispatch_coca2():

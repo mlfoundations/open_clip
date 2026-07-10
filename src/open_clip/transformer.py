@@ -1368,6 +1368,16 @@ class ModernTextPool(nn.Module):
         return pooled.transpose(1, 2).reshape(b, c)
 
 
+def _reset_submodule_parameters(module: nn.Module):
+    """Reset standard child modules before applying an architecture-specific init scheme."""
+    for child in module.modules():
+        if child is module:
+            continue
+        reset_parameters = getattr(child, "reset_parameters", None)
+        if callable(reset_parameters):
+            reset_parameters()
+
+
 def _init_modern_text_block(
         block: ModernTextBlock,
         attn_std: float,
@@ -1561,6 +1571,7 @@ class ModernTextTransformer(nn.Module):
         self.init_parameters()
 
     def init_parameters(self):
+        _reset_submodule_parameters(self)
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         if self.token_embedding.padding_idx is not None:
             with torch.no_grad():
@@ -1597,10 +1608,10 @@ class ModernTextTransformer(nn.Module):
                 zero_residual=zero_residual,
             )
 
-        # MAP attentive-pool projections (the learned ``query`` is already initialized in ModernTextPool.__init__).
         # The pool/head init is scheme-independent: the block-init choice (flat/sandwich, zero-residual) only
         # governs the residual stream, not the readout.
         if getattr(self.pool, "query", None) is not None:
+            nn.init.normal_(self.pool.query, std=self.width ** -0.5)
             nn.init.normal_(self.pool.q.weight, std=self.width ** -0.5)
             if self.pool.q.bias is not None:
                 nn.init.zeros_(self.pool.q.bias)
@@ -2144,6 +2155,40 @@ def context_attn_mask_from_valid(context_valid: Optional[torch.Tensor]) -> Optio
     return valid[:, None, None, :]
 
 
+def _init_classic_resblocks(
+        blocks: Sequence[ResidualAttentionBlock],
+        width: int,
+        layers: int,
+):
+    """Initialize every parameter owned by classic self/cross-attention residual blocks."""
+    proj_std = (width ** -0.5) * ((2 * layers) ** -0.5)
+    attn_std = width ** -0.5
+    fc_std = (2 * width) ** -0.5
+    for block in blocks:
+        attn = block.attn
+        if attn.in_proj_weight is not None:
+            nn.init.normal_(attn.in_proj_weight, std=attn_std)
+        else:
+            nn.init.normal_(attn.q_proj_weight, std=attn_std)
+            nn.init.normal_(attn.k_proj_weight, std=attn_std)
+            nn.init.normal_(attn.v_proj_weight, std=attn_std)
+        if attn.in_proj_bias is not None:
+            nn.init.zeros_(attn.in_proj_bias)
+        if attn.logit_scale is not None:
+            nn.init.constant_(attn.logit_scale, math.log(10))
+        if attn.head_scale is not None:
+            nn.init.ones_(attn.head_scale)
+        nn.init.normal_(attn.out_proj.weight, std=proj_std)
+        if attn.out_proj.bias is not None:
+            nn.init.zeros_(attn.out_proj.bias)
+        nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+        if block.mlp.c_fc.bias is not None:
+            nn.init.zeros_(block.mlp.c_fc.bias)
+        nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        if block.mlp.c_proj.bias is not None:
+            nn.init.zeros_(block.mlp.c_proj.bias)
+
+
 class MultimodalTransformer(Transformer):
     def __init__(
             self,
@@ -2190,42 +2235,12 @@ class MultimodalTransformer(Transformer):
         self.init_parameters()
 
     def init_parameters(self):
-        # Two-phase init so this doubles as a full materializer for meta-device / to_empty() flows
-        # (FSDP deferred init): every submodule with a self-contained default init (norms, LayerScale,
-        # Linear, ...) resets itself via the standard reset_parameters() protocol, then the CLIP
-        # scheme overrides the weights it prescribes. Only Attention's raw parameters need explicit
-        # handling (its reset is the private _reset_parameters, skipped by the sweep on purpose --
-        # the scheme covers every tensor it owns).
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset_parameters'):
-                module.reset_parameters()
-
-        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
-        attn_std = self.width ** -0.5
-        fc_std = (2 * self.width) ** -0.5
-        for block in list(self.resblocks) + list(self.cross_attn):
-            attn = block.attn
-            if attn.in_proj_weight is not None:
-                nn.init.normal_(attn.in_proj_weight, std=attn_std)
-            else:
-                nn.init.normal_(attn.q_proj_weight, std=attn_std)
-                nn.init.normal_(attn.k_proj_weight, std=attn_std)
-                nn.init.normal_(attn.v_proj_weight, std=attn_std)
-            if attn.in_proj_bias is not None:
-                nn.init.zeros_(attn.in_proj_bias)
-            if attn.logit_scale is not None:
-                nn.init.constant_(attn.logit_scale, math.log(10))
-            if attn.head_scale is not None:
-                nn.init.ones_(attn.head_scale)
-            nn.init.normal_(attn.out_proj.weight, std=proj_std)
-            if attn.out_proj.bias is not None:
-                nn.init.zeros_(attn.out_proj.bias)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            if block.mlp.c_fc.bias is not None:
-                nn.init.zeros_(block.mlp.c_fc.bias)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-            if block.mlp.c_proj.bias is not None:
-                nn.init.zeros_(block.mlp.c_proj.bias)
+        _reset_submodule_parameters(self)
+        _init_classic_resblocks(
+            list(self.resblocks) + list(self.cross_attn),
+            width=self.width,
+            layers=self.layers,
+        )
 
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.width ** -0.5)
@@ -2395,21 +2410,21 @@ class MultimodalDecoder(nn.Module):
         self.init_parameters()
 
     def init_parameters(self):
+        _reset_submodule_parameters(self)
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
-
-        proj_std = (self.width ** -0.5) * ((2 * self.layers) ** -0.5)
-        attn_std = self.width ** -0.5
-        fc_std = (2 * self.width) ** -0.5
-        for block in list(self.resblocks) + list(self.cross_attn):
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        _init_classic_resblocks(
+            list(self.resblocks) + list(self.cross_attn),
+            width=self.width,
+            layers=self.layers,
+        )
 
         nn.init.normal_(self.lm_head, std=self.width ** -0.5)
         if self.text_projection is not None:
             nn.init.normal_(self.text_projection, std=self.width ** -0.5)
+        if self.attn_mask is not None:
+            mask = self.build_causal_mask().to(device=self.attn_mask.device, dtype=self.attn_mask.dtype)
+            self.attn_mask.copy_(mask)
 
     def build_causal_mask(self):
         # pytorch uses additive attention mask; fill with -inf
@@ -2665,6 +2680,7 @@ class ModernMultimodalDecoder(nn.Module):
             self.lm_head.weight = self.token_embedding.weight
 
     def init_parameters(self):
+        _reset_submodule_parameters(self)
         nn.init.normal_(self.token_embedding.weight, std=0.02)
 
         # same scheme as ModernTextTransformer.init_parameters (see comments there)
@@ -2685,6 +2701,7 @@ class ModernMultimodalDecoder(nn.Module):
             )
 
         if getattr(self.pool, "query", None) is not None:
+            nn.init.normal_(self.pool.query, std=self.width ** -0.5)
             nn.init.normal_(self.pool.q.weight, std=self.width ** -0.5)
             if self.pool.q.bias is not None:
                 nn.init.zeros_(self.pool.q.bias)
@@ -2888,6 +2905,7 @@ class ModernMultimodalTransformer(nn.Module):
         self.init_parameters()
 
     def init_parameters(self):
+        _reset_submodule_parameters(self)
         # same scheme as ModernTextTransformer.init_parameters (see comments there)
         sandwich = getattr(self.cfg, "norm_placement", "pre") == "sandwich"
         zero_residual = bool(getattr(self.cfg, "zero_init_residual", False))

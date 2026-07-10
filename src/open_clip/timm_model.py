@@ -47,7 +47,7 @@ class TimmModel(nn.Module):
         self.image_size = to_2tuple(image_size)
         # output_tokens: forward returns {'pooled', 'patch_tokens', 'patch_valid'} via the trunk's
         # forward_features/forward_head split -- the token sequence consumed by multimodal
-        # decoders (CoCa/MaMMUT cross-attention). Requires an NLC-style trunk.
+        # decoders (currently MaMMUT cross-attention). Requires an NLC-style trunk.
         self.output_tokens = output_tokens
 
         # setup kwargs that may not be common across all models

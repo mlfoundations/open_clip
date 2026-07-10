@@ -9,7 +9,7 @@ import pytest
 import torch
 
 import open_clip
-from open_clip.coca_model import MultimodalCfg
+from open_clip.coca_model import CoCa, MultimodalCfg
 from open_clip.mammut_model import MaMMUT
 from open_clip.model import CLIPVisionCfg
 from open_clip.task.coca_task import CoCaTask
@@ -106,6 +106,43 @@ def test_timm_output_tokens_dict_input():
     assert tokens.shape == (2, 24, TRUNK_DIM)  # prefix stripped: aligned with patch-only valid
     assert valid.shape == (2, 24) and valid.dtype == torch.bool
     torch.testing.assert_close(valid, batch['patch_valid'])
+
+
+def test_clip_timm_output_tokens_selects_pooled_features():
+    model = open_clip.CLIP(
+        embed_dim=32,
+        vision_cfg=TINY_VISION_CFG,
+        text_cfg=dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1),
+    ).eval()
+
+    with torch.no_grad():
+        features = model.encode_image(torch.randn(2, 3, 64, 64))
+
+    assert features.shape == (2, 32)
+
+
+def test_coca_rejects_timm_vision_tower_with_clear_error():
+    with pytest.raises(ValueError, match='does not support timm vision towers'):
+        CoCa(
+            embed_dim=32,
+            vision_cfg=TINY_VISION_CFG,
+            text_cfg=dict(
+                context_length=8,
+                vocab_size=64,
+                width=32,
+                heads=4,
+                layers=1,
+                embed_cls=True,
+                output_tokens=True,
+            ),
+            multimodal_cfg=dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1),
+        )
+
+
+def test_mammut_requires_vision_token_output():
+    vision_cfg = dict(TINY_VISION_CFG, output_tokens=False)
+    with pytest.raises(ValueError, match='output_tokens=True'):
+        MaMMUT(embed_dim=32, multimodal_cfg=TINY_MM_CFG, vision_cfg=vision_cfg)
 
 
 def test_timm_output_tokens_no_reg_variant():

@@ -14,6 +14,7 @@ from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
     NaFlexBatcher,
     SampleDecodeError,
+    collate_naflex_dicts,
     collate_naflex_tuples,
     create_naflex_data_config_from_args,
 )
@@ -39,6 +40,16 @@ def _samples(num_samples=4):
         }
         for idx in range(num_samples)
     ]
+
+
+class _MaskTokenizer:
+    """Fixed-length tokenizer whose validity cannot be inferred from token values."""
+
+    def __call__(self, text, output_mask=False):
+        value = int(text.strip())
+        tokens = torch.tensor([[value, 0, 2, 0]], dtype=torch.long)
+        valid = torch.tensor([[True, True, True, False]])
+        return (tokens, valid) if output_mask else tokens
 
 
 def _write_tar(path, num_samples=4):
@@ -79,6 +90,48 @@ def test_naflex_batcher_returns_dict_batches():
     assert batch["image"]["patch_coord"].shape == (2, 4, 2)
     assert batch["image"]["patch_valid"].all()
     assert batch["text"].shape == (2, 1)
+
+
+def test_naflex_batcher_preserves_fixed_text_valid():
+    samples = _samples(2)
+    expected = []
+    for idx, sample in enumerate(samples):
+        sample["text"] = torch.tensor([idx, 0, 2, 0], dtype=torch.long)
+        sample["text_valid"] = torch.tensor([True, True, True, False])
+        expected.append(sample["text_valid"])
+
+    batcher = NaFlexBatcher(
+        train_num_samples=2,
+        patch_size=16,
+        seq_lens=(4,),
+        max_tokens_per_batch=8,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+    batch = next(batcher.run(samples))
+
+    torch.testing.assert_close(batch["text_valid"], torch.stack(expected))
+
+
+def test_collate_naflex_dicts_preserves_fixed_text_valid():
+    batch = [
+        {
+            "image": {
+                "patches": torch.randn(4, 16 * 16 * 3),
+                "patch_coord": torch.zeros(4, 2, dtype=torch.long),
+                "patch_valid": torch.ones(4, dtype=torch.bool),
+            },
+            "text": torch.tensor([idx, 0, 2, 0], dtype=torch.long),
+            "text_valid": torch.tensor([True, True, True, False]),
+        }
+        for idx in range(2)
+    ]
+
+    output = collate_naflex_dicts(batch, max_seq_len=4)
+
+    assert output["text_valid"].shape == (2, 4)
+    assert output["text_valid"].tolist() == [[True, True, True, False]] * 2
 
 
 # --- decode-in-loop (deferred decode + skip-and-replenish) ----------------------------------------------------
@@ -378,8 +431,9 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
         distributed=False,
         rank=0,
         world_size=1,
+        text_attention_mask=True,
     )
-    tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
+    tokenizer = _MaskTokenizer()
 
     info = get_wds_dataset(
         args,
@@ -390,9 +444,10 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
     )
     batch = next(iter(info.dataloader))
 
-    assert set(batch.keys()) == {"image", "text"}
+    assert set(batch.keys()) == {"image", "text", "text_valid"}
     assert batch["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
-    assert batch["text"].shape == (2, 1)
+    assert batch["text"].shape == (2, 4)
+    assert batch["text_valid"].tolist() == [[True, True, True, False]] * 2
 
 
 def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
@@ -481,8 +536,9 @@ def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
         distributed=False,
         rank=0,
         world_size=1,
+        text_attention_mask=True,
     )
-    tokenizer = lambda text: [torch.tensor([int(text.strip())], dtype=torch.long)]
+    tokenizer = _MaskTokenizer()
 
     info = get_wds_dataset(
         args,
@@ -493,11 +549,12 @@ def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
     )
     batch = next(iter(info.dataloader))
 
-    assert set(batch.keys()) == {"image", "text"}
+    assert set(batch.keys()) == {"image", "text", "text_valid"}
     assert batch["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
     assert batch["image"]["patch_coord"].shape == (2, 4, 2)
     assert batch["image"]["patch_valid"].all()
-    assert batch["text"].shape == (2, 1)
+    assert batch["text"].shape == (2, 4)
+    assert batch["text_valid"].tolist() == [[True, True, True, False]] * 2
 
 
 def test_get_imagenet_naflex_eval_outputs_patched_image_dict(tmp_path):

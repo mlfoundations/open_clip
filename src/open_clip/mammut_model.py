@@ -98,6 +98,8 @@ class MaMMUT(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
+        if not getattr(self.visual, 'output_tokens', False):
+            raise ValueError("MaMMUT requires vision_cfg.output_tokens=True for caption cross-attention.")
 
         self.text = _build_multimodal_decoder_tower(
             embed_dim=embed_dim,
@@ -148,9 +150,18 @@ class MaMMUT(nn.Module):
         # with None validity for native
         out = self.visual(images)
         if isinstance(out, dict):
+            required = {'pooled', 'patch_tokens', 'patch_valid'}
+            missing = required.difference(out)
+            if missing:
+                raise KeyError(f"MaMMUT vision output is missing required keys: {sorted(missing)}")
             image_latent, image_embs, image_embs_valid = out['pooled'], out['patch_tokens'], out['patch_valid']
+        elif isinstance(out, (tuple, list)) and len(out) == 2:
+            image_latent, image_embs = out
+            image_embs_valid = None
         else:
-            image_latent, image_embs, image_embs_valid = (*out, None)
+            raise TypeError(
+                "MaMMUT vision tower must return (pooled, tokens) or a timm token-output dictionary."
+            )
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, image_embs, image_embs_valid
 

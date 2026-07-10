@@ -263,6 +263,20 @@ def _build_vision_tower(
     return visual
 
 
+def _pooled_image_features(output: Any) -> torch.Tensor:
+    """Select the pooled feature from vision towers that optionally expose token sidecars."""
+    if isinstance(output, dict):
+        try:
+            return output['pooled']
+        except KeyError as ex:
+            raise KeyError("vision tower dictionary output must contain a 'pooled' tensor.") from ex
+    if isinstance(output, (tuple, list)):
+        if not output:
+            raise ValueError("vision tower returned an empty output sequence.")
+        return output[0]
+    return output
+
+
 def _build_text_tower(
         embed_dim: int,
         text_cfg: CLIPTextCfg,
@@ -405,7 +419,7 @@ class CLIP(nn.Module):
         return no_wd
 
     def _encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
+        features = _pooled_image_features(self.visual(image))
         return F.normalize(features, dim=-1) if normalize else features
 
     def encode_image(self, image, normalize: bool = False):
@@ -618,7 +632,7 @@ class CustomTextCLIP(nn.Module):
         return no_wd
 
     def _encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
+        features = _pooled_image_features(self.visual(image))
         return F.normalize(features, dim=-1) if normalize else features
 
     def encode_image(self, image, normalize: bool = False):

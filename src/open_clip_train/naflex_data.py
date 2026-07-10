@@ -193,6 +193,16 @@ def collate_variable_text(
     return text, text != pad_id
 
 
+def _collate_optional_values(values: Sequence[Any], key: str) -> Optional[Any]:
+    """Collate an optional per-sample sidecar, requiring all-or-none presence."""
+    present = [value is not None for value in values]
+    if not any(present):
+        return None
+    if not all(present):
+        raise ValueError(f"NaFlex batch has {key!r} for only some samples.")
+    return default_collate(values)
+
+
 def collate_naflex_dicts(
         batch: List[Sample],
         primary_key: str = "image",
@@ -222,10 +232,15 @@ def collate_naflex_dicts(
         [(sample[primary_key], sample[target_key]) for sample in batch],
         max_seq_len=max_seq_len,
     )
-    return {
+    output = {
         primary_key: primary_batch,
         target_key: targets,
     }
+    valid_key = f"{target_key}_valid"
+    target_valid = _collate_optional_values([sample.get(valid_key) for sample in batch], valid_key)
+    if target_valid is not None:
+        output[valid_key] = target_valid
+    return output
 
 
 def _padded_per_rank(total: int, distributed: bool, world_size: int) -> int:
@@ -515,6 +530,7 @@ class NaFlexBatchScheduler:
             raise ValueError("`batch_divisor` must be positive.")
         self.primary_key = primary_key
         self.target_key = target_key
+        self.target_valid_key = f"{target_key}_valid"
         self.pad_id = pad_id
         # Per-row text token cost added when sizing batches so the token budget counts primary + text (the
         # worst-case caption length, i.e. the tokenizer context-length cap). 0 = primary-only batch sizing
@@ -729,8 +745,8 @@ class NaFlexBatchScheduler:
             sample: Sample,
             seq_len: int,
             patch_idx: int,
-    ) -> Tuple[Dict[str, torch.Tensor], Any]:
-        """Decode (optional) + transform + patchify one sample -> ``(patch_dict, target)``.
+    ) -> Tuple[Dict[str, torch.Tensor], Any, Optional[Any]]:
+        """Decode + patchify one sample, preserving an optional target-validity sidecar.
 
         Decode is the only step wrapped: a ``decode_fn`` failure on raw bytes raises ``SampleDecodeError`` so the
         streaming batcher can skip + replenish. ``transform`` / ``patchify`` stay unguarded -- a failure there is
@@ -748,19 +764,25 @@ class NaFlexBatchScheduler:
                 raise SampleDecodeError(repr(ex)) from ex
         primary = transform(primary) if transform is not None else primary
         patch_dict = primary if isinstance(primary, dict) else patchify(primary)
-        return patch_dict, sample[self.target_key]
+        return patch_dict, sample[self.target_key], sample.get(self.target_valid_key)
 
     def collate_processed(
             self,
             patch_dicts: List[Dict[str, torch.Tensor]],
             targets: List[Any],
             seq_len: int,
+            target_valids: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
-        """Collate already-processed ``(patch_dict, target)`` rows into a NaFlex batch dict."""
+        """Collate processed rows into a NaFlex batch, retaining exact target validity when supplied."""
         primary_batch = self._collate_patch_dicts(
             patch_dicts, seq_len, pad_multiple=self.pad_multiple, freq_tokens=self.pad_freq_tokens,
         )
         if self.pad_id is not None:
+            if target_valids is not None and any(value is not None for value in target_valids):
+                raise ValueError(
+                    f"NaFlex variable-text batches derive {self.target_valid_key!r} during padding; "
+                    "do not also supply a per-sample validity mask."
+                )
             # Variable-length captions padded within the batch; tasks select the keys they consume, so the
             # `<target>_valid` mask is always emitted.
             text, text_valid = collate_variable_text(
@@ -772,10 +794,14 @@ class NaFlexBatchScheduler:
                 f"{self.target_key}_valid": text_valid,
             }
 
-        return {
+        output = {
             self.primary_key: primary_batch,
             self.target_key: default_collate(targets),
         }
+        target_valid = _collate_optional_values(target_valids or [], self.target_valid_key)
+        if target_valid is not None:
+            output[self.target_valid_key] = target_valid
+        return output
 
     def collate_batch(
             self,
@@ -790,9 +816,10 @@ class NaFlexBatchScheduler:
         fixed sample list. With ``decode_fn=None`` it is equivalent to the pre-refactor ``collate_batch``.
         """
         processed = [self.process_sample(sample, seq_len, patch_idx) for sample in samples]
-        patch_dicts = [patch_dict for patch_dict, _ in processed]
-        targets = [target for _, target in processed]
-        return self.collate_processed(patch_dicts, targets, seq_len)
+        patch_dicts = [patch_dict for patch_dict, _, _ in processed]
+        targets = [target for _, target, _ in processed]
+        target_valids = [target_valid for _, _, target_valid in processed]
+        return self.collate_processed(patch_dicts, targets, seq_len, target_valids)
 
 
 class NaFlexBatcher:
@@ -903,6 +930,7 @@ class NaFlexBatcher:
             # partial batch (drop for train so ranks never see a short batch; keep for eval).
             patch_dicts: List[Dict[str, torch.Tensor]] = []
             targets: List[Any] = []
+            target_valids: List[Optional[Any]] = []
             consecutive_failures = 0
             while len(patch_dicts) < batch_size:
                 try:
@@ -912,7 +940,7 @@ class NaFlexBatcher:
                 if not isinstance(sample, dict):
                     raise TypeError("NaFlexBatcher expects dictionary samples from the data pipeline.")
                 try:
-                    patch_dict, target = self.scheduler.process_sample(sample, seq_len, patch_idx)
+                    patch_dict, target, target_valid = self.scheduler.process_sample(sample, seq_len, patch_idx)
                 except SampleDecodeError as ex:
                     # webdataset handler convention: a falsy return (or `reraise_exception`) means stop -> re-raise;
                     # a truthy return (e.g. `log_and_continue`) or no handler means skip + replenish this sample.
@@ -925,8 +953,9 @@ class NaFlexBatcher:
                 consecutive_failures = 0
                 patch_dicts.append(patch_dict)
                 targets.append(target)
+                target_valids.append(target_valid)
             if len(patch_dicts) == batch_size or (patch_dicts and not self.drop_last):
-                yield self.scheduler.collate_processed(patch_dicts, targets, seq_len)
+                yield self.scheduler.collate_processed(patch_dicts, targets, seq_len, target_valids)
 
 
 class NaFlexMapDatasetWrapper(IterableDataset):

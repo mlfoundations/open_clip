@@ -254,7 +254,6 @@ def prepare_generation_prompt(
         batch_size: int,
         device: torch.device,
         sot_token_id: int,
-        seq_len: int,
 ) -> Tuple[torch.Tensor, bool]:
     """Create/validate the common-length prompt consumed by GenerationMixin."""
     squeeze_output = False
@@ -294,10 +293,6 @@ def prepare_generation_prompt(
                 "pass same-length unpadded prompts or generate each prompt length separately."
             )
 
-    if text.shape[1] > seq_len:
-        raise ValueError(
-            f"generation prompt length ({text.shape[1]}) cannot exceed seq_len ({seq_len})."
-        )
     return text, squeeze_output
 
 
@@ -316,9 +311,6 @@ def build_generation_config(
         eos_token_id: int,
         sot_token_id: int,
 ) -> GenerationConfig:
-    if seq_len <= min_seq_len:
-        raise ValueError("seq_len must be larger than min_seq_len.")
-
     if generation_config is not None:
         generation_config = copy.deepcopy(generation_config)
         if getattr(generation_config, 'pad_token_id', None) is None:
@@ -329,6 +321,9 @@ def build_generation_config(
             generation_config.bos_token_id = sot_token_id
         generation_config.use_cache = False
         return generation_config
+
+    if seq_len <= min_seq_len:
+        raise ValueError("seq_len must be larger than min_seq_len.")
 
     gen_kwargs = dict(
         max_length=seq_len,
@@ -363,10 +358,14 @@ def validate_generation_lengths(
         prompt_len: int,
         generation_config: GenerationConfig,
         seq_len: int,
-        max_seq_len: int,
+        max_seq_len: Optional[int],
         context_length: Optional[int],
-):
-    max_length = getattr(generation_config, 'max_length', None) or seq_len
+) -> int:
+    max_new_tokens = getattr(generation_config, 'max_new_tokens', None)
+    if max_new_tokens is not None:
+        max_length = prompt_len + int(max_new_tokens)
+    else:
+        max_length = getattr(generation_config, 'max_length', None) or seq_len
     if max_seq_len is not None and max_length > max_seq_len:
         raise ValueError(f"generation max_length ({max_length}) cannot exceed max_seq_len ({max_seq_len}).")
     if context_length is not None and context_length > 0 and max_length > context_length:
@@ -375,6 +374,7 @@ def validate_generation_lengths(
         )
     if prompt_len > max_length:
         raise ValueError(f"generation prompt length ({prompt_len}) cannot exceed max_length ({max_length}).")
+    return max_length
 
 
 def generate_multimodal(
@@ -450,9 +450,8 @@ def generate_multimodal(
                 batch_size=image_embs.shape[0],
                 device=image_embs.device,
                 sot_token_id=sot_token_id,
-                seq_len=seq_len,
             )
-            validate_generation_lengths(
+            target_len = validate_generation_lengths(
                 prompt_len=prompt.shape[1],
                 generation_config=generation_config,
                 seq_len=seq_len,
@@ -480,7 +479,6 @@ def generate_multimodal(
                 **generate_kwargs,
             )
 
-            target_len = getattr(generation_config, 'max_length', None) or seq_len
             if fixed_output_length and output.shape[1] < target_len:
                 pad_len = target_len - output.shape[1]
                 output = torch.cat(

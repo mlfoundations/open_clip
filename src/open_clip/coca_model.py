@@ -82,6 +82,11 @@ class CoCa(nn.Module):
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
+        if vision_cfg.timm_model_name:
+            raise ValueError(
+                "CoCa does not support timm vision towers: caption cross-attention requires token projection "
+                "and validity handling that only MaMMUT's timm path currently provides."
+            )
 
         self.text = _build_text_tower(
             embed_dim=embed_dim,
@@ -151,6 +156,11 @@ class CoCa(nn.Module):
         return image_latent
 
     def encode_text(self, text, text_valid=None, normalize: bool = True):
+        """Encode text, optionally using an exact validity mask.
+
+        ``text_valid`` was inserted before ``normalize``. Legacy positional calls such as
+        ``encode_text(text, False)`` must use ``normalize=False`` after this breaking API change.
+        """
         text_latent, _ = self._encode_text(text, text_valid=text_valid, normalize=normalize)
         return text_latent
 
@@ -173,6 +183,9 @@ class CoCa(nn.Module):
             output_logit_scale_bias: bool = False,
     ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """ Forward features that returns intermediates.
+
+        Breaking positional API note: ``text_valid`` was inserted after ``text``; callers passing
+        ``image_indices`` or later arguments positionally must switch those arguments to keywords.
 
         Args:
             image: Input image tensor
@@ -252,6 +265,9 @@ class CoCa(nn.Module):
         text tower's pad/cls masking (passed down as its HF-style ``attention_mask``); validity falls
         back to ``text != pad_id`` when absent. Caption logits are causal over right-padded text and
         need no mask; label masking for the caption loss happens task-side.
+
+        Breaking positional API note: ``text_valid`` was inserted after ``text``; callers passing
+        ``image_latent`` or later arguments positionally must switch those arguments to keywords.
 
         labels: optional [B, L-1] AR-shifted caption labels (-100 = ignore, task-built). When given,
         returns ``caption_loss`` via the fused linear cross-entropy (full-vocab logits are never
