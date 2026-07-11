@@ -2,7 +2,7 @@
     "embed_dim": 512,
     "vision_cfg": {
         "timm_model_name": "naflexvit_base_patch16_gap",
-        "timm_model_kwargs": {"patch_size": 32},
+        "timm_model_kwargs": {"patch_size": 32, "pre_norm": true, "pos_embed_grid_size": [8, 8]},
         "timm_pool": "avg",
         "timm_proj": "linear",
         "output_tokens": true,

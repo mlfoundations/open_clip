@@ -280,4 +280,5 @@ def test_registered_config_builds(name, patch, seq_len):
     assert model.map_viz2txt_kv.shape[0] == 768
     assert model.visual.image_seq_len == seq_len
     assert model.visual.trunk.get_patch_size() == (patch, patch)
+    assert not isinstance(model.visual.trunk.norm_pre, torch.nn.Identity)
     assert model.visual.output_tokens
