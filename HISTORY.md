@@ -3,7 +3,7 @@
 * Fix missing space in error message
 * use model flag for normalizing embeddings
 * init logit_bias for non siglip pretrained models
-* Fix logit_bias load_checkpoint addition 
+* Fix logit_bias load_checkpoint addition
 * Make CoCa model match CLIP models for logit scale/bias init
 * Fix missing return of "logit_bias" in CoCa.forward
 * Add NLLB-CLIP with SigLIP models
@@ -39,7 +39,7 @@
 
 * Add EVA models
 * Support serial worker training
-* Fix Python 3.7 compatibility 
+* Fix Python 3.7 compatibility
 
 ## 2.19.0
 
@@ -61,11 +61,11 @@
 
 ## 2.16.2
 
-* Fixes for context_length and vocab_size attributes 
+* Fixes for context_length and vocab_size attributes
 
 ## 2.16.1
 
-* Fixes for context_length and vocab_size attributes 
+* Fixes for context_length and vocab_size attributes
 * Fix --train-num-samples logic
 * Add HF BERT configs for PubMed CLIP model
 
@@ -91,7 +91,7 @@
 ## 2.13.0
 
 * Add support for dataset mixtures with different sampling weights
-* Make transformers optional again 
+* Make transformers optional again
 
 ## 2.12.0
 
@@ -188,7 +188,7 @@
 ## 2.4.0
 
 * Fix #211, missing RN50x64 config. Fix type of dropout param for ResNet models
-* Bring back LayerNorm impl that casts to input for non bf16/fp16 
+* Bring back LayerNorm impl that casts to input for non bf16/fp16
 * zero_shot.py: set correct tokenizer based on args
 * training/params.py: remove hf params and get them from model config
 
@@ -196,7 +196,7 @@
 
 * Implement grad checkpointing for hf model.
 * custom_text: True if hf_model_name is set
-* Disable hf tokenizer parallelism 
+* Disable hf tokenizer parallelism
 
 ## 2.3.0
 
@@ -205,7 +205,7 @@
 ## 2.2.0
 
 * Support for custom text tower
-* Add checksum verification for pretrained model weights 
+* Add checksum verification for pretrained model weights
 
 ## 2.1.0
 

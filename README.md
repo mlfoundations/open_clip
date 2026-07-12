@@ -68,8 +68,8 @@ We provide more details about our full collection of pretrained models [here](do
 
 
 
-| Model    | Training data | Resolution | # of samples seen | ImageNet zero-shot acc. | 
-| -------- | ------- |  ------- |  ------- |  ------- |  
+| Model    | Training data | Resolution | # of samples seen | ImageNet zero-shot acc. |
+| -------- | ------- |  ------- |  ------- |  ------- |
 | ConvNext-Base | LAION-2B  | 256px | 13B | 71.5% |
 | ConvNext-Large | LAION-2B  | 320px | 29B | 76.9% |
 | ConvNext-XXLarge | LAION-2B | 256px | 34B | 79.5% |
@@ -80,19 +80,19 @@ We provide more details about our full collection of pretrained models [here](do
 | ViT-L-14  | DataComp-1B  | 224px | 13B | 79.2% |
 | ViT-bigG-14  | LAION-2B  | 224px | 34B | 80.1% |
 |  |  |   |   |  |
-| ViT-L-14-quickgelu [(Original CLIP)](https://arxiv.org/abs/2103.00020) | WIT | 224px | 13B | 75.5% | 
-| ViT-SO400M-14-SigLIP [(SigLIP)](https://arxiv.org/abs/2303.15343) | WebLI | 224px | 45B | 82.0% | 
-| ViT-L-14 [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-2B | 224px | 39B | 82.2% | 
+| ViT-L-14-quickgelu [(Original CLIP)](https://arxiv.org/abs/2103.00020) | WIT | 224px | 13B | 75.5% |
+| ViT-SO400M-14-SigLIP [(SigLIP)](https://arxiv.org/abs/2303.15343) | WebLI | 224px | 45B | 82.0% |
+| ViT-L-14 [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-2B | 224px | 39B | 82.2% |
 | ViT-L-16-256 [(SigLIP2)](https://arxiv.org/abs/2502.14786) |  WebLI (multi-lang) | 256px | 40B | 82.5% |
 | ViT-SO400M-14-SigLIP-384 [(SigLIP)](https://arxiv.org/abs/2303.15343) |  WebLI | 384px | 45B | 83.1% |
-| ViT-H-14-quickgelu [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-5B | 224px | 39B | 83.4% | 
+| ViT-H-14-quickgelu [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-5B | 224px | 39B | 83.4% |
 | PE-Core-L-14-336 [(PE)](https://arxiv.org/abs/2504.13181) | MetaCLIP-5.4B | 336px | 58B | 83.5% |
 | ViT-SO400M-16-SigLIP2-384 [(SigLIP2)](https://arxiv.org/abs/2502.14786) |  WebLI (multi-lang) | 384px | 40B | 84.1% |
 | ViT-H-14-378-quickgelu [(DFN)](https://arxiv.org/abs/2309.17425) | DFN-5B | 378px | 44B | 84.4% |
 | ViT-gopt-16-SigLIP2-384 [(SigLIP2)](https://arxiv.org/abs/2502.14786) | WebLI (multi-lang) | 384px | 40B | 85.0% |
 | PE-Core-bigG-14-448 [(PE)](https://arxiv.org/abs/2504.13181) | MetaCLIP-5.4B | 448px | 86B | 85.4% |
 
-Model cards with additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip. 
+Model cards with additional model specific details can be found on the Hugging Face Hub under the OpenCLIP library tag: https://huggingface.co/models?library=open_clip.
 
 If you found this repository useful, please consider [citing](#citing).
 We welcome anyone to submit an issue or send an email if you have any other requests or suggestions.
@@ -160,14 +160,14 @@ Future trained models will use nn.GELU.
 
 ### Loading models
 
-Models can be loaded with `open_clip.create_model_and_transforms`, as shown in the example below. The model name and corresponding `pretrained` keys are compatible with the outputs of `open_clip.list_pretrained()`. 
+Models can be loaded with `open_clip.create_model_and_transforms`, as shown in the example below. The model name and corresponding `pretrained` keys are compatible with the outputs of `open_clip.list_pretrained()`.
 
 The `pretrained` argument also accepts local paths, for example `/path/to/my/b32.pt`.
 You can also load checkpoints from huggingface this way. To do so, download the `open_clip_pytorch_model.bin` file (for example, [https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K/tree/main](https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K/blob/main/open_clip_pytorch_model.bin)), and use `pretrained=/path/to/open_clip_pytorch_model.bin`.
 
 ```python
 # pretrained also accepts local paths
-model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k') 
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 ```
 
 ## Fine-tuning on classification tasks
