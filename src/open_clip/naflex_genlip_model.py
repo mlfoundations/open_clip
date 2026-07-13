@@ -540,13 +540,8 @@ def packed_caption_loss(model, prefix_emb, prefix_valid, block_pos, text, text_v
 
 
 def build_patch_attn_mask(patch_valid: torch.Tensor) -> torch.Tensor:
-    """Full bidirectional mask over valid patch tokens (encoder-only mode), ``(B, 1, Ni, Ni)``."""
-    pv = patch_valid.bool()
-    b, ni = pv.shape
-    allowed = (pv[:, :, None] & pv[:, None, :]).clone()
-    idx = torch.arange(ni, device=pv.device)
-    allowed[:, idx, idx] = True
-    return allowed.unsqueeze(1)
+    """Compact key-padding mask for bidirectional patch attention, ``(B, 1, 1, Ni)``."""
+    return patch_valid.bool()[:, None, None, :]
 
 
 def build_image_position_ids(patch_coord: torch.Tensor, patch_valid: torch.Tensor) -> torch.Tensor:

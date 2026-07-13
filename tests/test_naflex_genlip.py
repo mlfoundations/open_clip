@@ -108,10 +108,16 @@ def test_encode_image():
     feats = model.encode_image(batch['image'])
     assert feats.shape == (batch['image']['patches'].shape[0], model.embed_dim)
     assert torch.isfinite(feats).all()
-    # image-only full attention mask is symmetric over valid patches
+    # Encoder-only attention uses a broadcastable key-padding mask.
     pv = batch['image']['patch_valid']
-    m = build_patch_attn_mask(pv)[0, 0]
-    assert m[0, :].sum() == int(pv[0].sum())
+    m = build_patch_attn_mask(pv)
+    assert m.shape == (pv.shape[0], 1, 1, pv.shape[1])
+    assert torch.equal(m[:, 0, 0], pv)
+
+    corrupted = {k: v.clone() for k, v in batch['image'].items()}
+    corrupted['patches'][~pv] = 1e4
+    corrupted_feats = model.encode_image(corrupted)
+    torch.testing.assert_close(corrupted_feats, feats)
 
 
 def test_mrope_section_assertion():
