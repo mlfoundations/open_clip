@@ -520,11 +520,14 @@ def packed_caption_loss(
         block_pos,
         text,
         text_valid,
-        z_loss_weight=0.0,
+        z_loss=False,
         compute_dtype=torch.float32,
         chunk_size=4096,
 ):
     """Fused autoregressive caption CE over the packed ``[valid prefix ; valid text ; PAD]`` layout.
+
+    Returns unweighted ``(ce, z)`` components (``z`` None when ``z_loss`` is off); objective
+    weighting happens task/loss-side.
 
     Shared by GenLIP and GenLAP (``model`` supplies ``embed_text``/``rotary``/``trunk``/``out_proj``/
     ``lm_head``). ``prefix_emb`` is the embedded image/audio tokens; ``block_pos`` is the standard block MRoPE
@@ -546,8 +549,7 @@ def packed_caption_loss(
     target = text[text_src]   # (sum(m),) valid caption tokens, row-major aligned (all valid -> no ignore)
     return fused_linear_cross_entropy(
         pred, model.lm_head.weight, target, bias=model.lm_head.bias, ignore_index=-100,
-        chunk_size=chunk_size, z_loss_weight=z_loss_weight, compute_dtype=compute_dtype,
-        return_components=True,
+        chunk_size=chunk_size, z_loss=z_loss, compute_dtype=compute_dtype,
     )
 
 
@@ -809,7 +811,7 @@ class NaFlexGenLip(nn.Module):
             text: torch.Tensor,
             text_valid: Optional[torch.Tensor] = None,
             compute_loss: bool = False,
-            caption_z_loss_weight: float = 0.0,
+            caption_z_loss: bool = False,
             caption_loss_compute_dtype=torch.float32,
             caption_loss_chunk_size: int = 4096,
     ) -> Dict[str, torch.Tensor]:
@@ -820,28 +822,34 @@ class NaFlexGenLip(nn.Module):
                 ``patch_valid`` ``(B, Ni)``.
             text: Caption token ids of shape ``(B, Lt)`` padded with ``pad_id``.
             text_valid: Optional ``(B, Lt)`` bool mask; derived from ``text != pad_id`` when omitted.
-            compute_loss: When True, return a memory-efficient autoregressive caption ``loss`` (fused linear
-                cross-entropy over the text-predicting positions only, no full-vocabulary logits are
-                materialized). When False, return full ``logits`` ``(B, S, vocab)`` (for inference/generation).
+            compute_loss: When True, return the memory-efficient autoregressive caption CE component
+                ``caption_loss_ce`` (fused linear cross-entropy over the text-predicting positions only,
+                no full-vocabulary logits are materialized), plus ``caption_loss_z`` when
+                ``caption_z_loss`` is set. Objective weighting/composition happens task-side. When
+                False, return full ``logits`` ``(B, S, vocab)`` (for inference/generation).
 
         Returns:
-            Dict with ``image_seq_len`` and either ``loss`` (``compute_loss=True``) or ``logits``.
+            Dict with either the unweighted caption loss components (``compute_loss=True``) or
+            ``logits`` and ``image_seq_len``.
         """
         if text_valid is None:
             text_valid = text != self.pad_id
 
         if compute_loss and self.pack_prefix:
             # Packed layout: compact [valid image ; valid text ; PAD] per row (no padding between the two).
-            loss, caption_ce, caption_z = packed_caption_loss(
+            caption_loss_ce, caption_loss_z = packed_caption_loss(
                 self,
                 self.patch_embed(image['patches']), image['patch_valid'],
                 build_mrope_position_ids(image['patch_coord'], image['patch_valid'], text_valid),
                 text, text_valid,
-                z_loss_weight=caption_z_loss_weight,
+                z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
                 chunk_size=caption_loss_chunk_size,
             )
-            return {'loss': loss, 'caption_ce': caption_ce, 'caption_z': caption_z}
+            out = {'caption_loss_ce': caption_loss_ce}
+            if caption_loss_z is not None:
+                out['caption_loss_z'] = caption_loss_z
+            return out
 
         hidden, ni = self._encode(image, text, text_valid)  # (B, S, D), Ni
 
@@ -851,20 +859,22 @@ class NaFlexGenLip(nn.Module):
             # (never predicted) and avoids the dominant memory cost of full-sequence logits.
             pred = hidden[:, ni - 1:-1, :]  # (B, Lt, D)
             target = torch.where(text_valid, text, torch.full_like(text, -100))  # (B, Lt)
-            loss, caption_ce, caption_z = fused_linear_cross_entropy(
+            caption_loss_ce, caption_loss_z = fused_linear_cross_entropy(
                 pred.reshape(-1, pred.shape[-1]),
                 self.lm_head.weight,
                 target.reshape(-1),
                 bias=self.lm_head.bias,
                 ignore_index=-100,
                 chunk_size=caption_loss_chunk_size,
-                z_loss_weight=caption_z_loss_weight,
+                z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
-                return_components=True,
             )
             # NOTE: return only tensors here. Returning a Python int (e.g. image_seq_len) breaks
             # torch.compile under the DDP graph-splitter (AOTAutograd expects FX nodes with .meta).
-            return {'loss': loss, 'caption_ce': caption_ce, 'caption_z': caption_z}
+            out = {'caption_loss_ce': caption_loss_ce}
+            if caption_loss_z is not None:
+                out['caption_loss_z'] = caption_loss_z
+            return out
 
         logits = self.lm_head(hidden)
         return {'logits': logits, 'image_seq_len': ni}

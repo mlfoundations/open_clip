@@ -223,7 +223,7 @@ def test_mammut_naflex_fused_caption_loss_parity():
     loss_legacy = torch.nn.functional.cross_entropy(
         out_legacy['logits'][:, :-1].permute(0, 2, 1), labels, ignore_index=-100)
     out_fused = model(image=image, text=text, text_valid=text_valid, labels=labels)
-    torch.testing.assert_close(out_fused['caption_loss'], loss_legacy, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(out_fused['caption_loss_ce'], loss_legacy, rtol=1e-5, atol=1e-5)
 
 
 def test_mammut_naflex_task_training_forward():

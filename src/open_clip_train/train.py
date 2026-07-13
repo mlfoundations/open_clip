@@ -642,7 +642,11 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                             pad_id=gen_loss_pad_id,
                         )
                     else:
-                        gen_loss = model_out.get("caption_loss", model_out.get("loss"))
+                        # Prefer the pure next-token CE component so val_generative_loss stays
+                        # comparable (perplexity-like) when the auxiliary z-loss term is enabled;
+                        # caption_loss/loss include the weighted z term.
+                        gen_loss = model_out.get(
+                            "caption_loss_ce", model_out.get("caption_loss", model_out.get("loss")))
 
                     if gen_loss is not None:
                         cumulative_gen_loss += gen_loss * batch_size

@@ -712,14 +712,16 @@ def parse_args(args):
         type=float,
         default=0.0,
         help="Weight for mean square(logsumexp(vocabulary logits)) on valid next-token targets. "
-             "Applies to CoCa/MaMMUT and GenLIP/GenLAP; 0 disables it."
+             "Applies to CoCa/MaMMUT and GenLIP/GenLAP at exactly this weight (independent of "
+             "--coca-caption-loss-weight); 0 disables it."
     )
     parser.add_argument(
         "--caption-loss-compute-dtype",
-        choices=("float32", "bfloat16"),
+        choices=("float32", "model"),
         default="float32",
-        help="Dtype used by caption CE/logsumexp. Scalar loss reductions remain float32. The default "
-             "matches existing numerics; bfloat16 is an experimental speed/memory tradeoff."
+        help="Caption CE/logsumexp compute mode. float32 explicitly upcasts their logits (the default, "
+             "matching existing numerics); model preserves the logits dtype and ambient autocast policy. "
+             "Returned loss/component scalars remain float32."
     )
     parser.add_argument(
         "--caption-loss-chunk-size",

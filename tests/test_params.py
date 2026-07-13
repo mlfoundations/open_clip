@@ -35,12 +35,12 @@ def test_val_retrieval_precision_parse():
 def test_caption_loss_options_parse():
     args = parse_args([
         "--caption-z-loss-weight", "1e-4",
-        "--caption-loss-compute-dtype", "bfloat16",
+        "--caption-loss-compute-dtype", "model",
         "--caption-loss-chunk-size", "512",
     ])
 
     assert args.caption_z_loss_weight == 1e-4
-    assert args.caption_loss_compute_dtype == "bfloat16"
+    assert args.caption_loss_compute_dtype == "model"
     assert args.caption_loss_chunk_size == 512
 
 

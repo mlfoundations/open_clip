@@ -56,6 +56,8 @@ class GenLipTask(ImageTextTask):
         """
         super().__init__(model, device=device, dtype=dtype, verbose=verbose)
         self.pad_id = unwrap_model(model).pad_id
+        if caption_z_loss_weight < 0:
+            raise ValueError(f"caption_z_loss_weight must be non-negative, got {caption_z_loss_weight}")
         self.caption_z_loss_weight = float(caption_z_loss_weight)
         self.caption_loss_compute_dtype = caption_loss_compute_dtype
         self.caption_loss_chunk_size = int(caption_loss_chunk_size)
@@ -82,24 +84,34 @@ class GenLipTask(ImageTextTask):
     def _loss_forward(self, module: nn.Module, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         modality = batch[self._modality_key]
         if self.fused_loss:
-            # The model computes the autoregressive caption loss internally via a memory-efficient fused
-            # linear cross-entropy (over text positions only). Doing it inside the single module forward keeps
-            # it DDP-safe (gradient sync hooks fire) and avoids materializing full-vocabulary logits.
+            # The model computes the unweighted caption CE (and optional z) components internally via a
+            # memory-efficient fused linear cross-entropy (over text positions only) -- DDP-safe (gradient
+            # sync hooks fire inside the single module forward) and no full-vocabulary logits materialized.
+            # Objective weighting/composition happens here: weights never enter a model forward.
             out = module(
                 text=batch["text"],
                 text_valid=batch.get("text_valid"),
                 compute_loss=True,
-                caption_z_loss_weight=self.caption_z_loss_weight,
+                caption_z_loss=self.caption_z_loss_weight != 0,
                 caption_loss_compute_dtype=self.caption_loss_compute_dtype,
                 caption_loss_chunk_size=self.caption_loss_chunk_size,
                 **{self._modality_kwarg: modality},
             )
-            return {
-                "caption_loss": out["loss"],
-                "caption_ce": out["caption_ce"].detach(),
-                "caption_z": out["caption_z"].detach(),
-                "loss": out["loss"],
-            }
+            ce = out["caption_loss_ce"]
+            z = out.get("caption_loss_z")
+            if z is None and self.caption_z_loss_weight:
+                # mirror CoCaLoss: a configured z weight with no model component would silently
+                # train without the z term
+                raise ValueError(
+                    'caption_z_loss_weight != 0 but the model returned no caption_loss_z; the model '
+                    'forward must honor caption_z_loss=True.')
+            caption_loss = ce
+            if self.caption_z_loss_weight:
+                caption_loss = caption_loss + self.caption_z_loss_weight * z
+            losses = {"caption_loss": caption_loss, "caption_loss_ce": ce.detach(), "loss": caption_loss}
+            if z is not None:
+                losses["caption_loss_z"] = z.detach()
+            return losses
 
         # External-loss path: drive the model as a plain logits producer and apply the autoregressive shift
         # here (CoCa-style), then let the external loss module compute the objective. NOTE: this materializes

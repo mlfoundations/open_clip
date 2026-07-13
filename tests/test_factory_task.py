@@ -5,12 +5,9 @@ of (args.distill, args.model, args.siglip), and that task-specific loss
 defaults are wired up correctly.
 """
 import os
-import sys
 import types
 
 import pytest
-import torch
-import torch.nn as nn
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -151,16 +148,16 @@ def test_create_task_plumbs_caption_loss_options():
     args = _make_args(
         model='coca_ViT-B-32',
         caption_z_loss_weight=1e-4,
-        caption_loss_compute_dtype='bfloat16',
+        caption_loss_compute_dtype='model',
         caption_loss_chunk_size=512,
     )
     task = create_task(args, model=model)
 
     assert task.caption_z_loss_weight == 1e-4
-    assert task.caption_loss_compute_dtype == 'bfloat16'
+    assert task.caption_loss_compute_dtype == 'model'
     assert task.caption_loss_chunk_size == 512
     assert task.loss.z_loss_weight == 1e-4
-    assert task.loss.compute_dtype is torch.bfloat16
+    assert task.loss.compute_dtype is None
 
 
 def test_create_task_plumbs_rank_world_size():

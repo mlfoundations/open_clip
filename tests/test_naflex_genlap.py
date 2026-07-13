@@ -54,7 +54,7 @@ def test_genlap_forward_logits_and_loss(config):
     assert out["audio_seq_len"] == ni
     assert torch.isfinite(out["logits"]).all()
 
-    loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["caption_loss_ce"]
     assert loss.ndim == 0 and torch.isfinite(loss)
 
 
@@ -71,9 +71,9 @@ def test_genlap_pack_prefix_parity_full_prefix(config):
     text, text_valid = _text(model.pad_id)
 
     model.pack_prefix = False
-    block = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    block = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["caption_loss_ce"]
     model.pack_prefix = True
-    packed = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["loss"]
+    packed = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)["caption_loss_ce"]
     assert torch.allclose(block, packed, atol=1e-5), f"{block.item()} != {packed.item()}"
 
 
@@ -85,10 +85,10 @@ def test_genlap_pack_prefix_variable_runs():
     text, text_valid = _text(model.pad_id)
     out = model(
         audio=audio, text=text, text_valid=text_valid, compute_loss=True,
-        caption_z_loss_weight=1e-4, caption_loss_chunk_size=7,
+        caption_z_loss=True, caption_loss_chunk_size=7,
     )
-    assert out["loss"].ndim == 0 and torch.isfinite(out["loss"])
-    assert out["caption_z"] > 0
+    assert out["caption_loss_ce"].ndim == 0 and torch.isfinite(out["caption_loss_ce"])
+    assert out["caption_loss_z"] > 0
 
 
 def test_genlap_1d_vs_2d_rope_mode():
@@ -168,8 +168,8 @@ def test_create_task_dispatches_genlap_and_trains():
     text, text_valid = _text(model.pad_id)
     task.train()
     losses, _ = task({"audio": audio, "text": text, "text_valid": text_valid})
-    assert all(k in losses for k in ("caption_loss", "caption_ce", "caption_z", "loss"))
-    assert losses["caption_z"] > 0 and torch.isfinite(losses["loss"])
+    assert all(k in losses for k in ("caption_loss", "caption_loss_ce", "caption_loss_z", "loss"))
+    assert losses["caption_loss_z"] > 0 and torch.isfinite(losses["loss"])
 
 
 def test_genlap_pre_norm_per_modality_streams():
@@ -191,5 +191,5 @@ def test_genlap_pre_norm_per_modality_streams():
     audio = _audio_batch(model)
     text, text_valid = _text(model.pad_id)
     with torch.no_grad():
-        loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)['loss']
+        loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)['caption_loss_ce']
     assert torch.isfinite(loss)

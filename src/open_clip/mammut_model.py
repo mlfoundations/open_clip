@@ -193,7 +193,7 @@ class MaMMUT(nn.Module):
             image_embs: Optional[torch.Tensor] = None,
             image_embs_valid: Optional[torch.Tensor] = None,
             labels: Optional[torch.Tensor] = None,
-            caption_z_loss_weight: float = 0.0,
+            caption_z_loss: bool = False,
             caption_loss_compute_dtype=torch.float32,
             caption_loss_chunk_size: int = 4096,
     ):
@@ -209,8 +209,10 @@ class MaMMUT(nn.Module):
         ``image_embs`` or padded K/V silently join cross-attention. None = dense tokens.
 
         labels: optional [B, L-1] AR-shifted caption labels (-100 = ignore, task-built). When
-        given, the caption pass returns ``caption_loss`` computed via the fused linear
-        cross-entropy (full-vocab logits are never materialized) instead of ``logits``."""
+        given, the caption pass returns the reduced caption CE as ``caption_loss_ce`` (plus
+        ``caption_loss_z`` when ``caption_z_loss`` is set) computed via the fused linear
+        cross-entropy (full-vocab logits are never materialized) instead of ``logits``. Loss
+        weighting is applied downstream (CoCaLoss)."""
         if image is not None and (image_latent is None or image_embs is None):
             image_latent, image_embs, image_embs_valid = self._encode_image(image)
 
@@ -242,18 +244,19 @@ class MaMMUT(nn.Module):
                 mode='caption', return_hidden=True)
             pred = hidden[:, :-1]
             weight, bias = self.text.lm_head_params
-            caption_loss, caption_ce, caption_z = fused_linear_cross_entropy(
+            caption_loss_ce, caption_loss_z = fused_linear_cross_entropy(
                 pred.reshape(-1, pred.shape[-1]),
                 weight,
                 labels.reshape(-1),
                 bias=bias,
                 ignore_index=-100,
                 chunk_size=caption_loss_chunk_size,
-                z_loss_weight=caption_z_loss_weight,
+                z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
-                return_components=True,
             )
-            out_dict.update(caption_loss=caption_loss, caption_ce=caption_ce, caption_z=caption_z)
+            out_dict["caption_loss_ce"] = caption_loss_ce
+            if caption_loss_z is not None:
+                out_dict["caption_loss_z"] = caption_loss_z
         else:
             out_dict["logits"] = self.text(
                 text, context=image_kv, context_valid=image_embs_valid, mode='caption')

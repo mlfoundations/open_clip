@@ -34,7 +34,7 @@
 > - `--length-bucketing`, `--bucket-pool`, `--bucket-chunk` — reorder the train stream by sample length (caption and/or audio tokens) to tighten per-batch padding; the bucket pool holds raw, undecoded samples
 > - `--text-pad-multiple` — round per-batch variable-text length up to a multiple, bounding the distinct sequence lengths `torch.compile` sees (text-axis analogue of `--naflex-pad-multiple`)
 > - `--text-attention-mask` — emit a per-sample text validity mask (batch key `text_valid`) from the tokenizer, consumed by CoCa/MaMMUT for attention/pooling and `-100` caption-label masking. Default auto-enables for CoCa/MaMMUT (except under `--distill`) and is rejected for tasks that don't consume it
-> - `--caption-z-loss-weight`, `--caption-loss-compute-dtype {float32,bfloat16}`, and `--caption-loss-chunk-size` — configure the next-token objective shared by CoCa/MaMMUT and GenLIP/GenLAP. Defaults preserve the existing fp32 CE with no z-loss; bf16 CE/logsumexp is an experimental opt-in while scalar reductions remain fp32
+> - `--caption-z-loss-weight`, `--caption-loss-compute-dtype {float32,model}`, and `--caption-loss-chunk-size` — configure the next-token objective shared by CoCa/MaMMUT and GenLIP/GenLAP. Defaults preserve the existing fp32 CE with no z-loss; `model` preserves the loss-logit dtype and ambient autocast policy while returned loss/component scalars remain fp32
 >
 > **Breaking changes — Python API:**
 > - `trace_model` removed from the top-level `open_clip` namespace

@@ -49,7 +49,7 @@ def test_audio_naflex_batch_via_scheduler_feeds_model():
     assert audio["patch_valid"][0].sum() > audio["patch_valid"][1].sum()  # 2 s clip > 1 s clip
 
     model = open_clip.create_model(CONFIG_1D).eval()
-    loss = model(audio=audio, text=batch["text"], text_valid=batch["text_valid"], compute_loss=True)["loss"]
+    loss = model(audio=audio, text=batch["text"], text_valid=batch["text_valid"], compute_loss=True)["caption_loss_ce"]
     assert loss.ndim == 0 and torch.isfinite(loss)
 
 

@@ -171,10 +171,12 @@ class CoCaLoss(ClipLoss):
         # also drops genuine tokens sharing the pad value (e.g. SimpleTokenizer id 0). Default kept at 0
         # for backward compat with external callers passing raw (unmasked) labels.
         self.pad_id = pad_id
+        if z_loss_weight < 0:
+            raise ValueError(f"z_loss_weight must be non-negative, got {z_loss_weight}")
         self.z_loss_weight = float(z_loss_weight)
         self.compute_dtype = resolve_caption_loss_dtype(compute_dtype)
-        # Retain the public module attribute used by downstream introspection. The forward path uses
-        # caption_cross_entropy so it can share z-loss and dtype behavior with the fused implementation.
+        # Public module used by the logits path when z-loss is disabled, so replacing it
+        # (e.g. label smoothing) keeps working in either loss-compute mode.
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=-100)
 
     def forward(
@@ -185,16 +187,16 @@ class CoCaLoss(ClipLoss):
             labels=None,
             logit_scale=None,
             output_dict=False,
-            caption_loss=None,
-            caption_ce=None,
-            caption_z=None,
+            caption_loss_ce=None,
+            caption_loss_z=None,
             return_components=False,
     ):
         """Two ways to supply the caption term:
 
         * legacy: ``logits`` [B, L, V] + ``labels`` [B, L] -- CE computed here (materialized logits);
-        * fused: ``caption_loss`` scalar precomputed by the model via ``fused_linear_cross_entropy``
-          (see CoCa/MaMMUT ``forward(labels=...)``) -- only the loss weighting is applied here.
+        * fused: ``caption_loss_ce`` scalar precomputed by the model via ``fused_linear_cross_entropy``
+          (see CoCa/MaMMUT ``forward(labels=...)``), with ``caption_loss_z`` alongside when the model
+          also computed the z term -- only the loss weighting is applied here.
 
         """
         assert logit_scale is not None, 'logit_scale is required'
@@ -204,27 +206,42 @@ class CoCaLoss(ClipLoss):
         else:
             clip_loss = torch.tensor(0, device=image_features.device)
 
-        if caption_loss is None:
+        if caption_loss_ce is None:
             assert logits is not None and labels is not None, \
-                'CoCaLoss needs (logits, labels) when the model does not supply caption_loss'
+                'CoCaLoss needs (logits, labels) when the model does not supply caption_loss_ce'
             if self.pad_id is not None:
                 labels = labels.masked_fill(labels == self.pad_id, -100)
-            caption_loss, caption_ce, caption_z = caption_cross_entropy(
-                logits,
-                labels,
-                ignore_index=-100,
-                z_loss_weight=self.z_loss_weight,
-                compute_dtype=self.compute_dtype,
-                return_components=True,
-            )
-        caption_loss = caption_loss * self.caption_loss_weight
+            if self.z_loss_weight == 0:
+                # Honor the public module while applying the same optional loss-logit upcast as
+                # caption_cross_entropy. Reduced diagnostics/objectives remain fp32.
+                loss_logits = logits.to(self.compute_dtype) if self.compute_dtype is not None else logits
+                caption_loss_ce = self.caption_loss(loss_logits.permute(0, 2, 1), labels).float()
+            else:
+                caption_loss_ce, caption_loss_z = caption_cross_entropy(
+                    logits,
+                    labels,
+                    ignore_index=-100,
+                    z_loss=True,
+                    compute_dtype=self.compute_dtype,
+                )
+        elif self.z_loss_weight and caption_loss_z is None:
+            raise ValueError(
+                'CoCaLoss has z_loss_weight != 0 but the model-supplied caption term has no '
+                'caption_loss_z; pass caption_z_loss=True into the model forward so the fused '
+                'loss computes one, or set z_loss_weight=0.')
+
+        # caption_loss_weight scales only the CE term; z applies at exactly z_loss_weight,
+        # matching GenLIP/GenLAP semantics for the same flag.
+        caption_loss = self.caption_loss_weight * caption_loss_ce
+        if self.z_loss_weight:
+            caption_loss = caption_loss + self.z_loss_weight * caption_loss_z
 
         if output_dict:
             output = {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
-            if return_components and caption_ce is not None:
-                output["caption_ce"] = caption_ce.detach()
-            if return_components and caption_z is not None:
-                output["caption_z"] = caption_z.detach()
+            if return_components:
+                output["caption_loss_ce"] = caption_loss_ce.detach()
+                if caption_loss_z is not None:
+                    output["caption_loss_z"] = caption_loss_z.detach()
             return output
 
         return clip_loss, caption_loss
@@ -538,15 +555,16 @@ class SigLipLoss(nn.Module):
 _CAPTION_LOSS_DTYPES = {
     "float32": torch.float32,
     "fp32": torch.float32,
-    "bfloat16": torch.bfloat16,
-    "bf16": torch.bfloat16,
+    "model": None,
 }
 
 
-def resolve_caption_loss_dtype(dtype) -> torch.dtype:
-    """Resolve the public caption-loss dtype spelling to a torch dtype."""
-    if dtype in (torch.float32, torch.bfloat16):
+def resolve_caption_loss_dtype(dtype) -> Optional[torch.dtype]:
+    """Resolve the caption-loss mode: fp32 upcast, or None for model/ambient behavior."""
+    if dtype is torch.float32:
         return dtype
+    if dtype is None:
+        return None
     try:
         return _CAPTION_LOSS_DTYPES[str(dtype).lower()]
     except KeyError as exc:
@@ -554,31 +572,46 @@ def resolve_caption_loss_dtype(dtype) -> torch.dtype:
         raise ValueError(f"caption loss compute dtype must be one of {{{choices}}}, got {dtype!r}") from exc
 
 
-def _caption_ce_z_from_valid_logits(logits, target, z_loss_weight, compute_dtype):
-    """Return fp32 CE and squared-log-normalizer sums for already-filtered targets."""
-    compute_dtype = resolve_caption_loss_dtype(compute_dtype)
-    logits = logits.to(compute_dtype)
-    # CUDA autocast promotes cross_entropy/logsumexp to fp32. Disable it locally so an explicit bf16
-    # loss-compute request is honored; reductions below are still accumulated in fp32.
-    with torch.autocast(device_type=logits.device.type, enabled=False):
-        if z_loss_weight:
-            # CE = logsumexp(logits) - target_logit. Reusing log_z avoids a second vocabulary reduction
-            # when the auxiliary z-loss is enabled.
-            log_z = torch.logsumexp(logits, dim=-1)
-            target_logits = logits.gather(-1, target.unsqueeze(-1)).squeeze(-1)
-            ce_sum = (log_z - target_logits).float().sum()
-            z_sum = log_z.float().square().sum()
-        else:
-            ce_sum = F.cross_entropy(logits, target, reduction="none").float().sum()
-            z_sum = ce_sum.new_zeros(())
+def _caption_ce_z_from_valid_logits(logits, target, z_loss: bool, compute_dtype: Optional[torch.dtype]):
+    """Return fp32 CE and squared-log-normalizer sums for already-filtered targets.
+
+    ``compute_dtype`` is the resolved optional fp32 upcast (callers resolve once via
+    :func:`resolve_caption_loss_dtype`; this runs per checkpointed chunk). ``z_sum`` is a zero
+    scalar when ``z_loss`` is off (kept a tensor for checkpoint-friendly output structure).
+    """
+    if compute_dtype is not None:
+        logits = logits.to(compute_dtype)
+    if z_loss:
+        # CE = logsumexp(logits) - target_logit. Reusing log_z avoids a second vocabulary reduction
+        # when the auxiliary z-loss is enabled.
+        log_z = torch.logsumexp(logits, dim=-1)
+        target_logits = logits.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+        ce_sum = (log_z - target_logits).float().sum()
+        z_sum = log_z.float().square().sum()
+    else:
+        ce_sum = F.cross_entropy(logits, target, reduction="none").float().sum()
+        z_sum = ce_sum.new_zeros(())
     return ce_sum, z_sum
 
 
-def _chunk_linear_ce(hidden, weight, bias, target, z_loss_weight, compute_dtype):
-    # F.linear remains in the surrounding AMP context, so the dominant vocabulary GEMM can execute in
-    # bf16 even when the numerically safer fp32 loss-compute mode is selected.
+def _chunk_linear_ce(hidden, weight, bias, target, z_loss, compute_dtype):
+    # F.linear remains in the model's dtype / surrounding AMP context. The optional fp32 upcast applies
+    # only to CE/logsumexp after this dominant vocabulary GEMM.
     logits = F.linear(hidden, weight, bias)
-    return _caption_ce_z_from_valid_logits(logits, target, z_loss_weight, compute_dtype)
+    return _caption_ce_z_from_valid_logits(logits, target, z_loss, compute_dtype)
+
+
+def _graph_tied_zero(hidden, weight, bias):
+    """Return an fp32 zero with graph edges to all fused-loss inputs.
+
+    Callers use this with an empty hidden tensor or on meta, so ``hidden.sum()`` reads no storage.
+    Scalar parameter selects avoid reducing the full LM head while still producing full-shaped zero
+    gradients in backward.
+    """
+    zero = hidden.sum() + weight[0, 0]
+    if bias is not None:
+        zero = zero + bias[0]
+    return zero.float() * 0.0
 
 
 @torch.compiler.disable
@@ -590,18 +623,21 @@ def fused_linear_cross_entropy(
         ignore_index: int = -100,
         chunk_size: int = 4096,
         reduction: str = "mean",
-        z_loss_weight: float = 0.0,
+        z_loss: bool = False,
         compute_dtype=torch.float32,
-        return_components: bool = False,
 ):
     """Memory-efficient linear projection + cross-entropy without materializing full logits.
 
     Computes ``cross_entropy(linear(hidden, weight, bias), target)`` in chunks over the token dimension,
     materializing only one ``[chunk_size, vocab]`` block at a time. The loss-compute block defaults to fp32
-    and can optionally remain bf16; scalar reductions always accumulate in fp32. Under autograd each chunk
-    is gradient-checkpointed so the logits are recomputed in backward, bounding peak memory to one chunk
-    regardless of batch/sequence length. This mirrors the fused linear cross-entropy used by the GenLIP
-    reference (Liger kernel) and is essential for large vocabularies (~100k).
+    or can follow the model dtype and ambient autocast policy; returned scalar components are fp32.
+    Under autograd each chunk is gradient-checkpointed so the logits are recomputed in backward, bounding
+    peak memory to one chunk regardless of batch/sequence length. This mirrors the fused linear
+    cross-entropy used by the GenLIP reference (Liger kernel) and is essential for large vocabularies
+    (~100k).
+
+    Returns UNWEIGHTED ``(ce, z)`` components -- objective weighting/composition belongs to the loss
+    module or task, never here or in a model forward. ``z`` is None when ``z_loss`` is off.
 
     TODO(torch>=2.13): compare/dispatch to ``F.linear_cross_entropy`` once the env has it — verify it
     bounds memory (not just kernel fusion), matches ignore_index/mean semantics (run
@@ -614,17 +650,20 @@ def fused_linear_cross_entropy(
         bias: Optional ``[vocab]`` bias.
         chunk_size: Number of tokens per chunk.
         reduction: ``"mean"`` (over non-ignored tokens) or ``"sum"``.
-        z_loss_weight: Weight for mean ``square(logsumexp(logits))``. Zero skips its computation.
-        compute_dtype: Dtype used by CE/logsumexp (``float32`` or ``bfloat16``).
-        return_components: Return ``(combined, ce, z)`` rather than only the combined objective.
+        z_loss: Also compute the mean ``square(logsumexp(logits))`` z component.
+        compute_dtype: ``float32`` explicitly upcasts CE/logsumexp inputs; ``model`` (or ``None``)
+            leaves their dtype and ambient autocast behavior unchanged.
     """
     if reduction not in ("mean", "sum"):
         raise ValueError(f"unsupported reduction={reduction!r}; expected 'mean' or 'sum'")
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
-    if z_loss_weight < 0:
-        raise ValueError(f"z_loss_weight must be non-negative, got {z_loss_weight}")
     compute_dtype = resolve_caption_loss_dtype(compute_dtype)
+    if hidden.is_meta:
+        # The valid-mask filtering below is data-dependent, which meta cannot resolve; shape/memory
+        # dry runs only need a graph-attached fp32 scalar.
+        zero = _graph_tied_zero(hidden, weight, bias)
+        return zero, (zero if z_loss else None)
     # Drop ignored (padding) positions before the head GEMM -- they carry zero loss and zero grad,
     # and padded rows are the norm for every caller.
     valid = target != ignore_index
@@ -636,52 +675,70 @@ def fused_linear_cross_entropy(
     use_ckpt = torch.is_grad_enabled() and hidden.requires_grad
     ce_total = hidden.new_zeros((), dtype=torch.float32)
     z_total = hidden.new_zeros((), dtype=torch.float32)
+    needs_graph_tie = torch.is_grad_enabled() and (
+        hidden.requires_grad or weight.requires_grad or (bias is not None and bias.requires_grad)
+    )
+    if n_tokens == 0 and needs_graph_tie:
+        # The chunk loop never runs; keep backward valid and DDP parameters marked as used.
+        zero = _graph_tied_zero(hidden, weight, bias)
+        ce_total = ce_total + zero
+        z_total = z_total + zero
     for start in range(0, n_tokens, chunk_size):
         h_chunk = hidden[start:start + chunk_size]
         t_chunk = target[start:start + chunk_size]
         if use_ckpt:
             ce_chunk, z_chunk = checkpoint(
-                _chunk_linear_ce, h_chunk, weight, bias, t_chunk, z_loss_weight, compute_dtype,
+                _chunk_linear_ce, h_chunk, weight, bias, t_chunk, z_loss, compute_dtype,
                 use_reentrant=False,
             )
         else:
             ce_chunk, z_chunk = _chunk_linear_ce(
-                h_chunk, weight, bias, t_chunk, z_loss_weight, compute_dtype)
+                h_chunk, weight, bias, t_chunk, z_loss, compute_dtype)
         ce_total = ce_total + ce_chunk
         z_total = z_total + z_chunk
     if reduction == "mean":
         denominator = n_valid.clamp(min=1)
         ce_total = ce_total / denominator
         z_total = z_total / denominator
-    combined = ce_total + float(z_loss_weight) * z_total
-    if return_components:
-        return combined, ce_total, z_total
-    return combined
+    return ce_total, (z_total if z_loss else None)
 
 
 def caption_cross_entropy(
         logits: torch.Tensor,
         target: torch.Tensor,
         ignore_index: int = -100,
-        z_loss_weight: float = 0.0,
+        z_loss: bool = False,
         compute_dtype=torch.float32,
-        return_components: bool = False,
 ):
-    """Materialized-logits counterpart of :func:`fused_linear_cross_entropy`."""
-    if z_loss_weight < 0:
-        raise ValueError(f"z_loss_weight must be non-negative, got {z_loss_weight}")
+    """Materialized-logits counterpart of :func:`fused_linear_cross_entropy`.
+
+    Returns unweighted ``(ce, z)`` components like the fused variant; ``z`` is None when
+    ``z_loss`` is off. Reductions are masked rather than the logits boolean-indexed: a
+    ``logits[valid]`` gather would materialize (and save for backward) a second
+    ``[n_valid, vocab]`` tensor, roughly doubling the activation memory of this already
+    logits-bound path.
+    """
+    compute_dtype = resolve_caption_loss_dtype(compute_dtype)
     logits = logits.reshape(-1, logits.shape[-1])
     target = target.reshape(-1)
     valid = target != ignore_index
     n_valid = valid.sum().clamp(min=1)
-    ce, z = _caption_ce_z_from_valid_logits(
-        logits[valid], target[valid], z_loss_weight, compute_dtype)
-    ce = ce / n_valid
-    z = z / n_valid
-    combined = ce + float(z_loss_weight) * z
-    if return_components:
-        return combined, ce, z
-    return combined
+    if compute_dtype is not None:
+        logits = logits.to(compute_dtype)
+    if z_loss:
+        zero = logits.new_zeros((), dtype=torch.float32)
+        log_z = torch.logsumexp(logits, dim=-1)
+        target_logits = logits.gather(-1, target.masked_fill(~valid, 0).unsqueeze(-1)).squeeze(-1)
+        # torch.where (not multiply-by-mask) keeps padded rows exactly out of the reductions.
+        # Like the historical full-tensor cross_entropy(ignore_index) path, padded logits are
+        # still reduced over, so they must be finite (extreme magnitudes are fine).
+        ce = torch.where(valid, (log_z - target_logits).float(), zero).sum() / n_valid
+        z = torch.where(valid, log_z.float().square(), zero).sum() / n_valid
+    else:
+        ce = F.cross_entropy(logits, target, ignore_index=ignore_index, reduction="none")
+        ce = ce.float().sum() / n_valid
+        z = None
+    return ce, z
 
 
 class GenLipLoss(nn.Module):
@@ -701,20 +758,24 @@ class GenLipLoss(nn.Module):
     ):
         super().__init__()
         self.ignore_index = ignore_index
+        if z_loss_weight < 0:
+            raise ValueError(f"z_loss_weight must be non-negative, got {z_loss_weight}")
         self.z_loss_weight = float(z_loss_weight)
         self.compute_dtype = resolve_caption_loss_dtype(compute_dtype)
 
     def forward(self, logits, labels, output_dict: bool = False, return_components: bool = False):
-        loss, ce, z = caption_cross_entropy(
+        ce, z = caption_cross_entropy(
             logits, labels,
             ignore_index=self.ignore_index,
-            z_loss_weight=self.z_loss_weight,
+            z_loss=bool(self.z_loss_weight),
             compute_dtype=self.compute_dtype,
-            return_components=True,
         )
+        loss = ce if z is None else ce + self.z_loss_weight * z
         if not output_dict:
             return loss
         output = {"caption_loss": loss}
         if return_components:
-            output.update(caption_ce=ce.detach(), caption_z=z.detach())
+            output["caption_loss_ce"] = ce.detach()
+            if z is not None:
+                output["caption_loss_z"] = z.detach()
         return output
