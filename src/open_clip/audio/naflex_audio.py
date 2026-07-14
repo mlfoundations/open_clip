@@ -280,13 +280,21 @@ class AudioNaFlexTransformFactory:
 
     is_naflex_transform_factory = True
     is_naflex_eval_transform_factory = True
+    supports_patch_flatten_control = True
 
     def __init__(self, cfg: AudioNaFlexCfg, pack_prefix: bool = False):
         self.cfg = cfg
         # Resolved model state used by the audio data path; avoids config-name lookups.
         self.pack_prefix = pack_prefix
 
-    def __call__(self, max_seq_len: Optional[int] = None, patch_size: Any = None) -> AudioNaFlexPatchify:
+    def __call__(
+            self,
+            max_seq_len: Optional[int] = None,
+            patch_size: Any = None,
+            flatten_patches: bool = True,
+    ) -> AudioNaFlexPatchify:
+        # Audio patch layout is fixed by ``AudioNaFlexCfg`` and already flattened by ``mel_to_patches``;
+        # image-only patch interpolation controls are accepted for the shared eval-factory contract and ignored.
         return AudioNaFlexPatchify(self.cfg, max_audio_tokens=max_seq_len)
 
 

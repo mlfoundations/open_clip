@@ -8,7 +8,8 @@ from PIL import Image
 from torchvision import transforms
 
 import open_clip
-from open_clip.transform import image_transform
+from open_clip.naflex_config import NaFlexDataConfig
+from open_clip.transform import NaFlexEvalTransformFactory, image_transform
 from open_clip_train.data import get_imagenet, get_wds_dataset
 from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
@@ -17,6 +18,7 @@ from open_clip_train.naflex_data import (
     collate_naflex_dicts,
     collate_naflex_tuples,
     create_naflex_data_config_from_args,
+    create_naflex_eval_transform,
 )
 from open_clip_train.params import parse_args
 from open_clip_train.train import get_naflex_loss_scale
@@ -357,6 +359,60 @@ def test_parse_naflex_args():
     assert args.naflex_max_tokens_per_batch == 4096
     assert args.naflex_batch_divisor == 4
     assert args.naflex_loss_scale == "sqrt"
+
+
+def test_naflex_patchify_flattens_per_model_base_patch_size():
+    multi = NaFlexBatcher(
+        train_num_samples=1,
+        patch_size_choices=(16, 32),
+        model_patch_size=16,
+        seq_lens=(4,),
+        max_tokens_per_batch=4,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+    image = torch.randn(3, 64, 64)
+
+    base = multi.scheduler.patchifiers[0](image)["patches"]
+    non_base = multi.scheduler.patchifiers[1](image)["patches"]
+
+    assert base.shape == (16, 16 * 16 * 3)
+    assert non_base.shape == (4, 32, 32, 3)
+
+    fixed_non_base = NaFlexBatcher(
+        train_num_samples=1,
+        patch_size=32,
+        model_patch_size=16,
+        seq_lens=(4,),
+        max_tokens_per_batch=4,
+        transform_factory=_transform_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+    assert fixed_non_base.scheduler.patchifiers[0](image)["patches"].shape == (4, 32, 32, 3)
+
+
+def test_naflex_eval_keeps_non_base_patch_dimensions():
+    factory = NaFlexEvalTransformFactory(
+        input_size=(3, 64, 64),
+        mean=(0.5, 0.5, 0.5),
+        std=(0.5, 0.5, 0.5),
+        interpolation="bilinear",
+    )
+    config = NaFlexDataConfig.resolve(
+        patch_sizes=[32],
+        seq_lens=[4],
+        model_patch_size=16,
+        supports_patch_interpolation=True,
+    )
+
+    transform, max_seq_len, patch_size = create_naflex_eval_transform(factory, config)
+    image = transform(Image.new("RGB", (64, 64)))
+
+    assert max_seq_len == 4
+    assert patch_size == (32, 32)
+    assert image["patches"].shape == (4, 32, 32, 3)
 
 
 def test_naflex_loss_scale_defaults_to_none():

@@ -24,6 +24,8 @@ class NaFlexDataConfig:
     batch_divisor: int = 8
     eval_patch_size: Tuple[int, int] = (16, 16)
     eval_seq_len: int = 1024
+    model_patch_size: Optional[Tuple[int, int]] = None
+    supports_patch_interpolation: Optional[bool] = None
 
     @classmethod
     def resolve(
@@ -37,6 +39,8 @@ class NaFlexDataConfig:
             batch_divisor: int = 8,
             eval_patch_size: Optional[PatchSize] = None,
             eval_seq_len: Optional[int] = None,
+            model_patch_size: Optional[PatchSize] = None,
+            supports_patch_interpolation: Optional[bool] = None,
     ) -> 'NaFlexDataConfig':
         patch_sizes = (16,) if patch_sizes is None else patch_sizes
         train_patch_sizes = tuple(to_2tuple(size) for size in patch_sizes)
@@ -99,6 +103,26 @@ class NaFlexDataConfig:
         if eval_seq_len <= 0:
             raise ValueError("NaFlex eval sequence length must be positive.")
 
+        model_patch_size = to_2tuple(model_patch_size) if model_patch_size is not None else None
+        if model_patch_size is not None and (model_patch_size[0] <= 0 or model_patch_size[1] <= 0):
+            raise ValueError("NaFlex model patch size must be positive.")
+        if supports_patch_interpolation is not None:
+            supports_patch_interpolation = bool(supports_patch_interpolation)
+
+        configured_patch_sizes = set(train_patch_sizes)
+        configured_patch_sizes.add(eval_patch_size)
+        if (
+                model_patch_size is not None
+                and supports_patch_interpolation is False
+                and any(size != model_patch_size for size in configured_patch_sizes)
+        ):
+            non_base_sizes = sorted(size for size in configured_patch_sizes if size != model_patch_size)
+            raise ValueError(
+                f"NaFlex patch sizes {non_base_sizes} differ from the model base patch size "
+                f"{model_patch_size}, but this model does not have patch interpolation enabled/supported. "
+                "Use the base patch size or a timm NaFlexVit image tower with patch interpolation enabled."
+            )
+
         return cls(
             train_patch_sizes=train_patch_sizes,
             train_patch_size_probs=train_patch_size_probs,
@@ -109,11 +133,24 @@ class NaFlexDataConfig:
             batch_divisor=batch_divisor,
             eval_patch_size=eval_patch_size,
             eval_seq_len=eval_seq_len,
+            model_patch_size=model_patch_size,
+            supports_patch_interpolation=supports_patch_interpolation,
         )
 
     @property
     def variable_patch_size(self) -> bool:
         return len(self.train_patch_sizes) > 1
+
+    def should_flatten_patches(self, patch_size: PatchSize) -> bool:
+        """Keep non-base patches spatial so the model can infer ``(Ph, Pw)`` for weight interpolation.
+
+        When no model geometry was supplied, preserve the historical data-only behavior: fixed patch-size
+        configurations are flattened and multi-size configurations are not. Model-wired training always supplies
+        ``model_patch_size`` and therefore makes this decision per patch size instead of from the number of choices.
+        """
+        if self.model_patch_size is None:
+            return not self.variable_patch_size
+        return to_2tuple(patch_size) == self.model_patch_size
 
     def resolve_max_tokens_per_batch(self, batch_size: int, per_row_text_tokens: int = 0) -> int:
         """Return the explicit budget or infer one at the longest configured sequence length."""

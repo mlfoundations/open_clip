@@ -4,13 +4,19 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+from PIL import Image
+from torchvision import transforms
 
 from open_clip import factory
 from open_clip import naflex_convert
 from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
+    NaFlexBatchScheduler,
+    collate_naflex_tuples,
     create_naflex_data_config_from_args,
+    create_naflex_eval_transform,
     get_naflex_model_patch_size,
+    get_naflex_model_supports_patch_interpolation,
 )
 from open_clip_train.params import parse_args
 
@@ -181,6 +187,7 @@ def test_force_naflex_vision_passes_use_naflex_to_timm(monkeypatch):
     )
 
     assert captured["use_naflex"] is True
+    assert captured["enable_patch_interpolator"] is True
 
 
 def test_force_naflex_vision_accepts_timm_models_by_module_membership():
@@ -199,6 +206,7 @@ def test_force_naflex_vision_configures_pe_core_timm_tower():
     assert vision_cfg["timm_pool"] == "map"
     assert vision_cfg["timm_proj"] is None
     assert vision_cfg["timm_model_kwargs"]["use_naflex"] is True
+    assert vision_cfg["timm_model_kwargs"]["enable_patch_interpolator"] is True
     assert vision_cfg["timm_model_kwargs"]["pool_include_prefix"] is True
 
 
@@ -217,6 +225,7 @@ def test_force_naflex_vision_converts_native_vit_config():
     assert vision_cfg["timm_model_kwargs"]["depth"] == 1
     assert vision_cfg["timm_model_kwargs"]["num_heads"] == 1
     assert vision_cfg["timm_model_kwargs"]["pos_embed_grid_size"] == (2, 2)
+    assert vision_cfg["timm_model_kwargs"]["enable_patch_interpolator"] is True
 
 
 def test_force_naflex_vision_rejects_non_vit_model():
@@ -264,6 +273,174 @@ def test_naflex_data_config_defaults_to_model_patch_size():
 
     assert config.train_patch_sizes == ((14, 14),)
     assert config.eval_patch_size == (14, 14)
+
+
+def test_naflex_model_patch_info_handles_adapter_and_interpolating_timm_tower():
+    adapter = types.SimpleNamespace(
+        trunk=nn.Identity(),
+        get_patch_size=lambda: (32, 32),
+    )
+    adapter_model = types.SimpleNamespace(visual=adapter)
+
+    assert get_naflex_model_patch_size(adapter_model) == (32, 32)
+    assert not get_naflex_model_supports_patch_interpolation(adapter_model)
+
+    from timm.models.naflexvit import NaFlexVit, NaFlexVitCfg
+
+    trunk = NaFlexVit(
+        NaFlexVitCfg(
+            patch_size=16,
+            embed_dim=4,
+            depth=1,
+            num_heads=1,
+            pos_embed="none",
+            enable_patch_interpolator=True,
+        ),
+        num_classes=0,
+    )
+    timm_model = types.SimpleNamespace(visual=types.SimpleNamespace(trunk=trunk))
+
+    assert get_naflex_model_patch_size(timm_model) == (16, 16)
+    assert get_naflex_model_supports_patch_interpolation(timm_model)
+    trunk.embeds.norm_input = nn.Identity()
+    assert not get_naflex_model_supports_patch_interpolation(timm_model)
+
+
+def test_naflex_data_config_fails_fast_for_fixed_patch_adapter():
+    model = types.SimpleNamespace(
+        visual=types.SimpleNamespace(
+            trunk=nn.Identity(),
+            get_patch_size=lambda: (16, 16),
+        ),
+    )
+    args = types.SimpleNamespace(
+        naflex_patch_sizes=[16, 32],
+        naflex_patch_size_probs=None,
+        naflex_seq_lens=[4],
+        naflex_seq_len_probs=None,
+        naflex_num_train_image_tokens=None,
+        naflex_max_tokens_per_batch=None,
+        naflex_batch_divisor=1,
+    )
+
+    with pytest.raises(ValueError, match="does not have patch interpolation enabled/supported"):
+        create_naflex_data_config_from_args(
+            args,
+            default_patch_size=get_naflex_model_patch_size(model),
+            supports_patch_interpolation=get_naflex_model_supports_patch_interpolation(model),
+        )
+
+
+def _pil_to_tensor_factory(max_seq_len, patch_size):
+    return transforms.ToTensor()
+
+
+@pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
+def test_naflex_16_32_forward_backward(monkeypatch):
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-naflex-variable-patch", _tiny_naflex_siglip2_clip_config())
+    model = factory.create_model(
+        "test-naflex-variable-patch",
+        load_weights=False,
+        force_naflex_vision=True,
+    )
+    assert get_naflex_model_supports_patch_interpolation(model)
+
+    scheduler = NaFlexBatchScheduler(
+        train_num_samples=1,
+        patch_size_choices=(16, 32),
+        model_patch_size=get_naflex_model_patch_size(model),
+        seq_lens=(4,),
+        max_tokens_per_batch=4,
+        transform_factory=_pil_to_tensor_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+
+    for patch_idx, image_size in enumerate((32, 64)):
+        batch = scheduler.collate_batch(
+            [{"image": Image.new("RGB", (image_size, image_size)), "text": torch.tensor([0])}],
+            seq_len=4,
+            patch_idx=patch_idx,
+        )["image"]
+        if patch_idx == 0:
+            assert batch["patches"].shape == (1, 4, 16 * 16 * 3)
+        else:
+            assert batch["patches"].shape == (1, 4, 32, 32, 3)
+
+        features = model.encode_image(batch)
+        features.square().sum().backward()
+        assert model.visual.trunk.embeds.proj.weight.grad is not None
+        model.zero_grad(set_to_none=True)
+
+    # A single non-base choice is not "variable" in scheduling terms, but still needs spatial patch dimensions
+    # so the model can resample its base 16x16 projection weight.
+    fixed_scheduler = NaFlexBatchScheduler(
+        train_num_samples=1,
+        patch_size=32,
+        model_patch_size=get_naflex_model_patch_size(model),
+        seq_lens=(4,),
+        max_tokens_per_batch=4,
+        transform_factory=_pil_to_tensor_factory,
+        batch_divisor=1,
+        shuffle=False,
+    )
+    fixed_batch = fixed_scheduler.collate_batch(
+        [{"image": Image.new("RGB", (64, 64)), "text": torch.tensor([0])}],
+        seq_len=4,
+        patch_idx=0,
+    )["image"]
+    assert fixed_batch["patches"].shape == (1, 4, 32, 32, 3)
+    model.encode_image(fixed_batch).square().sum().backward()
+    assert model.visual.trunk.embeds.proj.weight.grad is not None
+
+
+@pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
+def test_naflex_non_base_eval_and_checkpoint_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-naflex-variable-patch", _tiny_naflex_siglip2_clip_config())
+    model, _, preprocess_val = factory.create_model_and_transforms(
+        "test-naflex-variable-patch",
+        load_weights=False,
+        force_naflex_vision=True,
+        aug_cfg={"use_timm": True, "naflex": True},
+    )
+    model.eval()
+    model_patch_size = get_naflex_model_patch_size(model)
+    config = create_naflex_data_config_from_args(
+        types.SimpleNamespace(
+            naflex_patch_sizes=[32],
+            naflex_patch_size_probs=None,
+            naflex_seq_lens=[4],
+            naflex_seq_len_probs=None,
+            naflex_num_train_image_tokens=None,
+            naflex_max_tokens_per_batch=None,
+            naflex_batch_divisor=1,
+        ),
+        default_patch_size=model_patch_size,
+        supports_patch_interpolation=get_naflex_model_supports_patch_interpolation(model),
+    )
+    transform, max_seq_len, _ = create_naflex_eval_transform(preprocess_val, config)
+    patch_dict = transform(Image.new("RGB", (64, 64)))
+    images, _ = collate_naflex_tuples([(patch_dict, torch.tensor(0))], max_seq_len=max_seq_len)
+
+    assert images["patches"].shape == (1, 4, 32, 32, 3)
+    with torch.inference_mode():
+        expected = model.encode_image(images)
+
+    checkpoint_path = tmp_path / "variable_patch.pt"
+    torch.save({"state_dict": model.state_dict()}, checkpoint_path)
+    restored = factory.create_model(
+        "test-naflex-variable-patch",
+        load_weights=False,
+        force_naflex_vision=True,
+    )
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    restored.load_state_dict(checkpoint["state_dict"], strict=True)
+    restored.eval()
+
+    assert get_naflex_model_supports_patch_interpolation(restored)
+    with torch.inference_mode():
+        actual = restored.encode_image(images)
+    torch.testing.assert_close(actual, expected)
 
 
 def test_builtin_naflex_siglip2_configs_select_naflex_towers():

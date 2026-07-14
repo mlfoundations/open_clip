@@ -44,6 +44,7 @@ from open_clip_train.naflex_data import (
     create_naflex_data_config_from_args,
     get_naflex_model_image_seq_len,
     get_naflex_model_patch_size,
+    get_naflex_model_supports_patch_interpolation,
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.optim import OptimizerCfg, create_optimizer
@@ -368,12 +369,16 @@ def main(args):
                 f.write(f"{name}: {val}\n")
 
     naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
+    naflex_patch_interpolation = (
+        get_naflex_model_supports_patch_interpolation(model) if args.use_naflex else None
+    )
     naflex_eval_seq_len = get_naflex_model_image_seq_len(model) if args.use_naflex else None
     naflex_data_config = (
         create_naflex_data_config_from_args(
             args,
             default_patch_size=naflex_patch_size,
             default_eval_seq_len=naflex_eval_seq_len,
+            supports_patch_interpolation=naflex_patch_interpolation,
         )
         if args.use_naflex else None
     )

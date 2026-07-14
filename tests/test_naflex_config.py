@@ -35,6 +35,39 @@ def test_naflex_data_config_accepts_explicit_eval_seq_len():
     assert config.eval_config == ((16, 16), 576)
 
 
+def test_naflex_data_config_flattens_only_model_base_patch_size():
+    config = NaFlexDataConfig.resolve(
+        patch_sizes=[16, 32],
+        seq_lens=[4],
+        model_patch_size=16,
+        supports_patch_interpolation=True,
+    )
+
+    assert config.model_patch_size == (16, 16)
+    assert config.supports_patch_interpolation is True
+    assert config.should_flatten_patches(16)
+    assert not config.should_flatten_patches(32)
+
+    fixed_non_base = NaFlexDataConfig.resolve(
+        patch_sizes=[32],
+        seq_lens=[4],
+        model_patch_size=16,
+        supports_patch_interpolation=True,
+    )
+    assert not fixed_non_base.variable_patch_size
+    assert not fixed_non_base.should_flatten_patches(32)
+
+
+def test_naflex_data_config_rejects_non_base_patch_without_interpolation():
+    with pytest.raises(ValueError, match="does not have patch interpolation enabled/supported"):
+        NaFlexDataConfig.resolve(
+            patch_sizes=[16, 32],
+            seq_lens=[4],
+            model_patch_size=16,
+            supports_patch_interpolation=False,
+        )
+
+
 def test_naflex_data_config_infers_budget_from_longest_row_cost():
     config = NaFlexDataConfig.resolve(seq_lens=[128, 256, 1024])
 
