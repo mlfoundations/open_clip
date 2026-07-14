@@ -43,6 +43,7 @@ __all__ = [
     "create_naflex_eval_transform",
     "get_naflex_model_image_seq_len",
     "get_naflex_model_patch_size",
+    "get_naflex_model_supports_patch_interpolation",
     "require_naflex",
     "resolve_patch_cfg",
 ]
@@ -101,14 +102,45 @@ def resolve_patch_cfg(
 
 
 def get_naflex_model_patch_size(model) -> Optional[Tuple[int, int]]:
+    model = getattr(model, 'module', model)
     visual = getattr(model, 'visual', None)
     trunk = getattr(visual, 'trunk', visual)
-    if trunk is not None and hasattr(trunk, 'get_patch_size'):
-        return to_2tuple(trunk.get_patch_size())
+    # TimmModel exposes geometry on ``visual.trunk``; custom adapters such as GenLIP expose it on ``visual``
+    # even though they also have an unrelated internal ``trunk`` attribute.
+    for tower in (trunk, visual):
+        if tower is not None and hasattr(tower, 'get_patch_size'):
+            return to_2tuple(tower.get_patch_size())
     return None
 
 
+def get_naflex_model_supports_patch_interpolation(model) -> bool:
+    """Return whether the constructed image tower can currently consume non-base spatial patches.
+
+    This intentionally reports the resolved model state, not merely whether its class could support interpolation:
+    a timm NaFlexVit built without ``enable_patch_interpolator`` still fails on non-base patches.
+    """
+    model = getattr(model, 'module', model)
+    visual = getattr(model, 'visual', None)
+    trunk = getattr(visual, 'trunk', visual)
+    for tower in (trunk, visual):
+        if tower is None:
+            continue
+        declared = getattr(tower, 'supports_patch_interpolation', None)
+        if declared is not None:
+            return bool(declared)
+        embeds = getattr(tower, 'embeds', None)
+        if embeds is not None:
+            return bool(
+                getattr(embeds, 'is_linear', False)
+                and getattr(embeds, 'enable_patch_interpolator', False)
+                and getattr(embeds, 'patch_interpolator', None) is not None
+                and getattr(embeds, 'norm_input', None) is None
+            )
+    return False
+
+
 def get_naflex_model_image_seq_len(model) -> Optional[int]:
+    model = getattr(model, 'module', model)
     image_seq_len = getattr(getattr(model, 'visual', None), 'image_seq_len', None)
     return int(image_seq_len) if image_seq_len is not None else None
 
@@ -117,6 +149,7 @@ def create_naflex_data_config_from_args(
         args,
         default_patch_size: Optional[PatchSize] = None,
         default_eval_seq_len: Optional[int] = None,
+        supports_patch_interpolation: Optional[bool] = None,
 ) -> NaFlexDataConfig:
     patch_sizes = getattr(args, 'naflex_patch_sizes', None)
     if patch_sizes is None and default_patch_size is not None:
@@ -131,6 +164,8 @@ def create_naflex_data_config_from_args(
         max_tokens_per_batch=getattr(args, 'naflex_max_tokens_per_batch', None),
         batch_divisor=getattr(args, 'naflex_batch_divisor', 8),
         eval_seq_len=default_eval_seq_len if seq_lens is None else None,
+        model_patch_size=default_patch_size,
+        supports_patch_interpolation=supports_patch_interpolation,
     )
 
 
@@ -143,7 +178,21 @@ def create_naflex_eval_transform(
         raise ValueError("NaFlex eval requires `--aug-cfg use_timm=True naflex=True`.")
 
     patch_size, max_seq_len = naflex_data_config.eval_config
-    return transform_factory(max_seq_len=max_seq_len, patch_size=patch_size), max_seq_len, patch_size
+    flatten_patches = naflex_data_config.should_flatten_patches(patch_size)
+    if getattr(transform_factory, 'supports_patch_flatten_control', False):
+        transform = transform_factory(
+            max_seq_len=max_seq_len,
+            patch_size=patch_size,
+            flatten_patches=flatten_patches,
+        )
+    else:
+        if not flatten_patches:
+            raise ValueError(
+                "NaFlex eval at a non-base patch size requires an eval transform factory that can preserve "
+                "unflattened patches."
+            )
+        transform = transform_factory(max_seq_len=max_seq_len, patch_size=patch_size)
+    return transform, max_seq_len, patch_size
 
 
 def collate_naflex_tuples(
@@ -486,6 +535,7 @@ class NaFlexBatchScheduler:
             text_pad_multiple: Optional[int] = None,
             text_pad_cap: Optional[int] = None,
             decode_fn: Optional[Callable] = None,
+            model_patch_size: Optional[PatchSize] = None,
     ) -> None:
         require_naflex()
 
@@ -565,6 +615,7 @@ class NaFlexBatchScheduler:
             patch_size_choices=patch_size_choices,
             patch_size_choice_probs=patch_size_choice_probs,
         )
+        self.model_patch_size = to_2tuple(model_patch_size) if model_patch_size is not None else None
         self.transforms: Dict[Tuple[int, int], Optional[Callable]] = {}
         self.patchifiers: List[Callable] = []
 
@@ -572,7 +623,11 @@ class NaFlexBatchScheduler:
             self.patchifiers.append(
                 Patchify(
                     patch_size=patch_size_tuple,
-                    flatten_patches=not self.variable_patch_size,
+                    flatten_patches=(
+                        patch_size_tuple == self.model_patch_size
+                        if self.model_patch_size is not None
+                        else not self.variable_patch_size
+                    ),
                 )
             )
             for seq_len in self.seq_lens:
@@ -853,6 +908,7 @@ class NaFlexBatcher:
             decode_fn: Optional[Callable] = None,
             decode_error_handler: Optional[Callable] = None,
             drop_last: bool = True,
+            model_patch_size: Optional[PatchSize] = None,
     ) -> None:
         self.epoch = epoch
         # `decode_fn` runs per-sample inside the scheduler; `decode_error_handler` (e.g. data.log_and_continue) is
@@ -868,6 +924,7 @@ class NaFlexBatcher:
             patch_size=patch_size,
             patch_size_choices=patch_size_choices,
             patch_size_choice_probs=patch_size_choice_probs,
+            model_patch_size=model_patch_size,
             seq_lens=seq_lens,
             seq_len_choice_probs=seq_len_choice_probs,
             max_tokens_per_batch=max_tokens_per_batch,
@@ -983,6 +1040,7 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             per_row_text_tokens: int = 0,
             text_pad_multiple: Optional[int] = None,
             text_pad_cap: Optional[int] = None,
+            model_patch_size: Optional[PatchSize] = None,
     ) -> None:
         if not hasattr(base_dataset, '__len__') or not hasattr(base_dataset, '__getitem__'):
             raise TypeError("NaFlex map batching requires a map-style dataset.")
@@ -1002,6 +1060,7 @@ class NaFlexMapDatasetWrapper(IterableDataset):
             patch_size=patch_size,
             patch_size_choices=patch_size_choices,
             patch_size_choice_probs=patch_size_choice_probs,
+            model_patch_size=model_patch_size,
             seq_lens=seq_lens,
             seq_len_choice_probs=seq_len_choice_probs,
             max_tokens_per_batch=max_tokens_per_batch,

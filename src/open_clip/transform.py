@@ -92,20 +92,26 @@ class NaFlexTransformFactory:
 
 class NaFlexEvalTransformFactory:
     is_naflex_eval_transform_factory = True
+    supports_patch_flatten_control = True
 
     def __init__(self, **transform_kwargs) -> None:
         self.transform_kwargs = transform_kwargs
 
-    def __call__(self, max_seq_len, patch_size):
+    def __call__(self, max_seq_len, patch_size, flatten_patches=True):
         from timm.data import create_transform  # timm can still be optional
-        return create_transform(
+        from timm.data.naflex_transforms import Patchify
+
+        # timm's create_transform only exposes whether to patchify, not whether patch spatial dimensions should
+        # be retained. Compose Patchify ourselves so non-base eval patches can carry (Ph, Pw) to the interpolator.
+        transform = create_transform(
             is_training=False,
             naflex=True,
-            patchify=True,
+            patchify=False,
             max_seq_len=max_seq_len,
             patch_size=patch_size,
             **self.transform_kwargs,
         )
+        return Compose([transform, Patchify(patch_size=patch_size, flatten_patches=flatten_patches)])
 
 
 def is_naflex_aug_cfg(aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]]) -> bool:
