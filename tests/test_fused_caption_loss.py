@@ -392,11 +392,11 @@ def test_coca_loss_dual_mode():
 
     legacy = loss_fn(
         img_f, txt_f, logits=logits, labels=labels, logit_scale=scale,
-        output_dict=True, return_components=True)
+        output_dict=True)
     ce, z = caption_cross_entropy(logits, labels, z_loss=True)
     fused = loss_fn(
         img_f, txt_f, caption_loss_ce=ce, caption_loss_z=z,
-        logit_scale=scale, output_dict=True, return_components=True)
+        logit_scale=scale, output_dict=True)
     torch.testing.assert_close(legacy['caption_loss'], fused['caption_loss'])
     torch.testing.assert_close(legacy['contrastive_loss'], fused['contrastive_loss'])
     torch.testing.assert_close(legacy['caption_loss_ce'], fused['caption_loss_ce'])

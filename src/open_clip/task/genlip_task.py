@@ -61,7 +61,6 @@ class GenLipTask(ImageTextTask):
         self.caption_z_loss_weight = float(caption_z_loss_weight)
         self.caption_loss_compute_dtype = caption_loss_compute_dtype
         self.caption_loss_chunk_size = int(caption_loss_chunk_size)
-        self._default_caption_loss = False
         if loss is not None:
             # Explicit external objective: model is just a logits producer, loss owns the objective.
             self.loss = loss
@@ -75,7 +74,6 @@ class GenLipTask(ImageTextTask):
                 z_loss_weight=self.caption_z_loss_weight,
                 compute_dtype=self.caption_loss_compute_dtype,
             )
-            self._default_caption_loss = True
             self.fused_loss = False
         else:
             # Eval-only construction: no loss module, no fused loss path.
@@ -136,7 +134,6 @@ class GenLipTask(ImageTextTask):
             logits,
             labels,
             output_dict=True,
-            **({"return_components": True} if self._default_caption_loss else {}),
         )
         losses["loss"] = sum(v for k, v in losses.items() if k.endswith("_loss"))
         return losses

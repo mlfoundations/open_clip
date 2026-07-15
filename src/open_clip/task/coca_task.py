@@ -51,7 +51,6 @@ class CoCaTask(ImageTextTask):
         self.caption_z_loss_weight = float(caption_z_loss_weight)
         self.caption_loss_compute_dtype = caption_loss_compute_dtype
         self.caption_loss_chunk_size = int(caption_loss_chunk_size)
-        self._default_caption_loss = loss is None and default_loss
         if loss is not None:
             self.loss = loss
         elif default_loss:
@@ -119,7 +118,6 @@ class CoCaTask(ImageTextTask):
         losses = self.loss(
             **loss_input,
             output_dict=True,
-            **({"return_components": True} if self._default_caption_loss else {}),
         )
         # Log the (detached) caption components on the fused path regardless of loss module; they
         # intentionally lack a ``_loss`` suffix so they are not summed into the total below.
@@ -155,6 +153,5 @@ class CoCaTask(ImageTextTask):
             **inputs,
             **inputs_no_accum,
             output_dict=True,
-            **({"return_components": True} if self._default_caption_loss else {}),
         )
         return losses, report

@@ -189,7 +189,6 @@ class CoCaLoss(ClipLoss):
             output_dict=False,
             caption_loss_ce=None,
             caption_loss_z=None,
-            return_components=False,
     ):
         """Two ways to supply the caption term:
 
@@ -238,10 +237,9 @@ class CoCaLoss(ClipLoss):
 
         if output_dict:
             output = {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
-            if return_components:
-                output["caption_loss_ce"] = caption_loss_ce.detach()
-                if caption_loss_z is not None:
-                    output["caption_loss_z"] = caption_loss_z.detach()
+            output["caption_loss_ce"] = caption_loss_ce.detach()
+            if caption_loss_z is not None:
+                output["caption_loss_z"] = caption_loss_z.detach()
             return output
 
         return clip_loss, caption_loss
@@ -763,7 +761,7 @@ class GenLipLoss(nn.Module):
         self.z_loss_weight = float(z_loss_weight)
         self.compute_dtype = resolve_caption_loss_dtype(compute_dtype)
 
-    def forward(self, logits, labels, output_dict: bool = False, return_components: bool = False):
+    def forward(self, logits, labels, output_dict: bool = False):
         ce, z = caption_cross_entropy(
             logits, labels,
             ignore_index=self.ignore_index,
@@ -774,8 +772,7 @@ class GenLipLoss(nn.Module):
         if not output_dict:
             return loss
         output = {"caption_loss": loss}
-        if return_components:
-            output["caption_loss_ce"] = ce.detach()
-            if z is not None:
-                output["caption_loss_z"] = z.detach()
+        output["caption_loss_ce"] = ce.detach()
+        if z is not None:
+            output["caption_loss_z"] = z.detach()
         return output
