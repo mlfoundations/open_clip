@@ -115,15 +115,10 @@ class CoCaTask(ImageTextTask):
         else:
             model_out = self.trainable_module(**batch)
         loss_input = self._build_loss_inputs(model_out, batch)
-        losses = self.loss(
-            **loss_input,
-            output_dict=True,
-        )
+        losses = self.loss(**loss_input, output_dict=True)
         # Log the (detached) caption components on the fused path regardless of loss module; they
         # intentionally lack a ``_loss`` suffix so they are not summed into the total below.
-        for key in ("caption_loss_ce", "caption_loss_z"):
-            if key in model_out:
-                losses[key] = model_out[key].detach()
+        losses.update({k: model_out[k].detach() for k in ("caption_loss_ce", "caption_loss_z") if k in model_out})
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
         # Report from model_out (not loss_input): _build_loss_inputs drops logit_bias, which CoCaLoss can't take
