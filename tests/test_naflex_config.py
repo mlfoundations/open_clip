@@ -46,11 +46,18 @@ def test_naflex_data_config_infers_budget_from_longest_row_cost():
     assert explicit.resolve_max_tokens_per_batch(batch_size=32, per_row_text_tokens=77) == 12345
 
 
-def test_siglip2_naflex_configs_default_to_384_dense_and_576_tokens():
-    for model_name in ("ViT-B-16-SigLIP2-naflex", "ViT-SO400M-16-SigLIP2-naflex"):
-        vision_cfg = open_clip.get_model_config(model_name)["vision_cfg"]
-        assert vision_cfg["image_size"] == 384
-        assert vision_cfg["image_seq_len"] == 576
+@pytest.mark.parametrize(
+    ("model_name", "image_size", "image_seq_len"),
+    [
+        ("naflex_ViT-B-16", 224, 196),
+        ("ViT-B-16-SigLIP2-naflex", 384, 576),
+        ("ViT-SO400M-16-SigLIP2-naflex", 384, 576),
+    ],
+)
+def test_naflex_configs_define_nominal_image_seq_len(model_name, image_size, image_seq_len):
+    vision_cfg = open_clip.get_model_config(model_name)["vision_cfg"]
+    assert vision_cfg["image_size"] == image_size
+    assert vision_cfg["image_seq_len"] == image_seq_len
 
 
 def test_naflex_data_config_rejects_negative_patch_size_probs():

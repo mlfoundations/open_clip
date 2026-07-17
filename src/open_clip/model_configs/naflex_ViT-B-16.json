@@ -3,6 +3,7 @@
     "custom_text": true,
     "vision_cfg": {
         "image_size": 224,
+        "image_seq_len": 196,
         "timm_model_name": "naflexvit_base_patch16_gap",
         "timm_model_pretrained": false
     },
