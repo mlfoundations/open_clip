@@ -1,0 +1,2 @@
+experiment,model,pretrained,test_images,accuracy_percent,macro_precision_percent,macro_recall_percent,macro_f1_percent,weighted_precision_percent,weighted_recall_percent,weighted_f1_percent,evaluation_seconds,seconds_per_image
+action-aware prompts,ViT-B-32,openai,1921,83.28995314940136,84.12411369473529,82.8318782400039,82.09575549305583,84.85123588643205,83.28995314940136,82.64373104329991,52.13329099999828,0.027138621030712275
