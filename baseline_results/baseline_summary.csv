@@ -1,0 +1,2 @@
+model,pretrained,prompt,test_images,accuracy_percent,macro_precision_percent,macro_recall_percent,macro_f1_percent,weighted_precision_percent,weighted_recall_percent,weighted_f1_percent,evaluation_seconds,seconds_per_image
+ViT-B-32,openai,a photo of a person [action],1921,84.070796460177,84.81229059035915,83.18481777276894,82.74656894262552,85.30733157768137,84.070796460177,83.55871778480466,54.06870839999465,0.028146126184276234
