@@ -1,8 +1,21 @@
-torch>=2.6
-torchvision
-regex
-ftfy
-tqdm
-huggingface_hub
-safetensors
-timm
+# PyTorch should be installed following the instructions at https://pytorch.org
+# Install the correct wheel for your CUDA version (or CPU-only).
+# Example (CPU-only):
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+numpy==1.24.3
+pandas==1.5.3
+scikit-learn==1.2.2
+Pillow==9.4.0
+tqdm==4.65.0
+ftfy==6.1.1
+regex==2022.10.31
+einops==0.6.1
+timm==0.9.2
+huggingface_hub==0.18.1
+safetensors==0.4.0
+
+# Optional/dev
+pytest==7.4.2
+flake8==6.0.0
+black==24.1.0
