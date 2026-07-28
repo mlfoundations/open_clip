@@ -1,0 +1,41 @@
+class,prompt,prompt_type
+applauding,a photo of a person clapping both hands together,action-aware
+blowing bubbles,a photo of a person blowing bubbles,basic
+brushing teeth,a photo of a person brushing teeth,basic
+cleaning the floor,a photo of a person cleaning the floor,basic
+climbing,a photo of a person climbing,basic
+cooking,a photo of a person cooking,basic
+cutting trees,a photo of a person cutting trees,basic
+cutting vegetables,a photo of a person using a knife to cut vegetables on a board,action-aware
+drinking,a photo of a person drinking,basic
+feeding a horse,a photo of a person feeding a horse,basic
+fishing,a photo of a person fishing,basic
+fixing a bike,a photo of a person fixing a bike,basic
+fixing a car,a photo of a person fixing a car,basic
+gardening,a photo of a person gardening,basic
+holding an umbrella,a photo of a person holding an umbrella,basic
+jumping,a photo of a person jumping,basic
+looking through a microscope,a photo of a person looking through a microscope,basic
+looking through a telescope,a photo of a person looking through a telescope,basic
+phoning,a photo of a person holding a phone next to their ear,action-aware
+playing guitar,a photo of a person playing guitar,basic
+playing violin,a photo of a person playing violin,basic
+pouring liquid,a photo of a person tilting a container and pouring liquid into another container,action-aware
+pushing a cart,a photo of a person pushing a cart,basic
+reading,a photo of a person reading,basic
+riding a bike,a photo of a person riding a bike,basic
+riding a horse,a photo of a person riding a horse,basic
+rowing a boat,a photo of a person rowing a boat,basic
+running,a photo of a person running,basic
+shooting an arrow,a photo of a person shooting an arrow,basic
+smoking,a photo of a person holding a cigarette near their mouth,action-aware
+taking photos,a photo of a person taking photos,basic
+texting message,a photo of a person looking at and typing on a mobile phone with their hands,action-aware
+throwing frisby,a photo of a person throwing frisby,basic
+using a computer,a photo of a person using a computer,basic
+walking the dog,a photo of a person walking the dog,basic
+washing dishes,a photo of a person washing plates or dishes at a kitchen sink,action-aware
+watching TV,a photo of a person watching TV,basic
+waving hands,a photo of a person raising an open hand and waving,action-aware
+writing on a board,a photo of a person writing on a board,basic
+writing on a book,a photo of a person holding a pen and writing on a book or notebook,action-aware
