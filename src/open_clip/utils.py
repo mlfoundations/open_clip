@@ -79,16 +79,33 @@ def replace_linear(model, linear_replacement, include_modules=['c_fc', 'c_proj']
             if copy_weights:
                 model._modules[name].weight.data.copy_(old_module.weight.data)
                 if model._modules[name].bias is not None:
-                    model._modules[name].bias.data.copy_(old_module.bias)
+                    # assign (not .data.copy_) so the bias adopts old_module's dtype rather than
+                    # keeping linear_replacement's own default (float32) bias dtype -- a stale fp32
+                    # bias silently upcasts this layer's output and corrupts dtype for everything
+                    # downstream (e.g. the next LayerNorm, whose own weight/bias stay fp16).
+                    model._modules[name].bias.data = old_module.bias.data.clone()
 
     return model
 
-def convert_int8_model_to_inference_mode(model):
+def convert_int8_model_to_inference_mode(model, dtype: Optional[torch.dtype] = None):
     for m in model.modules():
         if hasattr(m, 'prepare_for_eval'):
-            int8_original_dtype = m.weight.dtype
+            # triton-based bnb layers (e.g. SwitchBackLinear): quantize the float weight and
+            # discard the shadow copy. int8_original_dtype tells get_weight_dtype() what dtype
+            # to cast activations to, since weight.dtype now reports torch.int8.
+            int8_original_dtype = dtype if dtype is not None else m.weight.dtype
             m.prepare_for_eval()
             m.int8_original_dtype = int8_original_dtype
+        elif getattr(getattr(m, 'weight', None), 'dtype', None) == torch.int8:
+            # e.g. bnb.nn.Linear8bitLt: weight quantizes itself as soon as it's moved to a CUDA
+            # device (no separate prepare_for_eval step), so it needs the same stamp applied here.
+            # bias, if present, is never quantized and still reflects the pre-quantization dtype.
+            if dtype is not None:
+                m.int8_original_dtype = dtype
+            elif getattr(m, 'bias', None) is not None:
+                m.int8_original_dtype = m.bias.dtype
+            else:
+                m.int8_original_dtype = torch.float16
 
 
 def feature_take_indices(
