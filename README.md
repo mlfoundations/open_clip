@@ -598,13 +598,28 @@ For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham e
 
 ### Int8 Support
 
-We have beta support for int8 training and inference.
-You can enable int8 training with `--use-bnb-linear SwitchBackLinearGlobal` or `--use-bnb-linear SwitchBackLinearGlobalMemEfficient`.
-Please see the bitsandbytes library for definitions for these layers.
-For CLIP VIT-Huge this should currently correspond to a 10% training speedup with no accuracy loss.
-More speedups comin when the attention layer is refactored so that linear layers man be replaced there, too.
+We have beta support for int8 inference via bitsandbytes' `Linear8bitLt` (the LLM.int8() layer). Only the MLP linear layers (`c_fc`/`c_proj`) are quantized by default; attention's combined QKV projection isn't an `nn.Linear` submodule and isn't covered yet (see the TODO in `src/open_clip/utils.py`).
 
-See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb or [paper](https://arxiv.org/abs/2304.13013).
+```python
+from functools import partial
+import bitsandbytes as bnb
+import open_clip
+
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+model = model.half()
+
+int8_linear_layer = partial(bnb.nn.Linear8bitLt, has_fp16_weights=False)
+int8_model = open_clip.utils.replace_linear(model, int8_linear_layer, include_modules=['c_fc', 'c_proj']).cuda()
+open_clip.utils.convert_int8_model_to_inference_mode(int8_model)  # stamps the dtype bookkeeping the model needs post-quantization
+```
+
+**Accuracy / speed, measured, not estimated:** on ViT-B-32-quickgelu (`openai` weights), zero-shot classification on CIFAR-10 was 88.76% (fp16) vs. 88.83% (int8) — a **+0.07 point** difference, i.e. no meaningful accuracy cost for quantizing just the MLP layers post-hoc (no fine-tuning). This is a single-template, single-dataset, single-model measurement, not a comprehensive benchmark, but it's real and reproducible (see the tutorial notebook). Speed was slightly *worse* for int8 (53.9ms vs. 56.9ms for a batch of 128, about 5.6% slower) — at this model scale, the extra kernel launches int8 quantization/dequantization requires per forward pass outweigh any raw int8 tensor-core throughput advantage, since `Linear8bitLt` was designed around much larger (billion-parameter) models than CLIP's transformer blocks. The practical benefit here is **memory** (roughly a 2x reduction on the quantized layers' weight tensors), not speed or accuracy.
+
+**Saving and loading a quantized model:** `replace_linear` swaps `nn.Linear` submodules for bitsandbytes layers in place, so a `state_dict` saved from the quantized model only loads back correctly into a model that already has the same layers swapped in — build the model, `replace_linear`, then `torch.save(int8_model.state_dict(), path)`; to load, rebuild the architecture, `replace_linear` + `convert_int8_model_to_inference_mode` again, then `load_state_dict`. The image transform and tokenizer aren't affected by quantization at all — they only depend on `model_name`, so just recreate them normally with `create_model_and_transforms`/`get_tokenizer`. See the tutorial notebook for a runnable example.
+
+**Older `SwitchBackLinear`/triton path (training):** the previous `--use-bnb-linear SwitchBackLinearGlobal` / `SwitchBackLinearGlobalMemEfficient` training path, and the triton-based classes in `bitsandbytes.nn.triton_based_modules` the earlier version of this tutorial used, are effectively unusable on a fresh install today: `triton==2.0.0.post1` (which those kernels were written against) has been removed from PyPI entirely, every installable triton version reorganized `triton.language.libdevice` away, and `bitsandbytes>=0.50` dropped `triton_based_modules` outright. If you hit `AttributeError: module 'triton.language' has no attribute 'libdevice'`, that's why — it's not fixable by pinning a version anymore. Use `Linear8bitLt` (above) for inference. There's currently no equivalent replacement documented for the *training*-time SwitchBack speedup path.
+
+See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb, and the original SwitchBack [paper](https://arxiv.org/abs/2304.13013) for the training-time approach (0.1pt accuracy cost vs. bf16 on CLIP ViT-Huge, per the paper — a very different regime from the post-hoc inference-only quantization measured above).
 
 ### Support for remote loading/training
 
