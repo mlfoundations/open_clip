@@ -931,10 +931,25 @@ def get_tokenizer(
     if text_config.get('tokenizer_type', '') == 'tiktoken':
         # tiktoken-based tokenizer for generative (GenLIP) models.
         encoding_name = text_config.get('tiktoken_name', 'cl100k_base')
+        bpe_path = text_config.get('tiktoken_bpe_path')
+        encoding_config_path = text_config.get('tiktoken_config_path')
+        if bpe_path:
+            if schema == 'local-dir':
+                bpe_path = str(local_dir_path / bpe_path)
+                if encoding_config_path:
+                    encoding_config_path = str(local_dir_path / encoding_config_path)
+            elif schema == 'hf-hub':
+                bpe_path = download_pretrained_from_hf(identifier, filename=bpe_path, cache_dir=cache_dir)
+                if encoding_config_path:
+                    encoding_config_path = download_pretrained_from_hf(
+                        identifier, filename=encoding_config_path, cache_dir=cache_dir,
+                    )
         _logger.info(f"Using TikTokenTokenizer with encoding: '{encoding_name}'")
         tokenizer = TikTokenTokenizer(
             encoding_name=encoding_name,
             context_length=context_length,
+            bpe_path=bpe_path,
+            encoding_config_path=encoding_config_path,
             **{k: v for k, v in tokenizer_kwargs.items() if k in ('add_bos', 'add_eos', 'clean')},
         )
 

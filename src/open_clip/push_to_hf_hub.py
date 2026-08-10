@@ -1,5 +1,6 @@
 import argparse
 import json
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Optional, Tuple, Union
@@ -29,7 +30,43 @@ except ImportError:
 
 from .constants import HF_WEIGHTS_NAME, HF_SAFE_WEIGHTS_NAME, HF_CONFIG_NAME
 from .factory import create_model_from_pretrained, get_model_config, get_tokenizer
-from .tokenizer import HFTokenizer, SigLipTokenizer
+from .tokenizer import HFTokenizer, SigLipTokenizer, TikTokenTokenizer
+
+
+_HF_TOKENIZER_FILE_PATTERNS = (
+    'tokenizer.json',
+    'tokenizer_config.json',
+    'special_tokens_map.json',
+    'added_tokens.json',
+    'vocab.json',
+    'merges.txt',
+    'spiece.model',
+    'sentencepiece.bpe.model',
+)
+
+
+def _get_text_config(model_config: Optional[dict]) -> dict:
+    if not model_config:
+        return {}
+    return model_config.get('text_cfg') or model_config.get('multimodal_cfg') or {}
+
+
+def _uses_tiktoken(tokenizer, model_config: Optional[dict]) -> bool:
+    text_cfg = _get_text_config(model_config)
+    return isinstance(tokenizer, TikTokenTokenizer) or text_cfg.get('tokenizer_type') == 'tiktoken'
+
+
+def _with_tiktoken_assets(model_config: Optional[dict], tokenizer_assets: Optional[dict]) -> Optional[dict]:
+    if not model_config or not isinstance(tokenizer_assets, dict):
+        return model_config
+    model_config = deepcopy(model_config)
+    text_cfg = model_config.get('text_cfg') or model_config.get('multimodal_cfg')
+    if text_cfg is not None:
+        text_cfg.update({
+            k: v for k, v in tokenizer_assets.items()
+            if k in ('tiktoken_bpe_path', 'tiktoken_config_path') and v
+        })
+    return model_config
 
 
 def save_config_for_hf(
@@ -37,19 +74,21 @@ def save_config_for_hf(
         config_path: str,
         model_config: Optional[dict],
 ):
-    preprocess_cfg = {
-        'mean': model.visual.image_mean,
-        'std': model.visual.image_std,
-    }
-    other_pp = getattr(model.visual, 'preprocess_cfg', {})
-    if 'interpolation' in other_pp:
-        preprocess_cfg['interpolation'] = other_pp['interpolation']
-    if 'resize_mode' in other_pp:
-        preprocess_cfg['resize_mode'] = other_pp['resize_mode']
     hf_config = {
         'model_cfg': model_config,
-        'preprocess_cfg': preprocess_cfg,
     }
+    visual = getattr(model, 'visual', None)
+    if visual is not None:
+        preprocess_cfg = {
+            'mean': visual.image_mean,
+            'std': visual.image_std,
+        }
+        other_pp = getattr(visual, 'preprocess_cfg', {})
+        if 'interpolation' in other_pp:
+            preprocess_cfg['interpolation'] = other_pp['interpolation']
+        if 'resize_mode' in other_pp:
+            preprocess_cfg['resize_mode'] = other_pp['resize_mode']
+        hf_config['preprocess_cfg'] = preprocess_cfg
 
     with config_path.open('w') as f:
         json.dump(hf_config, f, indent=2)
@@ -76,10 +115,17 @@ def save_for_hf(
         if safe_serialization is False or safe_serialization == "both":
             torch.save(tensors, save_directory / HF_WEIGHTS_NAME)
 
-    tokenizer.save_pretrained(save_directory)
+    tokenizer_assets = None
+    save_pretrained = getattr(tokenizer, 'save_pretrained', None)
+    if callable(save_pretrained):
+        tokenizer_assets = save_pretrained(save_directory)
 
     config_path = save_directory / config_filename
-    save_config_for_hf(model, config_path, model_config=model_config)
+    save_config_for_hf(
+        model,
+        config_path,
+        model_config=_with_tiktoken_assets(model_config, tokenizer_assets),
+    )
 
 
 def push_to_hf_hub(
@@ -95,7 +141,9 @@ def push_to_hf_hub(
     model_card: Optional[dict] = None,
     safe_serialization: Union[bool, str] = 'both',
 ):
-    if not isinstance(tokenizer, (HFTokenizer, SigLipTokenizer)):
+    uses_tiktoken = _uses_tiktoken(tokenizer, model_config)
+    delete_patterns = _HF_TOKENIZER_FILE_PATTERNS if uses_tiktoken else None
+    if not isinstance(tokenizer, (HFTokenizer, SigLipTokenizer)) and not uses_tiktoken:
         # FIXME this makes it awkward to push models with new tokenizers, come up with better soln.
         # default CLIP tokenizers use https://huggingface.co/openai/clip-vit-large-patch14
         tokenizer = HFTokenizer('openai/clip-vit-large-patch14')
@@ -150,6 +198,7 @@ def push_to_hf_hub(
             revision=revision,
             create_pr=create_pr,
             commit_message=commit_message,
+            delete_patterns=delete_patterns,
         )
 
 
