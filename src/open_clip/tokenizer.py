@@ -774,12 +774,33 @@ class TikTokenTokenizer:
         self.encoding_name = encoding_name
         if bpe_path is not None:
             cfg = self._load_encoding_config(encoding_name, encoding_config_path)
+            mergeable_ranks = self._load_tiktoken_bpe(bpe_path)
+            special_tokens = {str(k): int(v) for k, v in cfg.get("special_tokens", {}).items()}
+            explicit_n_vocab = cfg.get("explicit_n_vocab")
+            if explicit_n_vocab is not None:
+                max_token_value = max(
+                    max(mergeable_ranks.values(), default=0),
+                    max(special_tokens.values(), default=0),
+                )
+                if (
+                        len(mergeable_ranks) + len(special_tokens) != explicit_n_vocab or
+                        max_token_value != explicit_n_vocab - 1
+                ):
+                    warnings.warn(
+                        f"Ignoring explicit_n_vocab={explicit_n_vocab} in tiktoken encoding config for "
+                        f"{encoding_name!r}: it does not match the loaded vocab ({len(mergeable_ranks)} ranks "
+                        f"+ {len(special_tokens)} special tokens, max token id {max_token_value}). Expected for "
+                        f"gapped-vocab assets exported by older open_clip versions, but can also indicate a "
+                        f"truncated or mismatched bpe file.",
+                        UserWarning,
+                    )
+                    explicit_n_vocab = None
             self.enc = tiktoken.Encoding(
                 cfg.get("name", encoding_name),
                 pat_str=cfg["pat_str"],
-                mergeable_ranks=self._load_tiktoken_bpe(bpe_path),
-                special_tokens={str(k): int(v) for k, v in cfg.get("special_tokens", {}).items()},
-                explicit_n_vocab=cfg.get("explicit_n_vocab"),
+                mergeable_ranks=mergeable_ranks,
+                special_tokens=special_tokens,
+                explicit_n_vocab=explicit_n_vocab,
             )
         else:
             self.enc = tiktoken.get_encoding(encoding_name)
@@ -839,17 +860,17 @@ class TikTokenTokenizer:
         config_path = asset_dir / f"{stem}.json"
 
         self._dump_tiktoken_bpe(self.enc._mergeable_ranks, bpe_path)
+        config = {
+            "name": self.enc.name,
+            "pat_str": self.enc._pat_str,
+            "special_tokens": self.enc._special_tokens,
+        }
+        # n_vocab is max_token_value + 1 by construction, so tiktoken's explicit_n_vocab entry-count assertion
+        # only holds for dense id spaces; omit it for gapped vocabs (e.g. cl100k_base) or reload would fail.
+        if len(self.enc._mergeable_ranks) + len(self.enc._special_tokens) == self.enc.n_vocab:
+            config["explicit_n_vocab"] = self.enc.n_vocab
         with config_path.open("w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "name": self.enc.name,
-                    "pat_str": self.enc._pat_str,
-                    "special_tokens": self.enc._special_tokens,
-                    "explicit_n_vocab": self.enc.n_vocab,
-                },
-                f,
-                indent=2,
-            )
+            json.dump(config, f, indent=2)
 
         return {
             "tiktoken_bpe_path": str(bpe_path.relative_to(dest)),

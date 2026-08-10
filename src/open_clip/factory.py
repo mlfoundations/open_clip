@@ -865,8 +865,9 @@ def get_tokenizer(
                 # Load and parse the JSON config
                 with open(local_config_path, 'r', encoding='utf-8') as f:
                     local_json_config = json.load(f)
+                local_json_config = _translate_external_config(local_json_config)
                 if 'model_cfg' in local_json_config:
-                    config = _translate_external_config(local_json_config)['model_cfg']
+                    config = local_json_config['model_cfg']
                 else:
                     raise ValueError(f"Local config {local_config_path} missing 'model_cfg'.")
             except Exception as e:

@@ -87,6 +87,11 @@ class CLIPTextCfg:
     hf_tokenizer_name: Optional[str] = None
     tokenizer_mode: Optional[str] = None
     tokenizer_kwargs: Optional[dict] = None
+    tokenizer_type: str = ''
+    # Tokenizer-side packaging metadata for exported tiktoken models. Not used by model itself.
+    tiktoken_name: str = 'cl100k_base'
+    tiktoken_bpe_path: Optional[str] = None
+    tiktoken_config_path: Optional[str] = None
 
     width: int = 512
     heads: int = 8
@@ -108,8 +113,6 @@ class CLIPTextCfg:
     # match the tokenizer's eos/eot id (e.g. 1 for mt5, 2 for xlm-v, 50257 for the GenLIP tiktoken vocab), so
     # configs that pool on eos are required to set it explicitly and it is validated against the tokenizer.
     eos_id: Optional[int] = None
-    tokenizer_type: str = ''
-    tiktoken_name: str = 'cl100k_base'
     no_causal_mask: bool = False  # disable causal masking
     final_ln_after_pool: bool = False  # apply final LayerNorm after pooling
     pool_type: str = 'argmax'
