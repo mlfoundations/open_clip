@@ -4,10 +4,13 @@ Copied from https://github.com/openai/CLIP. Originally MIT License, Copyright (c
 """
 import gzip
 import html
+import base64
+import json
 import os
 import random
 import string
 from functools import lru_cache, partial
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 import warnings
 
@@ -760,6 +763,8 @@ class TikTokenTokenizer:
             add_bos: bool = True,
             add_eos: bool = True,
             clean: Optional[str] = None,
+            bpe_path: Optional[Union[str, os.PathLike]] = None,
+            encoding_config_path: Optional[Union[str, os.PathLike]] = None,
     ):
         try:
             import tiktoken
@@ -767,7 +772,18 @@ class TikTokenTokenizer:
             raise ImportError("Please install tiktoken to use TikTokenTokenizer (`pip install tiktoken`).") from e
 
         self.encoding_name = encoding_name
-        self.enc = tiktoken.get_encoding(encoding_name)
+        if bpe_path is not None:
+            cfg = self._load_encoding_config(encoding_name, encoding_config_path)
+            self.enc = tiktoken.Encoding(
+                cfg.get("name", encoding_name),
+                pat_str=cfg["pat_str"],
+                mergeable_ranks=self._load_tiktoken_bpe(bpe_path),
+                special_tokens={str(k): int(v) for k, v in cfg.get("special_tokens", {}).items()},
+                explicit_n_vocab=cfg.get("explicit_n_vocab"),
+            )
+        else:
+            self.enc = tiktoken.get_encoding(encoding_name)
+        self.encoding_name = self.enc.name
         self.context_length = context_length
         self.add_bos = add_bos
         self.add_eos = add_eos
@@ -786,6 +802,59 @@ class TikTokenTokenizer:
         self.sot_token_id = self.bos_token_id  # alias for CLIP-style callers
         self.all_special_ids = [self.eot_token_id, self.pad_token_id, self.bos_token_id]
         self.vocab_size = base + 3
+
+    @staticmethod
+    def _load_tiktoken_bpe(path: Union[str, os.PathLike]) -> Dict[bytes, int]:
+        ranks = {}
+        with open(path, "rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                token, rank = line.split()
+                ranks[base64.b64decode(token)] = int(rank)
+        return ranks
+
+    @staticmethod
+    def _dump_tiktoken_bpe(ranks: Dict[bytes, int], path: Union[str, os.PathLike]) -> None:
+        with open(path, "wb") as f:
+            for token, rank in sorted(ranks.items(), key=lambda x: x[1]):
+                f.write(base64.b64encode(token) + b" " + str(rank).encode() + b"\n")
+
+    @staticmethod
+    def _load_encoding_config(encoding_name: str, path: Optional[Union[str, os.PathLike]]) -> Dict[str, object]:
+        if path is None:
+            raise ValueError(
+                f"encoding_config_path is required when loading tiktoken encoding {encoding_name!r} from bpe_path."
+            )
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_pretrained(self, dest: Union[str, os.PathLike]) -> Dict[str, str]:
+        dest = Path(dest)
+        asset_dir = dest / "open_clip_tiktoken"
+        asset_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = self.encoding_name.replace("/", "_")
+        bpe_path = asset_dir / f"{stem}.tiktoken"
+        config_path = asset_dir / f"{stem}.json"
+
+        self._dump_tiktoken_bpe(self.enc._mergeable_ranks, bpe_path)
+        with config_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "name": self.enc.name,
+                    "pat_str": self.enc._pat_str,
+                    "special_tokens": self.enc._special_tokens,
+                    "explicit_n_vocab": self.enc.n_vocab,
+                },
+                f,
+                indent=2,
+            )
+
+        return {
+            "tiktoken_bpe_path": str(bpe_path.relative_to(dest)),
+            "tiktoken_config_path": str(config_path.relative_to(dest)),
+        }
 
     def encode(self, text: str) -> List[int]:
         # encode_ordinary ignores any special-token markup in the text, treating it as plain bytes.
