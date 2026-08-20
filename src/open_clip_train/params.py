@@ -522,12 +522,15 @@ def parse_args(args):
         "--torchcompile-strategy",
         type=str,
         default="task",
-        choices=["model", "task", "step"],
+        choices=["model", "task", "step", "blocks"],
         help=(
             "Compile strategy when --torchcompile is enabled: "
             "'model' compiles trainable_module before distributed wrapping, "
             "'task' compiles task train/eval forward callables, "
-            "'step' compiles the single-batch forward/backward/optimizer step."
+            "'step' compiles the single-batch forward/backward/optimizer step, "
+            "'blocks' compiles transformer blocks in place (before distributed wrapping) so "
+            "grad-checkpoint recompute stays in eager autograd -- bounds compiled-backward "
+            "memory when whole-graph compile schedules checkpointed recomputes poorly."
         ),
     )
     parser.add_argument(
@@ -541,6 +544,16 @@ def parse_args(args):
         type=str,
         default=None,
         help="Optional torch.compile mode, e.g. default, reduce-overhead, or max-autotune.",
+    )
+    parser.add_argument(
+        "--torchcompile-dynamic",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Pass dynamic=True/False to torch.compile (default None = automatic). "
+             "--no-torchcompile-dynamic forces per-shape static graphs; pair it with "
+             "--text-pad-multiple / --naflex-pad-multiple so the shape set stays small -- "
+             "automatic dynamic otherwise switches to a symbolic graph on the second shape, "
+             "with worse memory planning.",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."

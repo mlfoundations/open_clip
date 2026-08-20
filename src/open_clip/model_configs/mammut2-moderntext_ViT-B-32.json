@@ -11,11 +11,13 @@
     },
     "multimodal_cfg": {
         "text_arch": "modern",
-        "context_length": 77,
-        "vocab_size": 49408,
-        "bos_id": 49406,
-        "eos_id": 49407,
-        "width": 512,
+        "context_length": 128,
+	"variable_text": true,
+	"vocab_size": 50260,
+        "pad_id": 50258,
+        "bos_id": 50259,
+        "eos_id": 50257,
+	"width": 512,
         "heads": 8,
         "layers": 12,
         "cross_attn_ratio": 2,
@@ -23,7 +25,12 @@
         "mlp_type": "swiglu",
         "norm_type": "rmsnorm",
         "norm_eps": 1e-06,
-        "qk_norm": false,
-        "attn_gated": true
+        "qk_norm": true,
+        "attn_gated": true,
+        "tokenizer_type": "tiktoken",
+        "tiktoken_name": "r50k_base",
+        "tokenizer_kwargs": {
+            "clean": "whitespace"
+        }
     }
 }
