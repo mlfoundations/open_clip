@@ -460,8 +460,10 @@ def test_mammut_modern_factory_create():
     model = open_clip.create_model('mammut2-moderntext_ViT-B-32')
     assert isinstance(model, MaMMUT)
     assert isinstance(model.text, ModernMultimodalDecoder)
+    # config switched to tiktoken r50k / ctx 128 / qk-norm in f326982
     tokenizer = open_clip.get_tokenizer('mammut2-moderntext_ViT-B-32')
-    assert tokenizer.context_length == 77
+    assert tokenizer.context_length == 128
+    assert model.text.token_embedding.weight.shape[0] == 50260
 
 
 def test_mammut_modern_cross_sublayer_placement():
