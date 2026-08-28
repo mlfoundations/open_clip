@@ -412,6 +412,15 @@ def main(args):
         _logger.info(f'Disabling DDP dynamo optimizer ({reason}).')
         torch._dynamo.config.optimize_ddp = False
 
+    if args.torchcompile and args.torchcompile_pass_break:
+        inner = unwrap_model(model)
+        if hasattr(inner, 'pass_graph_break'):
+            inner.pass_graph_break = True
+            _logger.info('Enabling graph break between contrastive and caption decoder passes.')
+        else:
+            _logger.warning(
+                '--torchcompile-pass-break: model has no dual-pass graph break support; ignoring.')
+
     if args.torchcompile and args.torchcompile_strategy in ('model', 'blocks'):
         if args.fsdp:
             _logger.info(

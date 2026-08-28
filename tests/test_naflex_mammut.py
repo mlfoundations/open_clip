@@ -281,3 +281,29 @@ def test_registered_config_builds(name, patch, seq_len):
     assert model.visual.trunk.get_patch_size() == (patch, patch)
     assert not isinstance(model.visual.trunk.norm_pre, torch.nn.Identity)
     assert model.visual.output_tokens
+
+
+# ---------------------------------------------------------------- task integration extras
+
+def test_blocks_discovery_includes_timm_trunk():
+    """The FSDP/blocks-compile discovery must cover the timm vision trunk, not just the text
+    stacks -- otherwise --torchcompile-strategy blocks leaves the whole vision tower eager."""
+    model = _tiny_model().train()
+    task = CoCaTask(model, verbose=False)
+    names = [n for n, _ in task._get_fsdp_shard_modules()]
+    trunk = [n for n in names if n.startswith('visual.trunk.blocks')]
+    assert len(trunk) == TINY_VISION_CFG['timm_model_kwargs']['depth'], \
+        f'timm trunk blocks not discovered: {names}'
+
+
+def test_mammut_pass_graph_break_eager_noop():
+    """pass_graph_break must be a pure compile-time hint: eager outputs identical either way."""
+    model = _tiny_model()
+    batch, text = _patch_batch(), _text_batch()
+    with torch.no_grad():
+        base = model(image=batch, text=text)
+        model.pass_graph_break = True
+        split = model(image=batch, text=text)
+    for k, v in base.items():
+        if torch.is_tensor(v):
+            torch.testing.assert_close(v, split[k], rtol=0, atol=0)
