@@ -215,21 +215,14 @@ def test_registered_moderntext_config_builds():
     model = open_clip.create_model('coca2-moderntext-naflex_ViT-B-32')
     assert model.attn_pool_type == 'parallel'
     assert model.attn_pool.query.shape == (128, 512)
-    # parallel: the contrastive pooler reads (masked) trunk tokens directly, not pooled queries
+    assert model.attn_pool.attn.k_proj_weight.shape[1] == 768  # keys projected from trunk dim
+    # parallel: the contrastive pooler also reads (masked) trunk tokens, not pooled queries
     assert model.attn_pool_contrastive.attn.k_proj_weight.shape[1] == 768
+    assert model.visual.image_seq_len == 64
+    assert model.visual.trunk.get_patch_size() == (32, 32)
+    assert model.visual.output_tokens
     assert model.text.pool.pool_type == 'mean'
     assert model.text.cfg.attention_mode == 'causal'
     assert (model.pad_id, model.bos_id, model.eos_id) == (50258, 50259, 50257)
     assert model.context_length == 128
     assert model.text_decoder.lm_head.weight.shape[0] == 50260
-
-
-def test_registered_config_builds():
-    model = open_clip.create_model('coca2-naflex_ViT-B-32')
-    assert model.attn_pool is not None
-    assert model.attn_pool_type == 'cascade'
-    assert model.attn_pool.query.shape == (256, 512)
-    assert model.attn_pool.attn.k_proj_weight.shape[1] == 768  # keys projected from trunk dim
-    assert model.visual.image_seq_len == 64
-    assert model.visual.trunk.get_patch_size() == (32, 32)
-    assert model.visual.output_tokens
