@@ -121,22 +121,21 @@ def test_clip_timm_output_tokens_selects_pooled_features():
     assert features.shape == (2, 32)
 
 
-def test_coca_rejects_timm_vision_tower_with_clear_error():
-    with pytest.raises(ValueError, match='does not support timm vision towers'):
-        CoCa(
-            embed_dim=32,
-            vision_cfg=TINY_VISION_CFG,
-            text_cfg=dict(
-                context_length=8,
-                vocab_size=64,
-                width=32,
-                heads=4,
-                layers=1,
-                embed_cls=True,
-                output_tokens=True,
-            ),
-            multimodal_cfg=dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1),
-        )
+def test_coca_timm_tower_requires_paper_pooling():
+    """CoCa + timm towers is supported via token mode + model-level paper pooling only
+    (see test_naflex_coca2.py); configs missing either requirement get a clear error."""
+    text_cfg = dict(
+        context_length=8, vocab_size=64, width=32, heads=4, layers=1,
+        embed_cls=True, output_tokens=True,
+    )
+    mm_cfg = dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1)
+    # token mode on, but no paper pooler configured
+    with pytest.raises(ValueError, match="attentional_pool"):
+        CoCa(embed_dim=32, vision_cfg=TINY_VISION_CFG, text_cfg=text_cfg, multimodal_cfg=mm_cfg)
+    # paper pooler configured, but token mode off
+    vision_cfg = dict(TINY_VISION_CFG, output_tokens=False, attentional_pool='cascade')
+    with pytest.raises(ValueError, match="output_tokens"):
+        CoCa(embed_dim=32, vision_cfg=vision_cfg, text_cfg=text_cfg, multimodal_cfg=mm_cfg)
 
 
 def test_mammut_requires_vision_token_output():
