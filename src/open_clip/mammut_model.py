@@ -130,6 +130,14 @@ class MaMMUT(nn.Module):
 
         self.context_length = multimodal_cfg.context_length
 
+        # Runtime knob (--torchcompile-pass-break): under full-graph compile, split the graph
+        # between the two traversals of the shared decoder (contrastive pass, caption pass).
+        # One graph holding both checkpointed traversals makes the compiled backward retain a
+        # multi-block recompute working set (2-3.5x eager peak memory, torch 2.9-2.13); the
+        # break restores eager-like memory at no measured speed cost. Plain attribute rather
+        # than cfg: it is a compile-time training concern, not part of the model definition.
+        self.pass_graph_break = False
+
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         self.visual.set_grad_checkpointing(enable, impl=impl)
         self.text.set_grad_checkpointing(enable, impl=impl)
@@ -227,6 +235,11 @@ class MaMMUT(nn.Module):
 
         if image_latent is None:
             return {"text_features": text_latent}
+
+        if self.pass_graph_break:
+            # see ctor note: keep the contrastive and caption decoder traversals in separate
+            # compiled graphs; a no-op in eager and under the 'blocks' compile strategy
+            torch._dynamo.graph_break()
 
         # caption pass: causal self-attention w/ cross-attention over projected image tokens
         image_kv = image_embs @ self.map_viz2txt_kv

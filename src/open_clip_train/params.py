@@ -556,6 +556,17 @@ def parse_args(args):
              "with worse memory planning.",
     )
     parser.add_argument(
+        "--torchcompile-pass-break",
+        default=False,
+        action='store_true',
+        help="Insert a dynamo graph break between the contrastive and caption passes of dual-pass "
+             "decoder models (MaMMUT) under full-graph compile. One graph holding two checkpointed "
+             "traversals of the same decoder blocks makes the compiled backward retain a multi-block "
+             "recompute working set (2-3.5x eager peak memory); breaking between the passes restores "
+             "eager-like memory at no measured speed cost. Not needed with "
+             "--torchcompile-strategy blocks (recompute already stays eager there).",
+    )
+    parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
     )
     parser.add_argument(

@@ -250,7 +250,9 @@ class TrainingTask(nn.Module):
         """Discover modules to shard with FSDP2.
 
         Default: finds all ResidualAttentionBlock, CustomResidualAttentionBlock,
-        ModernTextBlock, and Bottleneck instances within the trainable module.
+        ModernTextBlock, Bottleneck, and timm ViT ``Block`` (timm towers, incl. NaFlexVit
+        trunks) instances within the trainable module. Also drives the 'blocks' compile
+        strategy, so timm vision trunks get per-block compile rather than staying eager.
         Models can override this by defining a ``fsdp_shard_modules()`` method.
         """
         model = unwrap_model(self.trainable_module)
@@ -260,7 +262,13 @@ class TrainingTask(nn.Module):
         from open_clip.transformer import ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock
         from open_clip.modified_resnet import Bottleneck
 
-        shard_types = (ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock, Bottleneck)
+        shard_types = [ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock, Bottleneck]
+        try:
+            from timm.models.vision_transformer import Block as TimmViTBlock
+            shard_types.append(TimmViTBlock)
+        except ImportError:
+            pass
+        shard_types = tuple(shard_types)
 
         modules = []
         for name, mod in model.named_modules():
