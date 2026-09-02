@@ -4,12 +4,15 @@ import math
 import random
 from dataclasses import asdict, is_dataclass
 from functools import partial
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 import torch
 import webdataset as wds
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
+
+if TYPE_CHECKING:
+    from open_clip.tokenizer import Tokenizer
 
 from open_clip_train.data import (
     DataInfo,
@@ -77,7 +80,7 @@ def _decode_audio_bytes(data):
 
 class _TokenizeAudioCaption:
     # Module-level callable (picklable for forkserver workers).
-    def __init__(self, tokenizer, variable: bool = False):
+    def __init__(self, tokenizer: "Tokenizer", variable: bool = False):
         self.tokenizer = tokenizer
         self.variable = variable
 
@@ -95,7 +98,7 @@ class AudioCaptionTokenizer:
     unpadded sequence for per-batch text padding, mirroring ``TokenizeText``.
     """
 
-    def __init__(self, tokenizer, variable: bool = False):
+    def __init__(self, tokenizer: "Tokenizer", variable: bool = False):
         self.tokenizer = tokenizer
         self.variable = variable
 

@@ -168,6 +168,10 @@ def test_tiktoken_synthetic_gapped_vocab_round_trips_offline(tmp_path, monkeypat
     assert reloaded.pad_token_id == tokenizer.pad_token_id
     assert reloaded.encode("abab") == tokenizer.encode("abab")
     assert reloaded("abab", context_length=8).shape == (1, 8)
+    # decode contract survives the bpe_path reload: control ids render, body round-trips, pad fill is cut at eos
+    model_tokens = reloaded("abab", context_length=8)[0]
+    assert reloaded.decode(model_tokens) == tokenizer.decode(model_tokens) == "<|bos|>abab<|eos|>"
+    assert reloaded.decode(model_tokens, skip_special_tokens=True) == "abab"
 
 
 def test_local_dir_tiktoken_uses_exported_asset(tmp_path, monkeypatch):
