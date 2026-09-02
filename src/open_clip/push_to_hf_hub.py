@@ -30,7 +30,7 @@ except ImportError:
 
 from .constants import HF_WEIGHTS_NAME, HF_SAFE_WEIGHTS_NAME, HF_CONFIG_NAME
 from .factory import create_model_from_pretrained, get_model_config, get_tokenizer
-from .tokenizer import HFTokenizer, SigLipTokenizer, TikTokenTokenizer
+from .tokenizer import HFTokenizer, SigLipTokenizer, TikTokenTokenizer, Tokenizer
 
 
 _HF_TOKENIZER_FILE_PATTERNS = (
@@ -96,7 +96,7 @@ def save_config_for_hf(
 
 def save_for_hf(
     model,
-    tokenizer: HFTokenizer,
+    tokenizer: Tokenizer,
     model_config: dict,
     save_directory: str,
     safe_serialization: Union[bool, str] = 'both',
@@ -130,7 +130,7 @@ def save_for_hf(
 
 def push_to_hf_hub(
     model,
-    tokenizer,
+    tokenizer: Tokenizer,
     model_config: Optional[dict],
     repo_id: str,
     commit_message: str = 'Add model',

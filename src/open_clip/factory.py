@@ -33,7 +33,7 @@ from .transform import (
     merge_preprocess_kwargs,
     naflex_eval_transform_v2,
 )
-from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, TikTokenTokenizer, DEFAULT_CONTEXT_LENGTH
+from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, TikTokenTokenizer, Tokenizer, DEFAULT_CONTEXT_LENGTH
 
 HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
@@ -835,7 +835,7 @@ def get_tokenizer(
         context_length: Optional[int] = None,
         cache_dir: Optional[str] = None,
         **kwargs, # Additional tokenizer kwargs passed to constructor
-):
+) -> Tokenizer:
     """
     Gets the appropriate tokenizer based on the model identifier schema or name.
 

@@ -11,7 +11,7 @@ import random
 import string
 from functools import lru_cache, partial
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, Union
 import warnings
 
 import ftfy
@@ -24,6 +24,125 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 _nltk_init = False
 
 DEFAULT_CONTEXT_LENGTH = 77  # default context length for OpenAI CLIP
+
+TokenizerInput = Union[str, Sequence[str]]
+TokenIds = Union[Sequence[int], np.ndarray, torch.Tensor]
+BatchTokenIds = Union[Iterable[TokenIds], np.ndarray, torch.Tensor]
+TokenizerOutput = Union[
+    torch.Tensor,
+    List[torch.Tensor],
+    Tuple[torch.Tensor, torch.Tensor],
+]
+
+
+class Tokenizer(Protocol):
+    """Structural interface shared by OpenCLIP tokenizer implementations."""
+
+    context_length: Optional[int]
+    vocab_size: int
+    bos_token_id: Optional[int]
+    eos_token_id: Optional[int]
+    pad_token_id: Optional[int]
+    sot_token_id: Optional[int]
+    eot_token_id: Optional[int]
+    all_special_ids: List[int]
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]: ...
+
+    def decode(
+            self,
+            tokens: TokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> str: ...
+
+    def batch_decode(
+            self,
+            batch_tokens: BatchTokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> List[str]: ...
+
+    def __call__(
+            self,
+            texts: TokenizerInput,
+            context_length: Optional[int] = None,
+            pad: bool = True,
+            output_mask: bool = False,
+            add_special_tokens: bool = True,
+    ) -> TokenizerOutput: ...
+
+
+def _to_token_list(tokens: TokenIds) -> List[int]:
+    if isinstance(tokens, torch.Tensor):
+        tokens = tokens.detach().cpu().tolist()
+    elif isinstance(tokens, np.ndarray):
+        tokens = tokens.tolist()
+    return list(tokens)
+
+
+def _to_token_batch(batch_tokens: BatchTokenIds) -> Iterable[TokenIds]:
+    if isinstance(batch_tokens, torch.Tensor):
+        return batch_tokens.detach().cpu().tolist()
+    if isinstance(batch_tokens, np.ndarray):
+        return batch_tokens.tolist()
+    return batch_tokens
+
+
+def _truncate_at_eos(tokens: TokenIds, eos_token_id: Optional[int], stop_at_eos: bool) -> List[int]:
+    tokens = _to_token_list(tokens)
+    if stop_at_eos and eos_token_id is not None:
+        try:
+            tokens = tokens[:tokens.index(eos_token_id) + 1]
+        except ValueError:
+            pass
+    return tokens
+
+
+def _decode_with_backend(
+        backend,
+        tokens: TokenIds,
+        eos_token_id: Optional[int],
+        skip_special_tokens: bool,
+        stop_at_eos: bool,
+) -> str:
+    tokens = _truncate_at_eos(tokens, eos_token_id, stop_at_eos)
+    return backend.decode(tokens, skip_special_tokens=skip_special_tokens)
+
+
+def _batch_decode_with_backend(
+        backend,
+        batch_tokens: BatchTokenIds,
+        eos_token_id: Optional[int],
+        skip_special_tokens: bool,
+        stop_at_eos: bool,
+) -> List[str]:
+    batch_tokens = _to_token_batch(batch_tokens)
+    batch_tokens = [
+        _truncate_at_eos(tokens, eos_token_id, stop_at_eos)
+        for tokens in batch_tokens
+    ]
+    return backend.batch_decode(batch_tokens, skip_special_tokens=skip_special_tokens)
+
+
+def _get_pad_fill_id(pad_token_id: Optional[int]) -> int:
+    """Use the reserved pad id when present, otherwise preserve the historical id-0 fill."""
+    return 0 if pad_token_id is None else pad_token_id
+
+
+def _pad_token_sequences(
+        all_tokens: List[List[int]],
+        context_length: int,
+        pad_token_id: int = 0,
+        output_mask: bool = False,
+) -> TokenizerOutput:
+    result = torch.full((len(all_tokens), context_length), pad_token_id, dtype=torch.long)
+    mask = torch.zeros_like(result, dtype=torch.bool) if output_mask else None
+    for i, tokens in enumerate(all_tokens):
+        result[i, :len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+        if mask is not None:
+            mask[i, :len(tokens)] = True
+    return (result, mask) if mask is not None else result
 
 
 @lru_cache()
@@ -177,6 +296,9 @@ class SimpleTokenizer(object):
         self.all_special_ids = [self.encoder[t] for t in special_tokens]
         self.sot_token_id = self.all_special_ids[0]
         self.eot_token_id = self.all_special_ids[1]
+        self.bos_token_id = self.sot_token_id
+        self.eos_token_id = self.eot_token_id
+        self.pad_token_id = None
         self.context_length = context_length
         self.clean_fn = get_clean_fn(clean)
         self.reduction_fn = get_reduction_mask_fn(reduction_mask) if reduction_mask else None
@@ -222,26 +344,49 @@ class SimpleTokenizer(object):
         self.cache[token] = word
         return word
 
-    def encode(self, text):
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
         bpe_tokens = []
         text = self.clean_fn(text)
         for token in re.findall(self.pat, text):
             token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
             bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
+        if add_special_tokens:
+            bpe_tokens = [self.sot_token_id] + bpe_tokens + [self.eot_token_id]
         return bpe_tokens
 
-    def decode(self, tokens):
+    def decode(
+            self,
+            tokens: TokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> str:
+        tokens = _truncate_at_eos(tokens, self.eot_token_id, stop_at_eos)
+        if skip_special_tokens:
+            tokens = [token for token in tokens if token not in self.all_special_ids]
         text = ''.join([self.decoder[token] for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
         return text
 
+    def batch_decode(
+            self,
+            batch_tokens: BatchTokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> List[str]:
+        batch_tokens = _to_token_batch(batch_tokens)
+        return [
+            self.decode(tokens, skip_special_tokens=skip_special_tokens, stop_at_eos=stop_at_eos)
+            for tokens in batch_tokens
+        ]
+
     def __call__(
             self,
-            texts: Union[str, List[str]],
+            texts: TokenizerInput,
             context_length: Optional[int] = None,
             pad: bool = True,
             output_mask: bool = False,
-    ) -> Union[torch.LongTensor, Tuple[torch.LongTensor, torch.Tensor]]:
+            add_special_tokens: bool = True,
+    ) -> TokenizerOutput:
         """ Returns the tokenized representation of given input string(s)
 
         Parameters
@@ -253,6 +398,8 @@ class SimpleTokenizer(object):
         output_mask : bool
             Also return a [B, L] bool attention mask (True = real token, HF polarity). Length-derived,
             so it stays exact even though this tokenizer pads with 0, a real vocab token.
+        add_special_tokens : bool
+            Add the start- and end-of-text tokens. Defaults to True for model-ready tokenization.
 
         Returns
         -------
@@ -280,50 +427,61 @@ class SimpleTokenizer(object):
                 sot_token_id=self.sot_token_id,
                 eot_token_id=self.eot_token_id,
                 encode_fn=self.encode,
+                add_special_tokens=add_special_tokens,
+                output_mask=output_mask,
             )
-            if output_mask:
-                # true lengths are not tracked through the reduction fns; positions through the first
-                # eot are valid by the right-padded contract (eot is a special id never emitted mid-text)
-                eot = result == self.eot_token_id
-                mask = eot.cumsum(dim=-1) - eot.long() == 0
-                return result, mask
             return result
 
-        all_tokens = [[self.sot_token_id] + self.encode(text) + [self.eot_token_id] for text in texts]
+        all_tokens = [self.encode(text, add_special_tokens=add_special_tokens) for text in texts]
         truncated = []
         for tokens in all_tokens:
             if len(tokens) > context_length:
                 tokens = tokens[:context_length]  # Truncate
-                tokens[-1] = self.eot_token_id
+                if add_special_tokens:
+                    tokens[-1] = self.eot_token_id
             truncated.append(tokens)
         all_tokens = truncated
-
-        result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
-
-        for i, tokens in enumerate(all_tokens):
-            result[i, :len(tokens)] = torch.tensor(tokens)
-
-        if output_mask:
-            # exact length-based validity: this tokenizer has no reserved pad (fills with 0, a real
-            # vocab token), so a value-derived mask cannot distinguish pad fill from genuine id-0 tokens
-            mask = torch.zeros_like(result, dtype=torch.bool)
-            for i, tokens in enumerate(all_tokens):
-                mask[i, :len(tokens)] = True
-            return result, mask
-
-        return result
+        # The length-derived mask remains exact even though id 0 is both fill and a valid body token.
+        return _pad_token_sequences(all_tokens, context_length, output_mask=output_mask)
 
 
 _tokenizer = SimpleTokenizer()
 
 
-def decode(output_ids: torch.Tensor):
-    output_ids = output_ids.cpu().numpy()
-    return _tokenizer.decode(output_ids)
+def decode(
+        output_ids: TokenIds,
+        skip_special_tokens: bool = False,
+        stop_at_eos: bool = True,
+) -> str:
+    return _tokenizer.decode(
+        output_ids,
+        skip_special_tokens=skip_special_tokens,
+        stop_at_eos=stop_at_eos,
+    )
 
 
-def tokenize(texts: Union[str, List[str]], context_length: int = DEFAULT_CONTEXT_LENGTH) -> torch.LongTensor:
-    return _tokenizer(texts, context_length=context_length)
+def batch_decode(
+        output_ids: BatchTokenIds,
+        skip_special_tokens: bool = False,
+        stop_at_eos: bool = True,
+) -> List[str]:
+    return _tokenizer.batch_decode(
+        output_ids,
+        skip_special_tokens=skip_special_tokens,
+        stop_at_eos=stop_at_eos,
+    )
+
+
+def tokenize(
+        texts: TokenizerInput,
+        context_length: int = DEFAULT_CONTEXT_LENGTH,
+        add_special_tokens: bool = True,
+) -> torch.LongTensor:
+    return _tokenizer(
+        texts,
+        context_length=context_length,
+        add_special_tokens=add_special_tokens,
+    )
 
 
 def random_mask_tokenize(
@@ -333,26 +491,29 @@ def random_mask_tokenize(
         eot_token_id: int,
         encode_fn: Callable,
         shuffle: bool = False,
+        add_special_tokens: bool = True,
+        output_mask: bool = False,
 ):
     all_tokens = [encode_fn(text) for text in texts]
-    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+    reduced_tokens = []
+    num_special_tokens = 2 if add_special_tokens else 0
+    num_keep = context_length - num_special_tokens
 
-    for i, tokens in enumerate(all_tokens):
+    for tokens in all_tokens:
         tokens = torch.tensor(tokens)
         num_tokens = len(tokens)
-        if num_tokens > context_length - 2:  # 2 for sot and eot token
-            num_keep = context_length - 2
+        if num_tokens > num_keep:
             indices = torch.randperm(len(tokens))
             indices = indices[:num_keep]
             if not shuffle:
                 indices = indices.msort()
             tokens = tokens[indices]
-            num_tokens = num_keep
-        result[i, 0] = sot_token_id
-        result[i, 1:num_tokens + 1] = tokens
-        result[i, num_tokens + 1] = eot_token_id
+        tokens = tokens.tolist()
+        if add_special_tokens:
+            tokens = [sot_token_id] + tokens + [eot_token_id]
+        reduced_tokens.append(tokens)
 
-    return result
+    return _pad_token_sequences(reduced_tokens, context_length, output_mask=output_mask)
 
 
 def simple_mask_tokenize(
@@ -361,20 +522,24 @@ def simple_mask_tokenize(
         sot_token_id: int,
         eot_token_id: int,
         encode_fn: Callable,
+        add_special_tokens: bool = True,
+        output_mask: bool = False,
 ):
     all_tokens = [encode_fn(text) for text in texts]
-    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+    reduced_tokens = []
+    num_special_tokens = 2 if add_special_tokens else 0
+    num_keep = context_length - num_special_tokens
 
-    for i, tokens in enumerate(all_tokens):
+    for tokens in all_tokens:
         num_tokens = len(tokens)
-        if num_tokens > context_length - 2:  # 2 for sot and eot token
-            num_keep = context_length - 2
+        if num_tokens > num_keep:
             start_index = random.randint(0, num_tokens - num_keep)  # high is incl
             tokens = tokens[start_index: start_index + num_keep]
-        tokens = [sot_token_id] + tokens + [eot_token_id]
-        result[i, :len(tokens)] = torch.tensor(tokens)
+        if add_special_tokens:
+            tokens = [sot_token_id] + tokens + [eot_token_id]
+        reduced_tokens.append(tokens)
 
-    return result
+    return _pad_token_sequences(reduced_tokens, context_length, output_mask=output_mask)
 
 
 def syntax_mask_tokenize(
@@ -383,7 +548,9 @@ def syntax_mask_tokenize(
         sot_token_id: int,
         eot_token_id: int,
         encode_fn: Callable,
-) -> torch.LongTensor:
+        add_special_tokens: bool = True,
+        output_mask: bool = False,
+) -> Union[torch.LongTensor, Tuple[torch.LongTensor, torch.Tensor]]:
     """ Returns the tokenized representation of given input string(s).
     Apply syntax masking before tokenize.
     """
@@ -407,13 +574,14 @@ def syntax_mask_tokenize(
 
     # syntax masking
     new_texts = []
+    num_special_tokens = 2 if add_special_tokens else 0
     for text in texts:
         list_tokens = nltk.tokenize.word_tokenize(text)
         pos_tags = nltk.pos_tag(list_tokens)
         #  sample the words by get_order method
         order_list = [get_order(tag) for _, tag in pos_tags]
         sorted_ids = np.argsort(np.array(order_list))
-        sampled_ids = sorted(sorted_ids[:context_length - 2]) # need 2 slots for sot and eot tokens
+        sampled_ids = sorted(sorted_ids[:context_length - num_special_tokens])
         sampled_tokens = np.take(np.array(list_tokens), sampled_ids, axis=0)  # sample the tokens
 
         new_text = ''
@@ -423,17 +591,20 @@ def syntax_mask_tokenize(
         new_texts.append(new_text)
     texts = new_texts
 
-    all_tokens = [[sot_token_id] + encode_fn(text) + [eot_token_id] for text in texts]
-    result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+    all_tokens = [encode_fn(text) for text in texts]
+    truncated = []
 
-    for i, tokens in enumerate(all_tokens):
+    for tokens in all_tokens:
+        if add_special_tokens:
+            tokens = [sot_token_id] + tokens + [eot_token_id]
         # still need first truncate because some words produces two tokens
         if len(tokens) > context_length:
             tokens = tokens[:context_length]  # Truncate
-            tokens[-1] = eot_token_id
-        result[i, :len(tokens)] = torch.tensor(tokens)
+            if add_special_tokens:
+                tokens[-1] = eot_token_id
+        truncated.append(tokens)
 
-    return result
+    return _pad_token_sequences(truncated, context_length, output_mask=output_mask)
 
 
 def get_reduction_mask_fn(type: str):
@@ -516,6 +687,9 @@ class HFTokenizer:
         self.sot_token_id = self.tokenizer.bos_token_id
         if self.sot_token_id is None:
             self.sot_token_id = self.tokenizer.cls_token_id
+        self.eos_token_id = self.eot_token_id
+        self.bos_token_id = self.sot_token_id
+        self.all_special_ids = self.tokenizer.all_special_ids
         self.vocab_size = len(self.tokenizer)
 
         # Set language function if available
@@ -528,13 +702,59 @@ class HFTokenizer:
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+        text = self.clean_fn(text)
+        if self.tokenizer_mode == 'clips':
+            tokens = self.tokenizer.encode(text, add_special_tokens=False)
+            if add_special_tokens:
+                tokens = [self.tokenizer.bos_token_id] + tokens + [
+                    self.tokenizer.eos_token_id,
+                    self.tokenizer.cls_token_id,
+                ]
+        else:
+            tokens = self.tokenizer.encode(text, add_special_tokens=add_special_tokens)
+
+        if self.strip_sep_token and self.tokenizer.sep_token_id in tokens:
+            fill_id = _get_pad_fill_id(self.pad_token_id)
+            tokens = [fill_id if token == self.tokenizer.sep_token_id else token for token in tokens]
+        return tokens
+
+    def decode(
+            self,
+            tokens: TokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> str:
+        return _decode_with_backend(
+            self.tokenizer,
+            tokens,
+            self.eot_token_id,
+            skip_special_tokens,
+            stop_at_eos,
+        )
+
+    def batch_decode(
+            self,
+            batch_tokens: BatchTokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> List[str]:
+        return _batch_decode_with_backend(
+            self.tokenizer,
+            batch_tokens,
+            self.eot_token_id,
+            skip_special_tokens,
+            stop_at_eos,
+        )
+
     def __call__(
             self,
-            texts: Union[str, List[str]],
+            texts: TokenizerInput,
             context_length: Optional[int] = None,
             pad: bool = True,
             output_mask: bool = False,
-    ) -> Union[torch.Tensor, List[torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
+            add_special_tokens: bool = True,
+    ) -> TokenizerOutput:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if isinstance(texts, str):
@@ -553,7 +773,12 @@ class HFTokenizer:
 
         # Handle different tokenization modes
         if self.tokenizer_mode == 'clips':
-            return self._clips_tokenize(texts, context_length, pad=pad)
+            return self._clips_tokenize(
+                texts,
+                context_length,
+                pad=pad,
+                add_special_tokens=add_special_tokens,
+            )
         else:
             # Standard tokenization
             encoded = self.tokenizer(
@@ -562,13 +787,13 @@ class HFTokenizer:
                 padding='max_length' if pad else False,
                 truncation=True,
                 return_tensors='pt' if pad else None,
+                add_special_tokens=add_special_tokens,
             )
             input_ids = encoded.input_ids if pad else encoded["input_ids"]
             attn_mask = encoded.attention_mask.bool() if (pad and output_mask) else None
 
             if self.strip_sep_token:
-                # pad_token_id can legitimately be None (no reserved pad token); fall back to the historical 0.
-                fill_id = 0 if self.pad_token_id is None else self.pad_token_id
+                fill_id = _get_pad_fill_id(self.pad_token_id)
                 if pad:
                     sep_positions = input_ids == self.tokenizer.sep_token_id
                     input_ids = torch.where(
@@ -604,6 +829,7 @@ class HFTokenizer:
             texts: List[str],
             context_length: int,
             pad: bool = True,
+            add_special_tokens: bool = True,
     ) -> Union[torch.Tensor, List[torch.Tensor]]:
         """Use standard HF tokenizer but apply custom post-processing"""
         # Use standard tokenizer without special tokens - we'll add our own
@@ -616,18 +842,23 @@ class HFTokenizer:
         )
 
         encoded = []
+        num_special_tokens = 3 if add_special_tokens else 0
         for tokens in encoded_outputs["input_ids"]:
-            tokens = tokens[:context_length - 3]  # Leave room for special tokens
-            tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
+            tokens = tokens[:context_length - num_special_tokens]
+            if add_special_tokens:
+                tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
             encoded.append(tokens)
 
         if not pad:
             # Match the padded contract: the class token terminates the sequence. The body is truncated to
             # context_length - 3 above, so [bos] + body + [eos] + [cls] always fits within context_length.
-            return [
-                torch.tensor(tokens + [self.tokenizer.cls_token_id], dtype=torch.long)
-                for tokens in encoded
-            ]
+            if add_special_tokens:
+                encoded = [tokens + [self.tokenizer.cls_token_id] for tokens in encoded]
+            return [torch.tensor(tokens, dtype=torch.long) for tokens in encoded]
+
+        if not add_special_tokens:
+            fill_id = _get_pad_fill_id(self.pad_token_id)
+            return _pad_token_sequences(encoded, context_length, pad_token_id=fill_id)
 
         # Create result tensor and handle padding + class token
         result = torch.zeros(len(encoded), context_length, dtype=torch.long)
@@ -706,19 +937,61 @@ class SigLipTokenizer:
         self.tokenizer.eos_token_id = 1
         self.pad_token_id = self.tokenizer.pad_token_id
         self.eot_token_id = self.tokenizer.eos_token_id
+        self.eos_token_id = self.eot_token_id
+        self.sot_token_id = self.tokenizer.bos_token_id
+        self.bos_token_id = self.sot_token_id
+        self.all_special_ids = self.tokenizer.all_special_ids
         self.vocab_size = len(self.tokenizer)
         self.context_length = context_length
 
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
 
+    def _clean(self, text: str) -> str:
+        return canonicalize_text(basic_clean(text))
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+        return self.tokenizer.encode(
+            self._clean(text),
+            add_special_tokens=add_special_tokens,
+        )
+
+    def decode(
+            self,
+            tokens: TokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> str:
+        return _decode_with_backend(
+            self.tokenizer,
+            tokens,
+            self.eot_token_id,
+            skip_special_tokens,
+            stop_at_eos,
+        )
+
+    def batch_decode(
+            self,
+            batch_tokens: BatchTokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> List[str]:
+        return _batch_decode_with_backend(
+            self.tokenizer,
+            batch_tokens,
+            self.eot_token_id,
+            skip_special_tokens,
+            stop_at_eos,
+        )
+
     def __call__(
             self,
-            texts: Union[str, List[str]],
+            texts: TokenizerInput,
             context_length: Optional[int] = None,
             pad: bool = True,
             output_mask: bool = False,
-    ) -> Union[torch.Tensor, List[torch.Tensor]]:
+            add_special_tokens: bool = True,
+    ) -> TokenizerOutput:
         # same cleaning as for default tokenizer, except lowercasing
         # adding lower (for case-sensitive tokenizers) will make it more robust but less sensitive to nuance
         if output_mask:
@@ -731,13 +1004,14 @@ class SigLipTokenizer:
         context_length = context_length or self.context_length
         assert context_length, 'Please set a valid context length in class init or call.'
 
-        texts = [canonicalize_text(basic_clean(text)) for text in texts]
+        texts = [self._clean(text) for text in texts]
         output = self.tokenizer(
             texts,
             return_tensors='pt' if pad else None,
             max_length=context_length,
             padding='max_length' if pad else False,
             truncation=True,
+            add_special_tokens=add_special_tokens,
         )
         if not pad:
             return [torch.tensor(tokens, dtype=torch.long) for tokens in output.input_ids]
@@ -821,8 +1095,21 @@ class TikTokenTokenizer:
         self.pad_token_id = base + 1
         self.bos_token_id = base + 2
         self.sot_token_id = self.bos_token_id  # alias for CLIP-style callers
-        self.all_special_ids = [self.eot_token_id, self.pad_token_id, self.bos_token_id]
+        self.eos_token_id = self.eot_token_id
         self.vocab_size = base + 3
+        self._special_token_text = {
+            self.bos_token_id: '<|bos|>',
+            self.eot_token_id: '<|eos|>',
+            self.pad_token_id: '<|pad|>',
+        }
+        # tiktoken's registered specials (e.g. <|endoftext|>) sit *below* n_vocab: encode_ordinary never emits
+        # them, but the LM head spans them, so decode has to know them to honour skip_special_tokens.
+        self._native_special_ids = frozenset(
+            self.enc.encode_single_token(name) for name in self.enc.special_tokens_set
+        )
+        self.all_special_ids = [
+            self.eot_token_id, self.pad_token_id, self.bos_token_id, *sorted(self._native_special_ids),
+        ]
 
     @staticmethod
     def _load_tiktoken_bpe(path: Union[str, os.PathLike]) -> Dict[bytes, int]:
@@ -877,15 +1164,67 @@ class TikTokenTokenizer:
             "tiktoken_config_path": str(config_path.relative_to(dest)),
         }
 
-    def encode(self, text: str) -> List[int]:
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
         # encode_ordinary ignores any special-token markup in the text, treating it as plain bytes.
         if self.clean_fn is not None:
             text = self.clean_fn(text)
-        return self.enc.encode_ordinary(text)
+        tokens = self.enc.encode_ordinary(text)
+        return self._wrap(tokens) if add_special_tokens else tokens
 
-    def decode(self, tokens: List[int]) -> str:
-        body = [t for t in tokens if t < self.enc.n_vocab]
-        return self.enc.decode(body)
+    def decode(
+            self,
+            tokens: TokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> str:
+        tokens = _truncate_at_eos(tokens, self.eot_token_id, stop_at_eos)
+        n_vocab = self.enc.n_vocab
+        if skip_special_tokens:
+            # Fast path: one filter + one decode. `< n_vocab` drops the reserved ids (above the vocab) and unknown
+            # ids (legacy tolerance); the native set drops tiktoken's own specials, which sit below n_vocab.
+            native = self._native_special_ids
+            return self._decode_body([token for token in tokens if token < n_vocab and token not in native])
+        parts = []
+        body = []
+        for token in tokens:
+            if token in self._special_token_text:
+                if body:
+                    parts.append(self._decode_body(body))
+                    body = []
+                parts.append(self._special_token_text[token])
+            elif token < n_vocab:
+                # Native specials stay in the body: tiktoken renders their own text (e.g. <|endoftext|>).
+                body.append(token)
+            # Preserve the legacy tolerance for unknown ids above the tiktoken vocabulary.
+        if body:
+            parts.append(self._decode_body(body))
+        return ''.join(parts)
+
+    def _decode_body(self, body: List[int]) -> str:
+        try:
+            return self.enc.decode(body)
+        except KeyError:
+            # Only reached when a gap id (unused id below n_vocab; cl100k/o200k have a few) slipped in:
+            # drop what tiktoken cannot decode and keep the rest.
+            chunks = []
+            for token in body:
+                try:
+                    chunks.append(self.enc.decode_single_token_bytes(token))
+                except KeyError:
+                    pass
+            return b''.join(chunks).decode('utf-8', errors='replace')
+
+    def batch_decode(
+            self,
+            batch_tokens: BatchTokenIds,
+            skip_special_tokens: bool = False,
+            stop_at_eos: bool = True,
+    ) -> List[str]:
+        batch_tokens = _to_token_batch(batch_tokens)
+        return [
+            self.decode(tokens, skip_special_tokens=skip_special_tokens, stop_at_eos=stop_at_eos)
+            for tokens in batch_tokens
+        ]
 
     def _wrap(self, ids: List[int]) -> List[int]:
         if self.add_bos:
@@ -896,11 +1235,12 @@ class TikTokenTokenizer:
 
     def __call__(
             self,
-            texts: Union[str, List[str]],
+            texts: TokenizerInput,
             context_length: Optional[int] = None,
             pad: bool = True,
             output_mask: bool = False,
-    ) -> Union[torch.LongTensor, List[torch.LongTensor], Tuple[torch.LongTensor, torch.Tensor]]:
+            add_special_tokens: bool = True,
+    ) -> TokenizerOutput:
         """Tokenize text(s).
 
         Args:
@@ -911,6 +1251,7 @@ class TikTokenTokenizer:
                 variable-length 1-D tensors.
             output_mask: Also return a [N, context_length] bool attention mask (True = real token,
                 HF polarity). Requires ``pad=True``. Exact: the pad id is reserved above the vocab.
+            add_special_tokens: Apply the constructor-configured BOS/EOS template. Defaults to True.
         """
         if isinstance(texts, str):
             texts = [texts]
@@ -919,13 +1260,13 @@ class TikTokenTokenizer:
         if output_mask and not pad:
             raise ValueError("output_mask=True requires pad=True (variable-length collation derives its own validity).")
 
-        all_tokens = [self._wrap(self.encode(text)) for text in texts]
+        all_tokens = [self.encode(text, add_special_tokens=add_special_tokens) for text in texts]
         if context_length is not None:
             truncated = []
             for tokens in all_tokens:
                 if len(tokens) > context_length:
                     tokens = tokens[:context_length]
-                    if self.add_eos:
+                    if add_special_tokens and self.add_eos:
                         tokens[-1] = self.eot_token_id
                 truncated.append(tokens)
             all_tokens = truncated
