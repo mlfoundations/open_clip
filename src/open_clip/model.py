@@ -76,6 +76,11 @@ class CLIPVisionCfg:
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
     timm_model_kwargs: Optional[dict] = None  # additional kwargs forwarded to timm.create_model()
+    # NaFlexVit towers only: enable timm's parameter-free patch-embed weight interpolator so the tower accepts
+    # patches at sizes other than its base patch size (variable-patch NaFlex training / eval). Off by default and
+    # state-dict compatible; declare it in the config of a model trained with variable patch sizes so plain
+    # loading works, or override at creation with `force_naflex_patch_interp`.
+    naflex_patch_interp: bool = False
 
 
 @dataclass
@@ -200,6 +205,17 @@ def _build_vision_tower(
     act_layer = QuickGELU if quick_gelu else nn.GELU
 
     if vision_cfg.timm_model_name:
+        timm_model_kwargs = dict(vision_cfg.timm_model_kwargs or {})
+        if vision_cfg.naflex_patch_interp:
+            is_naflex_tower = (
+                vision_cfg.timm_model_name.startswith('naflexvit') or timm_model_kwargs.get('use_naflex', False))
+            if not is_naflex_tower:
+                raise ValueError(
+                    "naflex_patch_interp requires a timm NaFlexVit vision tower "
+                    f"(got timm_model_name={vision_cfg.timm_model_name!r}); use force_naflex_vision to convert a "
+                    "compatible timm EVA/ViT tower."
+                )
+            timm_model_kwargs['enable_patch_interpolator'] = True
         visual = TimmModel(
             vision_cfg.timm_model_name,
             pretrained=vision_cfg.timm_model_pretrained,
@@ -211,8 +227,13 @@ def _build_vision_tower(
             patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
-            model_kwargs=vision_cfg.timm_model_kwargs,
+            model_kwargs=timm_model_kwargs or None,
             output_tokens=vision_cfg.output_tokens,
+        )
+    elif vision_cfg.naflex_patch_interp:
+        raise ValueError(
+            "naflex_patch_interp requires a timm NaFlexVit vision tower; use force_naflex_vision to convert a "
+            "compatible native ViT tower."
         )
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width

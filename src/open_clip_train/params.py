@@ -844,6 +844,15 @@ def parse_args(args):
         help="Sampling probabilities for --naflex-patch-sizes."
     )
     parser.add_argument(
+        "--force-naflex-patch-interp",
+        default=False,
+        action="store_true",
+        help="Force vision_cfg.naflex_patch_interp=True: enable timm's parameter-free patch-embed weight "
+             "interpolator on the NaFlex vision tower so --naflex-patch-sizes may include sizes other than the "
+             "model's base patch size. Auto-enabled when more than one patch size is listed. A model trained with "
+             "variable patch sizes should declare naflex_patch_interp in its config so inference needs no flag."
+    )
+    parser.add_argument(
         "--naflex-seq-lens",
         type=int,
         nargs="+",
@@ -980,6 +989,10 @@ def parse_args(args):
         args.aug_cfg = dict(args.aug_cfg or {})
         args.aug_cfg["use_timm"] = True
         args.aug_cfg["naflex"] = True
+        # Listing several patch sizes only makes sense with weight interpolation; a single non-base size without
+        # the flag is caught by the NaFlex data config's fail-fast, which names --force-naflex-patch-interp.
+        if args.naflex_patch_sizes and len(set(args.naflex_patch_sizes)) > 1:
+            args.force_naflex_patch_interp = True
 
     if 'timm' not in args.opt:
         # set default opt params based on model name (only if timm optimizer not used)

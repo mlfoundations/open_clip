@@ -147,6 +147,23 @@ def test_create_dummy_batch_uses_configured_naflex_shape():
     assert batch["text"].shape == (2, 5)
 
 
+def test_create_dummy_batch_keeps_non_base_naflex_patches_spatial():
+    """A non-base eval patch size follows the real eval transform: patches stay (Ph, Pw, C) for the tower's
+    weight interpolator instead of being flattened to a dim the base projection cannot consume."""
+    task = CLIPTask(TinyModel(), loss=DummyLoss())
+    task.set_naflex_data_config(NaFlexDataConfig.resolve(
+        patch_sizes=[32], seq_lens=[4], model_patch_size=16, supports_patch_interpolation=True))
+
+    batch = task.create_dummy_batch(batch_size=2)
+    assert batch["image"]["patches"].shape == (2, 4, 32, 32, 3)
+    assert batch["image"]["patch_coord"].shape == (2, 4, 2)
+
+    # Base size with the model geometry known stays flat (unchanged contract).
+    task.set_naflex_data_config(NaFlexDataConfig.resolve(
+        patch_sizes=[16], seq_lens=[4], model_patch_size=16, supports_patch_interpolation=True))
+    assert task.create_dummy_batch(batch_size=2)["image"]["patches"].shape == (2, 4, 16 * 16 * 3)
+
+
 # ---------------------------------------------------------------------------
 # forward() normalization: dict, positional, kwargs
 # ---------------------------------------------------------------------------

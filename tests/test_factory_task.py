@@ -228,9 +228,17 @@ def test_create_task_attaches_model_as_trainable_module():
 def test_create_task_configures_naflex_dummy_shape():
     model = open_clip.create_model('RN50')
     args = _make_args()
-    config = NaFlexDataConfig.resolve(patch_sizes=[16, 32], seq_lens=[4, 8])
+    # Model geometry known: the (base-size) eval patch is flattened, like the real eval transform.
+    config = NaFlexDataConfig.resolve(
+        patch_sizes=[16, 32], seq_lens=[4, 8], model_patch_size=16, supports_patch_interpolation=True)
     task = create_task(args, model=model, naflex_data_config=config)
     batch = task.create_dummy_batch(batch_size=2)
 
     assert batch["image"]["patches"].shape == (2, 8, 16 * 16 * 3)
     assert batch["text"].shape == (2, model.context_length)
+
+    # Data-only config (no model geometry): the historical multi-size rule keeps patches spatial, and the dummy
+    # must match what the eval transform emits under that same rule.
+    config = NaFlexDataConfig.resolve(patch_sizes=[16, 32], seq_lens=[4, 8])
+    task = create_task(args, model=model, naflex_data_config=config)
+    assert task.create_dummy_batch(batch_size=2)["image"]["patches"].shape == (2, 8, 16, 16, 3)

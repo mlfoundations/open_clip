@@ -44,6 +44,7 @@ __all__ = [
     "get_naflex_model_image_seq_len",
     "get_naflex_model_patch_size",
     "get_naflex_model_supports_patch_interpolation",
+    "prewarm_naflex_patch_interpolator",
     "require_naflex",
     "resolve_patch_cfg",
 ]
@@ -136,6 +137,34 @@ def get_naflex_model_supports_patch_interpolation(model) -> bool:
                 and getattr(embeds, 'patch_interpolator', None) is not None
                 and getattr(embeds, 'norm_input', None) is None
             )
+    return False
+
+
+def prewarm_naflex_patch_interpolator(model, naflex_data_config) -> bool:
+    """Precompute the image tower's patch-embed resampling matrices for every configured non-base patch size.
+
+    Wraps timm's ``prewarm_patch_interpolator`` (timm >= 1.0.29). Returns False as a no-op on older timm, when no
+    non-base patch size is configured, or when the tower does not expose the hook. Call after the model is on its
+    execution device and cast to its training dtype, and before ``torch.compile``: without prewarming the first
+    non-base forward fills the cache lazily, which costs a recompile under compile. timm clears the cache on any
+    later ``.to()`` / dtype conversion, after which the lazy path simply resumes.
+    """
+    model_patch_size = getattr(naflex_data_config, 'model_patch_size', None)
+    if model_patch_size is None:
+        return False
+    patch_sizes = set(naflex_data_config.train_patch_sizes)
+    patch_sizes.add(naflex_data_config.eval_patch_size)
+    patch_sizes = sorted(size for size in patch_sizes if size != model_patch_size)
+    if not patch_sizes:
+        return False
+    model = getattr(model, 'module', model)
+    visual = getattr(model, 'visual', None)
+    trunk = getattr(visual, 'trunk', visual)
+    for tower in (trunk, visual):
+        prewarm = getattr(tower, 'prewarm_patch_interpolator', None)
+        if callable(prewarm):
+            prewarm(patch_sizes)
+            return True
     return False
 
 

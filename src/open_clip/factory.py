@@ -332,6 +332,7 @@ def create_model(
         force_preprocess_cfg: Optional[Dict[str, Any]] = None,
         force_context_length: Optional[int] = None,
         force_naflex_vision: bool = False,
+        force_naflex_patch_interp: bool = False,
         pretrained_image: bool = False, # Load default base image weights (at creation, if no CLIP weights)
         pretrained_text: bool = True,  # Load default base text weights (at creation, if no CLIP weights) - NEW
         pretrained_image_path: Optional[str] = None, # Load specific image weights from file (after creation)
@@ -370,6 +371,10 @@ def create_model(
         force_preprocess_cfg: Dict to override specific FINAL preprocessing parameters.
         force_context_length: Override context length in model config.
         force_naflex_vision: Convert compatible native OpenCLIP ViT or timm EVA/ViT vision towers to NaFlexVit.
+        force_naflex_patch_interp: Override ``vision_cfg.naflex_patch_interp`` to True: enable timm's parameter-free
+            patch-embed weight interpolator on a NaFlexVit vision tower so it accepts patches at sizes other than
+            its base patch size (variable-patch NaFlex training / eval). State-dict compatible. A model trained
+            this way should declare ``naflex_patch_interp`` in its config so plain loading needs no override.
         pretrained_image: Load default base weights for image tower at creation if no CLIP weights loaded.
         pretrained_text: Load default base weights for text tower at creation if no CLIP weights loaded (default: True).
         pretrained_image_path: Path to load weights specifically into image tower after creation.
@@ -516,11 +521,15 @@ def create_model(
             warnings.warn("force_image_size is ignored for CLAP audio models.", UserWarning)
         if force_naflex_vision:
             raise ValueError("force_naflex_vision is only valid for image models.")
+        if force_naflex_patch_interp:
+            raise ValueError("force_naflex_patch_interp is only valid for image models.")
     else:
         if force_patch_dropout is not None:
             vision_cfg["patch_dropout"] = force_patch_dropout
         if force_image_size is not None:
             vision_cfg["image_size"] = force_image_size
+        if force_naflex_patch_interp:
+            vision_cfg["naflex_patch_interp"] = True
         if force_naflex_vision:
             apply_naflex_vision_config(model_cfg)
     if force_context_length is not None:
@@ -1248,6 +1257,7 @@ def create_model_and_transforms(
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_context_length: Optional[int] = None,
         force_naflex_vision: bool = False,
+        force_naflex_patch_interp: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
@@ -1290,6 +1300,10 @@ def create_model_and_transforms(
         force_image_size: Override image size in model config.
         force_context_length: Override context length in model config.
         force_naflex_vision: Convert compatible native OpenCLIP ViT or timm EVA/ViT vision towers to NaFlexVit.
+        force_naflex_patch_interp: Override ``vision_cfg.naflex_patch_interp`` to True: enable timm's parameter-free
+            patch-embed weight interpolator on a NaFlexVit vision tower so it accepts patches at sizes other than
+            its base patch size (variable-patch NaFlex training / eval). State-dict compatible. A model trained
+            this way should declare ``naflex_patch_interp`` in its config so plain loading needs no override.
         image_mean: Override default image normalization mean values (per channel).
         image_std: Override default image normalization std values (per channel).
         image_interpolation: Override default interpolation method for image resizing.
@@ -1356,6 +1370,7 @@ def create_model_and_transforms(
         force_preprocess_cfg=force_preprocess_cfg,
         force_context_length=force_context_length,
         force_naflex_vision=force_naflex_vision,
+        force_naflex_patch_interp=force_naflex_patch_interp,
         pretrained_image=pretrained_image,
         pretrained_text=pretrained_text,
         pretrained_image_path=pretrained_image_path,
@@ -1382,6 +1397,7 @@ def create_model_from_pretrained(
         force_image_size: Optional[Union[int, Tuple[int, int]]] = None,
         force_context_length: Optional[int] = None,
         force_naflex_vision: bool = False,
+        force_naflex_patch_interp: bool = False,
         image_mean: Optional[Tuple[float, ...]] = None,
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
@@ -1418,6 +1434,10 @@ def create_model_from_pretrained(
         force_image_size: Override image size in model config. Useful for using models at different resolutions.
         force_context_length: Override context length in model config.
         force_naflex_vision: Convert compatible native OpenCLIP ViT or timm EVA/ViT vision towers to NaFlexVit.
+        force_naflex_patch_interp: Override ``vision_cfg.naflex_patch_interp`` to True: enable timm's parameter-free
+            patch-embed weight interpolator on a NaFlexVit vision tower so it accepts patches at sizes other than
+            its base patch size (variable-patch NaFlex training / eval). State-dict compatible. A model trained
+            this way should declare ``naflex_patch_interp`` in its config so plain loading needs no override.
         image_mean: Override default image normalization mean values (per channel).
         image_std: Override default image normalization std values (per channel).
         image_interpolation: Override default interpolation method for image resizing ('bicubic', 'bilinear', 'nearest').
@@ -1478,6 +1498,7 @@ def create_model_from_pretrained(
         force_preprocess_cfg=force_preprocess_cfg,
         force_context_length=force_context_length,
         force_naflex_vision=force_naflex_vision,
+        force_naflex_patch_interp=force_naflex_patch_interp,
         cache_dir=cache_dir,
         require_pretrained=True,
         weights_only=weights_only,

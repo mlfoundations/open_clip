@@ -102,10 +102,6 @@ def _force_naflex_native_vit_vision(vision_cfg: Dict[str, Any], quick_gelu: bool
         'final_norm': True,
         'fc_norm': False,
         'embed_proj_type': 'linear',
-        # OpenCLIP exposes patch-size selection through its NaFlex data pipeline. The interpolator is
-        # parameter-free and only runs for non-base 5-D patches, so enabling it here is state-dict compatible and
-        # leaves the base-patch path unchanged.
-        'enable_patch_interpolator': True,
         'qkv_bias': True,
         'proj_bias': True,
         'act_layer': 'quick_gelu' if quick_gelu else None,
@@ -126,24 +122,26 @@ def _force_naflex_timm_vision(vision_cfg: Dict[str, Any]) -> None:
     timm_model_name = vision_cfg.get('timm_model_name')
     if not timm_model_name:
         raise RuntimeError("NaFlex vision mode requires a compatible timm or native ViT vision tower.")
-    is_naflex_model = _is_naflex_timm_model_name(timm_model_name)
-    if not is_naflex_model and not _can_convert_timm_model_to_naflex(timm_model_name):
+    if _is_naflex_timm_model_name(timm_model_name):
+        return
+    if not _can_convert_timm_model_to_naflex(timm_model_name):
         raise RuntimeError(
             f"NaFlex vision mode cannot convert timm model '{timm_model_name}'. "
             "Use a timm EVA/ViT model or an explicit naflexvit model config."
         )
     timm_model_kwargs = deepcopy(vision_cfg.get('timm_model_kwargs') or {})
-    if not is_naflex_model:
-        timm_model_kwargs['use_naflex'] = True
-    timm_model_kwargs['enable_patch_interpolator'] = True
-    if not is_naflex_model and vision_cfg.get('timm_pool') == 'map' and _is_timm_model_in_modules(
-            timm_model_name, ('eva',)
-    ):
+    timm_model_kwargs['use_naflex'] = True
+    if vision_cfg.get('timm_pool') == 'map' and _is_timm_model_in_modules(timm_model_name, ('eva',)):
         timm_model_kwargs.setdefault('pool_include_prefix', True)
     vision_cfg['timm_model_kwargs'] = timm_model_kwargs
 
 
 def apply_naflex_vision_config(model_cfg: Dict[str, Any]) -> None:
+    """Convert the vision tower config to a timm NaFlexVit (in place).
+
+    Other ``vision_cfg`` keys are preserved, including ``naflex_patch_interp`` (see ``CLIPVisionCfg``), which the
+    vision tower builder maps to timm's ``enable_patch_interpolator`` for NaFlexVit towers.
+    """
     vision_cfg = model_cfg['vision_cfg']
     if vision_cfg.get('timm_model_name'):
         _force_naflex_timm_vision(vision_cfg)

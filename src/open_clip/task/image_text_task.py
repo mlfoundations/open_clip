@@ -44,10 +44,13 @@ class ImageTextTask(TrainingTask):
             context_length = model.context_length
 
         if self._naflex_data_config is not None:
+            naflex_cfg = self._naflex_data_config
             image = self._create_naflex_dummy_image(
                 batch_size=batch_size,
-                max_seq_len=self._naflex_data_config.eval_seq_len,
-                patch_size=self._naflex_data_config.eval_patch_size,
+                max_seq_len=naflex_cfg.eval_seq_len,
+                patch_size=naflex_cfg.eval_patch_size,
+                # Same rule as the real eval transform: only base-size patches are flattened.
+                flatten_patches=naflex_cfg.should_flatten_patches(naflex_cfg.eval_patch_size),
                 device=device,
                 dtype=dtype,
             )
@@ -71,9 +74,16 @@ class ImageTextTask(TrainingTask):
             device: Optional[torch.device] = None,
             dtype: Optional[torch.dtype] = None,
             num_channels: int = 3,
+            flatten_patches: bool = True,
     ) -> Dict[str, torch.Tensor]:
-        patch_dim = patch_size[0] * patch_size[1] * num_channels
-        patches = torch.zeros(batch_size, max_seq_len, patch_dim, device=device, dtype=dtype)
+        if flatten_patches:
+            patch_dim = patch_size[0] * patch_size[1] * num_channels
+            patches = torch.zeros(batch_size, max_seq_len, patch_dim, device=device, dtype=dtype)
+        else:
+            # Non-base patch size: keep (Ph, Pw, C) (channels-last, as timm's Patchify emits) so the tower can
+            # resample its projection weight instead of hitting a flat-dim mismatch.
+            patches = torch.zeros(
+                batch_size, max_seq_len, patch_size[0], patch_size[1], num_channels, device=device, dtype=dtype)
 
         width = math.ceil(math.sqrt(max_seq_len))
         patch_idx = torch.arange(max_seq_len, device=device)

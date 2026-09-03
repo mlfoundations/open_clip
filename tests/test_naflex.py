@@ -352,6 +352,7 @@ def test_parse_naflex_args():
     ])
 
     assert args.use_naflex
+    assert args.force_naflex_patch_interp is True  # auto-enabled: more than one patch size listed
     assert args.naflex_num_train_image_tokens == 1024
     assert args.naflex_patch_sizes == [16, 32]
     assert args.naflex_patch_size_probs == [0.25, 0.75]
