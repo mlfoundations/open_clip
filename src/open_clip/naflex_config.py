@@ -120,7 +120,8 @@ class NaFlexDataConfig:
             raise ValueError(
                 f"NaFlex patch sizes {non_base_sizes} differ from the model base patch size "
                 f"{model_patch_size}, but this model does not have patch interpolation enabled/supported. "
-                "Use the base patch size or a timm NaFlexVit image tower with patch interpolation enabled."
+                "Use the base patch size, or enable patch interpolation on a timm NaFlexVit image tower "
+                "(vision_cfg.naflex_patch_interp / --force-naflex-patch-interp)."
             )
 
         return cls(

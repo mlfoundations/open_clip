@@ -31,6 +31,7 @@ from open_clip_train.naflex_data import (
     get_naflex_model_image_seq_len,
     get_naflex_model_patch_size,
     get_naflex_model_supports_patch_interpolation,
+    prewarm_naflex_patch_interpolator,
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args
@@ -235,6 +236,7 @@ def main(args):
         image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
         force_naflex_vision=args.force_naflex_vision,
+        force_naflex_patch_interp=args.force_naflex_patch_interp,
         pretrained_image=args.pretrained_image,
         output_dict=True,
         cache_dir=args.cache_dir,
@@ -410,6 +412,10 @@ def main(args):
         )
         if args.use_naflex else None
     )
+    if naflex_data_config is not None and prewarm_naflex_patch_interpolator(model, naflex_data_config):
+        # Model is on its device and cast here, before DDP/FSDP/compile: fill timm's patch-weight resampling
+        # cache now so the first non-base-patch forward does not trigger a recompile.
+        logging.info('Prewarmed NaFlex patch interpolator for non-base patch sizes.')
     data = get_data(
         args,
         (preprocess_train, preprocess_val),

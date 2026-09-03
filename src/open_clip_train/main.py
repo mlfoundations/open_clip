@@ -45,6 +45,7 @@ from open_clip_train.naflex_data import (
     get_naflex_model_image_seq_len,
     get_naflex_model_patch_size,
     get_naflex_model_supports_patch_interpolation,
+    prewarm_naflex_patch_interpolator,
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.optim import OptimizerCfg, create_optimizer
@@ -283,6 +284,7 @@ def main(args):
         aug_cfg=args.aug_cfg,
         audio_aug_cfg=audio_aug_cfg,
         force_naflex_vision=args.force_naflex_vision,
+        force_naflex_patch_interp=args.force_naflex_patch_interp,
         pretrained_image=args.pretrained_image,
         pretrained_audio_path=args.pretrained_audio,
         output_dict=True,
@@ -382,6 +384,10 @@ def main(args):
         )
         if args.use_naflex else None
     )
+    if naflex_data_config is not None and prewarm_naflex_patch_interpolator(model, naflex_data_config):
+        # Model is on its device and cast here, before DDP/FSDP/compile: fill timm's patch-weight resampling
+        # cache now so the first non-base-patch forward does not trigger a recompile.
+        _logger.info('Prewarmed NaFlex patch interpolator for non-base patch sizes.')
 
     # Create task (wraps model + loss)
     task = create_task(args, model=model, dist_model=dist_model, naflex_data_config=naflex_data_config)

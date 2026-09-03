@@ -17,6 +17,7 @@ from open_clip_train.naflex_data import (
     create_naflex_eval_transform,
     get_naflex_model_patch_size,
     get_naflex_model_supports_patch_interpolation,
+    prewarm_naflex_patch_interpolator,
 )
 from open_clip_train.params import parse_args
 
@@ -103,6 +104,18 @@ def _tiny_naflex_siglip2_clip_config():
     return config
 
 
+def _naflex_args(patch_sizes):
+    return types.SimpleNamespace(
+        naflex_patch_sizes=patch_sizes,
+        naflex_patch_size_probs=None,
+        naflex_seq_lens=[4],
+        naflex_seq_len_probs=None,
+        naflex_num_train_image_tokens=None,
+        naflex_max_tokens_per_batch=None,
+        naflex_batch_divisor=1,
+    )
+
+
 def _write_tiny_big_vision_npz(path):
     rng = np.random.default_rng(0)
     width = 4
@@ -187,6 +200,28 @@ def test_force_naflex_vision_passes_use_naflex_to_timm(monkeypatch):
     )
 
     assert captured["use_naflex"] is True
+    assert "enable_patch_interpolator" not in captured  # opt-in only
+
+    captured.clear()
+    factory.create_model(
+        "test-eva-naflex",
+        load_weights=False,
+        force_naflex_vision=True,
+        force_naflex_patch_interp=True,
+    )
+    assert captured["use_naflex"] is True
+    assert captured["enable_patch_interpolator"] is True
+
+    # An already-NaFlex timm tower needs no conversion; the flag alone enables the interpolator.
+    captured.clear()
+    monkeypatch.setitem(
+        factory._MODEL_CONFIGS, "test-naflex-timm", _tiny_timm_clip_config("naflexvit_base_patch16_siglip"))
+    factory.create_model(
+        "test-naflex-timm",
+        load_weights=False,
+        force_naflex_patch_interp=True,
+    )
+    assert "use_naflex" not in captured
     assert captured["enable_patch_interpolator"] is True
 
 
@@ -206,8 +241,14 @@ def test_force_naflex_vision_configures_pe_core_timm_tower():
     assert vision_cfg["timm_pool"] == "map"
     assert vision_cfg["timm_proj"] is None
     assert vision_cfg["timm_model_kwargs"]["use_naflex"] is True
-    assert vision_cfg["timm_model_kwargs"]["enable_patch_interpolator"] is True
+    assert "enable_patch_interpolator" not in vision_cfg["timm_model_kwargs"]
     assert vision_cfg["timm_model_kwargs"]["pool_include_prefix"] is True
+
+    config = factory.get_model_config("PE-Core-B-16")
+    config["vision_cfg"]["naflex_patch_interp"] = True
+    naflex_convert.apply_naflex_vision_config(config)
+    assert config["vision_cfg"]["naflex_patch_interp"] is True  # preserved; mapped to timm at tower build
+    assert "enable_patch_interpolator" not in config["vision_cfg"]["timm_model_kwargs"]
 
 
 @pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
@@ -225,7 +266,38 @@ def test_force_naflex_vision_converts_native_vit_config():
     assert vision_cfg["timm_model_kwargs"]["depth"] == 1
     assert vision_cfg["timm_model_kwargs"]["num_heads"] == 1
     assert vision_cfg["timm_model_kwargs"]["pos_embed_grid_size"] == (2, 2)
-    assert vision_cfg["timm_model_kwargs"]["enable_patch_interpolator"] is True
+    assert "enable_patch_interpolator" not in vision_cfg["timm_model_kwargs"]
+
+    config = _tiny_native_vit_clip_config()
+    config["vision_cfg"]["naflex_patch_interp"] = True
+    naflex_convert.apply_naflex_vision_config(config)
+    assert config["vision_cfg"]["naflex_patch_interp"] is True
+    assert "enable_patch_interpolator" not in config["vision_cfg"]["timm_model_kwargs"]
+
+
+def test_naflex_vision_config_preserves_declared_patch_interpolator():
+    # A config that declares the interpolator (a model trained with variable patch sizes) keeps it through both
+    # the no-op NaFlex pass-through and the native-ViT conversion, without any runtime override.
+    config = _tiny_naflex_siglip2_clip_config()
+    config["vision_cfg"]["naflex_patch_interp"] = True
+    naflex_convert.apply_naflex_vision_config(config)
+    assert config["vision_cfg"]["naflex_patch_interp"] is True
+
+    config = _tiny_native_vit_clip_config()
+    config["vision_cfg"]["naflex_patch_interp"] = True
+    naflex_convert.apply_naflex_vision_config(config)
+    assert config["vision_cfg"]["naflex_patch_interp"] is True
+
+    # The raw timm kwarg is still a valid passthrough for hand-written configs.
+    config = _tiny_naflex_siglip2_clip_config()
+    config["vision_cfg"]["timm_model_kwargs"]["enable_patch_interpolator"] = True
+    naflex_convert.apply_naflex_vision_config(config)
+    assert config["vision_cfg"]["timm_model_kwargs"]["enable_patch_interpolator"] is True
+
+
+def test_naflex_patch_interp_requires_naflex_timm_tower():
+    with pytest.raises(ValueError, match="requires a timm NaFlexVit vision tower"):
+        factory.create_model("RN50", load_weights=False, force_naflex_patch_interp=True)
 
 
 def test_force_naflex_vision_rejects_non_vit_model():
@@ -241,8 +313,16 @@ def test_parse_use_naflex_enables_timm_naflex_aug_cfg():
     args = parse_args(["--use-naflex"])
 
     assert args.force_naflex_vision is True
+    assert args.force_naflex_patch_interp is False
     assert args.aug_cfg["use_timm"] is True
     assert args.aug_cfg["naflex"] is True
+
+
+def test_parse_naflex_patch_interp_auto_enables_for_multiple_patch_sizes():
+    assert parse_args(["--use-naflex", "--naflex-patch-sizes", "16", "32"]).force_naflex_patch_interp is True
+    # A single (possibly non-base) size stays off; the data config fail-fast names the flag if it is needed.
+    assert parse_args(["--use-naflex", "--naflex-patch-sizes", "32"]).force_naflex_patch_interp is False
+    assert parse_args(["--use-naflex", "--force-naflex-patch-interp"]).force_naflex_patch_interp is True
 
 
 def test_parse_force_naflex_vision_does_not_enable_naflex_data_pipeline():
@@ -287,23 +367,26 @@ def test_naflex_model_patch_info_handles_adapter_and_interpolating_timm_tower():
 
     from timm.models.naflexvit import NaFlexVit, NaFlexVitCfg
 
-    trunk = NaFlexVit(
-        NaFlexVitCfg(
-            patch_size=16,
-            embed_dim=4,
-            depth=1,
-            num_heads=1,
-            pos_embed="none",
-            enable_patch_interpolator=True,
-        ),
-        num_classes=0,
-    )
-    timm_model = types.SimpleNamespace(visual=types.SimpleNamespace(trunk=trunk))
+    def _timm_model(**cfg_kwargs):
+        trunk = NaFlexVit(
+            NaFlexVitCfg(patch_size=16, embed_dim=4, depth=1, num_heads=1, pos_embed="none", **cfg_kwargs),
+            num_classes=0,
+        )
+        return types.SimpleNamespace(visual=types.SimpleNamespace(trunk=trunk))
 
-    assert get_naflex_model_patch_size(timm_model) == (16, 16)
-    assert get_naflex_model_supports_patch_interpolation(timm_model)
-    trunk.embeds.norm_input = nn.Identity()
-    assert not get_naflex_model_supports_patch_interpolation(timm_model)
+    interp_model = _timm_model(enable_patch_interpolator=True)
+    assert get_naflex_model_patch_size(interp_model) == (16, 16)
+    assert get_naflex_model_supports_patch_interpolation(interp_model)
+    # Built without the interpolator (the default), the same tower cannot consume non-base patches.
+    assert not get_naflex_model_supports_patch_interpolation(_timm_model())
+
+    # Introspection fallback for timm versions without a declared `supports_patch_interpolation` attribute.
+    embeds = types.SimpleNamespace(
+        is_linear=True, enable_patch_interpolator=True, patch_interpolator=object(), norm_input=None)
+    legacy_model = types.SimpleNamespace(visual=types.SimpleNamespace(trunk=types.SimpleNamespace(embeds=embeds)))
+    assert get_naflex_model_supports_patch_interpolation(legacy_model)
+    embeds.norm_input = nn.Identity()  # input norm is tied to the base patch dim
+    assert not get_naflex_model_supports_patch_interpolation(legacy_model)
 
 
 def test_naflex_data_config_fails_fast_for_fixed_patch_adapter():
@@ -342,6 +425,7 @@ def test_naflex_16_32_forward_backward(monkeypatch):
         "test-naflex-variable-patch",
         load_weights=False,
         force_naflex_vision=True,
+        force_naflex_patch_interp=True,
     )
     assert get_naflex_model_supports_patch_interpolation(model)
 
@@ -401,6 +485,7 @@ def test_naflex_non_base_eval_and_checkpoint_round_trip(monkeypatch, tmp_path):
         "test-naflex-variable-patch",
         load_weights=False,
         force_naflex_vision=True,
+        force_naflex_patch_interp=True,
         aug_cfg={"use_timm": True, "naflex": True},
     )
     model.eval()
@@ -432,6 +517,7 @@ def test_naflex_non_base_eval_and_checkpoint_round_trip(monkeypatch, tmp_path):
         "test-naflex-variable-patch",
         load_weights=False,
         force_naflex_vision=True,
+        force_naflex_patch_interp=True,
     )
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     restored.load_state_dict(checkpoint["state_dict"], strict=True)
@@ -441,6 +527,69 @@ def test_naflex_non_base_eval_and_checkpoint_round_trip(monkeypatch, tmp_path):
     with torch.inference_mode():
         actual = restored.encode_image(images)
     torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
+def test_naflex_patch_interp_off_by_default(monkeypatch):
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-naflex-variable-patch", _tiny_naflex_siglip2_clip_config())
+    model = factory.create_model("test-naflex-variable-patch", load_weights=False, force_naflex_vision=True)
+    assert not get_naflex_model_supports_patch_interpolation(model)
+    with pytest.raises(ValueError, match="does not have patch interpolation enabled/supported"):
+        create_naflex_data_config_from_args(
+            _naflex_args([16, 32]),
+            default_patch_size=get_naflex_model_patch_size(model),
+            supports_patch_interpolation=get_naflex_model_supports_patch_interpolation(model),
+        )
+    # Base-size-only configs never need it.
+    config = create_naflex_data_config_from_args(
+        _naflex_args([16]),
+        default_patch_size=get_naflex_model_patch_size(model),
+        supports_patch_interpolation=get_naflex_model_supports_patch_interpolation(model),
+    )
+    assert config.should_flatten_patches(16)
+
+    # Opt in on an unconverted NaFlex timm tower, and via the config field (no override).
+    model = factory.create_model("test-naflex-variable-patch", load_weights=False, force_naflex_patch_interp=True)
+    assert get_naflex_model_supports_patch_interpolation(model)
+    declared = _tiny_naflex_siglip2_clip_config()
+    declared["vision_cfg"]["naflex_patch_interp"] = True
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-naflex-variable-patch-declared", declared)
+    model = factory.create_model("test-naflex-variable-patch-declared", load_weights=False, force_naflex_vision=True)
+    assert get_naflex_model_supports_patch_interpolation(model)
+    # ...and with plain loading (no conversion, no override): what a hub config would rely on.
+    model = factory.create_model("test-naflex-variable-patch-declared", load_weights=False)
+    assert get_naflex_model_supports_patch_interpolation(model)
+
+
+@pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
+def test_prewarm_naflex_patch_interpolator(monkeypatch):
+    monkeypatch.setitem(factory._MODEL_CONFIGS, "test-naflex-variable-patch", _tiny_naflex_siglip2_clip_config())
+    model = factory.create_model(
+        "test-naflex-variable-patch",
+        load_weights=False,
+        force_naflex_vision=True,
+        force_naflex_patch_interp=True,
+    )
+    model_patch_size = get_naflex_model_patch_size(model)
+    supports = get_naflex_model_supports_patch_interpolation(model)
+
+    base_only = create_naflex_data_config_from_args(
+        _naflex_args([16]), default_patch_size=model_patch_size, supports_patch_interpolation=supports)
+    assert prewarm_naflex_patch_interpolator(model, base_only) is False
+
+    multi = create_naflex_data_config_from_args(
+        _naflex_args([16, 32]), default_patch_size=model_patch_size, supports_patch_interpolation=supports)
+    has_hook = hasattr(model.visual.trunk, "prewarm_patch_interpolator")  # timm >= 1.0.29
+    assert prewarm_naflex_patch_interpolator(model, multi) is has_hook
+    assert prewarm_naflex_patch_interpolator(types.SimpleNamespace(module=model), multi) is has_hook  # DDP-wrapped
+
+    # A non-base forward still works either way (prewarmed cache, or lazy fill on older timm).
+    patches = torch.randn(1, 4, 32, 32, 3)
+    coord = torch.tensor([[[0, 0], [0, 1], [1, 0], [1, 1]]])
+    valid = torch.ones(1, 4, dtype=torch.bool)
+    with torch.inference_mode():
+        out = model.encode_image({"patches": patches, "patch_coord": coord, "patch_valid": valid})
+    assert out.shape == (1, 4)
 
 
 def test_builtin_naflex_siglip2_configs_select_naflex_towers():
