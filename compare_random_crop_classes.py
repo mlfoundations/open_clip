@@ -161,8 +161,8 @@ def main():
             f"Net correct: {row['net_correct_change']:+d}"
         )
 
-    lines.extend(["", "TOP 10 F1 DECLINES", "-" * 100])
-    for rank, row in enumerate(sorted_rows[-10:][::-1], start=1):
+    lines.extend(["", "F1 DECLINES", "-" * 100])
+    for rank, row in enumerate(sorted(declined, key=lambda row: row["f1_change"]), start=1):
         lines.append(
             f"{rank:02d}. {row['class_name']:<32} "
             f"Full: {row['full_f1'] * 100:6.2f}% | "
