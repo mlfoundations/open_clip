@@ -228,11 +228,7 @@ def main():
     })
 
     prompt_df.to_csv(
-        RESULTS_DIR / "prompts_used.csv",Get-ChildItem "C:\Projects" -Recurse -File -ErrorAction SilentlyContinue |
-Where-Object {
-    $_.Extension -match "\.(jpg|jpeg)$"
-} |
-Select-Object -First 20 FullName
+        RESULTS_DIR / "prompts_used.csv",
         index=False,
     )
 
