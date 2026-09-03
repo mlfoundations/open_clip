@@ -418,9 +418,15 @@ class SigLipLoss(nn.Module):
         if self.chunk_size > 0:
             return self._chunked_loss(image_features, text_features, logit_scale, logit_bias, negative_only)
         logits = self.get_logits(image_features, text_features, logit_scale, logit_bias)
+        # Keep the reduction in fp32.  SigLIP sums B x N binary losses, so an
+        # fp16/bfloat16 reduction can overflow for otherwise perfectly valid
+        # large-batch logits (the per-pair values are finite).  Upcasting the
+        # logits also gives logsigmoid a stable accumulation dtype while the
+        # feature projection above remains in the model/autocast dtype.
+        logits = logits.float()
         labels = self.get_ground_truth(
             image_features.device,
-            image_features.dtype,
+            logits.dtype,
             image_features.shape[0],
             negative_only=negative_only,
         )
@@ -447,6 +453,10 @@ class SigLipLoss(nn.Module):
             end_i = min(i + chunk_size, B)
             img_chunk = image_features[i:end_i]
             logits = self.get_logits(img_chunk, text_features, logit_scale, logit_bias)
+            # Accumulate the O(chunk_size * N) pair losses in fp32.  Without
+            # this cast, a single chunk can overflow fp16 before it is added
+            # to the fp32 running total.
+            logits = logits.float()
 
             # Treat every pair as negative: -logsigmoid(-logits) == softplus(logits)
             chunk_loss = F.softplus(logits).sum()
