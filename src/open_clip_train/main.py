@@ -399,6 +399,7 @@ def main(args):
     compile_kwargs = dict(
         backend=args.torchcompile_backend,
         mode=args.torchcompile_mode,
+        dynamic=args.torchcompile_dynamic,
     )
     naflex_multimodal = args.use_naflex and isinstance(unwrap_model(model), MaMMUT)
     if args.torchcompile and args.distributed and not args.fsdp and (
@@ -416,15 +417,24 @@ def main(args):
         _logger.info(f'Disabling DDP dynamo optimizer ({reason}).')
         torch._dynamo.config.optimize_ddp = False
 
-    if args.torchcompile and args.torchcompile_strategy == 'model':
+    if args.torchcompile and args.torchcompile_pass_break:
+        inner = unwrap_model(model)
+        if hasattr(inner, 'pass_graph_break'):
+            inner.pass_graph_break = True
+            _logger.info('Enabling graph break between contrastive and caption decoder passes.')
+        else:
+            _logger.warning(
+                '--torchcompile-pass-break: model has no dual-pass graph break support; ignoring.')
+
+    if args.torchcompile and args.torchcompile_strategy in ('model', 'blocks'):
         if args.fsdp:
             _logger.info(
-                'torch.compile strategy=model with FSDP uses prepare_fsdp() per-block compile; '
-                'skipping root trainable_module compile.'
+                f'torch.compile strategy={args.torchcompile_strategy} with FSDP uses prepare_fsdp() '
+                'per-block compile; skipping pre-wrap compile.'
             )
         else:
-            _logger.info('Compiling trainable_module before distributed wrapping.')
-            task.compile(target='model', **compile_kwargs)
+            _logger.info(f'Compiling ({args.torchcompile_strategy}) before distributed wrapping.')
+            task.compile(target=args.torchcompile_strategy, **compile_kwargs)
 
     # Resolve FSDP mixed-precision from --precision.
     # Always create MixedPrecisionPolicy when FSDP is active (at minimum for fp32 reductions).

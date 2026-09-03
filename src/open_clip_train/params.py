@@ -522,12 +522,15 @@ def parse_args(args):
         "--torchcompile-strategy",
         type=str,
         default="task",
-        choices=["model", "task", "step"],
+        choices=["model", "task", "step", "blocks"],
         help=(
             "Compile strategy when --torchcompile is enabled: "
             "'model' compiles trainable_module before distributed wrapping, "
             "'task' compiles task train/eval forward callables, "
-            "'step' compiles the single-batch forward/backward/optimizer step."
+            "'step' compiles the single-batch forward/backward/optimizer step, "
+            "'blocks' compiles transformer blocks in place (before distributed wrapping) so "
+            "grad-checkpoint recompute stays in eager autograd -- bounds compiled-backward "
+            "memory when whole-graph compile schedules checkpointed recomputes poorly."
         ),
     )
     parser.add_argument(
@@ -541,6 +544,27 @@ def parse_args(args):
         type=str,
         default=None,
         help="Optional torch.compile mode, e.g. default, reduce-overhead, or max-autotune.",
+    )
+    parser.add_argument(
+        "--torchcompile-dynamic",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Pass dynamic=True/False to torch.compile (default None = automatic). "
+             "--no-torchcompile-dynamic forces per-shape static graphs; pair it with "
+             "--text-pad-multiple / --naflex-pad-multiple so the shape set stays small -- "
+             "automatic dynamic otherwise switches to a symbolic graph on the second shape, "
+             "with worse memory planning.",
+    )
+    parser.add_argument(
+        "--torchcompile-pass-break",
+        default=False,
+        action='store_true',
+        help="Insert a dynamo graph break between the contrastive and caption passes of dual-pass "
+             "decoder models (MaMMUT) under full-graph compile. One graph holding two checkpointed "
+             "traversals of the same decoder blocks makes the compiled backward retain a multi-block "
+             "recompute working set (2-3.5x eager peak memory); breaking between the passes restores "
+             "eager-like memory at no measured speed cost. Not needed with "
+             "--torchcompile-strategy blocks (recompute already stays eager there).",
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
@@ -706,6 +730,28 @@ def parse_args(args):
              "linear cross-entropy (never materializes the [B, L, vocab] logits; large memory "
              "saving at big batch). Loss values match the default (logits) path exactly. "
              "Not yet supported with --accum-freq > 1."
+    )
+    parser.add_argument(
+        "--caption-z-loss-weight",
+        type=float,
+        default=0.0,
+        help="Weight for mean square(logsumexp(vocabulary logits)) on valid next-token targets. "
+             "Applies to CoCa/MaMMUT and GenLIP/GenLAP at exactly this weight (independent of "
+             "--coca-caption-loss-weight); 0 disables it."
+    )
+    parser.add_argument(
+        "--caption-loss-compute-dtype",
+        choices=("float32", "model"),
+        default="float32",
+        help="Caption CE/logsumexp compute mode. float32 explicitly upcasts their logits (the default, "
+             "matching existing numerics); model preserves the logits dtype and ambient autocast policy. "
+             "Returned loss/component scalars remain float32."
+    )
+    parser.add_argument(
+        "--caption-loss-chunk-size",
+        type=int,
+        default=4096,
+        help="Number of valid next-token rows per vocabulary-logit chunk in fused caption loss."
     )
     parser.add_argument(
         "--remote-sync",
@@ -900,6 +946,12 @@ def parse_args(args):
     # A negative EMA horizon would make the decay exp(-n/h) > 1 and diverge the EMA; 0 disables it.
     if args.train_loss_ema_samples < 0:
         raise ValueError(f"--train-loss-ema-samples must be >= 0 (0 disables), got {args.train_loss_ema_samples}.")
+
+    if args.caption_z_loss_weight < 0:
+        raise ValueError(
+            f"--caption-z-loss-weight must be >= 0 (0 disables), got {args.caption_z_loss_weight}.")
+    if args.caption_loss_chunk_size <= 0:
+        raise ValueError(f"--caption-loss-chunk-size must be > 0, got {args.caption_loss_chunk_size}.")
 
     # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
     # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).

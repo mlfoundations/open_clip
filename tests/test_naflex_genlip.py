@@ -108,10 +108,16 @@ def test_encode_image():
     feats = model.encode_image(batch['image'])
     assert feats.shape == (batch['image']['patches'].shape[0], model.embed_dim)
     assert torch.isfinite(feats).all()
-    # image-only full attention mask is symmetric over valid patches
+    # Encoder-only attention uses a broadcastable key-padding mask.
     pv = batch['image']['patch_valid']
-    m = build_patch_attn_mask(pv)[0, 0]
-    assert m[0, :].sum() == int(pv[0].sum())
+    m = build_patch_attn_mask(pv)
+    assert m.shape == (pv.shape[0], 1, 1, pv.shape[1])
+    assert torch.equal(m[:, 0, 0], pv)
+
+    corrupted = {k: v.clone() for k, v in batch['image'].items()}
+    corrupted['patches'][~pv] = 1e4
+    corrupted_feats = model.encode_image(corrupted)
+    torch.testing.assert_close(corrupted_feats, feats)
 
 
 def test_mrope_section_assertion():
@@ -244,7 +250,7 @@ def test_fused_loss_matches_naive_logits_loss():
     batch = _make_batch(model.pad_id)
     text, tv = batch['text'], batch['text_valid']
 
-    fused = model(image=batch['image'], text=text, text_valid=tv, compute_loss=True)['loss']
+    fused = model(image=batch['image'], text=text, text_valid=tv, compute_loss=True)['caption_loss_ce']
 
     logits = model(image=batch['image'], text=text, text_valid=tv)['logits']
     b, lt = text.shape
@@ -269,9 +275,9 @@ def test_pack_prefix_defaults_off_and_parity_full_prefix():
     image, text, tv = batch['image'], batch['text'], batch['text_valid']
 
     model.pack_prefix = False
-    block = model(image=image, text=text, text_valid=tv, compute_loss=True)['loss']
+    block = model(image=image, text=text, text_valid=tv, compute_loss=True)['caption_loss_ce']
     model.pack_prefix = True
-    packed = model(image=image, text=text, text_valid=tv, compute_loss=True)['loss']
+    packed = model(image=image, text=text, text_valid=tv, compute_loss=True)['caption_loss_ce']
     assert torch.allclose(block, packed, atol=1e-5), f"{block.item()} != {packed.item()}"
 
 
@@ -280,8 +286,12 @@ def test_pack_prefix_variable_prefix_runs():
     model = open_clip.create_model(TEST_MODEL).eval()
     model.pack_prefix = True
     batch = _make_batch(model.pad_id)  # last sample has fewer valid patches (k < Na)
-    loss = model(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True)['loss']
-    assert loss.ndim == 0 and torch.isfinite(loss)
+    out = model(
+        image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True,
+        caption_z_loss=True, caption_loss_chunk_size=7,
+    )
+    assert out['caption_loss_ce'].ndim == 0 and torch.isfinite(out['caption_loss_ce'])
+    assert out['caption_loss_z'] > 0
 
 
 def test_task_fused_loss_flag():
@@ -294,18 +304,19 @@ def test_task_fused_loss_flag():
     model.eval()
     batch = _make_batch(model.pad_id)
 
-    fused_task = GenLipTask(model)
+    fused_task = GenLipTask(model, caption_z_loss_weight=1e-4, caption_loss_chunk_size=7)
     assert fused_task.fused_loss is True
     assert not hasattr(fused_task, 'loss')  # default carries no would-be-unused loss module
 
-    ext_task = GenLipTask(model, fused_loss=False)
+    ext_task = GenLipTask(model, fused_loss=False, caption_z_loss_weight=1e-4)
     assert ext_task.fused_loss is False
     assert type(ext_task.loss).__name__ == 'GenLipLoss'
 
     fused = fused_task._loss_forward(model, batch)
     ext = ext_task._loss_forward(model, batch)
     for out in (fused, ext):
-        assert 'caption_loss' in out and 'loss' in out and torch.isfinite(out['loss'])
+        assert all(k in out for k in ('caption_loss', 'caption_loss_ce', 'caption_loss_z', 'loss'))
+        assert torch.isfinite(out['loss']) and out['caption_loss_z'] > 0
     assert torch.allclose(fused['loss'], ext['loss'], atol=1e-4), \
         f"{fused['loss'].item()} != {ext['loss'].item()}"
 
@@ -324,8 +335,8 @@ def test_grad_checkpointing_toggle_and_parity():
     ckpt.set_grad_checkpointing(True, impl='inline')
     batch = _make_batch(model.pad_id)
     kw = dict(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True)
-    l_ref = ref(**kw)['loss']; l_ref.backward()
-    l_ckpt = ckpt(**kw)['loss']; l_ckpt.backward()
+    l_ref = ref(**kw)['caption_loss_ce']; l_ref.backward()
+    l_ckpt = ckpt(**kw)['caption_loss_ce']; l_ckpt.backward()
     assert torch.allclose(l_ref, l_ckpt, atol=1e-4)
     g_ref = ref.trunk.layers[0].self_attn.q_proj.weight.grad
     g_ckpt = ckpt.trunk.layers[0].self_attn.q_proj.weight.grad
@@ -339,7 +350,7 @@ def test_torch_compile_loss_step():
     batch = _make_batch(model.pad_id)
 
     def step(image, text, text_valid):
-        return model(image=image, text=text, text_valid=text_valid, compute_loss=True)['loss']
+        return model(image=image, text=text, text_valid=text_valid, compute_loss=True)['caption_loss_ce']
 
     compiled = torch.compile(step, backend='aot_eager')
     loss = compiled(batch['image'], batch['text'], batch['text_valid'])
@@ -593,7 +604,7 @@ def test_pre_norm_per_modality_streams():
     batch = _make_batch(model.pad_id)
     with torch.no_grad():
         out = model(**batch, compute_loss=True)
-    assert torch.isfinite(out['loss'])
+    assert torch.isfinite(out['caption_loss_ce'])
 
 
 def test_trunk_bias_and_norm_type_controls():
@@ -631,7 +642,7 @@ def test_trunk_bias_and_norm_type_controls():
     batch = _make_batch(model.pad_id)
     with torch.no_grad():
         out = model(**batch, compute_loss=True)
-    assert torch.isfinite(out['loss'])
+    assert torch.isfinite(out['caption_loss_ce'])
 
     # qk-norm follows norm_type (not fixed at RMSNorm): under layernorm it is LayerNorm.
     cfg['genlip_cfg']['norm_type'] = 'layernorm'

@@ -264,11 +264,16 @@ class AttentionalPooler(nn.Module):
         self.ln_q = norm_layer(d_model)
         self.ln_k = norm_layer(context_dim)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, key_valid: Optional[torch.Tensor] = None):
+        """key_valid: optional [B, L] bool/int validity (True/1 = real K/V token). Padded keys are
+        excluded from pooling attention -- required for NaFlex/variable-length token inputs where
+        trailing positions are padding, not content."""
         N = x.shape[0]
         x = self.ln_k(x)
         q = self.ln_q(self.query)
-        out = self.attn(q.unsqueeze(0).expand(N, -1, -1), k_x=x, v_x=x)
+        # [B, 1, 1, L] bool key mask, broadcast over heads/queries (incl. all-invalid-row guard)
+        attn_mask = context_attn_mask_from_valid(key_valid)
+        out = self.attn(q.unsqueeze(0).expand(N, -1, -1), k_x=x, v_x=x, attn_mask=attn_mask)
         return out
 
 

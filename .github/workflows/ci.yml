@@ -42,23 +42,23 @@ jobs:
         job: [ 1, 2, 3, 4 ]
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
         ref: ${{ inputs.manual_revision_test }}
     - name: Set up Python ${{ matrix.python }}
       id: pythonsetup
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python }}
     - name: Venv cache
       id: venv-cache
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: .env
         key: venv-${{ matrix.os }}-${{ steps.pythonsetup.outputs.python-version }}-${{ hashFiles('requirements*', 'pyproject.toml') }}
     - name: Pytest durations cache
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: .test_durations
         key: test_durations-${{ matrix.os }}-${{ steps.pythonsetup.outputs.python-version }}-${{ matrix.job }}-${{ github.run_id }}
@@ -115,7 +115,7 @@ jobs:
           tests
         jq -s -S 'add' durations_* > .test_durations
     - name: Collect pytest durations
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: pytest_durations_${{ matrix.os }}-${{ matrix.python }}-${{ matrix.job }}
         path: .test_durations

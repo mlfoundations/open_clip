@@ -9,7 +9,7 @@ import os
 import random
 import sys
 import warnings
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import braceexpand
 from dataclasses import dataclass
@@ -28,6 +28,9 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle, pipelinefilter, reraise_exception
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+if TYPE_CHECKING:
+    from open_clip.tokenizer import Tokenizer
+
 # Finite backstop for PIL's decompression-bomb guard (warn > this, error > 2x), mainly for the side paths
 # (CsvDataset, ImageFolder, legacy); the WDS path is gated tighter/earlier by --max-image-pixels in decode_pil_rgb.
 Image.MAX_IMAGE_PIXELS = 128_000_000
@@ -37,7 +40,7 @@ class TokenizeText:
     # Module-level callable replaces inline lambdas in webdataset pipelines so
     # they survive pickling — required under forkserver multiprocessing
     # (Python 3.14+ default on POSIX).
-    def __init__(self, tokenizer, variable: bool = False, output_mask: bool = False):
+    def __init__(self, tokenizer: "Tokenizer", variable: bool = False, output_mask: bool = False):
         self.tokenizer = tokenizer
         self.variable = variable
         # output_mask: emit a per-sample bool validity mask (batch key "text_valid", True = real token),
@@ -104,7 +107,7 @@ from open_clip_train.naflex_data import (
 )
 
 
-def get_text_pad_id(tokenizer) -> int:
+def get_text_pad_id(tokenizer: "Tokenizer") -> int:
     pad_id = getattr(tokenizer, "pad_token_id", None)
     if pad_id is None:
         raise ValueError("variable_text=True requires a tokenizer with a reserved `pad_token_id`.")

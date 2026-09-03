@@ -26,6 +26,9 @@ class CoCaTask(ImageTextTask):
             caption_loss_weight: float = 2.0,
             clip_loss_weight: float = 1.0,
             fused_caption_loss: bool = False,
+            caption_z_loss_weight: float = 0.0,
+            caption_loss_compute_dtype="float32",
+            caption_loss_chunk_size: int = 4096,
             local_loss: bool = False,
             gather_with_grad: bool = False,
             cache_labels: bool = True,
@@ -38,10 +41,16 @@ class CoCaTask(ImageTextTask):
         super().__init__(model, device=device, dtype=dtype, verbose=verbose)
         # pad-value fallback for batches without a text_valid mask (see _caption_labels)
         self.pad_id = getattr(unwrap_model(model), 'pad_id', 0)
-        # fused: labels are passed INTO the model forward, which computes caption_loss via
-        # fused_linear_cross_entropy (no [B, L, V] logits materialized); CoCaLoss then only
-        # applies the loss weighting. Legacy (False): model returns logits, CoCaLoss computes CE.
+        # fused: labels are passed INTO the model forward, which computes the reduced caption CE
+        # (and optional z term) via fused_linear_cross_entropy (no [B, L, V] logits materialized);
+        # CoCaLoss then only applies the loss weighting. Legacy (False): model returns logits,
+        # CoCaLoss computes CE.
         self.fused_caption_loss = bool(fused_caption_loss)
+        if caption_z_loss_weight < 0:
+            raise ValueError(f"caption_z_loss_weight must be non-negative, got {caption_z_loss_weight}")
+        self.caption_z_loss_weight = float(caption_z_loss_weight)
+        self.caption_loss_compute_dtype = caption_loss_compute_dtype
+        self.caption_loss_chunk_size = int(caption_loss_chunk_size)
         if loss is not None:
             self.loss = loss
         elif default_loss:
@@ -55,6 +64,8 @@ class CoCaTask(ImageTextTask):
                 cache_labels=cache_labels,
                 rank=rank,
                 world_size=world_size,
+                z_loss_weight=self.caption_z_loss_weight,
+                compute_dtype=self.caption_loss_compute_dtype,
             )
         # else: eval-only construction, no self.loss attribute
 
@@ -80,9 +91,12 @@ class CoCaTask(ImageTextTask):
             "text_features": model_out["text_features"],
             "logit_scale": model_out["logit_scale"],
         }
-        if "caption_loss" in model_out:
-            # fused path: the model already reduced the caption term (labels went into forward)
-            inputs["caption_loss"] = model_out["caption_loss"]
+        if "caption_loss_ce" in model_out:
+            # fused path: the model already reduced the caption CE (labels went into forward);
+            # caption_loss_z rides along when the model computed the z term
+            inputs["caption_loss_ce"] = model_out["caption_loss_ce"]
+            if "caption_loss_z" in model_out:
+                inputs["caption_loss_z"] = model_out["caption_loss_z"]
         else:
             inputs["logits"] = model_out["logits"][:, :-1]
             inputs["labels"] = self._caption_labels(batch["text"], batch.get("text_valid"))
@@ -91,11 +105,20 @@ class CoCaTask(ImageTextTask):
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         if self.fused_caption_loss:
             labels = self._caption_labels(batch["text"], batch.get("text_valid"))
-            model_out = self.trainable_module(**batch, labels=labels)
+            model_out = self.trainable_module(
+                **batch,
+                labels=labels,
+                caption_z_loss=self.caption_z_loss_weight != 0,
+                caption_loss_compute_dtype=self.caption_loss_compute_dtype,
+                caption_loss_chunk_size=self.caption_loss_chunk_size,
+            )
         else:
             model_out = self.trainable_module(**batch)
         loss_input = self._build_loss_inputs(model_out, batch)
         losses = self.loss(**loss_input, output_dict=True)
+        # Log the (detached) caption components on the fused path regardless of loss module; they
+        # intentionally lack a ``_loss`` suffix so they are not summed into the total below.
+        losses.update({k: model_out[k].detach() for k in ("caption_loss_ce", "caption_loss_z") if k in model_out})
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
         # Report from model_out (not loss_input): _build_loss_inputs drops logit_bias, which CoCaLoss can't take
@@ -121,5 +144,9 @@ class CoCaTask(ImageTextTask):
         report = self._report(inputs_no_accum)  # capture before dropping logit_bias for the loss call
         # CoCaLoss doesn't accept logit_bias
         inputs_no_accum.pop("logit_bias", None)
-        losses = self.loss(**inputs, **inputs_no_accum, output_dict=True)
+        losses = self.loss(
+            **inputs,
+            **inputs_no_accum,
+            output_dict=True,
+        )
         return losses, report

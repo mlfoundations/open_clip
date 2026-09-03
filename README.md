@@ -34,6 +34,7 @@
 > - `--length-bucketing`, `--bucket-pool`, `--bucket-chunk` — reorder the train stream by sample length (caption and/or audio tokens) to tighten per-batch padding; the bucket pool holds raw, undecoded samples
 > - `--text-pad-multiple` — round per-batch variable-text length up to a multiple, bounding the distinct sequence lengths `torch.compile` sees (text-axis analogue of `--naflex-pad-multiple`)
 > - `--text-attention-mask` — emit a per-sample text validity mask (batch key `text_valid`) from the tokenizer, consumed by CoCa/MaMMUT for attention/pooling and `-100` caption-label masking. Default auto-enables for CoCa/MaMMUT (except under `--distill`) and is rejected for tasks that don't consume it
+> - `--caption-z-loss-weight`, `--caption-loss-compute-dtype {float32,model}`, and `--caption-loss-chunk-size` — configure the next-token objective shared by CoCa/MaMMUT and GenLIP/GenLAP. Defaults preserve the existing fp32 CE with no z-loss; `model` preserves the loss-logit dtype and ambient autocast policy while returned loss/component scalars remain fp32
 >
 > **Breaking changes — Python API:**
 > - `trace_model` removed from the top-level `open_clip` namespace
@@ -44,6 +45,7 @@
 > - CoCa's exact-mask API adds `text_valid` after `text` in `encode_text`, `forward`, and `forward_intermediates`. This shifts the older trailing positional arguments (`normalize`, `image_latent`, `image_indices`, and so on); pass those arguments by keyword. For example, replace `model.encode_text(text, False)` with `model.encode_text(text, normalize=False)`.
 > - `CLIPTextCfg.eos_id` no longer defaults to `2` (that value is only correct for XLM-style vocabs). Configs using `pool_type="eos"` must set `eos_id` explicitly, and `get_tokenizer` now validates `eos_id`/`pad_id` against the resolved tokenizer, raising on mismatch instead of pooling/masking silently wrong positions.
 > - `HFTokenizer` no longer fabricates `pad_token_id=0` when the underlying tokenizer has no pad token (id 0 is a real token in most BPE vocabs); variable-text setups fail fast instead. It also forces `padding_side='right'`, which all OpenCLIP pooling/masking assumes.
+> - Tokenizer wrappers now share special-token controls: `encode(..., add_special_tokens=False)` remains body-only by default, while model-facing `tokenizer(...)` defaults to `add_special_tokens=True`. `decode()` / `batch_decode()` default to `skip_special_tokens=False, stop_at_eos=True`; pass `stop_at_eos=False` to inspect tokens after the first EOS. This intentionally changes legacy SimpleTokenizer decode output by hiding post-EOS id-0 fill (`!`) and makes TikToken decode render its reserved control tokens unless `skip_special_tokens=True`.
 > - `MaxPooler` (`hf_pooler_type="max_pooler"`) mask polarity fixed — it previously max-pooled over the padding positions instead of the valid ones.
 > - `CoCa.__init__` no longer takes a `pad_id` argument — `model.pad_id` is derived from the text tower (the id it actually masks with: `text_cfg.pad_id` for native towers, the transformers config pad for HF towers). MaMMUT follows the same pattern. This fixes `coca_roberta-*`, which previously masked with roberta's pad (1) in the tower while the loss ignored 0 — its config now declares `pad_id: 1` and the caption loss no longer trains on padding.
 > - `CoCaTask` builds caption labels masked to `-100`; `CoCaLoss`'s cross-entropy uses `ignore_index=-100`. Its `pad_id` arg is retained for standalone callers passing raw labels (default `0` preserves the old value-based behavior; the task path passes `None`). Validation generative-loss metrics are likewise mask/pad-aware and will report different (correct) values for nonzero-pad models.
@@ -597,13 +599,28 @@ For more information see Cui et al. (https://arxiv.org/abs/2112.09331) or Pham e
 
 ### Int8 Support
 
-We have beta support for int8 training and inference.
-You can enable int8 training with `--use-bnb-linear SwitchBackLinearGlobal` or `--use-bnb-linear SwitchBackLinearGlobalMemEfficient`.
-Please see the bitsandbytes library for definitions for these layers.
-For CLIP VIT-Huge this should currently correspond to a 10% training speedup with no accuracy loss.
-More speedups comin when the attention layer is refactored so that linear layers man be replaced there, too.
+We have beta support for int8 inference via bitsandbytes' `Linear8bitLt` (the LLM.int8() layer). Only the MLP linear layers (`c_fc`/`c_proj`) are quantized by default; attention's combined QKV projection isn't an `nn.Linear` submodule and isn't covered yet (see the TODO in `src/open_clip/utils.py`).
 
-See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb or [paper](https://arxiv.org/abs/2304.13013).
+```python
+from functools import partial
+import bitsandbytes as bnb
+import open_clip
+
+model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+model = model.half()
+
+int8_linear_layer = partial(bnb.nn.Linear8bitLt, has_fp16_weights=False)
+int8_model = open_clip.utils.replace_linear(model, int8_linear_layer, include_modules=['c_fc', 'c_proj']).cuda()
+open_clip.utils.convert_int8_model_to_inference_mode(int8_model)  # stamps the dtype bookkeeping the model needs post-quantization
+```
+
+**Accuracy / speed, measured, not estimated:** on ViT-B-32-quickgelu (`openai` weights), zero-shot classification on CIFAR-10 was 88.76% (fp16) vs. 88.83% (int8) — a **+0.07 point** difference, i.e. no meaningful accuracy cost for quantizing just the MLP layers post-hoc (no fine-tuning). This is a single-template, single-dataset, single-model measurement, not a comprehensive benchmark, but it's real and reproducible (see the tutorial notebook). Speed was slightly *worse* for int8 (53.9ms vs. 56.9ms for a batch of 128, about 5.6% slower) — at this model scale, the extra kernel launches int8 quantization/dequantization requires per forward pass outweigh any raw int8 tensor-core throughput advantage, since `Linear8bitLt` was designed around much larger (billion-parameter) models than CLIP's transformer blocks. The practical benefit here is **memory** (roughly a 2x reduction on the quantized layers' weight tensors), not speed or accuracy.
+
+**Saving and loading a quantized model:** `replace_linear` swaps `nn.Linear` submodules for bitsandbytes layers in place, so a `state_dict` saved from the quantized model only loads back correctly into a model that already has the same layers swapped in — build the model, `replace_linear`, then `torch.save(int8_model.state_dict(), path)`; to load, rebuild the architecture, `replace_linear` + `convert_int8_model_to_inference_mode` again, then `load_state_dict`. The image transform and tokenizer aren't affected by quantization at all — they only depend on `model_name`, so just recreate them normally with `create_model_and_transforms`/`get_tokenizer`. See the tutorial notebook for a runnable example.
+
+**Older `SwitchBackLinear`/triton path (training):** the previous `--use-bnb-linear SwitchBackLinearGlobal` / `SwitchBackLinearGlobalMemEfficient` training path, and the triton-based classes in `bitsandbytes.nn.triton_based_modules` the earlier version of this tutorial used, are effectively unusable on a fresh install today: `triton==2.0.0.post1` (which those kernels were written against) has been removed from PyPI entirely, every installable triton version reorganized `triton.language.libdevice` away, and `bitsandbytes>=0.50` dropped `triton_based_modules` outright. If you hit `AttributeError: module 'triton.language' has no attribute 'libdevice'`, that's why — it's not fixable by pinning a version anymore. Use `Linear8bitLt` (above) for inference. There's currently no equivalent replacement documented for the *training*-time SwitchBack speedup path.
+
+See the tutorial https://github.com/mlfoundations/open_clip/blob/main/tutorials/int8_tutorial.ipynb, and the original SwitchBack [paper](https://arxiv.org/abs/2304.13013) for the training-time approach (0.1pt accuracy cost vs. bf16 on CLIP ViT-Huge, per the paper — a very different regime from the post-hoc inference-only quantization measured above).
 
 ### Support for remote loading/training
 

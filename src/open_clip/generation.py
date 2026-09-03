@@ -92,6 +92,15 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
     def device(self) -> torch.device:
         return self._image_embs.device
 
+    def get_experts_implementation(self) -> dict:
+        # GenerationMixin.generate() (transformers>=5.14.0) unconditionally calls this from
+        # _optimize_model_for_decode() to snapshot/restore MoE routing config. It's normally
+        # only defined on transformers.PreTrainedModel, which this wrapper doesn't subclass.
+        # This wrapper never has MoE submodels, so there's nothing to report; an empty dict
+        # makes the caller's `"grouped_mm" in experts_implementation.values()` check a no-op.
+        # See https://github.com/mlfoundations/open_clip/issues/1199
+        return {}
+
     def prepare_inputs_for_generation(
             self,
             input_ids,

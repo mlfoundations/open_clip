@@ -150,5 +150,5 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
 
     loss = model(
         audio=batch["audio"], text=batch["text"], text_valid=batch["text_valid"], compute_loss=True,
-    )["loss"]
+    )["caption_loss_ce"]
     assert loss.ndim == 0 and torch.isfinite(loss)

@@ -33,7 +33,7 @@ from .transform import (
     merge_preprocess_kwargs,
     naflex_eval_transform_v2,
 )
-from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, TikTokenTokenizer, DEFAULT_CONTEXT_LENGTH
+from .tokenizer import HFTokenizer, SimpleTokenizer, SigLipTokenizer, TikTokenTokenizer, Tokenizer, DEFAULT_CONTEXT_LENGTH
 
 HF_HUB_PREFIX = 'hf-hub:'
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
@@ -835,7 +835,7 @@ def get_tokenizer(
         context_length: Optional[int] = None,
         cache_dir: Optional[str] = None,
         **kwargs, # Additional tokenizer kwargs passed to constructor
-):
+) -> Tokenizer:
     """
     Gets the appropriate tokenizer based on the model identifier schema or name.
 
@@ -865,8 +865,9 @@ def get_tokenizer(
                 # Load and parse the JSON config
                 with open(local_config_path, 'r', encoding='utf-8') as f:
                     local_json_config = json.load(f)
+                local_json_config = _translate_external_config(local_json_config)
                 if 'model_cfg' in local_json_config:
-                    config = _translate_external_config(local_json_config)['model_cfg']
+                    config = local_json_config['model_cfg']
                 else:
                     raise ValueError(f"Local config {local_config_path} missing 'model_cfg'.")
             except Exception as e:
@@ -931,10 +932,25 @@ def get_tokenizer(
     if text_config.get('tokenizer_type', '') == 'tiktoken':
         # tiktoken-based tokenizer for generative (GenLIP) models.
         encoding_name = text_config.get('tiktoken_name', 'cl100k_base')
+        bpe_path = text_config.get('tiktoken_bpe_path')
+        encoding_config_path = text_config.get('tiktoken_config_path')
+        if bpe_path:
+            if schema == 'local-dir':
+                bpe_path = str(local_dir_path / bpe_path)
+                if encoding_config_path:
+                    encoding_config_path = str(local_dir_path / encoding_config_path)
+            elif schema == 'hf-hub':
+                bpe_path = download_pretrained_from_hf(identifier, filename=bpe_path, cache_dir=cache_dir)
+                if encoding_config_path:
+                    encoding_config_path = download_pretrained_from_hf(
+                        identifier, filename=encoding_config_path, cache_dir=cache_dir,
+                    )
         _logger.info(f"Using TikTokenTokenizer with encoding: '{encoding_name}'")
         tokenizer = TikTokenTokenizer(
             encoding_name=encoding_name,
             context_length=context_length,
+            bpe_path=bpe_path,
+            encoding_config_path=encoding_config_path,
             **{k: v for k, v in tokenizer_kwargs.items() if k in ('add_bos', 'add_eos', 'clean')},
         )
 
@@ -1069,9 +1085,14 @@ def create_loss(args, model: Optional[torch.nn.Module] = None):
             cache_labels=cache_labels,
             rank=args.rank,
             world_size=args.world_size,
+            z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
         )
     elif is_genlip:
-        return GenLipLoss()
+        return GenLipLoss(
+            z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+        )
     elif args.siglip:
         return SigLipLoss(
             cache_labels=cache_labels,
@@ -1138,15 +1159,28 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
             fused_caption_loss=getattr(args, 'fused_caption_loss', False),
+            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=cache_labels,
             **shared,
         )
     elif isinstance(model_unwrapped, NaFlexGenLap):
-        task = GenLapTask(model)
+        task = GenLapTask(
+            model,
+            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
+        )
     elif isinstance(model_unwrapped, NaFlexGenLip):
-        task = GenLipTask(model)
+        task = GenLipTask(
+            model,
+            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
+        )
     elif args.siglip:
         task = SigLIPTask(
             model,

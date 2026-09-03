@@ -7,6 +7,7 @@ import numpy as np
 from dataclasses import dataclass
 
 from .transformer import (
+    AttentionalPooler,
     LayerNormFp32,
     LayerNorm,
     QuickGELU,
@@ -83,10 +84,32 @@ class CoCa(nn.Module):
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
         if vision_cfg.timm_model_name:
+            # timm towers are supported in token mode only, with model-level attentional pooling:
+            # the tower returns {'pooled', 'patch_tokens', 'patch_valid'} and the paper poolers
+            # (generative n_queries + contrastive) live on the model, pooling the trunk tokens with
+            # validity masking. Masking terminates at the pooler: the caption decoder cross-attends
+            # the fixed-count pooled queries, so no context_valid threading is needed downstream
+            # (contrast MaMMUT, which cross-attends raw patch tokens and threads image_embs_valid).
+            if not vision_cfg.output_tokens:
+                raise ValueError(
+                    "CoCa with a timm vision tower requires vision_cfg.output_tokens=true "
+                    "(token mode) so model-level attentional pooling can consume trunk tokens.")
+            if vision_cfg.attentional_pool not in ('cascade', 'parallel'):
+                raise ValueError(
+                    "CoCa with a timm vision tower requires vision_cfg.attentional_pool "
+                    "'cascade' or 'parallel' (paper pooling); the caption decoder consumes the "
+                    "pooled queries, not raw patch tokens.")
+        if getattr(text_cfg, 'text_arch', None) == 'modern' and \
+                getattr(text_cfg, 'attention_mode', None) == 'bidirectional':
+            # The caption decoder consumes the tower's contextualized token embeddings; under
+            # bidirectional attention position i carries future-token information the decoder's
+            # causal mask cannot undo, so the caption loss can copy and generation would mismatch
+            # training. Fail fast rather than train a silently-broken caption objective. (Masked
+            # 'mean' pooling for the contrastive readout works fine over a causal tower.)
             raise ValueError(
-                "CoCa does not support timm vision towers: caption cross-attention requires token projection "
-                "and validity handling that only MaMMUT's timm path currently provides."
-            )
+                "CoCa does not support a bidirectional modern text tower "
+                "(text_cfg.attention_mode='bidirectional'): its token embeddings leak future "
+                "tokens into the caption decoder. Use attention_mode='causal'.")
 
         self.text = _build_text_tower(
             embed_dim=embed_dim,
@@ -107,6 +130,40 @@ class CoCa(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
+
+        if vision_cfg.timm_model_name:
+            # model-level paper poolers over trunk tokens (see the token-mode note above)
+            norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+            trunk_dim = self.visual.trunk.num_features
+            self.attn_pool_type = vision_cfg.attentional_pool
+            self.pool_norm = norm_layer(trunk_dim)  # pre-pool norm, mirrors native ln_post-on-width
+            self.attn_pool = AttentionalPooler(
+                embed_dim,
+                trunk_dim,
+                n_head=vision_cfg.attn_pooler_heads,
+                n_queries=vision_cfg.attn_pooler_queries,
+            )
+            self.attn_pool_contrastive = AttentionalPooler(
+                embed_dim,
+                embed_dim if self.attn_pool_type == 'cascade' else trunk_dim,
+                n_head=vision_cfg.attn_pooler_heads,
+                n_queries=1,
+            )
+            with torch.no_grad():  # match VisionTransformer.init_parameters pooler query init
+                nn.init.normal_(self.attn_pool.query, std=embed_dim ** -0.5)
+                nn.init.normal_(self.attn_pool_contrastive.query, std=embed_dim ** -0.5)
+            # Paper pooling replaces the tower's pooled readout entirely; its parameters
+            # (trunk fc_norm + TimmModel head proj) would never receive grad and trip DDP's
+            # unused-parameter check. Remove them rather than carry dead weights. (MaMMUT keeps
+            # them: it uses the tower's pooled output as the contrastive latent.)
+            self.visual.head = nn.Identity()
+            if getattr(self.visual.trunk, 'fc_norm', None) is not None:
+                self.visual.trunk.fc_norm = nn.Identity()
+        else:
+            self.attn_pool_type = ''
+            self.pool_norm = None
+            self.attn_pool = None
+            self.attn_pool_contrastive = None
 
         self.text_decoder = _build_text_decoder_tower(
             vocab_size,
@@ -140,7 +197,20 @@ class CoCa(nn.Module):
         self.text_decoder.set_grad_checkpointing(enable, impl=impl)
 
     def _encode_image(self, images, normalize: bool = True):
-        image_latent, tokens_embs = self.visual(images)
+        out = self.visual(images)
+        if isinstance(out, dict):
+            # timm token mode: {'pooled', 'patch_tokens', 'patch_valid'} -- masked model-level
+            # pooling; the tower's own 'pooled' readout is unused (paper pooling replaces it).
+            tokens = self.pool_norm(out['patch_tokens'])
+            patch_valid = out['patch_valid']
+            tokens_embs = self.attn_pool(tokens, key_valid=patch_valid)
+            if self.attn_pool_type == 'cascade':
+                # pooled queries are fixed-count and all valid -> no mask from here on
+                image_latent = self.attn_pool_contrastive(tokens_embs)[:, 0]
+            else:  # parallel: contrastive pooler reads the (masked) trunk tokens directly
+                image_latent = self.attn_pool_contrastive(tokens, key_valid=patch_valid)[:, 0]
+        else:
+            image_latent, tokens_embs = out
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
@@ -260,6 +330,9 @@ class CoCa(nn.Module):
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
             labels: Optional[torch.Tensor] = None,
+            caption_z_loss: bool = False,
+            caption_loss_compute_dtype=torch.float32,
+            caption_loss_chunk_size: int = 4096,
     ):
         """text_valid: optional [B, L] bool/int text validity (True/1 = real token), consumed by the
         text tower's pad/cls masking (passed down as its HF-style ``attention_mask``); validity falls
@@ -270,8 +343,9 @@ class CoCa(nn.Module):
         ``image_latent`` or later arguments positionally must switch those arguments to keywords.
 
         labels: optional [B, L-1] AR-shifted caption labels (-100 = ignore, task-built). When given,
-        returns ``caption_loss`` via the fused linear cross-entropy (full-vocab logits are never
-        materialized) instead of ``logits``."""
+        returns the reduced caption CE as ``caption_loss_ce`` (plus ``caption_loss_z`` when
+        ``caption_z_loss`` is set) via the fused linear cross-entropy (full-vocab logits are
+        never materialized) instead of ``logits``. Loss weighting is applied downstream (CoCaLoss)."""
         if image is not None and (image_latent is None or image_embs is None):
             image_latent, image_embs = self._encode_image(image)
 
@@ -294,13 +368,19 @@ class CoCa(nn.Module):
             hidden = self.text_decoder(image_embs, token_embs, return_hidden=True)
             pred = hidden[:, :-1]
             weight, bias = self.text_decoder.lm_head_params
-            out_dict["caption_loss"] = fused_linear_cross_entropy(
+            caption_loss_ce, caption_loss_z = fused_linear_cross_entropy(
                 pred.reshape(-1, pred.shape[-1]),
                 weight,
                 labels.reshape(-1),
                 bias=bias,
                 ignore_index=-100,
+                chunk_size=caption_loss_chunk_size,
+                z_loss=caption_z_loss,
+                compute_dtype=caption_loss_compute_dtype,
             )
+            out_dict["caption_loss_ce"] = caption_loss_ce
+            if caption_loss_z is not None:
+                out_dict["caption_loss_z"] = caption_loss_z
         else:
             out_dict["logits"] = self.text_decoder(image_embs, token_embs)
         if self.logit_bias is not None:

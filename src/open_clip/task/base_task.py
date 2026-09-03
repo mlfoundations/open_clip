@@ -123,6 +123,21 @@ class TrainingTask(nn.Module):
         kwargs = self._compile_kwargs(backend=backend, mode=mode, **compile_kwargs)
         if target == 'model':
             self.trainable_module = torch.compile(self.trainable_module, **kwargs)
+        elif target == 'blocks':
+            # Compile transformer blocks in place; surrounding code (incl. any inline
+            # torch.utils.checkpoint call in the trunks) stays eager. Grad-checkpoint recompute
+            # is then sequenced block-by-block by eager autograd instead of being traced into
+            # the compiled backward, which bounds backward working-set to ~one block. Use when
+            # whole-graph compile schedules checkpointed recomputes poorly (torch 2.13 regression).
+            blocks = self._get_fsdp_shard_modules()
+            if not blocks:
+                raise ValueError("compile target 'blocks' found no blocks to compile "
+                                 "(see _get_fsdp_shard_modules)")
+            model = unwrap_model(self.trainable_module)
+            for name, mod in blocks:
+                parent_name, _, attr = name.rpartition('.')
+                parent = model.get_submodule(parent_name) if parent_name else model
+                setattr(parent, attr, torch.compile(mod, **kwargs))
         elif target == 'task':
             if compile_train:
                 self._compiled_training_forward = torch.compile(self.training_forward, **kwargs)
@@ -235,7 +250,9 @@ class TrainingTask(nn.Module):
         """Discover modules to shard with FSDP2.
 
         Default: finds all ResidualAttentionBlock, CustomResidualAttentionBlock,
-        ModernTextBlock, and Bottleneck instances within the trainable module.
+        ModernTextBlock, Bottleneck, and timm ViT ``Block`` (timm towers, incl. NaFlexVit
+        trunks) instances within the trainable module. Also drives the 'blocks' compile
+        strategy, so timm vision trunks get per-block compile rather than staying eager.
         Models can override this by defining a ``fsdp_shard_modules()`` method.
         """
         model = unwrap_model(self.trainable_module)
@@ -245,7 +262,13 @@ class TrainingTask(nn.Module):
         from open_clip.transformer import ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock
         from open_clip.modified_resnet import Bottleneck
 
-        shard_types = (ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock, Bottleneck)
+        shard_types = [ResidualAttentionBlock, CustomResidualAttentionBlock, ModernTextBlock, Bottleneck]
+        try:
+            from timm.models.vision_transformer import Block as TimmViTBlock
+            shard_types.append(TimmViTBlock)
+        except ImportError:
+            pass
+        shard_types = tuple(shard_types)
 
         modules = []
         for name, mod in model.named_modules():
@@ -374,6 +397,16 @@ class TrainingTask(nn.Module):
                 sd[key] = val.squeeze(0)
         return sd
 
+    @staticmethod
+    def _strip_compiled_keys(sd: dict) -> dict:
+        """Remove ``_orig_mod.`` segments that torch.compile wrappers insert into state_dict keys.
+
+        Handles both the root prefix (compile strategy 'model') and nested per-block segments
+        (strategy 'blocks', e.g. ``text.blocks.9._orig_mod.norm1.weight``) so saved checkpoints
+        are always clean and portable across compile strategies.
+        """
+        return {k.replace('._orig_mod.', '.').removeprefix('_orig_mod.'): v for k, v in sd.items()}
+
     def state_dict(self, *args, **kwargs) -> dict:
         """Return state dict with both main and EMA weights."""
         if self._fsdp_enabled:
@@ -389,11 +422,13 @@ class TrainingTask(nn.Module):
             )
             if self.normalize_checkpoint_scalars:
                 model_sd = self._normalize_scalar_params(model_sd)
-            sd = {'state_dict': model_sd}
+            sd = {'state_dict': self._strip_compiled_keys(model_sd)}
         else:
-            sd = {'state_dict': unwrap_model(self.trainable_module).state_dict()}
+            sd = {'state_dict': self._strip_compiled_keys(
+                unwrap_model(self.trainable_module).state_dict())}
         if self.trainable_module_ema is not None:
-            sd['state_dict_ema'] = self.trainable_module_ema.module.state_dict()
+            sd['state_dict_ema'] = self._strip_compiled_keys(
+                self.trainable_module_ema.module.state_dict())
         return sd
 
     @staticmethod
@@ -421,7 +456,17 @@ class TrainingTask(nn.Module):
         """Load state dict for both main and EMA weights."""
         if 'state_dict' in state_dict:
             model = unwrap_model(self.trainable_module)
-            sd = self._reconcile_state_dict_shapes(model, state_dict['state_dict'])
+            # normalize away compile-wrapper segments from the incoming checkpoint, then remap
+            # clean names onto the live model's keys when its blocks are compiled in place
+            sd = self._strip_compiled_keys(state_dict['state_dict'])
+            model_keys = list(model.state_dict().keys())
+            if any('_orig_mod' in k for k in model_keys):
+                clean_to_model = {
+                    k.replace('._orig_mod.', '.').removeprefix('_orig_mod.'): k for k in model_keys
+                }
+                # unmapped (unexpected) keys keep their name so strict-mode reporting is unchanged
+                sd = {clean_to_model.get(k, k): v for k, v in sd.items()}
+            sd = self._reconcile_state_dict_shapes(model, sd)
             if self._fsdp_enabled:
                 from torch.distributed.checkpoint.state_dict import (
                     set_model_state_dict,
@@ -433,7 +478,7 @@ class TrainingTask(nn.Module):
                 model.load_state_dict(sd, strict=strict)
         if 'state_dict_ema' in state_dict and self.trainable_module_ema is not None:
             self.trainable_module_ema.module.load_state_dict(
-                state_dict['state_dict_ema'], strict=strict,
+                self._strip_compiled_keys(state_dict['state_dict_ema']), strict=strict,
             )
 
     def state_dict_for_inference(self) -> dict:

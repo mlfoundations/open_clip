@@ -121,22 +121,21 @@ def test_clip_timm_output_tokens_selects_pooled_features():
     assert features.shape == (2, 32)
 
 
-def test_coca_rejects_timm_vision_tower_with_clear_error():
-    with pytest.raises(ValueError, match='does not support timm vision towers'):
-        CoCa(
-            embed_dim=32,
-            vision_cfg=TINY_VISION_CFG,
-            text_cfg=dict(
-                context_length=8,
-                vocab_size=64,
-                width=32,
-                heads=4,
-                layers=1,
-                embed_cls=True,
-                output_tokens=True,
-            ),
-            multimodal_cfg=dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1),
-        )
+def test_coca_timm_tower_requires_paper_pooling():
+    """CoCa + timm towers is supported via token mode + model-level paper pooling only
+    (see test_naflex_coca2.py); configs missing either requirement get a clear error."""
+    text_cfg = dict(
+        context_length=8, vocab_size=64, width=32, heads=4, layers=1,
+        embed_cls=True, output_tokens=True,
+    )
+    mm_cfg = dict(context_length=8, vocab_size=64, width=32, heads=4, layers=1)
+    # token mode on, but no paper pooler configured
+    with pytest.raises(ValueError, match="attentional_pool"):
+        CoCa(embed_dim=32, vision_cfg=TINY_VISION_CFG, text_cfg=text_cfg, multimodal_cfg=mm_cfg)
+    # paper pooler configured, but token mode off
+    vision_cfg = dict(TINY_VISION_CFG, output_tokens=False, attentional_pool='cascade')
+    with pytest.raises(ValueError, match="output_tokens"):
+        CoCa(embed_dim=32, vision_cfg=vision_cfg, text_cfg=text_cfg, multimodal_cfg=mm_cfg)
 
 
 def test_mammut_requires_vision_token_output():
@@ -223,7 +222,7 @@ def test_mammut_naflex_fused_caption_loss_parity():
     loss_legacy = torch.nn.functional.cross_entropy(
         out_legacy['logits'][:, :-1].permute(0, 2, 1), labels, ignore_index=-100)
     out_fused = model(image=image, text=text, text_valid=text_valid, labels=labels)
-    torch.testing.assert_close(out_fused['caption_loss'], loss_legacy, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(out_fused['caption_loss_ce'], loss_legacy, rtol=1e-5, atol=1e-5)
 
 
 def test_mammut_naflex_task_training_forward():
@@ -282,3 +281,29 @@ def test_registered_config_builds(name, patch, seq_len):
     assert model.visual.trunk.get_patch_size() == (patch, patch)
     assert not isinstance(model.visual.trunk.norm_pre, torch.nn.Identity)
     assert model.visual.output_tokens
+
+
+# ---------------------------------------------------------------- task integration extras
+
+def test_blocks_discovery_includes_timm_trunk():
+    """The FSDP/blocks-compile discovery must cover the timm vision trunk, not just the text
+    stacks -- otherwise --torchcompile-strategy blocks leaves the whole vision tower eager."""
+    model = _tiny_model().train()
+    task = CoCaTask(model, verbose=False)
+    names = [n for n, _ in task._get_fsdp_shard_modules()]
+    trunk = [n for n in names if n.startswith('visual.trunk.blocks')]
+    assert len(trunk) == TINY_VISION_CFG['timm_model_kwargs']['depth'], \
+        f'timm trunk blocks not discovered: {names}'
+
+
+def test_mammut_pass_graph_break_eager_noop():
+    """pass_graph_break must be a pure compile-time hint: eager outputs identical either way."""
+    model = _tiny_model()
+    batch, text = _patch_batch(), _text_batch()
+    with torch.no_grad():
+        base = model(image=batch, text=text)
+        model.pass_graph_break = True
+        split = model(image=batch, text=text)
+    for k, v in base.items():
+        if torch.is_tensor(v):
+            torch.testing.assert_close(v, split[k], rtol=0, atol=0)
