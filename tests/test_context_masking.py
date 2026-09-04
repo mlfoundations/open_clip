@@ -38,9 +38,12 @@ def test_mammut_decoder_context_padding_invariant(model_name):
         masked = dec(text, context=padded, context_valid=valid, mode='caption')
         unmasked = dec(text, context=padded, mode='caption')
 
-    torch.testing.assert_close(dense_none, ref)                      # None == dense behavior
-    torch.testing.assert_close(masked, ref, rtol=1e-4, atol=1e-5)    # padding hidden by mask
-    assert not torch.allclose(unmasked, ref, rtol=1e-4, atol=1e-5)   # sanity: pad DOES leak unmasked
+    torch.testing.assert_close(dense_none, ref)  # None == dense behavior
+    # Different context lengths can change FP32 attention/GEMM roundoff, amplified by the LM head.
+    # Allow a little absolute headroom near zero; the same tolerance must still detect unmasked padding.
+    rtol, atol = 1e-4, 5e-5
+    torch.testing.assert_close(masked, ref, rtol=rtol, atol=atol)
+    assert not torch.allclose(unmasked, ref, rtol=rtol, atol=atol)
 
 
 @pytest.mark.parametrize('model_name', COCA_MODELS)
