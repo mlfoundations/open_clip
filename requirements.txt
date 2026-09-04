@@ -5,4 +5,4 @@ ftfy
 tqdm
 huggingface_hub
 safetensors
-timm
+timm>=1.0.29
