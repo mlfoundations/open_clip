@@ -18,8 +18,9 @@ import util_test
 pytest.importorskip("torchaudio")  # mel transform (not file decode) needs torchaudio
 
 import open_clip
+from open_clip.model_traits import CLAP_TRAITS
 import open_clip_train.audio_data as audio_data
-from open_clip import create_model, get_tokenizer
+from open_clip import create_model, get_tokenizer, get_model_traits
 from open_clip.audio.config import CLIPAudioCfg
 from open_clip.audio.naflex_audio import AudioNaFlexTransformFactory
 from open_clip.audio.transform import audio_transform_v2
@@ -93,7 +94,7 @@ def test_get_wds_audio_dataset_clap_waveform():
     preprocess_audio = audio_transform_v2(audio_cfg, is_train=False)
     tokenizer = lambda s: torch.zeros(1, 16, dtype=torch.long)  # fixed-length contrastive text stub
 
-    info = get_wds_audio_dataset(args, preprocess_audio, is_train=True, tokenizer=tokenizer)
+    info = get_wds_audio_dataset(args, preprocess_audio, is_train=True, tokenizer=tokenizer, model_traits=CLAP_TRAITS)
     batch = next(iter(info.dataloader))
     assert set(batch) == {"audio", "text"}
     assert set(batch["audio"]) >= {"waveform", "longer"}
@@ -118,13 +119,13 @@ def test_audio_loader_forkserver_context_wiring():
 
 
 def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
-    """NaFlex generative path (args.genlap): yields a patch dict + variable text the GenLAP model consumes."""
+    """NaFlex generative path (GenLAP traits): yields a patch dict + variable text the GenLAP model consumes."""
     shard = _build_audio_tar("audio_wds_genlap")
     model = create_model("naflexgenlap_test_1d").eval()
     tokenizer = get_tokenizer("naflexgenlap_test_1d")  # tiktoken, has pad_token_id
 
     args = _base_args(shard)
-    args.genlap = True  # triggers the NaFlex audio branch (generative: variable text + pad_id)
+    model_traits = get_model_traits(model)  # NaFlex audio branch (generative: variable text + pad_id)
     args.length_bucketing = True  # exercise audio LengthBucketer wiring
     args.bucket_pool = 4          # tiny pool so the bucketer flushes fast over the test shard
     args.bucket_chunk = 2
@@ -138,6 +139,7 @@ def test_get_wds_audio_dataset_naflex_genlap_feeds_model():
 
     info = get_wds_audio_dataset(
         args, preprocess_audio, is_train=True, tokenizer=tokenizer, naflex_data_config=naflex_data_config,
+        model_traits=model_traits,
     )
     batch = next(iter(info.dataloader))
     assert set(batch["audio"]) >= {"patches", "patch_coord", "patch_valid"}

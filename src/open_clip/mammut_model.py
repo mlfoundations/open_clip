@@ -18,6 +18,7 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 
+from .model_traits import MAMMUT_TRAITS
 from .coca_model import MultimodalCfg
 from .loss import fused_linear_cross_entropy
 from .model import CLIPVisionCfg, _build_vision_tower
@@ -47,7 +48,9 @@ def _build_multimodal_decoder_tower(
     if multimodal_cfg.text_arch == 'modern':
         # modern decoder is cfg-driven and ignores quick_gelu / cast_dtype norm selection
         # (act/norm come from mlp_type / norm_type, matching ModernTextTransformer)
-        return ModernMultimodalDecoder(multimodal_cfg, output_dim=embed_dim)
+        decoder = ModernMultimodalDecoder(multimodal_cfg, output_dim=embed_dim)
+        decoder.variable_text = bool(multimodal_cfg.variable_text)
+        return decoder
 
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
@@ -71,11 +74,15 @@ def _build_multimodal_decoder_tower(
         act_layer=act_layer,
         norm_layer=norm_layer,
     )
+    # per-batch padded text contract, read by the data pipeline via model traits (see _build_text_tower)
+    decoder.variable_text = bool(multimodal_cfg.variable_text)
 
     return decoder
 
 
 class MaMMUT(nn.Module):
+    traits = MAMMUT_TRAITS
+
     def __init__(
             self,
             embed_dim: int,

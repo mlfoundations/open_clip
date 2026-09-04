@@ -107,6 +107,21 @@ from open_clip_train.naflex_data import (
 )
 
 
+def resolve_text_layout(args, model_traits):
+    """Return ``(text_in_token_budget, variable_text)`` for the loaders.
+
+    ``text_in_token_budget``: captions count toward the NaFlex row token budget (GenLIP / GenLAP rows).
+    ``variable_text``: per-batch padded text (token budgeting, user override, or the text tower's contract).
+    ``model_traits`` is the built model's :class:`~open_clip.ModelTraits`
+    (``open_clip.get_model_traits(model)``) and is required: loaders never infer the model family from ``args``.
+    """
+    if model_traits is None:
+        raise ValueError("data loaders require model_traits (open_clip.get_model_traits(model)).")
+    text_in_budget = bool(model_traits.naflex_text_in_token_budget)
+    variable_text = text_in_budget or bool(getattr(args, 'variable_text', False)) or bool(model_traits.variable_text)
+    return text_in_budget, variable_text
+
+
 def get_text_pad_id(tokenizer: "Tokenizer") -> int:
     pad_id = getattr(tokenizer, "pad_token_id", None)
     if pad_id is None:
@@ -747,7 +762,10 @@ def naflex_loader_counts(batcher, args):
     return batcher.num_batches_for_workers(num_workers), batcher.num_samples_for_workers(num_workers)
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None):
+def get_wds_dataset(
+        args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None,
+        model_traits=None,
+):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
@@ -831,19 +849,17 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
     # GenLIP budgets variable captions with image tokens. Other variable-text towers only need batch-time padding.
-    genlip_text = getattr(args, 'genlip', False)
-    variable_text = bool(getattr(args, 'variable_text', False))
-    text_variable = genlip_text or variable_text
-    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_in_budget, variable_text = resolve_text_layout(args, model_traits)
+    text_pad_id = get_text_pad_id(tokenizer) if variable_text else None
     text_pad_multiple = getattr(args, 'text_pad_multiple', None)
     text_pad_cap = getattr(tokenizer, 'context_length', None)
-    naflex_pad_id = text_pad_id if text_variable else None
-    naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
-    output_text_mask = bool(getattr(args, 'text_attention_mask', None)) and not text_variable
-    tokenize_text = TokenizeText(tokenizer, variable=text_variable, output_mask=output_text_mask)
+    naflex_pad_id = text_pad_id
+    naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if text_in_budget else 0
+    output_text_mask = bool(getattr(args, 'text_attention_mask', None)) and not variable_text
+    tokenize_text = TokenizeText(tokenizer, variable=variable_text, output_mask=output_text_mask)
 
     # Length bucketing reorders by caption length (train-only; only meaningful for variable text).
-    use_bucketing = is_train and text_variable and getattr(args, 'length_bucketing', False)
+    use_bucketing = is_train and variable_text and getattr(args, 'length_bucketing', False)
 
     # Image decode runs *after* tokenize and the optional length bucketer (see decode_pil_rgb below): the
     # bucketer pools `--bucket-pool` complete samples per worker, so it must see raw, undecoded samples (the
@@ -933,7 +949,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         )
         dataset = wds.DataPipeline(*pipeline)
     else:
-        if text_variable:
+        if variable_text:
             collate_fn = partial(
                 collate_variable_text_dicts,
                 pad_id=text_pad_id,
@@ -1013,16 +1029,14 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
+def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None, model_traits=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
     shared_epoch = SharedEpoch(epoch=epoch)
     use_naflex_train = naflex_data_config is not None and is_train
     use_naflex_eval = naflex_data_config is not None and not is_train
-    variable_text = bool(getattr(args, 'variable_text', False))
-    genlip_text = getattr(args, 'genlip', False)
-    text_variable = variable_text or genlip_text
-    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_in_budget, variable_text = resolve_text_layout(args, model_traits)
+    text_pad_id = get_text_pad_id(tokenizer) if variable_text else None
     text_pad_multiple = getattr(args, 'text_pad_multiple', None)
     text_pad_cap = getattr(tokenizer, 'context_length', None)
     collate_fn = default_collate
@@ -1040,7 +1054,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         )
     else:
         dataset_transform = preprocess_fn
-        if text_variable:
+        if variable_text:
             collate_fn = partial(
                 collate_variable_text_dicts, pad_id=text_pad_id,
                 text_pad_multiple=text_pad_multiple, text_pad_cap=text_pad_cap,
@@ -1053,8 +1067,8 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         caption_key=args.csv_caption_key,
         sep=args.csv_separator,
         tokenizer=tokenizer,
-        variable_text=text_variable,
-        output_text_mask=bool(getattr(args, 'text_attention_mask', None)) and not text_variable,
+        variable_text=variable_text,
+        output_text_mask=bool(getattr(args, 'text_attention_mask', None)) and not variable_text,
     )
 
     if use_naflex_train:
@@ -1063,9 +1077,9 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         if not naflex_data_config.variable_patch_size:
             naflex_patch_size = naflex_patch_size_choices[0]
             naflex_patch_size_choices = None
-        # GenLIP includes caption-token cap in the batch budget; other variable-text towers only need padding.
-        naflex_pad_id = text_pad_id if (genlip_text or variable_text) else None
-        naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if genlip_text else 0
+        # Only the token-budget trait charges captions to the row; variable text alone just changes padding.
+        naflex_pad_id = text_pad_id
+        naflex_text_cost = (getattr(tokenizer, 'context_length', 0) or 0) if text_in_budget else 0
         max_tokens_per_batch = naflex_data_config.resolve_max_tokens_per_batch(
             args.batch_size,
             per_row_text_tokens=naflex_text_cost,
@@ -1155,9 +1169,11 @@ class SyntheticDataset(Dataset):
         return self.preprocess_txt.map_sample(sample)
 
 
-def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
+def get_synthetic_dataset(
+        args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None, model_traits=None,
+):
     image_size = preprocess_fn.transforms[0].size
-    variable_text = bool(getattr(args, 'variable_text', False))
+    _, variable_text = resolve_text_layout(args, model_traits)
     collate_fn = (
         partial(
             collate_variable_text_dicts, pad_id=get_text_pad_id(tokenizer),
@@ -1220,7 +1236,7 @@ def get_dataset_fn(data_path, dataset_type):
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
     
 
-def get_data(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=None):
+def get_data(args, preprocess_fns, model_traits, epoch=0, tokenizer=None, naflex_data_config=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
 
@@ -1237,6 +1253,7 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=N
             epoch=epoch,
             tokenizer=tokenizer,
             naflex_data_config=naflex_data_config,
+            model_traits=model_traits,
         )
 
     if args.val_data:
@@ -1246,6 +1263,7 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=N
             is_train=False,
             tokenizer=tokenizer,
             naflex_data_config=naflex_data_config,
+            model_traits=model_traits,
         )
 
     if args.imagenet_val is not None:

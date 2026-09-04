@@ -36,6 +36,7 @@ try:
 except ImportError:
     DropPath = None
 
+from .model_traits import GENLIP_TRAITS
 from .loss import fused_linear_cross_entropy
 
 
@@ -691,6 +692,7 @@ class NaFlexGenLipVisualAdapter(nn.Module):
 class NaFlexGenLip(nn.Module):
     """GenLIP unified vision-language model with a NaFlex linear patch-embed image side."""
 
+    traits = GENLIP_TRAITS
     output_dict: torch.jit.Final[bool]
 
     def __init__(

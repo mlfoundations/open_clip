@@ -294,12 +294,19 @@ def test_create_model_and_transforms_returns_audio_naflex_factory():
 
 
 def test_params_genlap_enables_naflex():
-    from open_clip_train.params import parse_args
+    from open_clip import ModelFamily, get_model_traits
+    from open_clip_train.params import apply_model_traits, parse_args
 
+    model = open_clip.create_model(CONFIG_1D)
+    traits = get_model_traits(model)
+    assert traits.family is ModelFamily.GENLAP and traits.requires_naflex_data
     args = parse_args(["--model", CONFIG_1D, "--train-num-samples", "100"])
-    assert args.genlap is True
+    assert args.use_naflex is False  # implied by the built model's traits, not by the model name
+    apply_model_traits(args, traits)
     assert args.use_naflex is True
-    assert args.force_naflex_vision is False
+    assert args.variable_text is True
+    with pytest.raises(ValueError, match="accum-freq"):
+        apply_model_traits(parse_args(["--model", CONFIG_1D, "--accum-freq", "2"]), traits)
 
 
 def test_contrastive_audio_bucketer_reorders_by_audio_tokens():

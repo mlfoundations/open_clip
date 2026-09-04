@@ -30,7 +30,7 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, get_tokenizer, create_task
+from open_clip import create_model_and_transforms, get_tokenizer, create_task, get_model_traits
 from open_clip.task import (
     load_checkpoint,
     load_sharded_checkpoint,
@@ -49,7 +49,7 @@ from open_clip_train.naflex_data import (
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.optim import OptimizerCfg, create_optimizer
-from open_clip_train.params import parse_args
+from open_clip_train.params import parse_args, apply_model_traits
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown, tensorize_learning_rate
 from open_clip_train.train import (
     TrainState,
@@ -250,8 +250,7 @@ def main(args):
     if args.distill:
         #FIXME: support distillation with grad accum.
         assert args.accum_freq == 1
-        #FIXME: support distillation with coca.
-        assert 'coca' not in args.model.lower()
+        # generative (CoCa / MaMMUT / GenLIP / GenLAP) students are rejected in apply_model_traits, post-creation
 
     if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
         # arg is nargs, single (square) image size list -> int
@@ -338,26 +337,11 @@ def main(args):
         else:
             model.set_grad_checkpointing(impl='composable' if args.fsdp else 'inline')
 
-    text_tower = getattr(model, 'text', None)
-    args.variable_text = bool(getattr(args, 'variable_text', False) or getattr(text_tower, 'variable_text', False))
-
-    # Resolve --text-attention-mask before params logging so the recorded value reflects what the
-    # data pipeline actually emits. Auto: generative image-text models consume text validity masks
-    # (attention/pooling + -100 caption-label masking). Mirror create_task dispatch: model type,
-    # EXCEPT distillation, which takes precedence over CoCa/MaMMUT and yields a DistillCLIPTask
-    # that does not consume the batch key.
-    from open_clip import CoCa, MaMMUT
-    _mask_consumer = isinstance(unwrap_model(model), (CoCa, MaMMUT)) and not args.distill
-    if args.text_attention_mask is None:
-        args.text_attention_mask = _mask_consumer
-    elif args.text_attention_mask and not _mask_consumer:
-        # fail fast: other tasks don't accept the batch key -- e.g. CLIPTask silently drops it in
-        # training_forward but the grad-accumulation path would crash on the unexpected key
-        raise ValueError(
-            "--text-attention-mask requires a task that consumes text validity masks "
-            "(CoCa / MaMMUT, without --distill); GenLIP/GenLAP and variable-text pipelines derive "
-            "validity in their collators, and CLIP-style contrastive tasks do not use one."
-        )
+    # Combine the built model's traits with the user flags (NaFlex data implied by the model, variable text,
+    # the --text-attention-mask default, accum / distill guards) before params logging so the recorded values
+    # reflect what the data pipeline actually does.
+    model_traits = get_model_traits(model)
+    apply_model_traits(args, model_traits)
 
     if is_master(args):
         _logger.info("Model:")
@@ -407,9 +391,10 @@ def main(args):
         mode=args.torchcompile_mode,
         dynamic=args.torchcompile_dynamic,
     )
-    naflex_multimodal = args.use_naflex and isinstance(unwrap_model(model), MaMMUT)
+    # generative models under NaFlex data or variable text: image patches + caption length = `const + symbol`
+    dynamic_text_shapes = model_traits.generative and (args.use_naflex or args.variable_text)
     if args.torchcompile and args.distributed and not args.fsdp and (
-            args.grad_checkpointing or getattr(args, 'genlip', False) or naflex_multimodal
+            args.grad_checkpointing or dynamic_text_shapes
     ):
         # The DDP dynamo optimizer splits the graph into submodules at gradient-bucket boundaries. That
         # breaks under (a) grad checkpointing and (b) dynamic cross-bucket sequence lengths (image patches +
@@ -417,9 +402,7 @@ def main(args):
         # a submodule receives the concatenated tensor but not the input that binds the symbol, so Inductor
         # can't recover it ("expected [sN] to have been codegen-ed"). Disable the split so the whole forward
         # compiles as one symbol-consistent graph.
-        reason = ('grad checkpointing' if args.grad_checkpointing
-                  else 'genlip dynamic shapes' if getattr(args, 'genlip', False)
-                  else 'naflex multimodal dynamic shapes')
+        reason = 'grad checkpointing' if args.grad_checkpointing else 'generative dynamic text shapes'
         _logger.info(f'Disabling DDP dynamo optimizer ({reason}).')
         torch._dynamo.config.optimize_ddp = False
 
@@ -574,6 +557,7 @@ def main(args):
         epoch=start_epoch,
         tokenizer=tokenizer,
         naflex_data_config=getattr(task, 'naflex_data_config', None),
+        model_traits=model_traits,
     )
     if args.audio_zeroshot_dataset:
         from open_clip_train.audio_zero_shot import (

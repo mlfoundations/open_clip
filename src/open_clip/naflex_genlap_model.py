@@ -24,6 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .model_traits import GENLAP_TRAITS
 from .audio.naflex_audio import AudioNaFlexCfg, MelPatchEmbed
 from .loss import fused_linear_cross_entropy
 from .naflex_genlip_model import (
@@ -89,6 +90,7 @@ def build_audio_position_ids(
 class NaFlexGenLap(nn.Module):
     """GenLAP unified audio-language model: NaFlex spectrogram patches through the shared GenLIP trunk."""
 
+    traits = GENLAP_TRAITS
     output_dict: torch.jit.Final[bool]
 
     def __init__(

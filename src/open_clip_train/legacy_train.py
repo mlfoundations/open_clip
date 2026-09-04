@@ -14,6 +14,7 @@ except ImportError:
     wandb = None
 
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
+from open_clip.utils import cat_padded_sequences
 from open_clip_train.distributed import is_master
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
@@ -176,7 +177,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     inputs = {}
                     for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+                        values = accumulated[:j] + [model_out[key]] + accumulated[j + 1:]
+                        if key in ("logits", "labels"):
+                            # Caption outputs are already AR-shifted. Added label padding must be ignored
+                            # by CoCaLoss, including for models with a nonzero tokenizer pad id.
+                            inputs[key] = cat_padded_sequences(values, padding_value=-100 if key == "labels" else 0)
+                        else:
+                            inputs[key] = torch.cat(values)
 
                     losses = loss(**inputs, **inputs_no_accum, output_dict=True)
                     del inputs

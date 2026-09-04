@@ -61,6 +61,14 @@ def _tiny_batch(seed=0, batch_size=2, seq_len=16, num_pad=4):
 
 
 @pytest.mark.parametrize('mm_cfg', ARCH_CFGS, ids=ARCH_IDS)
+@pytest.mark.parametrize('variable_text', [False, True])
+def test_mammut_honors_variable_text_config(mm_cfg, variable_text):
+    model = _tiny_model(dict(mm_cfg, variable_text=variable_text))
+    assert model.text.variable_text is variable_text
+    assert open_clip.get_model_traits(model).variable_text is variable_text
+
+
+@pytest.mark.parametrize('mm_cfg', ARCH_CFGS, ids=ARCH_IDS)
 def test_mammut_output_contract(mm_cfg):
     """Forward returns the CoCa-style dict with full-length caption logits."""
     model = _tiny_model(mm_cfg)
@@ -246,7 +254,7 @@ def test_mammut_new_format_proj_checkpoint_not_misconverted(tmp_path):
 
 def test_mammut_create_loss_pad_id():
     """Standalone create_loss() keys the legacy value-based label ignore to the model instance's
-    pad id (config-by-name resolution is deliberately avoided); the underlying CE uses -100."""
+    pad id (model names are never inspected); the underlying CE uses -100."""
     import types
     from open_clip import create_loss
     from open_clip.loss import CoCaLoss
@@ -262,10 +270,14 @@ def test_mammut_create_loss_pad_id():
     assert isinstance(loss, CoCaLoss)
     assert loss.pad_id == 1  # raw labels equal to the model pad id are ignored
     assert loss.caption_loss.ignore_index == -100
-    # without a model instance, falls back to the historical default fill id and name dispatch
-    fallback = create_loss(args)
+    # without a model instance, explicit traits select the loss and the fill id falls back to the historical 0;
+    # the model name is never inspected
+    from open_clip.model_traits import MAMMUT_TRAITS
+    fallback = create_loss(args, traits=MAMMUT_TRAITS)
     assert isinstance(fallback, CoCaLoss)
     assert fallback.pad_id == 0
+    with pytest.raises(ValueError, match="requires the model"):
+        create_loss(args)
 
 
 def test_mammut_proj_type_none_requires_matching_dims():

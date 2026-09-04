@@ -23,7 +23,7 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, get_tokenizer, create_loss, get_model_traits
 from open_clip_train.legacy_data import get_data_legacy as get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.naflex_data import (
@@ -34,7 +34,7 @@ from open_clip_train.naflex_data import (
     prewarm_naflex_patch_interpolator,
 )
 from open_clip_train.logger import setup_logging
-from open_clip_train.params import parse_args
+from open_clip_train.params import parse_args, apply_model_traits
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.legacy_train import train_one_epoch, evaluate
 from open_clip_train.file_utils import pt_load, check_exists, start_sync_process, remote_sync
@@ -209,8 +209,7 @@ def main(args):
     if args.distill:
         #FIXME: support distillation with grad accum.
         assert args.accum_freq == 1
-        #FIXME: support distillation with coca.
-        assert 'coca' not in args.model.lower()
+        # generative students are rejected in apply_model_traits, post-creation
 
     if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
         # arg is nargs, single (square) image size list -> int
@@ -393,10 +392,9 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    # Mirror main.py: variable-text towers opt the data pipeline into per-batch text padding via this flag.
-    # The model may already be DDP-wrapped here, so look through `.module` for the text tower.
-    text_tower = getattr(getattr(model, 'module', model), 'text', None)
-    args.variable_text = bool(getattr(args, 'variable_text', False) or getattr(text_tower, 'variable_text', False))
+    # Mirror main.py: combine the built model's traits with the user flags (get_model_traits sees through DDP).
+    model_traits = get_model_traits(model)
+    apply_model_traits(args, model_traits)
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
     naflex_patch_size = get_naflex_model_patch_size(model) if args.use_naflex else None
     naflex_patch_interpolation = (

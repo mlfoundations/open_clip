@@ -20,6 +20,7 @@ from open_clip_train.legacy_data import (
 )
 from test_audio_wds import SR, _base_args, _build_audio_tar  # noqa: F401  (audio tar + args helpers)
 from test_wds import build_inputs, build_params
+from test_data_csv import _make_csv  # noqa: F401  (tiny tsv fixture)
 
 
 def test_legacy_wds_image_fixed_text():
@@ -82,3 +83,34 @@ def test_legacy_get_data_rejects_naflex_and_bucketing():
     args = types.SimpleNamespace(use_naflex=False, length_bucketing=True)
     with pytest.raises(ValueError, match="length-bucketing"):
         get_data_legacy(args, (None, None))
+
+
+def test_legacy_get_data_csv_is_args_only(tmp_path):
+    """Legacy stays backward compatible: csv sources build with no model traits, variable_text from args."""
+    from torchvision import transforms
+
+    csv_path = _make_csv(tmp_path, n=4)
+    args = types.SimpleNamespace(
+        train_data=str(csv_path),
+        val_data=None,
+        dataset_type="auto",
+        csv_img_key="filepath",
+        csv_caption_key="caption",
+        csv_separator="\t",
+        imagenet_val=None,
+        imagenet_v2=None,
+        distributed=False,
+        batch_size=2,
+        workers=0,
+    )
+    tok = util_test.VariableTokenizer()
+    data = get_data_legacy(args, (transforms.ToTensor(), transforms.ToTensor()), tokenizer=tok)
+    batch = next(iter(data["train"].dataloader))
+    assert batch["image"].shape[0] == 2
+    assert batch["text"].shape == (2, util_test.VariableTokenizer.context_length)  # fixed-length contract
+
+    args.variable_text = True
+    data = get_data_legacy(args, (transforms.ToTensor(), transforms.ToTensor()), tokenizer=tok)
+    batch = next(iter(data["train"].dataloader))
+    valid = batch["text"] != util_test.VariableTokenizer.pad_token_id
+    assert batch["text"].shape[1] == int(valid.sum(dim=1).max())  # padded to batch max

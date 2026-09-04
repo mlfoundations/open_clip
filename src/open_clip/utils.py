@@ -5,7 +5,22 @@ from typing import List, Optional, Tuple, Union
 import torch
 from torch import nn as nn
 from torch import _assert
+from torch.nn import functional as F
 from torchvision.ops.misc import FrozenBatchNorm2d
+
+
+def cat_padded_sequences(tensors: List[torch.Tensor], padding_value: float = 0) -> torch.Tensor:
+    """Concatenate ``[batch, length, ...]`` tensors, right-padding length to the maximum.
+
+    Used when accumulating caption logits/labels from microbatches with different text lengths.
+    Padding stays outside the model forward and preserves gradients through the live microbatch.
+    """
+    max_length = max(t.shape[1] for t in tensors)
+    return torch.cat([
+        F.pad(t, (0, 0) * (t.ndim - 2) + (0, max_length - t.shape[1]), value=padding_value)
+        if t.shape[1] != max_length else t
+        for t in tensors
+    ])
 
 
 def freeze_batch_norm_2d(module, module_match={}, name=''):

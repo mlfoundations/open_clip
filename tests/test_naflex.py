@@ -8,6 +8,7 @@ from PIL import Image
 from torchvision import transforms
 
 import open_clip
+from open_clip.model_traits import CLIP_TRAITS
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.transform import NaFlexEvalTransformFactory, image_transform
 from open_clip_train.data import get_imagenet, get_wds_dataset
@@ -498,6 +499,7 @@ def test_get_wds_dataset_naflex_keeps_dictionary_contract(tmp_path):
         is_train=True,
         tokenizer=tokenizer,
         naflex_data_config=create_naflex_data_config_from_args(args),
+        model_traits=CLIP_TRAITS,
     )
     batch = next(iter(info.dataloader))
 
@@ -540,6 +542,7 @@ def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
         is_train=True,
         tokenizer=tokenizer,
         naflex_data_config=create_naflex_data_config_from_args(args),
+        model_traits=CLIP_TRAITS,
     )
     batches = list(info.dataloader)
 
@@ -603,6 +606,7 @@ def test_get_wds_dataset_naflex_eval_outputs_patched_image_dict(tmp_path):
         is_train=False,
         tokenizer=tokenizer,
         naflex_data_config=create_naflex_data_config_from_args(args),
+        model_traits=CLIP_TRAITS,
     )
     batch = next(iter(info.dataloader))
 

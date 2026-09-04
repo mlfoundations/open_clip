@@ -11,6 +11,7 @@ from torchvision import transforms
 
 from open_clip.tokenizer import SimpleTokenizer
 from open_clip_train.data import get_wds_dataset
+from open_clip.model_traits import CLIP_TRAITS
 from open_clip_train.params import parse_args
 from open_clip_train.main import random_seed
 
@@ -76,7 +77,7 @@ def build_params(input_shards, seed=0):
 
 def get_dataloader(input_shards):
     args, preprocess_img, tokenizer = build_params(input_shards)
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer, model_traits=CLIP_TRAITS)
     dataloader = dataset.dataloader
     return dataloader
 
@@ -119,7 +120,7 @@ def test_two_sources_same_weights():
     input_shards = f"{os.path.join(input_dir, 'test_data_000.tar')}::{os.path.join(input_dir, 'test_data_001.tar')}"
     args, preprocess_img, tokenizer = build_params(input_shards)
     args.train_data_upsampling_factors = '1::1'
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer, model_traits=CLIP_TRAITS)
     dataloader = dataset.dataloader
 
     counts = collections.defaultdict(int)
@@ -137,7 +138,7 @@ def test_two_sources_with_upsampling():
     input_shards = f"{os.path.join(input_dir, 'test_data_000.tar')}::{os.path.join(input_dir, 'test_data_001.tar')}"
     args, preprocess_img, tokenizer = build_params(input_shards)
     args.train_data_upsampling_factors = '1::2'
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer, model_traits=CLIP_TRAITS)
     dataloader = dataset.dataloader
 
     counts = collections.defaultdict(int)
@@ -163,7 +164,8 @@ def test_wds_variable_text_pads_to_batch_max():
     args.batch_size = 2
     args.variable_text = True
 
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=util_test.VariableTokenizer())
+    dataset = get_wds_dataset(
+        args, preprocess_img, is_train=True, tokenizer=util_test.VariableTokenizer(), model_traits=CLIP_TRAITS)
     batch = next(iter(dataset.dataloader))
 
     assert batch["image"].shape[0] == 2
@@ -190,7 +192,8 @@ def test_wds_variable_text_pad_multiple_rounds_seq_len():
     args.variable_text = True
     args.text_pad_multiple = 8
 
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=util_test.VariableTokenizer())
+    dataset = get_wds_dataset(
+        args, preprocess_img, is_train=True, tokenizer=util_test.VariableTokenizer(), model_traits=CLIP_TRAITS)
     batch = next(iter(dataset.dataloader))
     assert batch["text"].shape[1] % 8 == 0  # --text-pad-multiple rounds the batch sequence length
 
@@ -205,7 +208,7 @@ def test_wds_fixed_text_attention_mask_does_not_add_none_key():
     args.batch_size = 2
     args.text_attention_mask = True
 
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=SimpleTokenizer())
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=SimpleTokenizer(), model_traits=CLIP_TRAITS)
     batch = next(iter(dataset.dataloader))
 
     assert set(batch) == {"image", "text", "text_valid"}
@@ -233,7 +236,7 @@ def test_wds_variable_text_length_bucketing_standard_vit():
 
     # Length varies with the caption's trailing digit so the length-sort actually reorders samples.
     tokenizer = util_test.VariableTokenizer(length_fn=lambda text: int(text[-1]) + 2)
-    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer)
+    dataset = get_wds_dataset(args, preprocess_img, is_train=True, tokenizer=tokenizer, model_traits=CLIP_TRAITS)
     batches = list(itertools.islice(iter(dataset.dataloader), 3))
     assert batches, "bucketed standard-ViT pipeline produced no batches"
     for batch in batches:

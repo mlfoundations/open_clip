@@ -21,6 +21,10 @@ from .mammut_model import MaMMUT
 from .naflex_genlip_model import NaFlexGenLip
 from .naflex_genlap_model import NaFlexGenLap
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
+from .model_traits import (
+    InputMode, ModelFamily, ModelTraits, get_model_traits, traits_from_config, traits_from_model,
+    validate_distillation,
+)
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -520,7 +524,8 @@ def create_model(
         if force_image_size is not None:
             warnings.warn("force_image_size is ignored for CLAP audio models.", UserWarning)
         if force_naflex_vision:
-            raise ValueError("force_naflex_vision is only valid for image models.")
+            # Nothing to convert: --use-naflex passes this for every model, NaFlex audio towers included.
+            _logger.info("force_naflex_vision is a no-op for audio models (no vision tower).")
         if force_naflex_patch_interp:
             raise ValueError("force_naflex_patch_interp is only valid for image models.")
     else:
@@ -531,7 +536,12 @@ def create_model(
         if force_naflex_patch_interp:
             vision_cfg["naflex_patch_interp"] = True
         if force_naflex_vision:
-            apply_naflex_vision_config(model_cfg)
+            pre_traits = traits_from_config(model_cfg)
+            if pre_traits.requires_naflex_data or pre_traits.image_input is InputMode.NONE:
+                # NaFlex-native (GenLIP embed) or no vision tower (GenLAP): nothing to convert.
+                _logger.info(f"force_naflex_vision is a no-op for {pre_traits.family.value} models.")
+            else:
+                apply_naflex_vision_config(model_cfg)
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
 
@@ -624,6 +634,8 @@ def create_model(
     # Instantiate the model
     _logger.info(f"Instantiating model architecture: {model_class.__name__}")
     model = model_class(**final_model_cfg, cast_dtype=cast_dtype)
+    # Resolved traits (family + tower-level facts) ride on the model; see model_traits.get_model_traits.
+    model.traits = traits_from_model(model)
     _set_model_device_and_precision(model, device, precision, is_timm_model)
 
     # Load Full Pretrained CLIP Weights (if path exists)
@@ -1002,8 +1014,7 @@ def get_tokenizer(
 
     # generative models (caption/LM loss) consume pad_id as the loss ignore_index -- require it explicit
     # when the tokenizer reserves a nonzero pad (see _validate_special_tokens)
-    generative = any(k in config for k in ('multimodal_cfg', 'genlip_cfg', 'genlap_cfg'))
-    _validate_special_tokens(text_config, tokenizer, generative=generative)
+    _validate_special_tokens(text_config, tokenizer, generative=traits_from_config(config).generative)
 
     return tokenizer
 
@@ -1049,7 +1060,11 @@ def _use_loss_label_cache(args):
     )
 
 
-def create_loss(args, model: Optional[torch.nn.Module] = None):
+def create_loss(
+        args,
+        model: Optional[torch.nn.Module] = None,
+        traits: Optional[ModelTraits] = None,
+):
     """Construct a loss module from training args.
 
     Standalone factory for users running their own training loops. The
@@ -1057,24 +1072,24 @@ def create_loss(args, model: Optional[torch.nn.Module] = None):
     wraps model + loss and handles EMA/FSDP/checkpointing.
 
     Args:
-        args: training args namespace (model name, loss weights, distributed settings).
-        model: optional model instance. When given, loss dispatch keys on the built model type
-            (name checks miss hf-hub:/local-dir:/renamed configs) and model-dependent settings
-            (e.g. ``pad_id`` for the CoCa/MaMMUT caption loss on raw labels) come from its
-            attributes. Config-by-name resolution is deliberately not attempted (hub / local-dir
-            configs and model_kwargs overrides make it unreliable) -- pass the model when possible.
+        args: training args namespace (loss weights, distributed settings).
+        model: the model instance. Loss dispatch keys on the model's traits and model-dependent
+            settings (e.g. ``pad_id`` for the CoCa/MaMMUT caption loss on raw labels) come from its
+            attributes. Required unless ``traits`` is given; the model name is never inspected.
+        traits: explicit :class:`ModelTraits`, for callers that have not built the model.
     """
     if model is not None:
         from .task import unwrap_model
-        model = unwrap_model(model)  # see through torch.compile / DDP wrappers for isinstance + attrs
-        is_captioning = isinstance(model, (CoCa, MaMMUT))
-        is_genlip = isinstance(model, (NaFlexGenLip, NaFlexGenLap))
-    else:
-        is_captioning = "coca" in args.model.lower() or "mammut" in args.model.lower()
-        is_genlip = "genlip" in args.model.lower() or "genlap" in args.model.lower()
+        model = unwrap_model(model)  # see through torch.compile / DDP wrappers for attrs
+        traits = get_model_traits(model)
+    elif traits is None:
+        raise ValueError("create_loss requires the model (model=...) or explicit traits=...; model names are not inspected.")
+    is_captioning = traits.family in (ModelFamily.COCA, ModelFamily.MAMMUT)
+    is_genlip = traits.family in (ModelFamily.GENLIP, ModelFamily.GENLAP)
 
     cache_labels = _use_loss_label_cache(args)
     if args.distill:
+        validate_distillation(traits)
         return DistillClipLoss(
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
@@ -1141,9 +1156,9 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     # dispatch on the unwrapped model type (external callers may pass torch.compile / DDP wrapped
     # models); the task itself still wraps the model as provided
     model_unwrapped = unwrap_model(model)
+    if args.distill:
+        validate_distillation(get_model_traits(model_unwrapped))
     if isinstance(model_unwrapped, CLAP):
-        if args.distill:
-            raise ValueError("CLAP distillation is not supported in this integration.")
         task = CLAPTask(
             model,
             local_loss=args.local_loss,
@@ -1210,6 +1225,16 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     return task
 
 
+def _with_naflex_aug_cfg(aug_cfg):
+    """Return ``aug_cfg`` with the timm NaFlex transform pipeline enabled (dict, AugmentationCfg, or None)."""
+    if aug_cfg is None:
+        return {'use_timm': True, 'naflex': True}
+    if isinstance(aug_cfg, dict):
+        return {**aug_cfg, 'use_timm': True, 'naflex': True}
+    from dataclasses import replace as _replace
+    return _replace(aug_cfg, use_timm=True, naflex=True)
+
+
 def _build_preprocess(model, *, aug_cfg=None, audio_aug_cfg=None):
     """Return ``(preprocess_train, preprocess_val)`` for the model's modality.
 
@@ -1218,24 +1243,28 @@ def _build_preprocess(model, *, aug_cfg=None, audio_aug_cfg=None):
     ``.audio`` nor ``.visual``, so it would otherwise crash the image branch. Shared by
     ``create_model_and_transforms`` and ``create_model_from_pretrained``.
     """
-    if isinstance(model, NaFlexGenLap):
+    traits = get_model_traits(model)
+    if traits.family is ModelFamily.GENLAP:
         from .audio.naflex_audio import AudioNaFlexTransformFactory
 
         factory = AudioNaFlexTransformFactory(model.audio_cfg, pack_prefix=getattr(model, 'pack_prefix', False))
         return factory, factory
-    if hasattr(model, 'audio') and getattr(model.audio.cfg, 'model_type', '').lower() == 'naflexvit':
+    if traits.audio_input is InputMode.NAFLEX:
         # NaFlexClap: CLAP with a NaFlex spectrogram-ViT audio tower -> NaFlex patchify transform (not HTSAT).
         from .audio.naflex_audio import AudioNaFlexCfg, AudioNaFlexTransformFactory
 
         factory = AudioNaFlexTransformFactory(AudioNaFlexCfg.from_clip_audio_cfg(model.audio.cfg))
         return factory, factory
-    if hasattr(model, 'audio'):
+    if traits.audio_input is not InputMode.NONE:
         from .audio.transform import audio_transform_v2
 
         return (
             audio_transform_v2(model.audio.cfg, is_train=True, audio_aug_cfg=audio_aug_cfg),
             audio_transform_v2(model.audio.cfg, is_train=False, audio_aug_cfg=audio_aug_cfg),
         )
+    if traits.requires_naflex_data:
+        # GenLIP requires both flags, even when the caller supplied naflex=True without use_timm=True.
+        aug_cfg = _with_naflex_aug_cfg(aug_cfg)
     pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
     preprocess_train = image_transform_v2(pp_cfg, is_train=True, aug_cfg=aug_cfg)
     if is_naflex_aug_cfg(aug_cfg):
