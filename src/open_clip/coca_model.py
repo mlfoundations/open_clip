@@ -6,6 +6,7 @@ from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass
 
+from .model_traits import COCA_TRAITS
 from .transformer import (
     AttentionalPooler,
     LayerNormFp32,
@@ -66,6 +67,8 @@ def _build_text_decoder_tower(
 
 
 class CoCa(nn.Module):
+    traits = COCA_TRAITS
+
     def __init__(
             self,
             embed_dim,

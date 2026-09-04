@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import torch
 
 from open_clip.audio.naflex_audio import AudioNaFlexCfg
+from open_clip.model_traits import CLAP_TRAITS
 from open_clip_train.audio_data import SyntheticAudioDataset, _audio_collate, get_synthetic_audio_dataset
 from open_clip_train.naflex_data import AudioTokenLength
 
@@ -105,7 +106,9 @@ def test_synthetic_audio_dataset_uses_resolved_dataclass_cfg():
         distributed=False,
         audio_multiprocessing_context="forkserver",
     )
-    info = get_synthetic_audio_dataset(args, Transform(), is_train=True, tokenizer=tokenizer)
+    info = get_synthetic_audio_dataset(
+        args, Transform(), is_train=True, tokenizer=tokenizer, model_traits=CLAP_TRAITS,
+    )
     dataset = info.dataloader.dataset
     assert dataset.sample_rate == 16000
     assert dataset.clip_samples == 16000

@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .model_traits import CLAP_TRAITS
 from .audio.config import CLIPAudioCfg
 from .model import CLIPTextCfg, _build_text_tower
 
@@ -22,6 +23,7 @@ def _build_audio_tower(
 class CLAP(nn.Module):
     """Contrastive Language-Audio Pretraining model."""
 
+    traits = CLAP_TRAITS  # audio_input / requires_naflex_data resolved per tower by the factory
     output_dict: torch.jit.Final[bool]
 
     def __init__(

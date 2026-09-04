@@ -170,11 +170,15 @@ def test_naflexclap_preprocess_and_params():
     assert isinstance(ptrain, AudioNaFlexTransformFactory)
     assert isinstance(pval, AudioNaFlexTransformFactory)
 
-    from open_clip_train.params import parse_args
+    from open_clip import InputMode, get_model_traits
+    from open_clip_train.params import apply_model_traits, parse_args
+    traits = get_model_traits(model)
+    assert traits.audio_input is InputMode.NAFLEX and traits.requires_naflex_data
     args = parse_args(["--model", CONFIG, "--train-num-samples", "100"])
-    assert args.naflexclap is True
+    assert args.use_naflex is False  # implied by the built model's traits, not by the model name
+    apply_model_traits(args, traits)
     assert args.use_naflex is True
-    assert args.force_naflex_vision is False
+    assert args.aug_cfg["naflex"] is True
 
 
 def test_naflexclap_audio_zero_shot_run_path():

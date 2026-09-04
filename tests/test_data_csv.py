@@ -8,6 +8,7 @@ from PIL import Image
 from torchvision import transforms
 
 import open_clip
+from open_clip.model_traits import CLIP_TRAITS
 import util_test
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip_train.data import CsvDataset, get_csv_dataset
@@ -95,7 +96,7 @@ def test_get_csv_dataset_train_drop_last(tmp_path):
         workers=0,
     )
     tok = lambda xs: xs
-    train_info = get_csv_dataset(args, transforms.ToTensor(), is_train=True, tokenizer=tok)
+    train_info = get_csv_dataset(args, transforms.ToTensor(), is_train=True, tokenizer=tok, model_traits=CLIP_TRAITS)
     # 3 samples, batch_size=2, drop_last=True => 1 batch
     assert train_info.dataloader.num_batches == 1
 
@@ -114,7 +115,7 @@ def test_get_csv_dataset_val_keeps_partial(tmp_path):
         workers=0,
     )
     tok = lambda xs: xs
-    val_info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=tok)
+    val_info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=tok, model_traits=CLIP_TRAITS)
     # 3 samples, batch_size=2, drop_last=False => 2 batches
     assert val_info.dataloader.num_batches == 2
 
@@ -133,7 +134,7 @@ def test_get_csv_dataset_batches_are_dicts(tmp_path):
         workers=0,
     )
     tok = lambda xs: [torch.tensor([ord(c) for c in x[:5]]) for x in xs]
-    info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=tok)
+    info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=tok, model_traits=CLIP_TRAITS)
     batch = next(iter(info.dataloader))
     assert isinstance(batch, dict)
     assert "image" in batch and "text" in batch
@@ -158,7 +159,8 @@ def test_get_csv_dataset_variable_text_pads_to_batch_max(tmp_path):
         variable_text=True,
     )
 
-    info = get_csv_dataset(args, transforms.ToTensor(), is_train=False, tokenizer=util_test.VariableTokenizer())
+    info = get_csv_dataset(
+        args, transforms.ToTensor(), is_train=False, tokenizer=util_test.VariableTokenizer(), model_traits=CLIP_TRAITS)
     batch = next(iter(info.dataloader))
 
     assert batch["text"].shape == (2, len("longer") + 1)
@@ -205,6 +207,7 @@ def test_get_csv_dataset_naflex_train_outputs_patched_dict_batches(tmp_path):
         is_train=True,
         tokenizer=tokenizer,
         naflex_data_config=config,
+        model_traits=CLIP_TRAITS,
     )
     batch = next(iter(info.dataloader))
 
@@ -244,6 +247,7 @@ def test_get_csv_dataset_naflex_val_outputs_patched_dict_batches(tmp_path):
         is_train=False,
         tokenizer=tokenizer,
         naflex_data_config=config,
+        model_traits=CLIP_TRAITS,
     )
     batch = next(iter(info.dataloader))
 

@@ -1,8 +1,7 @@
 """Tests for factory.create_task() dispatch logic.
 
-Verifies the right TrainingTask subclass is constructed for each combination
-of (args.distill, args.model, args.siglip), and that task-specific loss
-defaults are wired up correctly.
+Verifies dispatch uses the built model plus distillation/SigLIP settings, rejects
+unsupported combinations, and wires up task-specific loss defaults correctly.
 """
 import os
 import types
@@ -14,6 +13,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 import open_clip
 from open_clip import create_task
 from open_clip.naflex_config import NaFlexDataConfig
+from open_clip.model_traits import CLIP_TRAITS
 from open_clip.task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
 from open_clip.loss import ClipLoss, SigLipLoss, CoCaLoss, DistillClipLoss
 
@@ -114,13 +114,12 @@ def test_create_task_distill_returns_distill_task():
     assert all(not p.requires_grad for p in task.teacher.parameters())
 
 
-def test_create_task_distill_takes_precedence_over_coca():
-    """When --distill is set with a coca model, distill wins (first branch)."""
+def test_create_task_rejects_distilling_coca():
+    """Distillation must not silently bypass the captioning task."""
     student = open_clip.create_model('coca_ViT-B-32')
-    teacher = open_clip.create_model('coca_ViT-B-32')
     args = _make_args(model='coca_ViT-B-32', distill=True)
-    task = create_task(args, model=student, dist_model=teacher)
-    assert isinstance(task, DistillCLIPTask)
+    with pytest.raises(ValueError, match="distillation is not supported for generative models"):
+        create_task(args, model=student)
 
 
 def test_create_task_distill_precedence_over_siglip():
@@ -204,7 +203,7 @@ def test_create_task_sets_cache_labels_for_compile_strategy(torchcompile, strate
 )
 def test_create_loss_sets_cache_labels_for_compile_strategy(torchcompile, strategy, expected_cache):
     args = _make_args(torchcompile=torchcompile, torchcompile_strategy=strategy)
-    loss = open_clip.create_loss(args)
+    loss = open_clip.create_loss(args, traits=CLIP_TRAITS)
 
     assert loss.cache_labels is expected_cache
 

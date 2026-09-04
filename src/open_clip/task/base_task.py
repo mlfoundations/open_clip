@@ -509,6 +509,10 @@ class TrainingTask(nn.Module):
         """
         return {key: source[key] for key in ("logit_scale", "logit_bias") if key in source}
 
+    def concat_accum_features(self, features: Dict[str, List[torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        """Combine cached and live microbatch outputs; override for outputs with variable sequence lengths."""
+        return {key: torch.cat(values) for key, values in features.items()}
+
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         """Compute loss from accumulated features for gradient accumulation.
 

@@ -17,6 +17,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 from functools import partial
 
+from .model_traits import CLIP_TRAITS
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
@@ -372,6 +373,7 @@ def _build_text_tower(
 
 
 class CLIP(nn.Module):
+    traits = CLIP_TRAITS  # family-level defaults; the factory attaches the resolved instance
 
     def __init__(
             self,
@@ -605,6 +607,7 @@ class CLIP(nn.Module):
 
 
 class CustomTextCLIP(nn.Module):
+    traits = CLIP_TRAITS
 
     def __init__(
             self,

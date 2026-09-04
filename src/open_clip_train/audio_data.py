@@ -14,6 +14,8 @@ from torch.utils.data.distributed import DistributedSampler
 if TYPE_CHECKING:
     from open_clip.tokenizer import Tokenizer
 
+from open_clip.model_traits import InputMode
+
 from open_clip_train.data import (
     DataInfo,
     RepeatedShardList,
@@ -27,6 +29,7 @@ from open_clip_train.data import (
     get_text_pad_id,
     log_and_continue,
     naflex_loader_counts,
+    resolve_text_layout,
     tarfile_to_samples_nothrow,
     wds_shuffle_sizes,
 )
@@ -163,6 +166,7 @@ def get_wds_audio_dataset(
         floor=False,
         tokenizer=None,
         naflex_data_config=None,
+        model_traits=None,
 ):
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
@@ -193,12 +197,8 @@ def get_wds_audio_dataset(
 
     # NaFlex audio uses the shared batcher path; standard CLAP keeps the fixed-batch loader.
     # GenLAP has variable text in the audio row budget; contrastive variable text is padded separately.
-    naflex_audio = naflex_data_config is not None and (
-        getattr(args, "genlap", False) or getattr(args, "naflexclap", False)
-    )
-    generative = getattr(args, "genlap", False)
-    variable_text = bool(getattr(args, "variable_text", False))
-    text_variable = generative or variable_text
+    text_in_budget, variable_text = resolve_text_layout(args, model_traits)
+    naflex_audio = naflex_data_config is not None and model_traits.audio_input is InputMode.NAFLEX
     naflex_train = naflex_audio and is_train
     naflex_eval = naflex_audio and not is_train
 
@@ -263,12 +263,12 @@ def get_wds_audio_dataset(
     decode_audio = wds.map_dict(audio=_decode_audio_bytes, handler=log_and_continue)
 
     # GenLAP budgets variable text with audio; contrastive variable text only changes padding/collation.
-    text_pad_id = get_text_pad_id(tokenizer) if text_variable else None
+    text_pad_id = get_text_pad_id(tokenizer) if variable_text else None
     text_pad_multiple = getattr(args, "text_pad_multiple", None)
     text_pad_cap = getattr(tokenizer, "context_length", None)
-    naflex_pad_id = text_pad_id if text_variable else None
-    naflex_text_cost = (getattr(tokenizer, "context_length", 0) or 0) if generative else 0
-    naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=text_variable)
+    naflex_pad_id = text_pad_id
+    naflex_text_cost = (getattr(tokenizer, "context_length", 0) or 0) if text_in_budget else 0
+    naflex_tokenize = AudioCaptionTokenizer(tokenizer, variable=variable_text)
 
     naflex_batcher = None
     if naflex_train:
@@ -289,7 +289,7 @@ def get_wds_audio_dataset(
                     max_audio_tokens=max(naflex_data_config.train_seq_lens),  # clamp the sort key for outliers
                 )
             ]
-            if text_variable:
+            if variable_text:
                 # Variable text adds caption length to the reorder key; only GenLAP also adds its cap to row budget.
                 length_fns.append(CaptionLength(key="text"))
             audio_bucketer = LengthBucketer(
@@ -419,7 +419,9 @@ class SyntheticAudioDataset(Dataset):
         return {"audio": audio, "text": self.preprocess_txt(self.caption)}
 
 
-def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None):
+def get_synthetic_audio_dataset(
+        args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None, model_traits=None,
+):
     # NOT YET supported for NaFlex audio models (GenLAP / NaFlexClap): SyntheticAudioDataset feeds the transform a
     # (waveform, sample_rate) tuple, but the NaFlex audio transform is a factory that patchifies on demand
     # (__call__(max_seq_len, patch_size)) -- so it would mis-handle the tuple and fail downstream in the collate.
@@ -446,7 +448,7 @@ def get_synthetic_audio_dataset(args, preprocess_fn, is_train, epoch=0, tokenize
         }
     else:
         audio_cfg = {}
-    variable_text = bool(getattr(args, "variable_text", False))
+    _, variable_text = resolve_text_layout(args, model_traits)
     dataset = SyntheticAudioDataset(
         audio_cfg=audio_cfg,
         transform=preprocess_fn,

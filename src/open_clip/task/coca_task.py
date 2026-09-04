@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from .base_task import unwrap_model
 from .image_text_task import ImageTextTask
+from ..utils import cat_padded_sequences
 
 
 class CoCaTask(ImageTextTask):
@@ -125,6 +126,12 @@ class CoCaTask(ImageTextTask):
         # but we still want to log. Matches the accum path, which captures bias from inputs_no_accum before dropping.
         return losses, self._report(model_out)
 
+    def concat_accum_features(self, features):
+        return {
+            key: cat_padded_sequences(values) if key == "logits" else torch.cat(values)
+            for key, values in features.items()
+        }
+
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         if self.fused_caption_loss:
             # The accum feature-cache replays micro-batches against cached contrastive features; the
@@ -133,13 +140,11 @@ class CoCaTask(ImageTextTask):
             raise NotImplementedError(
                 "fused caption loss does not support --accum-freq > 1 yet; "
                 "drop --fused-caption-loss or set --accum-freq 1")
-        all_texts = torch.cat([b["text"] for b in accum_batches])
-        # derive validity per batch (masks may be present for some accum batches and not others)
-        all_valid = torch.cat([
-            b["text_valid"].bool() if b.get("text_valid") is not None else b["text"] != self.pad_id
-            for b in accum_batches
-        ])
-        inputs["labels"] = self._caption_labels(all_texts, all_valid)
+        # Mask and shift each caption before padding. The loss then averages over all valid target
+        # tokens in the effective batch, regardless of each microbatch's padded length or token count.
+        inputs["labels"] = cat_padded_sequences([
+            self._caption_labels(b["text"], b.get("text_valid")) for b in accum_batches
+        ], padding_value=-100)
         inputs["logits"] = inputs["logits"][:, :-1]
         report = self._report(inputs_no_accum)  # capture before dropping logit_bias for the loss call
         # CoCaLoss doesn't accept logit_bias

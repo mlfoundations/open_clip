@@ -293,10 +293,10 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
                     logit_bias = model_out.pop("logit_bias")
                     inputs_no_accum["logit_bias"] = logit_bias if is_last_step else logit_bias.detach()
 
-                inputs = {}
-                for key, val in accum_features.items():
-                    accumulated = accum_features[key]
-                    inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+                inputs = task.concat_accum_features({
+                    key: accumulated[:j] + [model_out[key]] + accumulated[j + 1:]
+                    for key, accumulated in accum_features.items()
+                })
 
                 losses, report = task.compute_accum_loss(inputs, inputs_no_accum, accum_batches)
                 del inputs

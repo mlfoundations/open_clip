@@ -26,6 +26,7 @@ from torch.utils.data.dataloader import default_collate
 
 # Audio helpers are referenced through the module (not from-imported) so test monkeypatching of the decode
 # stubs (audio_data._decode_audio) applies here too.
+from open_clip.model_traits import CLIP_TRAITS
 from open_clip_train import audio_data as _audio_data
 from open_clip_train.data import (
     DataInfo,
@@ -39,6 +40,7 @@ from open_clip_train.data import (
     collate_variable_text_dicts,
     detshuffle2,
     expand_urls,
+    get_csv_dataset,
     get_dataset_size,
     get_imagenet,
     get_text_pad_id,
@@ -251,11 +253,24 @@ def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floo
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
+# The legacy pipeline is args-driven and fixed-batch by contract (it rejects NaFlex below), so shared CSV and
+# synthetic builders use constant text traits: no caption token budget, ``variable_text`` decided by args alone.
+_LEGACY_TEXT_TRAITS = CLIP_TRAITS
+
+
+def get_csv_dataset_legacy(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+    """Args-only csv builder for the legacy pipeline (``get_csv_dataset`` without a model traits argument)."""
+    return get_csv_dataset(
+        args, preprocess_fn, is_train, epoch=epoch, tokenizer=tokenizer, model_traits=_LEGACY_TEXT_TRAITS,
+    )
+
+
 def get_data_legacy(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_config=None):
     """``get_data`` counterpart using the legacy decode-first wds builders (used by ``legacy_main``).
 
-    WebDataset types route to the legacy assemblies above; csv/synthetic types have no wds pipeline and
-    delegate to the default builders. NaFlex is not supported here -- use ``main.py`` / ``data.get_data``.
+    Args-only, like the pre-traits pipeline: WebDataset types route to the legacy assemblies above, csv types to
+    :func:`get_csv_dataset_legacy`, synthetic types to args-only adapters of the default builders.
+    NaFlex is not supported here -- use ``main.py`` / ``data.get_data``.
     """
     from open_clip_train.data import get_dataset_fn
 
@@ -265,12 +280,15 @@ def get_data_legacy(args, preprocess_fns, epoch=0, tokenizer=None, naflex_data_c
         raise ValueError("legacy data pipelines do not support --length-bucketing; use data.get_data.")
 
     def dataset_fn(data_path, dataset_type):
-        if dataset_type == "webdataset" or (
-                dataset_type == "auto" and data_path and data_path.split('.')[-1] == 'tar'
-        ):
+        ext = data_path.split('.')[-1] if data_path else ''
+        if dataset_type == "webdataset" or (dataset_type == "auto" and ext == 'tar'):
             return get_wds_dataset_legacy
         if dataset_type == "webdataset-audio":
             return get_wds_audio_dataset_legacy
+        if dataset_type == "csv" or (dataset_type == "auto" and ext in ('csv', 'tsv')):
+            return get_csv_dataset_legacy
+        if dataset_type in ("synthetic", "synthetic-audio"):
+            return partial(get_dataset_fn(data_path, dataset_type), model_traits=_LEGACY_TEXT_TRAITS)
         return get_dataset_fn(data_path, dataset_type)
 
     preprocess_train, preprocess_val = preprocess_fns

@@ -14,6 +14,7 @@ from .factory import (
     create_task,
 )
 from .factory import list_models, add_model_config, get_model_config, load_checkpoint
+from .model_traits import ModelFamily, InputMode, ModelTraits, get_model_traits, traits_from_config
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, GenLipLoss
 from .task import (
     TrainingTask,

@@ -962,33 +962,13 @@ def parse_args(args):
     if args.caption_loss_chunk_size <= 0:
         raise ValueError(f"--caption-loss-chunk-size must be > 0, got {args.caption_loss_chunk_size}.")
 
-    # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
-    # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).
-    args.genlip = 'genlip' in args.model.lower()
-    if args.genlip:
-        args.use_naflex = True
-        if args.accum_freq > 1:
-            raise ValueError("GenLIP does not support --accum-freq > 1 (no contrastive feature caching).")
-
-    # GenLAP is the audio sibling (generative LM over a NaFlex spectrogram prefix). It consumes the NaFlex
-    # *audio* data pipeline (--dataset-type webdataset-audio) and, like GenLIP, has no vision tower to convert.
-    args.genlap = 'genlap' in args.model.lower()
-    if args.genlap:
-        args.use_naflex = True
-        if args.accum_freq > 1:
-            raise ValueError("GenLAP does not support --accum-freq > 1 (no contrastive feature caching).")
-
-    # NaFlexClap: contrastive CLAP with a NaFlex spectrogram-ViT audio tower. Consumes the NaFlex audio data
-    # path (fixed-length text), routes to CLAP/CLAPTask via is_audio_model. Contrastive => accum_freq>1 is fine.
-    args.naflexclap = 'naflexclap' in args.model.lower()
-    if args.naflexclap:
-        args.use_naflex = True
-
+    # Model-family effects (NaFlex data implied by GenLIP / GenLAP / NaFlexCLAP, grad-accum guards, the text-mask
+    # default) are applied after model creation by apply_model_traits(): the built model's traits decide, not
+    # the model name. --use-naflex here is pure user intent: NaFlex data pipeline plus conversion of the
+    # vision tower where the factory finds one it can convert (a no-op for NaFlex-native / audio models).
     if args.use_naflex:
-        args.force_naflex_vision = not (args.genlip or args.genlap or args.naflexclap)
-        args.aug_cfg = dict(args.aug_cfg or {})
-        args.aug_cfg["use_timm"] = True
-        args.aug_cfg["naflex"] = True
+        args.force_naflex_vision = True
+        _enable_naflex_aug_cfg(args)
         # Listing several patch sizes only makes sense with weight interpolation; a single non-base size without
         # the flag is caught by the NaFlex data config's fail-fast, which names --force-naflex-patch-interp.
         if args.naflex_patch_sizes and len(set(args.naflex_patch_sizes)) > 1:
@@ -1001,4 +981,64 @@ def parse_args(args):
             if getattr(args, name) is None:
                 setattr(args, name, val)
 
+    return args
+
+
+def _enable_naflex_aug_cfg(args):
+    args.aug_cfg = dict(args.aug_cfg or {})
+    args.aug_cfg["use_timm"] = True
+    args.aug_cfg["naflex"] = True
+
+
+def apply_model_traits(args, traits):
+    """Combine the built model's traits with the user's flags into the run-level settings the pipeline reads.
+
+    Call once, right after model creation (``open_clip.get_model_traits(model)``). Traits describe the model;
+    this is where they meet ``--use-naflex``, ``--accum-freq``, distillation settings, the ``args.variable_text``
+    override and ``--text-attention-mask``. Sets, in place:
+
+    - ``use_naflex``: implied for models that cannot consume fixed batches (GenLIP, GenLAP, NaFlexCLAP), with
+      the timm NaFlex aug_cfg toggles for consistency of the logged args (the factory already built matching
+      transforms from the same traits).
+    - ``variable_text``: user flag OR the text tower's contract.
+    - ``text_attention_mask``: defaults to whether the model consumes the standard collator's ``text_valid``
+      key (CoCa / MaMMUT, not under distillation); an explicit True elsewhere fails fast.
+
+    Raises for ``--use-naflex`` on a model with no NaFlex-capable tower, for ``--accum-freq > 1`` on models
+    without a contrastive feature cache, and for distillation of generative or CLAP models.
+    """
+    from open_clip.model_traits import InputMode, validate_distillation
+
+    distill = bool(getattr(args, "distill", False))
+    if traits.requires_naflex_data and not args.use_naflex:
+        args.use_naflex = True
+        _enable_naflex_aug_cfg(args)
+    naflex_capable = traits.image_input is InputMode.NAFLEX or traits.audio_input is InputMode.NAFLEX
+    if args.use_naflex and not naflex_capable:
+        # image towers are converted by the factory under --use-naflex (or it raised); a fixed audio tower
+        # (HTSAT / Whisper CLAP) or a non-NaFlex image tower cannot consume NaFlex batches at all
+        raise ValueError(
+            f"--use-naflex requires a NaFlex-capable tower, but this {traits.family.value} model has "
+            f"image_input={traits.image_input.value}, audio_input={traits.audio_input.value}."
+        )
+    args.variable_text = bool(getattr(args, "variable_text", False) or traits.variable_text)
+
+    if getattr(args, "accum_freq", 1) > 1 and not traits.supports_cached_grad_accum:
+        raise ValueError(
+            f"{traits.family.value} does not support --accum-freq > 1 (no contrastive feature caching)."
+        )
+    if distill:
+        validate_distillation(traits)
+
+    mask_consumer = traits.wants_text_valid_key and not distill
+    if getattr(args, "text_attention_mask", None) is None:
+        args.text_attention_mask = mask_consumer
+    elif args.text_attention_mask and not mask_consumer:
+        # fail fast: other tasks don't accept the batch key -- e.g. CLIPTask silently drops it in
+        # training_forward but the grad-accumulation path would crash on the unexpected key
+        raise ValueError(
+            "--text-attention-mask requires a task that consumes text validity masks "
+            "(CoCa / MaMMUT, without --distill); GenLIP/GenLAP and variable-text pipelines derive "
+            "validity in their collators, and CLIP-style contrastive tasks do not use one."
+        )
     return args
