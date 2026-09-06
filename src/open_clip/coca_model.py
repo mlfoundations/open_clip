@@ -16,7 +16,7 @@ from .transformer import (
     MultimodalTransformer,
 )
 from .loss import fused_linear_cross_entropy
-from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower, _forward_tower_intermediates
 
 
 @dataclass
@@ -288,22 +288,19 @@ class CoCa(nn.Module):
             assert False, 'FIXME, needs implementing'
 
         if image is not None:
-            image_output = self.visual.forward_intermediates(
-                image,
+            output.update(_forward_tower_intermediates(
+                self.visual, image, 'image_features', normalize,
                 indices=image_indices,
                 stop_early=stop_early,
                 normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
-            )
-            if normalize and "image_features" in image_output:
-                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
-            output.update(image_output)
+            ))
 
         if text is not None:
-            text_output = self.text.forward_intermediates(
-                text,
+            output.update(_forward_tower_intermediates(
+                self.text, text, 'text_features', normalize,
                 attention_mask=text_valid,
                 indices=text_indices,
                 stop_early=stop_early,
@@ -311,10 +308,7 @@ class CoCa(nn.Module):
                 intermediates_only=intermediates_only,
                 output_fmt=text_output_fmt,
                 output_extra_tokens=text_output_extra_tokens,
-            )
-            if normalize and "text_features" in text_output:
-                text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
-            output.update(text_output)
+            ))
 
         # FIXME text decoder
         logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
