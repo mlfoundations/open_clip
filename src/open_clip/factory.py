@@ -26,7 +26,7 @@ from .model_traits import (
     validate_distillation,
 )
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
+from .pretrained import get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import (
     AugmentationCfg,

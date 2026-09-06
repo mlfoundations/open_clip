@@ -14,7 +14,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 from functools import partial
 
 from .model_traits import CLIP_TRAITS

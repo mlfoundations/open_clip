@@ -11,7 +11,7 @@ and no wasted vocab-head matmul in the contrastive pass. The original behaviour 
 reachable via config flags (pool_type='avg_all', use_pad_mask=False) for compatibility
 with released openMaMMUT weights.
 """
-from typing import Dict, List, Optional, Union
+from typing import Optional
 
 import torch
 from torch import nn

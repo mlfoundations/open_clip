@@ -19,7 +19,6 @@ from .base_task import TrainingTask, unwrap_model
 class ImageTextTask(TrainingTask):
     """Image + text contract shared by CLIP-family tasks."""
 
-
     @property
     def data_keys(self) -> Tuple[str, ...]:
         """Keys expected in the batch dict from the data pipeline."""
