@@ -252,11 +252,11 @@ def test_mammut_new_format_proj_checkpoint_not_misconverted(tmp_path):
     assert torch.allclose(out1['logits'], out2['logits'])
 
 
-def test_mammut_create_loss_pad_id():
-    """Standalone create_loss() keys the legacy value-based label ignore to the model instance's
+def test_mammut_legacy_loss_pad_id():
+    """The legacy adapter keys the value-based label ignore to the model instance's
     pad id (model names are never inspected); the underlying CE uses -100."""
     import types
-    from open_clip import create_loss
+    from open_clip_train.loss import create_loss_from_args
     from open_clip.loss import CoCaLoss
 
     args = types.SimpleNamespace(
@@ -266,18 +266,12 @@ def test_mammut_create_loss_pad_id():
         horovod=False,
     )
     model = _tiny_model(dict(MULTIMODAL_CFG, pad_id=1))
-    loss = create_loss(args, model=model)
+    loss = create_loss_from_args(args, model=model)
     assert isinstance(loss, CoCaLoss)
     assert loss.pad_id == 1  # raw labels equal to the model pad id are ignored
     assert loss.caption_loss.ignore_index == -100
-    # without a model instance, explicit traits select the loss and the fill id falls back to the historical 0;
-    # the model name is never inspected
-    from open_clip.model_traits import MAMMUT_TRAITS
-    fallback = create_loss(args, traits=MAMMUT_TRAITS)
-    assert isinstance(fallback, CoCaLoss)
-    assert fallback.pad_id == 0
-    with pytest.raises(ValueError, match="requires the model"):
-        create_loss(args)
+    with pytest.raises(TypeError, match="model"):
+        create_loss_from_args(args)
 
 
 def test_mammut_proj_type_none_requires_matching_dims():

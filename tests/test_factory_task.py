@@ -14,6 +14,7 @@ import open_clip
 from open_clip import create_task
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.model_traits import CLIP_TRAITS
+from open_clip_train.loss import create_loss_from_args
 from open_clip.task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
 from open_clip.loss import ClipLoss, SigLipLoss, CoCaLoss, DistillClipLoss
 
@@ -90,14 +91,13 @@ def test_create_task_dispatches_on_model_type_not_name():
 def test_create_task_and_loss_dispatch_unwrap_wrapped_models():
     """isinstance dispatch must see through torch.compile (and DDP) wrappers."""
     import torch
-    from open_clip import create_loss
 
     model = open_clip.create_model('coca_ViT-B-32')
     compiled = torch.compile(model)
     args = _make_args(model='hf-hub:someorg/my-renamed-captioner')
     task = create_task(args, model=compiled)
     assert isinstance(task, CoCaTask)
-    loss = create_loss(args, model=compiled)
+    loss = create_loss_from_args(args, model=compiled)
     assert isinstance(loss, CoCaLoss)
     assert loss.pad_id == 0  # pad attr read through the wrapper
 
@@ -201,9 +201,9 @@ def test_create_task_sets_cache_labels_for_compile_strategy(torchcompile, strate
         (True, "step", False),
     ],
 )
-def test_create_loss_sets_cache_labels_for_compile_strategy(torchcompile, strategy, expected_cache):
+def test_legacy_loss_sets_cache_labels_for_compile_strategy(torchcompile, strategy, expected_cache):
     args = _make_args(torchcompile=torchcompile, torchcompile_strategy=strategy)
-    loss = open_clip.create_loss(args, traits=CLIP_TRAITS)
+    loss = create_loss_from_args(args, model=types.SimpleNamespace(traits=CLIP_TRAITS))
 
     assert loss.cache_labels is expected_cache
 
