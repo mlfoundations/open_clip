@@ -6,8 +6,6 @@ import open_clip
 import util_test
 import PIL
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
 torch.serialization.add_safe_globals([PIL.Image.Image])
 
 models_to_test = {m for m in open_clip.list_models() if not (open_clip.get_model_config(m) or {}).get("audio_cfg")}
@@ -39,18 +37,14 @@ if 'OPEN_CLIP_TEST_REG_MODELS' in os.environ:
         models_to_test = set(f.read().splitlines()).intersection(models_to_test)
     print(f"Selected models from {external_model_list}: {models_to_test}")
 
-models_to_test = list(models_to_test)
-models_to_test.sort()
-
-# Keep (model_name, False) tuples so test IDs remain stable for CI caching
-models_to_test_fully = [(m, False) for m in models_to_test]
+models_to_test = sorted(models_to_test)
 
 
+# Preserve the suffix used by CI's model-list parser and cached pytest-split durations.
 @pytest.mark.regression_test
-@pytest.mark.parametrize("model_name,jit", models_to_test_fully)
+@pytest.mark.parametrize("model_name", models_to_test, ids=lambda name: f"{name}-False")
 def test_inference_with_data(
         model_name,
-        jit,
         pretrained = None,
         pretrained_hf = False,
         precision = 'fp32',

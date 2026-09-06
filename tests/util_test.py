@@ -11,8 +11,6 @@ torch.serialization.add_safe_globals([PIL.Image.Image])
 if __name__ != '__main__':
     import open_clip
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
 def seed_all(seed = 0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
@@ -20,6 +18,22 @@ def seed_all(seed = 0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def create_tiny_model(family="clip", vision_layers=1):
+    """Real model families at unit-test scale; registry/config tests use their named models."""
+    vision = dict(image_size=32, patch_size=16, width=32, head_width=16, layers=vision_layers)
+    text = dict(context_length=8, vocab_size=64, width=32, heads=2, layers=1)
+    if family == "clip":
+        return open_clip.CLIP(embed_dim=32, vision_cfg=vision, text_cfg=text, output_dict=True)
+    vision["output_tokens"] = True
+    multimodal = dict(text, layers=2)
+    if family == "coca":
+        text.update(embed_cls=True, output_tokens=True)
+        return open_clip.CoCa(embed_dim=32, vision_cfg=vision, text_cfg=text, multimodal_cfg=multimodal)
+    if family == "mammut":
+        return open_clip.MaMMUT(embed_dim=32, vision_cfg=vision, multimodal_cfg=multimodal)
+    raise ValueError(f"Unknown test model family: {family}")
 
 
 def _default_caption_length(text):

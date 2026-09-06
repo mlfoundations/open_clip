@@ -48,7 +48,6 @@ def _batch():
     }
 
 
-@pytest.mark.skipif(not hasattr(torch, "compile"), reason="requires torch.compile")
 def test_task_compile_keeps_task_methods_and_compiles_train_eval_forward():
     task = TinyTask(TinyModel())
     task.compile(target="task", backend="eager")
@@ -70,7 +69,6 @@ def test_task_compile_keeps_task_methods_and_compiles_train_eval_forward():
     assert zeroshot_out["image_features"].shape == (4, 2)
 
 
-@pytest.mark.skipif(not hasattr(torch, "compile"), reason="requires torch.compile")
 def test_task_compile_model_compiles_trainable_module_only():
     task = TinyTask(TinyModel())
     task.compile(target="model", backend="eager")
@@ -80,7 +78,6 @@ def test_task_compile_model_compiles_trainable_module_only():
     assert task(_batch())[0]["loss"].isfinite()
 
 
-@pytest.mark.skipif(not hasattr(torch, "compile"), reason="requires torch.compile")
 def test_compiled_train_step_runs_forward_backward_and_optimizer_step():
     from open_clip_train.train import TrainState, _get_compiled_train_step
 
@@ -99,7 +96,6 @@ def test_compiled_train_step_runs_forward_backward_and_optimizer_step():
     assert not torch.allclose(before, task.trainable_module.linear.weight.detach())
 
 
-@pytest.mark.skipif(not hasattr(torch, "compile"), reason="requires torch.compile")
 def test_compiled_train_step_handles_grad_clip():
     from open_clip_train.train import TrainState, _get_compiled_train_step
 
@@ -178,3 +174,29 @@ def test_tensor_learning_rate_updates_in_place():
 
     assert optimizer.param_groups[0]["lr"] is lr
     assert get_learning_rate(optimizer) == pytest.approx(0.025)
+
+
+@pytest.mark.parametrize("strategy", ["model", "task", "step"])
+@pytest.mark.parametrize("dynamic", [None, False, True])
+def test_compile_options_reach_every_strategy(strategy, dynamic, monkeypatch):
+    from open_clip_train.train import TrainState, _get_compiled_train_step
+    from open_clip_train.utils import torch_compile_kwargs
+
+    calls = []
+
+    def compile(module, **kwargs):
+        calls.append(kwargs)
+        return module
+
+    monkeypatch.setattr(torch, "compile", compile)
+    args = SimpleNamespace(torchcompile_backend="eager", torchcompile_mode=None, torchcompile_dynamic=dynamic)
+    task = TinyTask(TinyModel())
+    if strategy == "step":
+        state = TrainState(task=task, optimizer=torch.optim.SGD(task.parameters(), lr=0.1))
+        _get_compiled_train_step(state, nullcontext, args)
+    else:
+        task.compile(target=strategy, **torch_compile_kwargs(args))
+    expected = {"backend": "eager"}
+    if dynamic is not None:
+        expected["dynamic"] = dynamic
+    assert calls and all(kwargs == expected for kwargs in calls)

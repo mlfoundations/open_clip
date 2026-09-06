@@ -4,7 +4,6 @@ Covers (via concrete CLIPTask): prepare_batch, create_dummy_batch,
 forward() calling-convention normalization, state_dict_for_inference,
 clamp_logit_scale, and data_keys.
 """
-import copy
 import math
 import types
 
@@ -237,30 +236,6 @@ def test_forward_eval_positional():
 def test_data_keys_default():
     task = CLIPTask(TinyModel(), loss=DummyLoss())
     assert task.data_keys == ("image", "text")
-
-
-# ---------------------------------------------------------------------------
-# state_dict_for_inference
-# ---------------------------------------------------------------------------
-
-
-def test_state_dict_for_inference_no_ema():
-    model = TinyModel()
-    task = CLIPTask(model, loss=DummyLoss())
-    sd = task.state_dict_for_inference()
-    assert "logit_scale" in sd
-    assert torch.equal(sd["logit_scale"], model.logit_scale.data)
-
-
-def test_state_dict_for_inference_prefers_ema():
-    model = TinyModel()
-    task = CLIPTask(model, loss=DummyLoss())
-    ema_model = copy.deepcopy(model)
-    with torch.no_grad():
-        ema_model.logit_scale.fill_(123.0)
-    task.trainable_module_ema = types.SimpleNamespace(module=ema_model)
-    sd = task.state_dict_for_inference()
-    assert torch.equal(sd["logit_scale"], ema_model.state_dict()["logit_scale"])
 
 
 # ---------------------------------------------------------------------------

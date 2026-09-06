@@ -1,13 +1,14 @@
+import glob
 import logging
-import os
 import multiprocessing
-
-_logger = logging.getLogger(__name__)
+import os
+import re
 import subprocess
 import time
 import fsspec
 import torch
-from tqdm import tqdm
+
+_logger = logging.getLogger(__name__)
 
 def remote_sync_s3(local_dir, remote_dir):
     # skip epoch_latest which can change during sync.
@@ -89,3 +90,46 @@ def check_exists(file_path):
     except FileNotFoundError:
         return False
     return True
+
+
+def natural_key(string_):
+    """See http://www.codinghorror.com/blog/archives/001018.html"""
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
+
+
+def get_latest_checkpoint(path: str, remote: bool, *, include_sharded: bool = True):
+    # The glob recurses, so it can pick up checkpoints across multiple subfolders.
+    if remote:
+        result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        _logger.debug("Remote checkpoint listing: %s", result)
+        if result.returncode == 1:
+            return None
+        checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
+    else:
+        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        # Also find DCP checkpoint dirs (contain .metadata file from DCP)
+        if include_sharded:
+            for d in glob.glob(os.path.join(path, 'epoch_*')):
+                if os.path.isdir(d) and os.path.exists(os.path.join(d, '.metadata')):
+                    checkpoints.append(d)
+    if checkpoints:
+        checkpoints = sorted(checkpoints, key=natural_key)
+        return checkpoints[-1]
+    return None
+
+
+def copy_codebase(args):
+    from shutil import copytree, ignore_patterns
+    new_code_path = os.path.join(args.logs, args.name, "code")
+    if os.path.exists(new_code_path):
+        print(
+            f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
+        )
+        return -1
+    print(f"Copying codebase to {new_code_path}")
+    current_code_path = os.path.realpath(__file__)
+    for _ in range(3):
+        current_code_path = os.path.dirname(current_code_path)
+    copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
+    print("Done copying code.")
+    return 1

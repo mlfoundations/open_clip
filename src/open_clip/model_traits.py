@@ -110,17 +110,11 @@ GENLIP_TRAITS = ModelTraits(
     image_input=InputMode.NAFLEX,
     variable_text=True,
 )
-GENLAP_TRAITS = ModelTraits(
+GENLAP_TRAITS = replace(
+    GENLIP_TRAITS,
     family=ModelFamily.GENLAP,
-    generative=True,
-    contrastive=False,
-    requires_naflex_data=True,
-    naflex_text_in_token_budget=True,
-    consumes_text_mask=True,
-    supports_cached_grad_accum=False,
     image_input=InputMode.NONE,
     audio_input=InputMode.NAFLEX,
-    variable_text=True,
 )
 CLAP_TRAITS = ModelTraits(family=ModelFamily.CLAP, image_input=InputMode.NONE, audio_input=InputMode.FIXED)
 
@@ -211,9 +205,8 @@ def traits_from_model(model: Any) -> ModelTraits:
     )
 
 
-def _unwrap(model: Any) -> Any:
-    # Same layers as open_clip.task.unwrap_model (DDP ``.module``, torch.compile ``._orig_mod``); kept local so
-    # this module stays torch-free and import-cycle-free.
+def unwrap_model(model: Any) -> Any:
+    """Unwrap nested DDP and torch.compile wrappers without importing torch."""
     unwrapped = model
     for _ in range(4):
         inner = getattr(unwrapped, "module", None)
@@ -227,7 +220,7 @@ def _unwrap(model: Any) -> Any:
 
 def get_model_traits(model: Any) -> ModelTraits:
     """Return the traits attached by the factory, resolving them for models that never went through it."""
-    unwrapped = _unwrap(model)
+    unwrapped = unwrap_model(model)
     attached = unwrapped.__dict__.get("traits") if hasattr(unwrapped, "__dict__") else None
     if isinstance(attached, ModelTraits):
         return attached

@@ -9,6 +9,17 @@ from torch.nn import functional as F
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 
+def move_to_device(value, device, input_dtype=None):
+    """Move tensors in nested dictionaries, casting only floating-point tensors."""
+    if isinstance(value, torch.Tensor):
+        if value.is_floating_point():
+            return value.to(device=device, dtype=input_dtype, non_blocking=True)
+        return value.to(device=device, non_blocking=True)
+    if isinstance(value, dict):
+        return {key: move_to_device(val, device, input_dtype) for key, val in value.items()}
+    return value
+
+
 def cat_padded_sequences(tensors: List[torch.Tensor], padding_value: float = 0) -> torch.Tensor:
     """Concatenate ``[batch, length, ...]`` tensors, right-padding length to the maximum.
 

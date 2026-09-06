@@ -17,8 +17,6 @@ Differences vs the default builders:
 Only the pipeline *assembly* is duplicated here; all stages (filters, extractors, tokenizers, collators,
 loader helpers) are imported from the default modules so the building blocks cannot drift.
 """
-import math
-
 from functools import partial
 
 import webdataset as wds
@@ -29,79 +27,21 @@ from torch.utils.data.dataloader import default_collate
 from open_clip.model_traits import CLIP_TRAITS
 from open_clip_train import audio_data as _audio_data
 from open_clip_train.data import (
-    DataInfo,
     DEFAULT_IMAGE_KEY,
     FilterNonEmptyText,
     FilterValidSample,
     JsonCaptionExtractor,
-    ResampledShards2,
     SharedEpoch,
     TokenizeText,
     collate_variable_text_dicts,
-    detshuffle2,
-    expand_urls,
+    create_wds_loader,
     get_csv_dataset,
-    get_dataset_size,
     get_imagenet,
     get_text_pad_id,
+    get_wds_sizes,
     log_and_continue,
-    tarfile_to_samples_nothrow,
-    wds_shuffle_sizes,
+    wds_shard_head,
 )
-
-
-def _legacy_shard_head(pipeline_seed_args, input_shards, is_train, resampled, shared_epoch):
-    """Shared shard-list + shuffle head (identical to the default builders)."""
-    args = pipeline_seed_args
-    if resampled:
-        pipeline = [ResampledShards2(
-            input_shards,
-            weights=args.train_data_upsampling_factors,
-            deterministic=True,
-            epoch=shared_epoch,
-        )]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    if is_train:
-        shard_shuffle_size, shard_shuffle_initial, sample_shuffle_size, sample_shuffle_initial = wds_shuffle_sizes()
-        if not resampled:
-            pipeline.extend([
-                detshuffle2(
-                    bufsize=shard_shuffle_size,
-                    initial=shard_shuffle_initial,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ])
-        pipeline.extend([
-            tarfile_to_samples_nothrow,
-            wds.shuffle(bufsize=sample_shuffle_size, initial=sample_shuffle_initial),
-        ])
-    else:
-        pipeline.extend([
-            wds.split_by_worker,
-            wds.tarfile_to_samples(handler=log_and_continue),
-        ])
-    return pipeline
-
-
-def _legacy_wds_sizes(args, input_shards, is_train):
-    num_shards = None
-    if is_train:
-        if args.train_num_samples is not None:
-            num_samples = args.train_num_samples
-        else:
-            num_samples, num_shards = get_dataset_size(input_shards)
-            if not num_samples:
-                raise RuntimeError(
-                    'Currently, the number of dataset samples must be specified for the training dataset. '
-                    'Please specify it via `--train-num-samples` if no dataset length info is present.')
-    else:
-        num_samples = args.val_num_samples or 0
-    return num_samples, num_shards
 
 
 def _legacy_text_collate(args, tokenizer):
@@ -123,16 +63,10 @@ def get_wds_dataset_legacy(args, preprocess_img, is_train, epoch=0, floor=False,
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-    num_samples, num_shards = _legacy_wds_sizes(args, input_shards, is_train)
+    num_samples, num_shards = get_wds_sizes(args, input_shards, is_train)
     shared_epoch = SharedEpoch(epoch=epoch)
 
-    if is_train and args.train_data_upsampling_factors is not None:
-        assert resampled, (
-            "--train_data_upsampling_factors is only supported when sampling with replacement "
-            "(with --dataset-resampled)."
-        )
-
-    pipeline = _legacy_shard_head(args, input_shards, is_train, resampled, shared_epoch)
+    pipeline = wds_shard_head(args, input_shards, is_train, resampled, shared_epoch, num_shards=num_shards)
 
     image_key = getattr(args, 'image_key', DEFAULT_IMAGE_KEY) or DEFAULT_IMAGE_KEY
     text_key = getattr(args, 'text_key', 'txt') or 'txt'
@@ -163,33 +97,9 @@ def get_wds_dataset_legacy(args, preprocess_img, is_train, epoch=0, floor=False,
     ])
     dataset = wds.DataPipeline(*pipeline)
 
-    if is_train:
-        if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
-        # roll over and repeat a few samples to get same number of full batches on each node
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.workers)
-        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
-    else:
-        # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size) if num_samples else 0
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
+    return create_wds_loader(
+        dataset, args, is_train, num_samples, shared_epoch, floor=floor,
     )
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floor=False, tokenizer=None):
@@ -197,10 +107,12 @@ def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floo
     input_shards = args.train_data if is_train else args.val_data
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False) and is_train
-    num_samples, num_shards = _legacy_wds_sizes(args, input_shards, is_train)
-    shared_epoch = SharedEpoch(epoch=epoch)
+    num_samples, num_shards = get_wds_sizes(args, input_shards, is_train)
+    shared_epoch = SharedEpoch(
+        epoch=epoch, mp_context=_audio_data._audio_loader_kwargs(args).get("multiprocessing_context"),
+    )
 
-    pipeline = _legacy_shard_head(args, input_shards, is_train, resampled, shared_epoch)
+    pipeline = wds_shard_head(args, input_shards, is_train, resampled, shared_epoch, num_shards=num_shards)
 
     audio_ext = getattr(args, "audio_ext", "flac")
     variable_text, text_pad_id, _ = _legacy_text_collate(args, tokenizer)
@@ -219,38 +131,16 @@ def get_wds_audio_dataset_legacy(args, preprocess_audio, is_train, epoch=0, floo
         wds.rename(audio=audio_ext, text="json;txt;cls", keep=False),
         wds.map_dict(
             audio=preprocess_audio,
-            text=_audio_data._TokenizeAudioCaption(tokenizer, variable=variable_text),
+            text=_audio_data.AudioCaptionTokenizer(tokenizer, variable=variable_text),
         ),
         wds.batched(args.batch_size, partial=not is_train, collation_fn=audio_collate),
     ])
     dataset = wds.DataPipeline(*pipeline)
 
-    if is_train:
-        if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.workers)
-        num_worker_batches = round_fn(num_batches / num_workers)
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)
-    else:
-        num_batches = math.ceil(num_samples / args.batch_size) if num_samples else 0
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
+    return create_wds_loader(
+        dataset, args, is_train, num_samples, shared_epoch, floor=floor,
         **_audio_data._audio_loader_kwargs(args),
     )
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 # The legacy pipeline is args-driven and fixed-batch by contract (it rejects NaFlex below), so shared CSV and

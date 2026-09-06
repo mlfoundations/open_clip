@@ -9,21 +9,17 @@ Covers:
 - state_dict_for_inference prefers EMA when present
 - _reconcile_state_dict_shapes handles 0-D <-> 1-D (FSDP boundary) mismatch
 """
-import os
-
 import pytest
 import torch
 import torch.nn as nn
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
-import open_clip
+from util_test import create_tiny_model
 from open_clip.task import CLIPTask, save_checkpoint, load_checkpoint
-from open_clip.task.base_task import TrainingTask
 
 
-def _make_task(model_name='RN50'):
-    model = open_clip.create_model(model_name)
+def _make_task():
+    # Retain BatchNorm buffers as well as parameters in checkpoint round trips.
+    model = create_tiny_model(vision_layers=(1, 1, 1, 1))
     return CLIPTask(model, rank=0, world_size=1)
 
 

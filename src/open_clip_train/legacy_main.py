@@ -1,13 +1,8 @@
 import copy
-import glob
 import logging
 import os
-import re
-import subprocess
 import sys
-import random
 from datetime import datetime
-from functools import partial
 
 import numpy as np
 import torch
@@ -36,39 +31,19 @@ from open_clip_train.naflex_data import (
 )
 from open_clip_train.logger import setup_logging
 from open_clip_train.params import parse_args, apply_model_traits
+from open_clip_train.utils import random_seed
+from open_clip_train.file_utils import (
+    copy_codebase, get_latest_checkpoint as _get_latest_checkpoint, pt_load, start_sync_process, remote_sync,
+)
 from open_clip_train.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from open_clip_train.legacy_train import train_one_epoch, evaluate
-from open_clip_train.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
 
-def random_seed(seed=42, rank=0):
-    torch.manual_seed(seed + rank)
-    np.random.seed(seed + rank)
-    random.seed(seed + rank)
-
-
-def natural_key(string_):
-    """See http://www.codinghorror.com/blog/archives/001018.html"""
-    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
-
-
-def get_latest_checkpoint(path: str, remote : bool):
-    # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
-    if remote:
-        result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print(result)
-        if result.returncode == 1:
-            return None
-        checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
-    else:
-        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
-    if checkpoints:
-        checkpoints = sorted(checkpoints, key=natural_key)
-        return checkpoints[-1]
-    return None
+def get_latest_checkpoint(path: str, remote: bool):
+    return _get_latest_checkpoint(path, remote, include_sharded=False)
 
 
 def main(args):
@@ -572,23 +547,6 @@ def main(args):
             logging.info('Final remote sync successful.')
         else:
             logging.info('Final remote sync failed.')
-
-
-def copy_codebase(args):
-    from shutil import copytree, ignore_patterns
-    new_code_path = os.path.join(args.logs, args.name, "code")
-    if os.path.exists(new_code_path):
-        print(
-            f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
-        )
-        return -1
-    print(f"Copying codebase to {new_code_path}")
-    current_code_path = os.path.realpath(__file__)
-    for _ in range(3):
-        current_code_path = os.path.dirname(current_code_path)
-    copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
-    print("Done copying code.")
-    return 1
 
 
 if __name__ == "__main__":
