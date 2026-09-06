@@ -15,6 +15,24 @@ from .pos_embed import get_2d_sincos_pos_embed
 from .layers import LayerNorm, LayerNormFp32, LayerScale, QuickGELU
 
 
+def _build_causal_mask(length: int) -> torch.Tensor:
+    return torch.full((length, length), float("-inf")).triu_(1)
+
+
+def _text_valid_mask(text: torch.Tensor, pad_id: Optional[int], mask: Optional[torch.Tensor] = None):
+    if mask is not None:
+        valid = mask.bool()
+    elif pad_id is None:
+        return torch.ones_like(text, dtype=torch.bool)
+    else:
+        valid = text != pad_id
+    # Keep one valid position in all-pad rows, without data-dependent control flow under compile.
+    empty = ~valid.any(dim=1, keepdim=True)
+    first = torch.zeros_like(valid)
+    first[:, 0] = True
+    return valid | (empty & first)
+
+
 class PatchDropout(nn.Module):
     """
     https://arxiv.org/abs/2212.00794
@@ -1561,19 +1579,7 @@ class ModernTextTransformer(nn.Module):
                 nn.init.zeros_(self.text_projection.bias)
 
     def _valid_mask(self, text: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if attention_mask is not None:
-            valid = attention_mask.bool()  # data-layer provided validity (True = real token)
-        elif self.pad_id is None:
-            return torch.ones_like(text, dtype=torch.bool)
-        else:
-            valid = text != self.pad_id
-        # Guarantee at least one valid position per row so degenerate all-pad rows do not yield NaNs at pooling.
-        # Done branchlessly (no data-dependent ``if``) so the tower stays torch.compile(fullgraph=True)-friendly:
-        # for rows that already have a valid token this is a no-op (the OR'd term is all-False).
-        empty = ~valid.any(dim=1, keepdim=True)
-        first = torch.zeros_like(valid)
-        first[:, 0] = True
-        return valid | (empty & first)
+        return _text_valid_mask(text, self.pad_id, attention_mask)
 
     def _attn_inputs(
             self,
@@ -1897,12 +1903,7 @@ class TextTransformer(nn.Module):
         return no_wd
 
     def build_causal_mask(self):
-        # lazily create causal attention mask, with full attention between the tokens
-        # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.num_pos, self.num_pos)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
-        return mask
+        return _build_causal_mask(self.num_pos)
 
     def _build_additive_mask(
         self,
@@ -2186,12 +2187,7 @@ class MultimodalTransformer(Transformer):
             self.attn_mask.copy_(mask)
 
     def build_attention_mask(self):
-        # lazily create causal attention mask, with full attention between the tokens
-        # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
-        return mask
+        return _build_causal_mask(self.context_length)
 
     def forward_intermediates(
             self,
@@ -2363,20 +2359,10 @@ class MultimodalDecoder(nn.Module):
             self.attn_mask.copy_(mask)
 
     def build_causal_mask(self):
-        # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
-        return mask
+        return _build_causal_mask(self.context_length)
 
     def _valid_mask(self, text: torch.Tensor, text_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """[B, L] bool validity (True = real token): the provided attention mask, else pad-value fallback.
-        Guarantees at least one valid position per row so degenerate all-invalid rows do not yield NaNs."""
-        valid = text_valid.bool() if text_valid is not None else text != self.pad_id
-        empty = ~valid.any(dim=1, keepdim=True)
-        first = torch.zeros_like(valid)
-        first[:, 0] = True
-        return valid | (empty & first)
+        return _text_valid_mask(text, self.pad_id, text_valid)
 
     def _build_pad_mask(self, valid: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         """Additive (-inf) key mask of shape [B*heads, L, L] hiding invalid (pad) tokens."""
@@ -2655,18 +2641,7 @@ class ModernMultimodalDecoder(nn.Module):
             nn.init.normal_(self.lm_head.weight, std=self.width ** -0.5)
 
     def _valid_mask(self, text: torch.Tensor, text_valid: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """[B, L] bool validity (True = real token): the provided text_valid mask, else pad-value fallback."""
-        if text_valid is not None:
-            valid = text_valid.bool()
-        elif self.pad_id is None:
-            return torch.ones_like(text, dtype=torch.bool)
-        else:
-            valid = text != self.pad_id
-        # branchless all-pad guard, as in ModernTextTransformer._valid_mask
-        empty = ~valid.any(dim=1, keepdim=True)
-        first = torch.zeros_like(valid)
-        first[:, 0] = True
-        return valid | (empty & first)
+        return _text_valid_mask(text, self.pad_id, text_valid)
 
     def get_cast_dtype(self) -> torch.dtype:
         return self.blocks[0].get_weight_dtype() if self.blocks else self.token_embedding.weight.dtype

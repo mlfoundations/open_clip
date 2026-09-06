@@ -1156,74 +1156,43 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     """
     from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, GenLapTask, DistillCLIPTask, CLAPTask, unwrap_model
 
-    cache_labels = _use_loss_label_cache(args)
-    shared = dict(rank=args.rank, world_size=args.world_size)
-    # dispatch on the unwrapped model type (external callers may pass torch.compile / DDP wrapped
-    # models); the task itself still wraps the model as provided
     model_unwrapped = unwrap_model(model)
     if args.distill:
         validate_distillation(get_model_traits(model_unwrapped))
+    # Dispatch on the built model, including wrapped models and renamed configurations.
     if isinstance(model_unwrapped, CLAP):
-        task = CLAPTask(
-            model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+        task_cls = CLAPTask
     elif args.distill:
-        task = DistillCLIPTask(
-            model, dist_model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+        task_cls = DistillCLIPTask
     elif isinstance(model_unwrapped, (CoCa, MaMMUT)):
-        # dispatch on the built model type, not args.model -- hf-hub:/local-dir:/renamed configs would
-        # silently fall through a name check to CLIPTask and drop the caption loss.
-        # MaMMUT shares the CoCa output contract (contrastive features + full-length caption logits).
-        task = CoCaTask(
-            model,
+        task_cls = CoCaTask
+    elif isinstance(model_unwrapped, NaFlexGenLap):
+        task_cls = GenLapTask
+    elif isinstance(model_unwrapped, NaFlexGenLip):
+        task_cls = GenLipTask
+    else:
+        task_cls = SigLIPTask if args.siglip else CLIPTask
+
+    options = {} if task_cls in (GenLipTask, GenLapTask) else dict(rank=args.rank, world_size=args.world_size)
+    if task_cls in (CLIPTask, CLAPTask, DistillCLIPTask, CoCaTask):
+        options.update(local_loss=args.local_loss, gather_with_grad=args.gather_with_grad,
+                       cache_labels=_use_loss_label_cache(args))
+    if task_cls in (CoCaTask, GenLipTask, GenLapTask):
+        options.update(
+            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
+        )
+    if task_cls is CoCaTask:
+        options.update(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
             fused_caption_loss=getattr(args, 'fused_caption_loss', False),
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
         )
-    elif isinstance(model_unwrapped, NaFlexGenLap):
-        task = GenLapTask(
-            model,
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-        )
-    elif isinstance(model_unwrapped, NaFlexGenLip):
-        task = GenLipTask(
-            model,
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-        )
-    elif args.siglip:
-        task = SigLIPTask(
-            model,
-            dist_impl=args.loss_dist_impl,
-            **shared,
-        )
-    else:
-        task = CLIPTask(
-            model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+    elif task_cls is SigLIPTask:
+        options['dist_impl'] = args.loss_dist_impl
+    task = (task_cls(model, dist_model, **options) if task_cls is DistillCLIPTask
+            else task_cls(model, **options))
     if naflex_data_config is not None:
         # Every task carries the NaFlex data policy via the base TrainingTask (image-text and audio-text alike).
         task.set_naflex_data_config(naflex_data_config)

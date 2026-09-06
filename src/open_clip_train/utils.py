@@ -44,6 +44,14 @@ def postprocess_clip_output(model_out):
     }
 
 
+def pop_accum_scalars(model_out, is_last_step):
+    """Scalars see the full effective batch on every replay; differentiate them only once."""
+    scalars = {"logit_scale": model_out.pop("logit_scale")}
+    if "logit_bias" in model_out:
+        scalars["logit_bias"] = model_out.pop("logit_bias")
+    return scalars if is_last_step else {key: value.detach() for key, value in scalars.items()}
+
+
 def backward(total_loss, scaler):
     if scaler is not None:
         scaler.scale(total_loss).backward()

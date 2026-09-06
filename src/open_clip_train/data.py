@@ -1010,6 +1010,19 @@ def get_wds_dataset(
     )
 
 
+def create_map_loader(dataset, args, is_train, *, collate_fn=None, **loader_kwargs):
+    """Standard fixed-batch loader for map-style image and audio datasets."""
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=is_train and sampler is None,
+        num_workers=args.workers, pin_memory=True, sampler=sampler,
+        drop_last=is_train, collate_fn=collate_fn, **loader_kwargs,
+    )
+    dataloader.num_samples = len(dataset)
+    dataloader.num_batches = len(dataloader)
+    return DataInfo(dataloader, sampler)
+
+
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None, model_traits=None):
     input_filename = args.train_data if is_train else args.val_data
     assert input_filename
@@ -1101,24 +1114,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         dataloader.num_batches = dataset.num_batches_for_workers(num_workers)
         return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=collate_fn,
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-
-    return DataInfo(dataloader, sampler)
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn)
 
 
 class SyntheticDataset(Dataset):
@@ -1171,24 +1167,7 @@ def get_synthetic_dataset(
         variable_text=variable_text,
         output_text_mask=bool(getattr(args, 'text_attention_mask', None)) and not variable_text,
     )
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=collate_fn,
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-
-    return DataInfo(dataloader, sampler)
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn)
 
 
 def get_dataset_fn(data_path, dataset_type):

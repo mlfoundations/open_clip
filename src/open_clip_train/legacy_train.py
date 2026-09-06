@@ -1,7 +1,5 @@
-import json
 import logging
 import math
-import os
 import time
 
 import torch
@@ -16,11 +14,12 @@ from open_clip import get_input_dtype
 from open_clip.utils import cat_padded_sequences
 from open_clip.task import unwrap_model
 from open_clip_train.distributed import is_master
+from open_clip_train import eval_utils
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
-from open_clip_train.utils import AverageMeter, backward, postprocess_clip_output
+from open_clip_train.utils import AverageMeter, backward, pop_accum_scalars, postprocess_clip_output
 
 
 def _coca_apply_ar_shift(model_out, texts):
@@ -124,15 +123,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     model_out = model(images, texts)
                     model_out = _coca_apply_ar_shift(model_out, texts)
 
-                    # detach logit_scale/bias on all but the last step: they are live on every
-                    # accumulation step against the full-effective-batch loss, so each backward would
-                    # otherwise contribute a full d(loss)/d(logit_scale) -- accum_freq copies in total
-                    inputs_no_accum = {}
-                    logit_scale = model_out.pop("logit_scale")
-                    inputs_no_accum["logit_scale"] = logit_scale if is_last_step else logit_scale.detach()
-                    if "logit_bias" in model_out:
-                        logit_bias = model_out.pop("logit_bias")
-                        inputs_no_accum["logit_bias"] = logit_bias if is_last_step else logit_bias.detach()
+                    inputs_no_accum = pop_accum_scalars(model_out, is_last_step)
+                    logit_scale = inputs_no_accum["logit_scale"]
 
                     inputs = {}
                     for key, val in accum_features.items():
@@ -328,41 +320,12 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     if not metrics:
         return metrics
 
-    logging.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
-
-    log_data = {"val/" + name: val for name, val in metrics.items()}
-
-    if args.save_logs:
-        if tb_writer is not None:
-            for name, val in log_data.items():
-                tb_writer.add_scalar(name, val, epoch)
-
-        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
-            f.write(json.dumps(metrics))
-            f.write("\n")
-
     if args.wandb:
-        assert wandb is not None, 'Please install wandb.'
-        if 'train' in data:
-            dataloader = data['train'].dataloader
-            num_batches_per_epoch = dataloader.num_batches // args.accum_freq
-            step = num_batches_per_epoch * epoch
-        else:
-            step = None
-        log_data['epoch'] = epoch
-        wandb.log(log_data, step=step)
+        assert wandb is not None, "Please install wandb."
+    eval_utils.log_eval_metrics(metrics, data, epoch, args, logging, tb_writer, wandb if args.wandb else None)
 
     return metrics
 
 def maybe_compute_generative_loss(model_out, texts=None, pad_id=0):
-    # CoCa is the only model that emits "logits" in its output dict. The model
-    # itself no longer applies the autoregressive shift (that moved into
-    # CoCaTask for the task-based pipeline), so we apply it here for the eval
-    # generative-loss readout.
-    if "logits" in model_out and texts is not None:
-        logits = model_out["logits"][:, :-1]
-        labels = texts[:, 1:]
-        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=pad_id)
+    # Preserve the legacy third positional argument (the current trainer also accepts text_valid).
+    return eval_utils.maybe_compute_generative_loss(model_out, texts=texts, pad_id=pad_id)

@@ -240,7 +240,7 @@ def test_run_audio_zero_shot_classifier_uses_bare_model_dummy_audio(monkeypatch)
         def __call__(self, audio=None):
             raise AssertionError("rank 1 should stop before forward when broadcast signal is zero")
 
-    monkeypatch.setattr(audio_zero_shot.dist, "broadcast", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(torch.distributed, "broadcast", lambda *_args, **_kwargs: None)
     args = SimpleNamespace(
         device="cpu",
         precision="fp32",
