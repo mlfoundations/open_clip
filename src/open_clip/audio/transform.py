@@ -27,6 +27,39 @@ def get_audio_frame_count(audio_cfg: Union[CLIPAudioCfg, Dict[str, Any]]) -> int
     return cfg.get("clip_samples", 480000) // cfg.get("hop_size", 480) + 1
 
 
+def stack_audio_inputs(audios):
+    """Batch waveform payloads, including optional HTSAT fusion inputs."""
+    out = {
+        "waveform": torch.stack([audio["waveform"] for audio in audios]),
+        "longer": torch.as_tensor([bool(audio["longer"]) for audio in audios], dtype=torch.bool),
+    }
+    if "mel_fusion" in audios[0]:
+        out["mel_fusion"] = torch.stack([audio["mel_fusion"] for audio in audios])
+    return out
+
+
+def create_dummy_audio(audio_cfg, batch_size=1, device=None, dtype=None):
+    """Minimal audio input for synchronized evaluation of CLAP towers."""
+    if getattr(audio_cfg, "model_type", "").lower() == "naflexvit":
+        n = 16
+        coord = torch.zeros(batch_size, n, 2, dtype=torch.long, device=device)
+        coord[..., 1] = torch.arange(n, device=device)
+        return {
+            "patches": torch.zeros(batch_size, n, audio_cfg.in_chans * audio_cfg.patch_freq * audio_cfg.patch_time,
+                                   device=device, dtype=dtype),
+            "patch_coord": coord,
+            "patch_valid": torch.ones(batch_size, n, dtype=torch.bool, device=device),
+        }
+    out = {
+        "waveform": torch.zeros(batch_size, audio_cfg.clip_samples, device=device, dtype=dtype),
+        "longer": torch.zeros(batch_size, dtype=torch.bool, device=device),
+    }
+    if audio_cfg.enable_fusion:
+        out["mel_fusion"] = torch.zeros(
+            batch_size, 4, get_audio_frame_count(audio_cfg), audio_cfg.mel_bins, device=device, dtype=dtype)
+    return out
+
+
 def int16_to_float32_torch(x: torch.Tensor) -> torch.Tensor:
     return (x / 32767.0).type(torch.float32)
 

@@ -14,7 +14,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 from functools import partial
 
 from .model_traits import CLIP_TRAITS
@@ -372,6 +371,44 @@ def _build_text_tower(
     return text
 
 
+def _compute_logits(image_features, text_features, logit_scale, logit_bias=None):
+    image_logits = logit_scale * image_features @ text_features.T
+    if logit_bias is not None:
+        image_logits += logit_bias
+    return image_logits, image_logits.T
+
+
+def _pack_clip_output(image_features, text_features, logit_scale, logit_bias, output_dict):
+    if output_dict:
+        output = dict(image_features=image_features, text_features=text_features, logit_scale=logit_scale)
+        if logit_bias is not None:
+            output['logit_bias'] = logit_bias.clone()
+        return output
+    if logit_bias is not None:
+        return image_features, text_features, logit_scale, logit_bias.clone()
+    return image_features, text_features, logit_scale
+
+
+def _forward_tower_intermediates(tower, inputs, feature_key, normalize, **kwargs):
+    output = tower.forward_intermediates(inputs, **kwargs)
+    if normalize and feature_key in output:
+        output[feature_key] = F.normalize(output[feature_key], dim=-1)
+    return output
+
+
+def _add_intermediate_logits(output, logit_scale, logit_bias, output_logits, output_logit_scale_bias):
+    if output_logits or output_logit_scale_bias:
+        logit_scale = logit_scale.exp()
+    if output_logits:
+        output['image_logits'], output['text_logits'] = _compute_logits(
+            output['image_features'], output['text_features'], logit_scale, logit_bias)
+    if output_logit_scale_bias:
+        output['logit_scale'] = logit_scale
+        if logit_bias is not None:
+            output['logit_bias'] = logit_bias.clone()
+    return output
+
+
 class CLIP(nn.Module):
     traits = CLIP_TRAITS  # family-level defaults; the factory attaches the resolved instance
 
@@ -474,11 +511,7 @@ class CLIP(nn.Module):
     def get_logits(self, image, text):
         image_features = self._encode_image(image, normalize=True)
         text_features = self._encode_text(text, normalize=True)
-        image_logits = self.logit_scale.exp() * image_features @ text_features.T
-        if self.logit_bias is not None:
-            image_logits += self.logit_bias
-        text_logits = image_logits.T
-        return image_logits, text_logits
+        return _compute_logits(image_features, text_features, self.logit_scale.exp(), self.logit_bias)
 
     def forward_intermediates(
             self,
@@ -526,18 +559,15 @@ class CLIP(nn.Module):
             assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
 
         if image is not None:
-            image_output = self.visual.forward_intermediates(
-                image,
+            output.update(_forward_tower_intermediates(
+                self.visual, image, 'image_features', normalize,
                 indices=image_indices,
                 stop_early=stop_early,
                 normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
-            )
-            if normalize and "image_features" in image_output:
-                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
-            output.update(image_output)
+            ))
 
         if text is not None:
             cast_dtype = self.transformer.get_cast_dtype()
@@ -566,22 +596,8 @@ class CLIP(nn.Module):
                     x = F.normalize(x, dim=-1)
                 output["text_features"] = x
 
-        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
-
-        if output_logits:
-            image_logits = logit_scale_exp * output["image_features"] @ output["text_features"].T
-            if self.logit_bias is not None:
-                image_logits += self.logit_bias
-            text_logits = image_logits.T
-            output["image_logits"] = image_logits
-            output["text_logits"] = text_logits
-
-        if output_logit_scale_bias:
-            output["logit_scale"] = logit_scale_exp
-            if self.logit_bias is not None:
-                output['logit_bias'] = self.logit_bias.clone()
-
-        return output
+        return _add_intermediate_logits(
+            output, self.logit_scale, self.logit_bias, output_logits, output_logit_scale_bias)
 
     def forward(
             self,
@@ -590,20 +606,8 @@ class CLIP(nn.Module):
     ):
         image_features = self._encode_image(image, normalize=True) if image is not None else None
         text_features = self._encode_text(text, normalize=True) if text is not None else None
-
-        if self.output_dict:
-            out_dict = {
-                "image_features": image_features,
-                "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
-            }
-            if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias.clone()
-            return out_dict
-
-        if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias.clone()
-        return image_features, text_features, self.logit_scale.exp()
+        return _pack_clip_output(
+            image_features, text_features, self.logit_scale.exp(), self.logit_bias, self.output_dict)
 
 
 class CustomTextCLIP(nn.Module):
@@ -675,11 +679,7 @@ class CustomTextCLIP(nn.Module):
     def get_logits(self, image, text):
         image_features = self._encode_image(image, normalize=True)
         text_features = self._encode_text(text, normalize=True)
-        image_logits = self.logit_scale.exp() * image_features @ text_features.T
-        if self.logit_bias is not None:
-            image_logits += self.logit_bias
-        text_logits = image_logits.T
-        return image_logits, text_logits
+        return _compute_logits(image_features, text_features, self.logit_scale.exp(), self.logit_bias)
 
     def forward_intermediates(
             self,
@@ -727,49 +727,29 @@ class CustomTextCLIP(nn.Module):
             assert image is not None and text is not None, 'Both image and text inputs are required to compute logits'
 
         if image is not None:
-            image_output = self.visual.forward_intermediates(
-                image,
+            output.update(_forward_tower_intermediates(
+                self.visual, image, 'image_features', normalize,
                 indices=image_indices,
                 stop_early=stop_early,
                 normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
-            )
-            if normalize and "image_features" in image_output:
-                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
-            output.update(image_output)
+            ))
 
         if text is not None:
-            text_output = self.text.forward_intermediates(
-                text,
+            output.update(_forward_tower_intermediates(
+                self.text, text, 'text_features', normalize,
                 indices=text_indices,
                 stop_early=stop_early,
                 normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
                 output_fmt=text_output_fmt,
                 output_extra_tokens=text_output_extra_tokens,
-            )
-            if normalize and "text_features" in text_output:
-                text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
-            output.update(text_output)
+            ))
 
-        logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
-
-        if output_logits:
-            image_logits = logit_scale_exp * output["image_features"] @ output["text_features"].T
-            if self.logit_bias is not None:
-                image_logits += self.logit_bias
-            text_logits = image_logits.T
-            output["image_logits"] = image_logits
-            output["text_logits"] = text_logits
-
-        if output_logit_scale_bias:
-            output["logit_scale"] = logit_scale_exp
-            if self.logit_bias is not None:
-                output['logit_bias'] = self.logit_bias.clone()
-
-        return output
+        return _add_intermediate_logits(
+            output, self.logit_scale, self.logit_bias, output_logits, output_logit_scale_bias)
 
     def forward(
             self,
@@ -778,20 +758,8 @@ class CustomTextCLIP(nn.Module):
     ):
         image_features = self._encode_image(image, normalize=True) if image is not None else None
         text_features = self._encode_text(text, normalize=True) if text is not None else None
-
-        if self.output_dict:
-            out_dict = {
-                "image_features": image_features,
-                "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
-            }
-            if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias.clone()
-            return out_dict
-
-        if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias.clone()
-        return image_features, text_features, self.logit_scale.exp()
+        return _pack_clip_output(
+            image_features, text_features, self.logit_scale.exp(), self.logit_bias, self.output_dict)
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):

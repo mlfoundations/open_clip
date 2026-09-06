@@ -1,9 +1,7 @@
-import json
 import logging
 import math
 
 _logger = logging.getLogger(__name__)
-import os
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -42,11 +40,13 @@ def get_wandb_backend(args):
 from open_clip import get_input_dtype
 from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
+from open_clip_train.eval_utils import iter_eval_batches, log_eval_metrics, maybe_compute_generative_loss
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.scheduler import get_learning_rate
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
+from open_clip_train.utils import AverageMeter, backward, pop_accum_scalars, postprocess_clip_output, torch_compile_kwargs
 
 
 @dataclass
@@ -97,25 +97,6 @@ def restore_train_state_counters(
             state.samples_seen = int(metadata["samples_seen"])
 
 
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
 class SampleWeightedEMA:
     """Sample-count-weighted EMA of a scalar.
 
@@ -133,32 +114,6 @@ class SampleWeightedEMA:
         decay = math.exp(-n / self.ema_samples)
         self.value = val if self.value is None else decay * self.value + (1.0 - decay) * val
         return self.value
-
-
-def postprocess_clip_output(model_out):
-    return {
-        "image_features": model_out[0],
-        "text_features": model_out[1],
-        "logit_scale": model_out[2]
-    }
-
-
-def backward(total_loss, scaler):
-    if scaler is not None:
-        scaler.scale(total_loss).backward()
-    else:
-        total_loss.backward()
-
-
-def _torch_compile_kwargs(args):
-    kwargs = {}
-    backend = getattr(args, "torchcompile_backend", None)
-    mode = getattr(args, "torchcompile_mode", None)
-    if backend is not None:
-        kwargs["backend"] = backend
-    if mode is not None:
-        kwargs["mode"] = mode
-    return kwargs
 
 
 def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
@@ -193,7 +148,7 @@ def _get_compiled_train_step(state: TrainState, autocast, args):
 
     compiled_train_step = torch.compile(
         _make_train_step_no_accum_no_scaler(state.task, state.optimizer, autocast, args),
-        **_torch_compile_kwargs(args),
+        **torch_compile_kwargs(args),
     )
     state.compiled_train_step = compiled_train_step
     return state.compiled_train_step
@@ -283,15 +238,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
             with autocast():
                 model_out = task.trainable_module(**batch_j)
 
-                # detach logit_scale/bias on all but the last step: they are live on every
-                # accumulation step against the full-effective-batch loss, so each backward would
-                # otherwise contribute a full d(loss)/d(logit_scale) -- accum_freq copies in total
-                inputs_no_accum = {}
-                logit_scale = model_out.pop("logit_scale")
-                inputs_no_accum["logit_scale"] = logit_scale if is_last_step else logit_scale.detach()
-                if "logit_bias" in model_out:
-                    logit_bias = model_out.pop("logit_bias")
-                    inputs_no_accum["logit_bias"] = logit_bias if is_last_step else logit_bias.detach()
+                inputs_no_accum = pop_accum_scalars(model_out, is_last_step)
 
                 inputs = task.concat_accum_features({
                     key: accumulated[:j] + [model_out[key]] + accumulated[j + 1:]
@@ -572,7 +519,6 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         if is_rank0:
             dataloader = data['val'].dataloader
             samples_per_val = dataloader.num_samples
-            dataloader_iter = iter(dataloader)
 
         if use_fsdp_eval:
             # Pre-allocate dummy batch for non-master ranks
@@ -581,7 +527,6 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                 device=device,
                 dtype=input_dtype,
             )
-            signal = torch.zeros(1, device=device, dtype=torch.long)
 
         # Retrieval metrics are computed in score chunks below, but feature
         # accumulation and exact pair scoring remain O(N * D) memory and O(N^2)
@@ -591,25 +536,9 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         gen_loss_pad_id = getattr(get_model_from_task(task), 'pad_id', 0)
         all_primary_features, all_text_features = [], []
         with torch.inference_mode():
-            i = 0
-            while True:
-                if use_fsdp_eval:
-                    if is_rank0:
-                        batch = next(dataloader_iter, None)
-                        signal.fill_(0 if batch is None else 1)
-                    dist.broadcast(signal, src=0)
-                    if signal.item() == 0:
-                        break
-
-                    if is_rank0:
-                        batch = task.prepare_batch(batch, device, input_dtype)
-                    else:
-                        batch = dummy_batch
-                else:
-                    batch = next(dataloader_iter, None)
-                    if batch is None:
-                        break
-                    batch = task.prepare_batch(batch, device, input_dtype)
+            for i, batch in enumerate(iter_eval_batches(
+                    dataloader if is_rank0 else None, device, args.rank, use_fsdp_eval)):
+                batch = dummy_batch if use_fsdp_eval and not is_rank0 else task.prepare_batch(batch, device, input_dtype)
 
                 with autocast():
                     model_out = task(batch)
@@ -660,8 +589,6 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                             _logger.info(
                                 f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 
-                i += 1
-
             if is_rank0 and num_samples > 0:
                 if all_primary_features:
                     retrieval_chunk_size = getattr(
@@ -699,41 +626,6 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
     if not metrics:
         return metrics
 
-    _logger.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
-
-    log_data = {"val/" + name: val for name, val in metrics.items()}
-
-    if args.save_logs:
-        if tb_writer is not None:
-            for name, val in log_data.items():
-                tb_writer.add_scalar(name, val, epoch)
-
-        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
-            f.write(json.dumps(metrics))
-            f.write("\n")
-
-    wb = get_wandb_backend(args)
-    if wb is not None:
-        if 'train' in data:
-            dataloader = data['train'].dataloader
-            num_batches_per_epoch = dataloader.num_batches // args.accum_freq
-            step = num_batches_per_epoch * epoch
-        else:
-            step = None
-        log_data['epoch'] = epoch
-        wb.log(log_data, step=step)
+    log_eval_metrics(metrics, data, epoch, args, _logger, tb_writer, get_wandb_backend(args))
 
     return metrics
-
-def maybe_compute_generative_loss(model_out, texts=None, text_valid=None, pad_id=0):
-    if "logits" in model_out and texts is not None:
-        logits = model_out["logits"][:, :-1]
-        labels = texts[:, 1:]
-        # invalid label positions -> -100: from the batch attention mask when the pipeline emits one,
-        # else the pad-value fallback (which also drops genuine tokens equal to the fill id)
-        valid = text_valid[:, 1:].bool() if text_valid is not None else labels != pad_id
-        labels = labels.masked_fill(~valid, -100)
-        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=-100)

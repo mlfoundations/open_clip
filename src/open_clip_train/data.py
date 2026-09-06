@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 import braceexpand
 from dataclasses import dataclass
 from functools import partial
-from multiprocessing import Value, get_context
+from multiprocessing import get_context
 
 import numpy as np
 import pandas as pd
@@ -177,6 +177,7 @@ class CsvDataset(Dataset):
         self.variable_text = variable_text
         assert not (variable_text and output_text_mask), 'variable-text collation derives its own validity mask'
         self.output_text_mask = output_text_mask
+        self._tokenize_text = TokenizeText(tokenizer, variable=variable_text, output_mask=output_text_mask)
 
     def __len__(self):
         return len(self.images)
@@ -186,14 +187,8 @@ class CsvDataset(Dataset):
         if self.transforms is not None:
             image = self.transforms(image)
         caption = str(self.captions.iloc[idx])
-        if self.variable_text:
-            text = self.tokenize(caption, pad=False)[0]
-        elif self.output_text_mask:
-            text, mask = self.tokenize([caption], output_mask=True)
-            return {"image": image, "text": text[0], "text_valid": mask[0]}
-        else:
-            text = self.tokenize([caption])[0]
-        return {"image": image, "text": text}
+        # Preserve CSV's list input for fixed-length tokenizers, including user-provided callables.
+        return self._tokenize_text.map_sample({"image": image, "text": caption if self.variable_text else [caption]})
 
 
 class SharedEpoch:
@@ -762,22 +757,13 @@ def naflex_loader_counts(batcher, args):
     return batcher.num_batches_for_workers(num_workers), batcher.num_samples_for_workers(num_workers)
 
 
-def get_wds_dataset(
-        args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None,
-        model_traits=None,
-):
-    input_shards = args.train_data if is_train else args.val_data
-    assert input_shards is not None
-    resampled = getattr(args, 'dataset_resampled', False) and is_train
-    use_naflex_train = naflex_data_config is not None and is_train
-    use_naflex_eval = naflex_data_config is not None and not is_train
-
+def get_wds_sizes(args, input_shards, is_train, num_tokens=None):
+    """Resolve sample/shard counts; image NaFlex may instead specify a training token budget."""
     num_shards = None
     if is_train:
-        num_image_tokens = naflex_data_config.train_num_image_tokens if use_naflex_train else None
-        if use_naflex_train and num_image_tokens is not None and args.train_num_samples is not None:
-            raise ValueError("Specify only one of `--train-num-samples` or `--naflex-num-train-image-tokens`.")
-        if use_naflex_train and num_image_tokens is not None:
+        if num_tokens is not None:
+            if args.train_num_samples is not None:
+                raise ValueError("Specify only one of `--train-num-samples` or `--naflex-num-train-image-tokens`.")
             num_samples = None
         elif args.train_num_samples is not None:
             num_samples = args.train_num_samples
@@ -788,16 +774,91 @@ def get_wds_dataset(
                     'Currently, the number of dataset samples must be specified for the training dataset. '
                     'Please specify it via `--train-num-samples` if no dataset length info is present.')
     else:
-        # Eval will just exhaust the iterator if the size is not specified.
+        # Evaluation exhausts the iterator when no size is specified.
         num_samples = args.val_num_samples or 0
+    return num_samples, num_shards
 
-    shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
+def wds_shard_head(
+        args, input_shards, is_train, resampled, shared_epoch, *, repeat=False, num_shards=None,
+):
+    """Build the shared shard source, worker splitting, tar extraction, and raw-sample shuffle."""
     if is_train and args.train_data_upsampling_factors is not None:
         assert resampled, (
             "--train_data_upsampling_factors is only supported when sampling with replacement "
             "(with --dataset-resampled)."
         )
+    if is_train and not resampled:
+        num_shards = num_shards or len(expand_urls(input_shards)[0])
+        assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
+    if resampled:
+        pipeline = [ResampledShards2(
+            input_shards, weights=args.train_data_upsampling_factors, deterministic=True, epoch=shared_epoch,
+        )]
+    elif repeat:
+        pipeline = [RepeatedShardList(input_shards)]
+    else:
+        pipeline = [wds.SimpleShardList(expand_urls(input_shards)[0])]
+
+    if is_train:
+        shard_size, shard_initial, sample_size, sample_initial = wds_shuffle_sizes()
+        if not resampled:
+            pipeline.extend([
+                detshuffle2(bufsize=shard_size, initial=shard_initial, seed=args.seed, epoch=shared_epoch),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ])
+        pipeline.extend([
+            tarfile_to_samples_nothrow,
+            wds.shuffle(bufsize=sample_size, initial=sample_initial),
+        ])
+    else:
+        pipeline.extend([wds.split_by_worker, wds.tarfile_to_samples(handler=log_and_continue)])
+    return pipeline
+
+
+def create_wds_loader(
+        dataset, args, is_train, num_samples, shared_epoch, *, floor=False, naflex_batcher=None, **loader_kwargs,
+):
+    """Apply epoch sizing to an already-batched pipeline and retain loader count metadata."""
+    if naflex_batcher is not None:
+        num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
+    elif is_train:
+        # Round to full batches on every worker/rank, repeating samples when rounding up.
+        round_fn = math.floor if floor else math.ceil
+        global_batch_size = args.batch_size * args.world_size
+        num_batches = round_fn(num_samples / global_batch_size)
+        num_workers = max(1, args.workers)
+        num_worker_batches = round_fn(num_batches / num_workers)
+        num_batches = num_worker_batches * num_workers
+        num_samples = num_batches * global_batch_size
+        dataset = dataset.with_epoch(num_worker_batches)
+    else:
+        num_batches = math.ceil(num_samples / args.batch_size)
+
+    dataloader = wds.WebLoader(
+        dataset, batch_size=None, shuffle=False, num_workers=args.workers,
+        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
+        **loader_kwargs,
+    )
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
+
+def get_wds_dataset(
+        args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, naflex_data_config=None,
+        model_traits=None,
+):
+    input_shards = args.train_data if is_train else args.val_data
+    assert input_shards is not None
+    resampled = getattr(args, 'dataset_resampled', False) and is_train
+    use_naflex_train = naflex_data_config is not None and is_train
+    use_naflex_eval = naflex_data_config is not None and not is_train
+
+    num_image_tokens = naflex_data_config.train_num_image_tokens if use_naflex_train else None
+    num_samples, num_shards = get_wds_sizes(args, input_shards, is_train, num_tokens=num_image_tokens)
+    shared_epoch = SharedEpoch(epoch=epoch)
 
     if use_naflex_train:
         require_naflex()
@@ -806,48 +867,9 @@ def get_wds_dataset(
     elif use_naflex_eval:
         preprocess_img, naflex_max_seq_len, _ = create_naflex_eval_transform(preprocess_img, naflex_data_config)
 
-    if resampled:
-        pipeline = [ResampledShards2(
-            input_shards,
-            weights=args.train_data_upsampling_factors,
-            deterministic=True,
-            epoch=shared_epoch,
-        )]
-    elif use_naflex_train:
-        num_shards = num_shards or len(expand_urls(input_shards)[0])
-        assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
-        pipeline = [RepeatedShardList(input_shards)]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    # at this point we have an iterator over all the shards
-    if is_train:
-        shard_shuffle_size, shard_shuffle_initial, sample_shuffle_size, sample_shuffle_initial = wds_shuffle_sizes()
-        if not resampled:
-            pipeline.extend([
-                detshuffle2(
-                    bufsize=shard_shuffle_size,
-                    initial=shard_shuffle_initial,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ])
-        pipeline.extend([
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            tarfile_to_samples_nothrow,  # wds.tarfile_to_samples(handler=log_and_continue),
-            wds.shuffle(
-                bufsize=sample_shuffle_size,
-                initial=sample_shuffle_initial,
-            ),
-        ])
-    else:
-        pipeline.extend([
-            wds.split_by_worker,
-            # at this point, we have an iterator over the shards assigned to each worker
-            wds.tarfile_to_samples(handler=log_and_continue),
-        ])
+    pipeline = wds_shard_head(
+        args, input_shards, is_train, resampled, shared_epoch, repeat=use_naflex_train, num_shards=num_shards,
+    )
     # GenLIP budgets variable captions with image tokens. Other variable-text towers only need batch-time padding.
     text_in_budget, variable_text = resolve_text_layout(args, model_traits)
     text_pad_id = get_text_pad_id(tokenizer) if variable_text else None
@@ -892,6 +914,7 @@ def get_wds_dataset(
     decode_pil = partial(decode_pil_rgb, max_pixels=image_max_pixels)
     decode_image = wds.map_dict(image=decode_pil, handler=log_and_continue)
 
+    naflex_batcher = None
     if use_naflex_train:
         # Image NaFlex resizes images to ~fill the bucket, so caption length is the only optional bucketing signal.
         image_bucketer = None
@@ -924,7 +947,6 @@ def get_wds_dataset(
             text_pad_cap=text_pad_cap,
         )
         dataset = wds.DataPipeline(*pipeline)
-        num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
     elif use_naflex_eval:
         pipeline.append(decode_image)
         if output_text_mask:
@@ -983,50 +1005,22 @@ def get_wds_dataset(
         pipeline.extend(stages)
         dataset = wds.DataPipeline(*pipeline)
 
-    if is_train and not use_naflex_train:
-        if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
-        # roll over and repeat a few samples to get same number of full batches on each node
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.workers)
-        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
-    elif not is_train:
-        # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
+    return create_wds_loader(
+        dataset, args, is_train, num_samples, shared_epoch, floor=floor, naflex_batcher=naflex_batcher,
     )
 
-    # FIXME not clear which approach is better, with_epoch before vs after dataloader?
-    # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
-    # if is_train:
-    #     # roll over and repeat a few samples to get same number of full batches on each node
-    #     global_batch_size = args.batch_size * args.world_size
-    #     num_batches = math.ceil(num_samples / global_batch_size)
-    #     num_workers = max(1, args.workers)
-    #     num_batches = math.ceil(num_batches / num_workers) * num_workers
-    #     num_samples = num_batches * global_batch_size
-    #     dataloader = dataloader.with_epoch(num_batches)
-    # else:
-    #     # last batches are partial, eval is done on single (master) node
-    #     num_batches = math.ceil(num_samples / args.batch_size)
 
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+def create_map_loader(dataset, args, is_train, *, collate_fn=None, **loader_kwargs):
+    """Standard fixed-batch loader for map-style image and audio datasets."""
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=is_train and sampler is None,
+        num_workers=args.workers, pin_memory=True, sampler=sampler,
+        drop_last=is_train, collate_fn=collate_fn, **loader_kwargs,
+    )
+    dataloader.num_samples = len(dataset)
+    dataloader.num_batches = len(dataloader)
+    return DataInfo(dataloader, sampler)
 
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, naflex_data_config=None, model_traits=None):
@@ -1120,24 +1114,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         dataloader.num_batches = dataset.num_batches_for_workers(num_workers)
         return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=collate_fn,
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-
-    return DataInfo(dataloader, sampler)
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn)
 
 
 class SyntheticDataset(Dataset):
@@ -1190,24 +1167,7 @@ def get_synthetic_dataset(
         variable_text=variable_text,
         output_text_mask=bool(getattr(args, 'text_attention_mask', None)) and not variable_text,
     )
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=collate_fn,
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-
-    return DataInfo(dataloader, sampler)
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn)
 
 
 def get_dataset_fn(data_path, dataset_type):

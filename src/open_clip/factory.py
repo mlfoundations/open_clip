@@ -26,7 +26,7 @@ from .model_traits import (
     validate_distillation,
 )
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
+from .pretrained import get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import (
     AugmentationCfg,
@@ -586,16 +586,12 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (NaFlexGenLip, CLIP, CustomTextCLIP, CoCa, CLAP)
-    if 'genlip_cfg' in model_cfg:
+    # Share config-family classification with tokenizer validation and trait prediction.
+    family = traits_from_config(model_cfg).family
+    if family in (ModelFamily.GENLIP, ModelFamily.GENLAP):
         model_cfg.pop('custom_text', None)
-        model_class = NaFlexGenLip
-    elif 'genlap_cfg' in model_cfg:
-        # GenLAP: generative audio-language model (NaFlex spectrogram prefix). Its front-end config key is
-        # 'audio_naflex_cfg' (NOT 'audio_cfg', which would trip is_audio_model -> CLAP routing).
-        model_cfg.pop('custom_text', None)
-        model_class = NaFlexGenLap
-    elif is_audio_model:
+        model_class = NaFlexGenLip if family is ModelFamily.GENLIP else NaFlexGenLap
+    elif family is ModelFamily.CLAP:
         model_class = CLAP
     else:
         custom_text_requested = model_cfg.pop('custom_text', False)
@@ -603,11 +599,11 @@ def create_model(
             custom_text_requested or force_custom_text or is_hf_text_model or
             is_modern_text_model or is_variable_text_model
         )
-        if "multimodal_cfg" in model_cfg and "text_cfg" not in model_cfg:
+        if family is ModelFamily.MAMMUT:
             # single text decoder serving both contrastive & caption passes
             model_class = MaMMUT
         elif custom_text:
-            if "multimodal_cfg" in model_cfg:
+            if family is ModelFamily.COCA:
                 model_class = CoCa
             else:
                 model_class = CustomTextCLIP
@@ -1104,61 +1100,43 @@ def create_loss(
     labels must already be aligned for next-token prediction. The legacy trainer uses
     ``open_clip_train.loss.create_loss_from_args`` to translate its model and CLI settings.
     """
-    if loss_type not in ("clip", "distill_clip", "siglip", "coca", "genlip"):
-        raise ValueError(
-            f"Unknown loss_type {loss_type!r}; expected clip, distill_clip, siglip, coca, or genlip.")
-
-    # A flat interface must not silently discard options intended for a different objective.
-    unsupported = []
-    if loss_type not in ("clip", "distill_clip", "coca"):
-        unsupported.extend(k for k, v in dict(local_loss=local_loss, gather_with_grad=gather_with_grad).items() if v)
-    if loss_type != "coca":
-        if caption_loss_weight != 2.0:
-            unsupported.append("caption_loss_weight")
-        if clip_loss_weight != 1.0:
-            unsupported.append("clip_loss_weight")
-        if pad_id is not _UNSET_PAD_ID:
-            unsupported.append("pad_id")
-    if loss_type not in ("coca", "genlip"):
-        if z_loss_weight != 0.0:
-            unsupported.append("z_loss_weight")
-        if compute_dtype not in (torch.float32, "float32"):
-            unsupported.append("compute_dtype")
-    if loss_type != "genlip" and ignore_index != -100:
-        unsupported.append("ignore_index")
-    if loss_type != "siglip":
-        if dist_impl is not None:
-            unsupported.append("dist_impl")
-        if chunk_size != 0:
-            unsupported.append("chunk_size")
-    if loss_type == "genlip":
-        if cache_labels:
-            unsupported.append("cache_labels")
-        if rank != 0:
-            unsupported.append("rank")
-        if world_size != 1:
-            unsupported.append("world_size")
+    distributed = ("cache_labels", "rank", "world_size")
+    contrastive = distributed + ("local_loss", "gather_with_grad")
+    caption = ("z_loss_weight", "compute_dtype")
+    specs = {
+        "clip": (ClipLoss, contrastive),
+        "distill_clip": (DistillClipLoss, contrastive),
+        "siglip": (SigLipLoss, distributed + ("dist_impl", "chunk_size")),
+        "coca": (CoCaLoss, contrastive + caption + ("caption_loss_weight", "clip_loss_weight", "pad_id")),
+        "genlip": (GenLipLoss, caption + ("ignore_index",)),
+    }
+    if loss_type not in specs:
+        raise ValueError(f"Unknown loss_type {loss_type!r}; expected one of {', '.join(specs)}.")
+    loss_class, supported = specs[loss_type]
+    if compute_dtype == "float32":
+        compute_dtype = torch.float32
+    # Pair each supplied value with its neutral default; the same spec validates and forwards options.
+    options = dict(
+        local_loss=(local_loss, False),
+        gather_with_grad=(gather_with_grad, False),
+        cache_labels=(cache_labels, False),
+        rank=(rank, 0),
+        world_size=(world_size, 1),
+        caption_loss_weight=(caption_loss_weight, 2.0),
+        clip_loss_weight=(clip_loss_weight, 1.0),
+        pad_id=(pad_id, _UNSET_PAD_ID),
+        z_loss_weight=(z_loss_weight, 0.0),
+        compute_dtype=(compute_dtype, torch.float32),
+        ignore_index=(ignore_index, -100),
+        dist_impl=(dist_impl, None),
+        chunk_size=(chunk_size, 0),
+    )
+    unsupported = [name for name, (value, default) in options.items() if name not in supported and value != default]
     if unsupported:
         raise ValueError(f"Options not supported for {loss_type}: {', '.join(unsupported)}.")
-
-    if loss_type == "genlip":
-        return GenLipLoss(ignore_index=ignore_index, z_loss_weight=z_loss_weight, compute_dtype=compute_dtype)
-    shared = dict(cache_labels=cache_labels, rank=rank, world_size=world_size)
-    if loss_type == "siglip":
-        return SigLipLoss(dist_impl=dist_impl, chunk_size=chunk_size, **shared)
-    shared.update(local_loss=local_loss, gather_with_grad=gather_with_grad)
-    if loss_type == "coca":
-        if pad_id is _UNSET_PAD_ID:
-            raise ValueError("coca requires explicit pad_id: an integer for raw labels, or None for -100 masked labels.")
-        return CoCaLoss(
-            caption_loss_weight=caption_loss_weight,
-            clip_loss_weight=clip_loss_weight,
-            pad_id=pad_id,
-            z_loss_weight=z_loss_weight,
-            compute_dtype=compute_dtype,
-            **shared,
-        )
-    return (DistillClipLoss if loss_type == "distill_clip" else ClipLoss)(**shared)
+    if loss_type == "coca" and pad_id is _UNSET_PAD_ID:
+        raise ValueError("coca requires explicit pad_id: an integer for raw labels, or None for -100 masked labels.")
+    return loss_class(**{name: options[name][0] for name in supported})
 
 
 def create_task(args, model, dist_model=None, naflex_data_config=None):
@@ -1178,74 +1156,43 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
     """
     from .task import CLIPTask, SigLIPTask, CoCaTask, GenLipTask, GenLapTask, DistillCLIPTask, CLAPTask, unwrap_model
 
-    cache_labels = _use_loss_label_cache(args)
-    shared = dict(rank=args.rank, world_size=args.world_size)
-    # dispatch on the unwrapped model type (external callers may pass torch.compile / DDP wrapped
-    # models); the task itself still wraps the model as provided
     model_unwrapped = unwrap_model(model)
     if args.distill:
         validate_distillation(get_model_traits(model_unwrapped))
+    # Dispatch on the built model, including wrapped models and renamed configurations.
     if isinstance(model_unwrapped, CLAP):
-        task = CLAPTask(
-            model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+        task_cls = CLAPTask
     elif args.distill:
-        task = DistillCLIPTask(
-            model, dist_model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+        task_cls = DistillCLIPTask
     elif isinstance(model_unwrapped, (CoCa, MaMMUT)):
-        # dispatch on the built model type, not args.model -- hf-hub:/local-dir:/renamed configs would
-        # silently fall through a name check to CLIPTask and drop the caption loss.
-        # MaMMUT shares the CoCa output contract (contrastive features + full-length caption logits).
-        task = CoCaTask(
-            model,
+        task_cls = CoCaTask
+    elif isinstance(model_unwrapped, NaFlexGenLap):
+        task_cls = GenLapTask
+    elif isinstance(model_unwrapped, NaFlexGenLip):
+        task_cls = GenLipTask
+    else:
+        task_cls = SigLIPTask if args.siglip else CLIPTask
+
+    options = {} if task_cls in (GenLipTask, GenLapTask) else dict(rank=args.rank, world_size=args.world_size)
+    if task_cls in (CLIPTask, CLAPTask, DistillCLIPTask, CoCaTask):
+        options.update(local_loss=args.local_loss, gather_with_grad=args.gather_with_grad,
+                       cache_labels=_use_loss_label_cache(args))
+    if task_cls in (CoCaTask, GenLipTask, GenLapTask):
+        options.update(
+            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
+            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
+        )
+    if task_cls is CoCaTask:
+        options.update(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
             fused_caption_loss=getattr(args, 'fused_caption_loss', False),
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
         )
-    elif isinstance(model_unwrapped, NaFlexGenLap):
-        task = GenLapTask(
-            model,
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-        )
-    elif isinstance(model_unwrapped, NaFlexGenLip):
-        task = GenLipTask(
-            model,
-            caption_z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            caption_loss_compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-            caption_loss_chunk_size=getattr(args, 'caption_loss_chunk_size', 4096),
-        )
-    elif args.siglip:
-        task = SigLIPTask(
-            model,
-            dist_impl=args.loss_dist_impl,
-            **shared,
-        )
-    else:
-        task = CLIPTask(
-            model,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            **shared,
-        )
+    elif task_cls is SigLIPTask:
+        options['dist_impl'] = args.loss_dist_impl
+    task = (task_cls(model, dist_model, **options) if task_cls is DistillCLIPTask
+            else task_cls(model, **options))
     if naflex_data_config is not None:
         # Every task carries the NaFlex data policy via the base TrainingTask (image-text and audio-text alike).
         task.set_naflex_data_config(naflex_data_config)

@@ -1,19 +1,10 @@
-"""Tests that evaluate() correctly unwraps task objects to get the model.
-
-Covers raw tasks, torch.compile'd tasks, and DDP-wrapped tasks for each
-task type (CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask).
-"""
-import os
-import sys
+"""Evaluation and model extraction work with plain and compiled tasks."""
 import types
 from unittest import mock
 
 import pytest
 import torch
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
-import open_clip
 from open_clip.task import (
     CLIPTask,
     SigLIPTask,
@@ -21,11 +12,12 @@ from open_clip.task import (
     DistillCLIPTask,
     get_model_from_task,
 )
+from util_test import create_tiny_model
 
 
-def _make_args(**overrides):
+def _make_args():
     """Build a minimal args namespace matching what evaluate() needs."""
-    defaults = dict(
+    return types.SimpleNamespace(
         device='cpu',
         precision='fp32',
         rank=0,
@@ -35,130 +27,99 @@ def _make_args(**overrides):
         val_frequency=1,
         epochs=1,
         zeroshot_frequency=0,  # disable zero-shot to keep test fast
-        model='RN50',
+        model='tiny-clip',
         save_logs=False,
         wandb=False,
     )
-    defaults.update(overrides)
-    return types.SimpleNamespace(**defaults)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# get_model_from_task: unwrap correctly for every wrapper combination
-# ──────────────────────────────────────────────────────────────────────
-
-_TASK_CONFIGS = [
-    ('CLIPTask', CLIPTask, 'RN50', {}),
-    ('SigLIPTask', SigLIPTask, 'RN50', {}),
-    ('CoCaTask', CoCaTask, 'coca_ViT-B-32', {}),
-]
-
-
-@pytest.mark.parametrize("label,TaskCls,model_name,task_kw", _TASK_CONFIGS)
-def test_get_model_from_raw_task(label, TaskCls, model_name, task_kw):
-    model = open_clip.create_model(model_name)
-    task = TaskCls(model, rank=0, world_size=1, **task_kw)
-    extracted = get_model_from_task(task)
-    assert hasattr(extracted, 'encode_text'), f'{label}: missing encode_text'
-    assert hasattr(extracted, 'encode_image'), f'{label}: missing encode_image'
+@pytest.mark.parametrize("task_cls,family", [(CLIPTask, "clip"), (SigLIPTask, "clip"), (CoCaTask, "coca")])
+@pytest.mark.parametrize("compiled", [False, True], ids=["raw", "compiled"])
+def test_get_model_from_task(task_cls, family, compiled):
+    model = create_tiny_model(family)
+    task = task_cls(model, rank=0, world_size=1)
+    if compiled:
+        task = torch.compile(task, backend="eager")
+    assert get_model_from_task(task) is model
 
 
-@pytest.mark.parametrize("label,TaskCls,model_name,task_kw", _TASK_CONFIGS)
-def test_get_model_from_compiled_task(label, TaskCls, model_name, task_kw):
-    model = open_clip.create_model(model_name)
-    task = TaskCls(model, rank=0, world_size=1, **task_kw)
-    compiled = torch.compile(task)
-    extracted = get_model_from_task(compiled)
-    assert hasattr(extracted, 'encode_text'), f'{label}: missing encode_text after compile'
-    assert hasattr(extracted, 'encode_image'), f'{label}: missing encode_image after compile'
+@pytest.mark.parametrize("family", ["clip", "coca"])
+def test_get_model_from_plain_model(family):
+    model = create_tiny_model(family)
+    assert get_model_from_task(model) is model
 
 
-@pytest.mark.parametrize("label,TaskCls,model_name,task_kw", _TASK_CONFIGS)
-def test_get_model_from_plain_model(label, TaskCls, model_name, task_kw):
-    """Passing a raw model (no task) should return it as-is."""
-    model = open_clip.create_model(model_name)
-    extracted = get_model_from_task(model)
-    assert hasattr(extracted, 'encode_text')
-    assert hasattr(extracted, 'encode_image')
-
-
-def test_get_model_from_distill_task():
-    student = open_clip.create_model('RN50')
-    teacher = open_clip.create_model('RN50')
+@pytest.mark.parametrize("compiled", [False, True], ids=["raw", "compiled"])
+def test_get_model_from_distill_task(compiled):
+    student = create_tiny_model()
+    teacher = create_tiny_model()
     task = DistillCLIPTask(student, teacher, rank=0, world_size=1)
-    extracted = get_model_from_task(task)
-    assert hasattr(extracted, 'encode_text')
-    assert hasattr(extracted, 'encode_image')
-    # Should return the student, not the teacher
-    assert extracted is student
+    if compiled:
+        task = torch.compile(task, backend="eager")
+    assert get_model_from_task(task) is student
 
-
-def test_get_model_from_compiled_distill_task():
-    student = open_clip.create_model('RN50')
-    teacher = open_clip.create_model('RN50')
-    task = DistillCLIPTask(student, teacher, rank=0, world_size=1)
-    compiled = torch.compile(task)
-    extracted = get_model_from_task(compiled)
-    assert hasattr(extracted, 'encode_text')
-
-
-# ──────────────────────────────────────────────────────────────────────
-# evaluate(): smoke test with mocked val data
-# ──────────────────────────────────────────────────────────────────────
 
 def _make_val_dataloader(model, batch_size=2, num_batches=2):
-    """Create a fake dataloader that yields (images, texts) batches."""
+    """Create an in-memory iterable of image/text batch dicts; no worker processes."""
     image_size = model.visual.image_size
     if not isinstance(image_size, tuple):
         image_size = (image_size, image_size)
-    tokenizer = open_clip.get_tokenizer('RN50')
-    batches = []
-    for _ in range(num_batches):
-        images = torch.randn(batch_size, 3, *image_size)
-        texts = tokenizer(['a cat', 'a dog'][:batch_size])
-        batches.append({"image": images, "text": texts})
-
+    batches = [
+        {
+            "image": torch.randn(batch_size, 3, *image_size),
+            "text": torch.randint(1, model.vocab_size, (batch_size, model.context_length)),
+        }
+        for _ in range(num_batches)
+    ]
     dl = mock.MagicMock()
-    dl.__iter__ = mock.MagicMock(return_value=iter(batches))
+    dl.__iter__.return_value = iter(batches)
     dl.num_samples = batch_size * num_batches
     return dl
 
 
-_EVAL_TASK_CONFIGS = [
-    ('CLIPTask', CLIPTask, 'RN50', {}),
-    ('SigLIPTask', SigLIPTask, 'RN50', {}),
-]
-
-
-@pytest.mark.parametrize("label,TaskCls,model_name,task_kw", _EVAL_TASK_CONFIGS)
-@pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
-def test_evaluate_with_task(label, TaskCls, model_name, task_kw):
-    """evaluate() should work with each task type without AttributeError."""
+@pytest.mark.parametrize("task_cls", [CLIPTask, SigLIPTask])
+@pytest.mark.parametrize("compiled", [False, True], ids=["raw", "compiled"])
+def test_evaluate_with_task(task_cls, compiled):
     from open_clip_train.train import evaluate
 
-    model = open_clip.create_model(model_name, output_dict=True)
-    task = TaskCls(model, rank=0, world_size=1, **task_kw)
+    model = create_tiny_model()
+    task = task_cls(model, rank=0, world_size=1)
+    if compiled:
+        task = torch.compile(task, backend="eager")
+    data = {'val': types.SimpleNamespace(dataloader=_make_val_dataloader(model))}
 
-    args = _make_args(model=model_name)
-    val_dl = _make_val_dataloader(model)
-    data = {'val': mock.MagicMock(dataloader=val_dl)}
-
-    metrics = evaluate(task, data, epoch=1, args=args)
+    metrics = evaluate(task, data, epoch=1, args=_make_args())
     assert 'clip_val_loss' in metrics
+    assert torch.isfinite(torch.as_tensor(metrics['clip_val_loss']))
 
 
-@pytest.mark.skipif(sys.platform.startswith('darwin'), reason="macos pickle bug with locals")
-def test_evaluate_with_compiled_task():
-    """evaluate() should work with a torch.compile'd task."""
-    from open_clip_train.train import evaluate
+@pytest.mark.parametrize("trainer", ["legacy", "task"])
+def test_generative_eval_accumulates_every_batch(trainer):
+    import math
+    from open_clip_train import legacy_train, train
 
-    model = open_clip.create_model('RN50', output_dict=True)
-    task = SigLIPTask(model, rank=0, world_size=1)
-    compiled = torch.compile(task)
+    class CaptionModel(torch.nn.Module):
+        pad_id = 0
 
-    args = _make_args()
-    val_dl = _make_val_dataloader(model)
-    data = {'val': mock.MagicMock(dataloader=val_dl)}
+        def forward(self, image, text):
+            batch_size = text.shape[0]
+            return {
+                "image_features": torch.ones(batch_size, 4),
+                "text_features": torch.ones(batch_size, 4),
+                "logit_scale": torch.tensor(1.),
+                "logits": torch.zeros(batch_size, text.shape[1], 4),
+            }
 
-    metrics = evaluate(compiled, data, epoch=1, args=args)
-    assert 'clip_val_loss' in metrics
+    batches = [
+        {"image": torch.zeros(n, 3, 4, 4), "text": torch.tensor([[1, 2, 3]]).repeat(n, 1)}
+        for n in (2, 3)
+    ]
+    loader = mock.MagicMock()
+    loader.__iter__.return_value = iter(batches)
+    loader.num_samples = 5
+    model = CaptionModel()
+    evaluate = legacy_train.evaluate if trainer == "legacy" else train.evaluate
+    target = model if trainer == "legacy" else CoCaTask(model)
+    metrics = evaluate(target, {"val": types.SimpleNamespace(dataloader=loader)}, 1, _make_args())
+    assert metrics["num_samples"] == 5
+    assert metrics["val_generative_loss"] == pytest.approx(math.log(4))

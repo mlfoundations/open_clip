@@ -1,6 +1,5 @@
 import io
 import json
-import math
 import random
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -8,30 +7,25 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 
 import torch
 import webdataset as wds
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import Dataset
 
 if TYPE_CHECKING:
     from open_clip.tokenizer import Tokenizer
 
 from open_clip.model_traits import InputMode
+from open_clip.audio.transform import stack_audio_inputs
 
 from open_clip_train.data import (
-    DataInfo,
-    RepeatedShardList,
-    ResampledShards2,
+    create_map_loader,
     SharedEpoch,
     TokenizeText,
     append_naflex_train_stages,
-    detshuffle2,
-    expand_urls,
-    get_dataset_size,
+    create_wds_loader,
     get_text_pad_id,
+    get_wds_sizes,
     log_and_continue,
-    naflex_loader_counts,
     resolve_text_layout,
-    tarfile_to_samples_nothrow,
-    wds_shuffle_sizes,
+    wds_shard_head,
 )
 from open_clip_train.naflex_data import (
     AudioTokenLength,
@@ -81,21 +75,8 @@ def _decode_audio_bytes(data):
     return torchaudio.load(io.BytesIO(data))
 
 
-class _TokenizeAudioCaption:
-    # Module-level callable (picklable for forkserver workers).
-    def __init__(self, tokenizer: "Tokenizer", variable: bool = False):
-        self.tokenizer = tokenizer
-        self.variable = variable
-
-    def __call__(self, text):
-        caption = _extract_caption(text)
-        if self.variable:
-            return self.tokenizer(caption, pad=False)[0]
-        return self.tokenizer(caption)[0]
-
-
 class AudioCaptionTokenizer:
-    """Picklable caption-member -> token tensor for the NaFlex audio path.
+    """Picklable caption-member -> token tensor for audio pipelines.
 
     Reuses ``_extract_caption`` (json/txt/cls + multi-caption handling); ``variable=True`` returns a 1-D
     unpadded sequence for per-batch text padding, mirroring ``TokenizeText``.
@@ -137,8 +118,6 @@ def _audio_collate(
 ):
     audios = [sample["audio"] for sample in batch]
     texts = [sample["text"] for sample in batch]
-    waveforms = torch.stack([audio["waveform"] for audio in audios])
-    longers = torch.as_tensor([bool(audio["longer"]) for audio in audios], dtype=torch.bool)
     if pad_id is None:
         text_tensor = torch.stack(list(texts))
         text_valid = None
@@ -146,12 +125,7 @@ def _audio_collate(
         text_tensor, text_valid = collate_variable_text(
             texts, pad_id, pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
         )
-    audio_batch = {
-        "waveform": waveforms,
-        "longer": longers,
-    }
-    if "mel_fusion" in audios[0]:
-        audio_batch["mel_fusion"] = torch.stack([audio["mel_fusion"] for audio in audios])
+    audio_batch = stack_audio_inputs(audios)
     out = {"audio": audio_batch, "text": text_tensor}
     if text_valid is not None:
         out["text_valid"] = text_valid
@@ -172,29 +146,11 @@ def get_wds_audio_dataset(
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False) and is_train
 
-    num_shards = None
-    if is_train:
-        if args.train_num_samples is not None:
-            num_samples = args.train_num_samples
-        else:
-            num_samples, num_shards = get_dataset_size(input_shards)
-            if not num_samples:
-                raise RuntimeError(
-                    "Currently, the number of dataset samples must be specified for the training dataset. "
-                    "Please specify it via `--train-num-samples` if no dataset length info is present."
-                )
-    else:
-        num_samples = args.val_num_samples or 0
+    num_samples, num_shards = get_wds_sizes(args, input_shards, is_train)
 
     # Match the shared-epoch counter's mp context to the loader's (forkserver for audio when workers>0), so its
     # SemLock can be pickled into the workers; otherwise a fork-context lock crossing to forkserver workers errors.
     shared_epoch = SharedEpoch(epoch=epoch, mp_context=_audio_loader_kwargs(args).get("multiprocessing_context"))
-    if is_train and args.train_data_upsampling_factors is not None:
-        assert resampled, (
-            "--train_data_upsampling_factors is only supported when sampling with replacement "
-            "(with --dataset-resampled)."
-        )
-
     # NaFlex audio uses the shared batcher path; standard CLAP keeps the fixed-batch loader.
     # GenLAP has variable text in the audio row budget; contrastive variable text is padded separately.
     text_in_budget, variable_text = resolve_text_layout(args, model_traits)
@@ -202,51 +158,10 @@ def get_wds_audio_dataset(
     naflex_train = naflex_audio and is_train
     naflex_eval = naflex_audio and not is_train
 
-    if resampled:
-        pipeline = [
-            ResampledShards2(
-                input_shards,
-                weights=args.train_data_upsampling_factors,
-                deterministic=True,
-                epoch=shared_epoch,
-            )
-        ]
-    elif naflex_train:
-        num_shards = num_shards or len(expand_urls(input_shards)[0])
-        assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"
-        pipeline = [RepeatedShardList(input_shards)]
-    else:
-        expanded_shards, _ = expand_urls(input_shards)
-        pipeline = [wds.SimpleShardList(expanded_shards)]
-
-    if is_train:
-        shard_shuffle_size, shard_shuffle_initial, sample_shuffle_size, sample_shuffle_initial = wds_shuffle_sizes()
-        if not resampled:
-            pipeline.extend(
-                [
-                    detshuffle2(
-                        bufsize=shard_shuffle_size,
-                        initial=shard_shuffle_initial,
-                        seed=args.seed,
-                        epoch=shared_epoch,
-                    ),
-                    wds.split_by_node,
-                    wds.split_by_worker,
-                ]
-            )
-        pipeline.extend(
-            [
-                tarfile_to_samples_nothrow,
-                wds.shuffle(bufsize=sample_shuffle_size, initial=sample_shuffle_initial),
-            ]
-        )
-    else:
-        pipeline.extend(
-            [
-                wds.split_by_worker,
-                wds.tarfile_to_samples(handler=log_and_continue),
-            ]
-        )
+    pipeline = wds_shard_head(
+        args, input_shards, is_train, resampled, shared_epoch, repeat=naflex_train,
+        num_shards=num_shards,
+    )
 
     audio_ext = getattr(args, "audio_ext", "flac")
     # Shared filter/rename head (sample -> {audio: <raw bytes>, text: <raw caption member>}). Audio decode runs
@@ -348,7 +263,7 @@ def get_wds_audio_dataset(
                 decode_audio,
                 wds.map_dict(
                     audio=preprocess_audio,
-                    text=_TokenizeAudioCaption(tokenizer, variable=variable_text),
+                    text=AudioCaptionTokenizer(tokenizer, variable=variable_text),
                 ),
                 wds.batched(
                     args.batch_size,
@@ -363,35 +278,10 @@ def get_wds_audio_dataset(
         )
 
     dataset = wds.DataPipeline(*pipeline)
-    if naflex_train:
-        # NaFlex epoch length comes from the batcher's deterministic schedule (no with_epoch / fixed batch).
-        num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
-    elif is_train:
-        if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.workers)
-        num_worker_batches = round_fn(num_batches / num_workers)
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
-        dataset = dataset.with_epoch(num_worker_batches)
-    else:
-        num_batches = math.ceil(num_samples / args.batch_size) if num_samples else 0
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=args.workers > 0 and getattr(args, 'persistent_workers', True),
+    return create_wds_loader(
+        dataset, args, is_train, num_samples, shared_epoch, floor=floor, naflex_batcher=naflex_batcher,
         **_audio_loader_kwargs(args),
     )
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 class SyntheticAudioDataset(Dataset):
@@ -456,24 +346,9 @@ def get_synthetic_audio_dataset(
         tokenizer=tokenizer,
         variable_text=variable_text,
     )
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=partial(
-            _audio_collate, pad_id=get_text_pad_id(tokenizer),
-            text_pad_multiple=getattr(args, "text_pad_multiple", None),
-            text_pad_cap=getattr(tokenizer, "context_length", None),
-        ) if variable_text else _audio_collate,
-        **_audio_loader_kwargs(args),
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-    return DataInfo(dataloader, sampler)
+    collate_fn = partial(
+        _audio_collate, pad_id=get_text_pad_id(tokenizer),
+        text_pad_multiple=getattr(args, "text_pad_multiple", None),
+        text_pad_cap=getattr(tokenizer, "context_length", None),
+    ) if variable_text else _audio_collate
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn, **_audio_loader_kwargs(args))

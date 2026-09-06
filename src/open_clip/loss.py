@@ -701,6 +701,19 @@ def fused_linear_cross_entropy(
     return ce_total, (z_total if z_loss else None)
 
 
+def fused_caption_loss(hidden, labels, weight, bias=None, *, chunk_size=4096, z_loss=False, compute_dtype=torch.float32):
+    """Apply the LM head to hidden positions [0, L-1) using AR-shifted labels [1, L)."""
+    pred = hidden[:, :-1]
+    ce, z = fused_linear_cross_entropy(
+        pred.reshape(-1, pred.shape[-1]), weight, labels.reshape(-1), bias=bias,
+        ignore_index=-100, chunk_size=chunk_size, z_loss=z_loss, compute_dtype=compute_dtype,
+    )
+    output = {"caption_loss_ce": ce}
+    if z is not None:
+        output["caption_loss_z"] = z
+    return output
+
+
 def caption_cross_entropy(
         logits: torch.Tensor,
         target: torch.Tensor,

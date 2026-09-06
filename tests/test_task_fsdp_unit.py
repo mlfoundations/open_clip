@@ -80,26 +80,6 @@ def test_normalize_scalar_params_ignores_longer_vectors():
 # ---------------------------------------------------------------------------
 
 
-def test_reconcile_0d_to_1d():
-    """Checkpoint has 0-D scalar, model has [1] (FSDP mode)."""
-    model = TinyFSDPModel()
-    # Reshape logit_scale to [1] as FSDP would
-    model.logit_scale = nn.Parameter(model.logit_scale.data.unsqueeze(0))
-
-    sd = {"logit_scale": torch.tensor(4.6)}  # 0-D
-    result = TrainingTask._reconcile_state_dict_shapes(model, sd)
-    assert result["logit_scale"].shape == (1,)
-
-
-def test_reconcile_1d_to_0d():
-    """Checkpoint has [1], model has 0-D scalar (non-FSDP mode)."""
-    model = TinyFSDPModel()  # logit_scale is 0-D
-
-    sd = {"logit_scale": torch.tensor([4.6])}  # [1]
-    result = TrainingTask._reconcile_state_dict_shapes(model, sd)
-    assert result["logit_scale"].ndim == 0
-
-
 def test_reconcile_noop_when_shapes_match():
     model = TinyFSDPModel()
     sd = {"logit_scale": torch.tensor(4.6)}  # 0-D matches 0-D

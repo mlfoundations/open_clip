@@ -15,8 +15,8 @@ from .transformer import (
     ModernMultimodalTransformer,
     MultimodalTransformer,
 )
-from .loss import fused_linear_cross_entropy
-from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .loss import fused_caption_loss
+from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower, _forward_tower_intermediates
 
 
 @dataclass
@@ -66,7 +66,65 @@ def _build_text_decoder_tower(
     return decoder
 
 
-class CoCa(nn.Module):
+class MultimodalGenerationMixin:
+    """Caption generation for models supplying image, text, and decoder components."""
+
+    def generate(
+        self,
+        image,
+        text=None,
+        seq_len=30,
+        max_seq_len=77,
+        temperature=1.,
+        generation_type="beam_search",
+        top_p=0.1,
+        top_k=1,
+        pad_token_id=None,
+        eos_token_id=None,
+        sot_token_id=None,
+        num_beams=6,
+        num_beam_groups=3,
+        min_seq_len=5,
+        stopping_criteria=None,
+        repetition_penalty=1.0,
+        fixed_output_length=False,
+        generation_config=None,
+        text_valid=None,
+    ):
+        try:
+            from .generation import generate_multimodal
+        except Exception as e:
+            raise RuntimeError(
+                "Please install transformers for generate functionality. "
+                "`pip install transformers`."
+            ) from e
+
+        return generate_multimodal(
+            self,
+            image=image,
+            **self._generation_components(),
+            text=text,
+            text_valid=text_valid,
+            seq_len=seq_len,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            generation_type=generation_type,
+            top_p=top_p,
+            top_k=top_k,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            sot_token_id=sot_token_id,
+            num_beams=num_beams,
+            num_beam_groups=num_beam_groups,
+            min_seq_len=min_seq_len,
+            stopping_criteria=stopping_criteria,
+            repetition_penalty=repetition_penalty,
+            fixed_output_length=fixed_output_length,
+            generation_config=generation_config,
+        )
+
+
+class CoCa(MultimodalGenerationMixin, nn.Module):
     traits = COCA_TRAITS
 
     def __init__(
@@ -288,22 +346,19 @@ class CoCa(nn.Module):
             assert False, 'FIXME, needs implementing'
 
         if image is not None:
-            image_output = self.visual.forward_intermediates(
-                image,
+            output.update(_forward_tower_intermediates(
+                self.visual, image, 'image_features', normalize,
                 indices=image_indices,
                 stop_early=stop_early,
                 normalize_intermediates=normalize_intermediates,
                 intermediates_only=intermediates_only,
                 output_fmt=image_output_fmt,
                 output_extra_tokens=image_output_extra_tokens,
-            )
-            if normalize and "image_features" in image_output:
-                image_output["image_features"] = F.normalize(image_output["image_features"], dim=-1)
-            output.update(image_output)
+            ))
 
         if text is not None:
-            text_output = self.text.forward_intermediates(
-                text,
+            output.update(_forward_tower_intermediates(
+                self.text, text, 'text_features', normalize,
                 attention_mask=text_valid,
                 indices=text_indices,
                 stop_early=stop_early,
@@ -311,10 +366,7 @@ class CoCa(nn.Module):
                 intermediates_only=intermediates_only,
                 output_fmt=text_output_fmt,
                 output_extra_tokens=text_output_extra_tokens,
-            )
-            if normalize and "text_features" in text_output:
-                text_output["text_features"] = F.normalize(text_output["text_features"], dim=-1)
-            output.update(text_output)
+            ))
 
         # FIXME text decoder
         logit_scale_exp = self.logit_scale.exp() if output_logits or output_logit_scale_bias else None
@@ -366,83 +418,24 @@ class CoCa(nn.Module):
             "logit_scale": self.logit_scale.exp(),
         }
         if labels is not None:
-            # fused caption loss: hidden positions [0, L-1) predict tokens [1, L) (same shift the
-            # task applies to logits on the legacy path)
             hidden = self.text_decoder(image_embs, token_embs, return_hidden=True)
-            pred = hidden[:, :-1]
-            weight, bias = self.text_decoder.lm_head_params
-            caption_loss_ce, caption_loss_z = fused_linear_cross_entropy(
-                pred.reshape(-1, pred.shape[-1]),
-                weight,
-                labels.reshape(-1),
-                bias=bias,
-                ignore_index=-100,
+            caption_losses = fused_caption_loss(
+                hidden, labels, *self.text_decoder.lm_head_params,
                 chunk_size=caption_loss_chunk_size,
                 z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
             )
-            out_dict["caption_loss_ce"] = caption_loss_ce
-            if caption_loss_z is not None:
-                out_dict["caption_loss_z"] = caption_loss_z
+            out_dict.update(caption_losses)
         else:
             out_dict["logits"] = self.text_decoder(image_embs, token_embs)
         if self.logit_bias is not None:
             out_dict["logit_bias"] = self.logit_bias
         return out_dict
 
-    def generate(
-        self,
-        image,
-        text=None,
-        seq_len=30,
-        max_seq_len=77,
-        temperature=1.,
-        generation_type="beam_search",
-        top_p=0.1,
-        top_k=1,
-        pad_token_id=None,
-        eos_token_id=None,
-        sot_token_id=None,
-        num_beams=6,
-        num_beam_groups=3,
-        min_seq_len=5,
-        stopping_criteria=None,
-        repetition_penalty=1.0,
-        fixed_output_length=False,
-        generation_config=None,
-        text_valid=None,
-    ):
-        try:
-            from .generation import generate_multimodal
-        except (ImportError, Exception) as e:
-            raise RuntimeError(
-                "Please install transformers for generate functionality. "
-                "`pip install transformers`."
-            ) from e
-
-        return generate_multimodal(
-            self,
-            image=image,
+    def _generation_components(self):
+        return dict(
             image_embs_fn=lambda images: self._encode_image(images)[1],
             text_encoder_fn=lambda ids: self._encode_text(ids)[1],
             text_decoder_fn=self.text_decoder,
             decoder=self.text_decoder,
-            text=text,
-            text_valid=text_valid,
-            seq_len=seq_len,
-            max_seq_len=max_seq_len,
-            temperature=temperature,
-            generation_type=generation_type,
-            top_p=top_p,
-            top_k=top_k,
-            pad_token_id=pad_token_id,
-            eos_token_id=eos_token_id,
-            sot_token_id=sot_token_id,
-            num_beams=num_beams,
-            num_beam_groups=num_beam_groups,
-            min_seq_len=min_seq_len,
-            stopping_criteria=stopping_criteria,
-            repetition_penalty=repetition_penalty,
-            fixed_output_length=fixed_output_length,
-            generation_config=generation_config,
         )

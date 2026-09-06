@@ -6,24 +6,18 @@ positional ``task(image, text)`` backward-compat in ``forward()``,
 Concrete tasks (CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask) inherit
 from this layer.
 
-Future modalities (NaFlex, CLAP, MamMuT) should derive directly from
-``TrainingTask`` and supply their own contract.
+Audio tasks supply their own modality contract and dummy batches.
 """
 import math
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-import torch.nn as nn
 
 from .base_task import TrainingTask, unwrap_model
 
 
 class ImageTextTask(TrainingTask):
     """Image + text contract shared by CLIP-family tasks."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._naflex_data_config = None
 
     @property
     def data_keys(self) -> Tuple[str, ...]:
