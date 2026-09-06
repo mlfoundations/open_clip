@@ -20,7 +20,7 @@ def accuracy(output, target, topk=(1,)):
 def iter_eval_batches(dataloader, device, rank=0, use_fsdp_eval=False, unit_scale=None):
     """Let rank zero drive exhaustion while every FSDP rank performs the same number of forwards."""
     if not use_fsdp_eval:
-        yield from tqdm(dataloader, unit_scale=unit_scale) if unit_scale is not None else dataloader
+        yield from (tqdm(dataloader, unit_scale=unit_scale) if unit_scale is not None else dataloader)
         return
     signal = torch.zeros(1, device=device, dtype=torch.long)
     iterator = iter(dataloader) if rank == 0 else None

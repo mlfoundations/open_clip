@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 import braceexpand
 from dataclasses import dataclass
 from functools import partial
-from multiprocessing import Value, get_context
+from multiprocessing import get_context
 
 import numpy as np
 import pandas as pd

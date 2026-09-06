@@ -7,7 +7,6 @@ from datetime import datetime
 
 import numpy as np
 import torch
-from torch import optim
 
 try:
     import wandb

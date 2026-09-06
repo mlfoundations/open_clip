@@ -1001,7 +1001,6 @@ class NaFlexBatcher:
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
 
-
     def run(self, src: Iterable[Sample]):
         epoch = _advance_epoch(self)
         generator = torch.Generator()
@@ -1116,7 +1115,6 @@ class NaFlexMapDatasetWrapper(IterableDataset):
 
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
-
 
     def _epoch_indices(self, epoch: int, samples_per_rank: int) -> List[int]:
         dataset_len = len(self.base_dataset)
