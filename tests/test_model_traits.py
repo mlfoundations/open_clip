@@ -22,6 +22,7 @@ from open_clip.model_traits import (
     traits_from_model,
 )
 from open_clip_train.params import apply_model_traits, parse_args
+from open_clip_train.loss import create_loss_from_args
 from open_clip.transform import AugmentationCfg
 
 _NAFLEX_AVAILABLE = True
@@ -218,7 +219,7 @@ def test_genlip_always_gets_naflex_transforms(aug_cfg):
     assert preprocess_train.transform_kwargs["scale"] == expected_scale
 
 
-def test_create_loss_dispatches_on_traits_never_names():
+def test_legacy_loss_dispatches_on_traits_never_names():
     from open_clip.loss import ClipLoss, CoCaLoss, GenLipLoss
 
     args = types.SimpleNamespace(
@@ -227,11 +228,11 @@ def test_create_loss_dispatches_on_traits_never_names():
         torchcompile=False, torchcompile_strategy="task",
     )
     # the name says coca; only the model / traits decide
-    assert isinstance(open_clip.create_loss(args, model=open_clip.create_model("RN50", load_weights=False)), ClipLoss)
-    assert isinstance(open_clip.create_loss(args, traits=COCA_TRAITS), CoCaLoss)
-    assert isinstance(open_clip.create_loss(args, traits=GENLIP_TRAITS), GenLipLoss)
-    with pytest.raises(ValueError, match="requires the model"):
-        open_clip.create_loss(args)
+    assert isinstance(create_loss_from_args(args, model=open_clip.create_model("RN50", load_weights=False)), ClipLoss)
+    assert isinstance(create_loss_from_args(args, model=types.SimpleNamespace(traits=COCA_TRAITS, pad_id=7)), CoCaLoss)
+    assert isinstance(create_loss_from_args(args, model=types.SimpleNamespace(traits=GENLIP_TRAITS)), GenLipLoss)
+    with pytest.raises(TypeError, match="model"):
+        create_loss_from_args(args)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -242,7 +243,7 @@ def _run_args(*argv):
 
 
 @pytest.mark.parametrize("traits", [COCA_TRAITS, MAMMUT_TRAITS, GENLIP_TRAITS, GENLAP_TRAITS, CLAP_TRAITS])
-@pytest.mark.parametrize("entrypoint", ["trainer", "loss_traits", "loss_model", "task"])
+@pytest.mark.parametrize("entrypoint", ["trainer", "legacy_loss", "task"])
 def test_distillation_rejected_consistently(traits, entrypoint):
     args = _run_args()
     args.distill = True
@@ -258,10 +259,8 @@ def test_distillation_rejected_consistently(traits, entrypoint):
     with pytest.raises(ValueError) as exc:
         if entrypoint == "trainer":
             apply_model_traits(args, traits)
-        elif entrypoint == "loss_traits":
-            open_clip.create_loss(args, traits=traits)
-        elif entrypoint == "loss_model":
-            open_clip.create_loss(args, model=wrapped)
+        elif entrypoint == "legacy_loss":
+            create_loss_from_args(args, model=wrapped)
         else:
             open_clip.create_task(args, model=wrapped)
     assert str(exc.value) == message
@@ -276,7 +275,7 @@ def test_contrastive_image_distillation_remains_supported(siglip):
     args.rank, args.world_size = 0, 1
     apply_model_traits(args, CLIP_TRAITS)
     assert args.text_attention_mask is False
-    assert isinstance(open_clip.create_loss(args, traits=CLIP_TRAITS), DistillClipLoss)
+    assert isinstance(create_loss_from_args(args, model=types.SimpleNamespace(traits=CLIP_TRAITS)), DistillClipLoss)
 
 
 def test_parse_args_no_longer_sniffs_model_names():

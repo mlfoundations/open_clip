@@ -16,8 +16,8 @@ import torch
 from open_clip.model import CLIP
 from open_clip.coca_model import CoCa
 from open_clip.mammut_model import MaMMUT
-from open_clip.loss import CoCaLoss
 from open_clip.task import CLIPTask, CoCaTask
+from open_clip_train.loss import create_loss_from_args
 from open_clip_train.train import _train_step_eager
 
 ACCUM_FREQ = 4
@@ -223,11 +223,11 @@ def test_legacy_caption_variable_text_accum_matches_full_batch(arch, z_loss_weig
     args = types.SimpleNamespace(
         device='cpu', precision='fp32', distill=False, accum_freq=len(batches), skip_scheduler=True,
         grad_clip_norm=None, rank=0, world_size=1, batch_size=MICRO_BS, log_every_n_steps=1, wandb=False,
+        local_loss=False, gather_with_grad=False,
+        coca_caption_loss_weight=0.7, coca_contrastive_loss_weight=1.3,
+        caption_z_loss_weight=z_loss_weight, caption_loss_compute_dtype='model',
     )
-    loss = CoCaLoss(
-        caption_loss_weight=0.7, clip_loss_weight=1.3, pad_id=model.pad_id,
-        z_loss_weight=z_loss_weight, compute_dtype='model',
-    )
+    loss = create_loss_from_args(args, model=model)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
     optimizer.zero_grad()
     train_one_epoch(model, data, loss, 0, optimizer, None, None, None, args)

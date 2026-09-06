@@ -12,6 +12,7 @@ import torch
 import open_clip
 from open_clip.coca_model import CoCa
 from open_clip.factory import _validate_special_tokens
+from open_clip_train.loss import create_loss_from_args
 
 
 def _coca_cfg(pad_id=None):
@@ -44,8 +45,8 @@ def test_coca_pad_id_derived_from_text_tower():
     assert task.loss.pad_id is None  # task path: labels pre-masked to -100
     text = torch.tensor([[3, 5, 7, 7]])
     assert task._caption_labels(text).tolist() == [[5, -100, -100]]
-    # standalone loss factory keeps the legacy value-based ignore, keyed to the model pad id
-    loss = open_clip.create_loss(args, model=model)
+    # The legacy adapter keeps the value-based ignore, keyed to the model pad id.
+    loss = create_loss_from_args(args, model=model)
     assert loss.pad_id == 7
 
 

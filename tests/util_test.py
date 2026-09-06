@@ -22,6 +22,10 @@ def seed_all(seed = 0):
     torch.manual_seed(seed)
 
 
+def _default_caption_length(text):
+    return len(text) + 1
+
+
 class VariableTokenizer:
     """Minimal tokenizer stub for variable-text data-pipeline tests.
 
@@ -33,7 +37,7 @@ class VariableTokenizer:
     context_length = 16
 
     def __init__(self, length_fn = None):
-        self.length_fn = length_fn or (lambda text: len(text) + 1)
+        self.length_fn = _default_caption_length if length_fn is None else length_fn
 
     def __call__(self, texts, pad = True):
         if isinstance(texts, bytes):
@@ -350,4 +354,3 @@ def main(args):
 if __name__ == '__main__':
     import sys
     main(sys.argv[1:])
-

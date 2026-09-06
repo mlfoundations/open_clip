@@ -22,7 +22,7 @@ from .naflex_genlip_model import NaFlexGenLip
 from .naflex_genlap_model import NaFlexGenLap
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
 from .model_traits import (
-    InputMode, ModelFamily, ModelTraits, get_model_traits, traits_from_config, traits_from_model,
+    InputMode, ModelFamily, get_model_traits, traits_from_config, traits_from_model,
     validate_distillation,
 )
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
@@ -1060,78 +1060,105 @@ def _use_loss_label_cache(args):
     )
 
 
-def create_loss(
-        args,
-        model: Optional[torch.nn.Module] = None,
-        traits: Optional[ModelTraits] = None,
-):
-    """Construct a loss module from training args.
+_UNSET_PAD_ID = object()
 
-    Standalone factory for users running their own training loops. The
-    training pipeline in this repo uses ``create_task()`` instead, which
-    wraps model + loss and handles EMA/FSDP/checkpointing.
+
+def create_loss(
+        loss_type: str,
+        *,
+        local_loss: bool = False,
+        gather_with_grad: bool = False,
+        cache_labels: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
+        caption_loss_weight: float = 2.0,
+        clip_loss_weight: float = 1.0,
+        pad_id=_UNSET_PAD_ID,
+        z_loss_weight: float = 0.0,
+        compute_dtype: Union[str, torch.dtype] = torch.float32,
+        ignore_index: int = -100,
+        dist_impl: Optional[str] = None,
+        chunk_size: int = 0,
+):
+    """Construct a standalone loss from explicit options, without a model or training namespace.
 
     Args:
-        args: training args namespace (loss weights, distributed settings).
-        model: the model instance. Loss dispatch keys on the model's traits and model-dependent
-            settings (e.g. ``pad_id`` for the CoCa/MaMMUT caption loss on raw labels) come from its
-            attributes. Required unless ``traits`` is given; the model name is never inspected.
-        traits: explicit :class:`ModelTraits`, for callers that have not built the model.
+        loss_type: ``"clip"``, ``"distill_clip"``, ``"siglip"``, ``"coca"`` (also MaMMUT), or
+            ``"genlip"`` (also GenLAP). These select loss contracts, not model architectures.
+        local_loss: Compute local contrastive logits for clip, distill_clip, or coca.
+        gather_with_grad: Gather contrastive features with gradients for those same losses.
+        cache_labels: Cache contrastive labels; disable when compiling a region containing the loss.
+        rank: Distributed rank for contrastive losses.
+        world_size: Distributed world size for contrastive losses.
+        caption_loss_weight: Caption CE weight for coca.
+        clip_loss_weight: Contrastive weight for coca.
+        pad_id: Required explicitly for coca: an integer for raw labels, or ``None`` for labels
+            already masked to -100. The loss never infers a tokenizer's padding convention.
+        z_loss_weight: Caption z-loss weight for coca or genlip.
+        compute_dtype: Caption compute dtype for coca or genlip (``"float32"``, ``"model"``, or a dtype).
+        ignore_index: Masked label value for genlip. CoCa always uses -100, plus pad_id when supplied.
+        dist_impl: Distributed exchange implementation for siglip.
+        chunk_size: SigLIP logits chunk size (0 disables chunking).
+
+    Non-default options that do not apply to the selected loss raise ValueError. Caption logits and
+    labels must already be aligned for next-token prediction. The legacy trainer uses
+    ``open_clip_train.loss.create_loss_from_args`` to translate its model and CLI settings.
     """
-    if model is not None:
-        from .task import unwrap_model
-        model = unwrap_model(model)  # see through torch.compile / DDP wrappers for attrs
-        traits = get_model_traits(model)
-    elif traits is None:
-        raise ValueError("create_loss requires the model (model=...) or explicit traits=...; model names are not inspected.")
-    is_captioning = traits.family in (ModelFamily.COCA, ModelFamily.MAMMUT)
-    is_genlip = traits.family in (ModelFamily.GENLIP, ModelFamily.GENLAP)
+    if loss_type not in ("clip", "distill_clip", "siglip", "coca", "genlip"):
+        raise ValueError(
+            f"Unknown loss_type {loss_type!r}; expected clip, distill_clip, siglip, coca, or genlip.")
 
-    cache_labels = _use_loss_label_cache(args)
-    if args.distill:
-        validate_distillation(traits)
-        return DistillClipLoss(
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            rank=args.rank,
-            world_size=args.world_size,
-        )
-    elif is_captioning:
+    # A flat interface must not silently discard options intended for a different objective.
+    unsupported = []
+    if loss_type not in ("clip", "distill_clip", "coca"):
+        unsupported.extend(k for k, v in dict(local_loss=local_loss, gather_with_grad=gather_with_grad).items() if v)
+    if loss_type != "coca":
+        if caption_loss_weight != 2.0:
+            unsupported.append("caption_loss_weight")
+        if clip_loss_weight != 1.0:
+            unsupported.append("clip_loss_weight")
+        if pad_id is not _UNSET_PAD_ID:
+            unsupported.append("pad_id")
+    if loss_type not in ("coca", "genlip"):
+        if z_loss_weight != 0.0:
+            unsupported.append("z_loss_weight")
+        if compute_dtype not in (torch.float32, "float32"):
+            unsupported.append("compute_dtype")
+    if loss_type != "genlip" and ignore_index != -100:
+        unsupported.append("ignore_index")
+    if loss_type != "siglip":
+        if dist_impl is not None:
+            unsupported.append("dist_impl")
+        if chunk_size != 0:
+            unsupported.append("chunk_size")
+    if loss_type == "genlip":
+        if cache_labels:
+            unsupported.append("cache_labels")
+        if rank != 0:
+            unsupported.append("rank")
+        if world_size != 1:
+            unsupported.append("world_size")
+    if unsupported:
+        raise ValueError(f"Options not supported for {loss_type}: {', '.join(unsupported)}.")
+
+    if loss_type == "genlip":
+        return GenLipLoss(ignore_index=ignore_index, z_loss_weight=z_loss_weight, compute_dtype=compute_dtype)
+    shared = dict(cache_labels=cache_labels, rank=rank, world_size=world_size)
+    if loss_type == "siglip":
+        return SigLipLoss(dist_impl=dist_impl, chunk_size=chunk_size, **shared)
+    shared.update(local_loss=local_loss, gather_with_grad=gather_with_grad)
+    if loss_type == "coca":
+        if pad_id is _UNSET_PAD_ID:
+            raise ValueError("coca requires explicit pad_id: an integer for raw labels, or None for -100 masked labels.")
         return CoCaLoss(
-            caption_loss_weight=args.coca_caption_loss_weight,
-            clip_loss_weight=args.coca_contrastive_loss_weight,
-            # standalone loops pass raw (unmasked) labels, so keep the legacy value-based ignore,
-            # keyed to the model's pad id when available; the task path masks labels to -100 instead
-            pad_id=getattr(model, 'pad_id', 0) if model is not None else 0,
-            local_loss=args.local_loss,
-            gather_with_grad=args.gather_with_grad,
-            cache_labels=cache_labels,
-            rank=args.rank,
-            world_size=args.world_size,
-            z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
+            caption_loss_weight=caption_loss_weight,
+            clip_loss_weight=clip_loss_weight,
+            pad_id=pad_id,
+            z_loss_weight=z_loss_weight,
+            compute_dtype=compute_dtype,
+            **shared,
         )
-    elif is_genlip:
-        return GenLipLoss(
-            z_loss_weight=getattr(args, 'caption_z_loss_weight', 0.0),
-            compute_dtype=getattr(args, 'caption_loss_compute_dtype', 'float32'),
-        )
-    elif args.siglip:
-        return SigLipLoss(
-            cache_labels=cache_labels,
-            rank=args.rank,
-            world_size=args.world_size,
-            dist_impl=args.loss_dist_impl,
-        )
-
-    return ClipLoss(
-        local_loss=args.local_loss,
-        gather_with_grad=args.gather_with_grad,
-        cache_labels=cache_labels,
-        rank=args.rank,
-        world_size=args.world_size,
-    )
+    return (DistillClipLoss if loss_type == "distill_clip" else ClipLoss)(**shared)
 
 
 def create_task(args, model, dist_model=None, naflex_data_config=None):

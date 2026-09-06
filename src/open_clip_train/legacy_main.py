@@ -23,7 +23,8 @@ try:
 except ImportError:
     tensorboard = None
 
-from open_clip import create_model_and_transforms, get_tokenizer, create_loss, get_model_traits
+from open_clip import create_model_and_transforms, get_tokenizer, get_model_traits
+from open_clip_train.loss import create_loss_from_args as create_loss
 from open_clip_train.legacy_data import get_data_legacy as get_data
 from open_clip_train.distributed import is_master, init_distributed_device, broadcast_object
 from open_clip_train.naflex_data import (
