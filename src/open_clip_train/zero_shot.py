@@ -3,32 +3,13 @@ import logging
 _logger = logging.getLogger(__name__)
 
 import torch
-import torch.distributed as dist
-from tqdm import tqdm
 
-from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
+from open_clip import get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from open_clip.task import get_model_from_task
-from open_clip.utils import move_to_device as _move_to_device
+from open_clip.utils import move_to_device
+from open_clip_train.eval_utils import accuracy, run_classification_eval
 from open_clip_train.precision import get_autocast
-
-
-def accuracy(output, target, topk=(1,)):
-    pred = output.topk(max(topk), 1, True, True)[1].t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-    return [correct[:k].reshape(-1).float().sum().item() for k in topk]
-
-
-def _image_batch_size(images) -> int:
-    if isinstance(images, dict):
-        return images["patches"].shape[0]
-    return images.size(0)
-
-
-def _get_dummy_batch_creator(model_or_task):
-    if hasattr(model_or_task, "create_dummy_batch"):
-        return model_or_task.create_dummy_batch
-    return None
 
 
 def is_imagenet_zeroshot_compatible(model_or_task) -> bool:
@@ -43,81 +24,24 @@ def validate_imagenet_zeroshot_compatible(model_or_task):
 
 
 def run_zero_shot_classifier(model, classifier, dataloader, args, use_fsdp_eval=False):
-    device = torch.device(args.device)
-    autocast = get_autocast(
-        args.precision,
-        device_type=device.type,
-        fsdp=getattr(args, 'fsdp', False),
+    def prepare(batch, device, dtype):
+        images, target = batch
+        return move_to_device(images, device, dtype), target.to(device, non_blocking=True)
+
+    def dummy(device, dtype):
+        if hasattr(model, "create_dummy_batch"):
+            return model.create_dummy_batch(batch_size=1, device=device, dtype=dtype)["image"]
+        if getattr(args, 'use_naflex', False):
+            raise ValueError("NaFlex FSDP zero-shot eval requires an ImageTextTask dummy batch interface.")
+        image_size = get_model_from_task(model).visual.image_size
+        if not isinstance(image_size, tuple):
+            image_size = (image_size, image_size)
+        return torch.zeros(1, 3, *image_size, device=device, dtype=dtype)
+
+    return run_classification_eval(
+        model, classifier, dataloader, args, input_key="image", prepare_batch=prepare, create_dummy=dummy,
+        use_fsdp_eval=use_fsdp_eval,
     )
-    input_dtype = get_input_dtype(args.precision)
-    is_rank0 = (args.rank == 0)
-
-    if use_fsdp_eval and not is_rank0:
-        dummy_batch_creator = _get_dummy_batch_creator(model)
-        if dummy_batch_creator is not None:
-            dummy_images = dummy_batch_creator(batch_size=1, device=device, dtype=input_dtype)["image"]
-        else:
-            if getattr(args, 'use_naflex', False):
-                raise ValueError("NaFlex FSDP zero-shot eval requires an ImageTextTask dummy batch interface.")
-            raw_model = get_model_from_task(model)
-            image_size = raw_model.visual.image_size
-            if not isinstance(image_size, tuple):
-                image_size = (image_size, image_size)
-            dummy_images = torch.zeros(1, 3, *image_size, device=device, dtype=input_dtype)
-
-    with torch.inference_mode():
-        top1, top5, n = 0., 0., 0.
-
-        if use_fsdp_eval:
-            signal = torch.zeros(1, device=device, dtype=torch.long)
-            if is_rank0:
-                dataloader_iter = iter(dataloader)
-
-            while True:
-                if is_rank0:
-                    batch = next(dataloader_iter, None)
-                    signal.fill_(0 if batch is None else 1)
-                dist.broadcast(signal, src=0)
-                if signal.item() == 0:
-                    break
-
-                if is_rank0:
-                    images, target = batch
-                    images = _move_to_device(images, device=device, input_dtype=input_dtype)
-                    target = target.to(device, non_blocking=True)
-                else:
-                    images = dummy_images
-
-                with autocast():
-                    output = model(image=images)
-                    image_features = output['image_features'] if isinstance(output, dict) else output[0]
-
-                if is_rank0:
-                    logits = 100. * image_features @ classifier
-                    acc1, acc5 = accuracy(logits, target, topk=(1, 5))
-                    top1 += acc1
-                    top5 += acc5
-                    n += _image_batch_size(images)
-        else:
-            for images, target in tqdm(dataloader, unit_scale=args.batch_size):
-                images = _move_to_device(images, device=device, input_dtype=input_dtype)
-                target = target.to(device, non_blocking=True)
-
-                with autocast():
-                    # predict
-                    output = model(image=images)
-                    image_features = output['image_features'] if isinstance(output, dict) else output[0]
-                    logits = 100. * image_features @ classifier
-
-                # measure accuracy
-                acc1, acc5 = accuracy(logits, target, topk=(1, 5))
-                top1 += acc1
-                top5 += acc5
-                n += _image_batch_size(images)
-
-    top1 = (top1 / n) if n else 0.
-    top5 = (top5 / n) if n else 0.
-    return top1, top5
 
 
 def zero_shot_eval(model_or_task, data, epoch, args, tokenizer=None):

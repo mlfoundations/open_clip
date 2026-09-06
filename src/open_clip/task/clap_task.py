@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from .base_task import TrainingTask, unwrap_model
+from ..audio.transform import create_dummy_audio
 
 
 class CLAPTask(TrainingTask):
@@ -82,41 +83,8 @@ class CLAPTask(TrainingTask):
             dtype: Optional[torch.dtype] = None,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         model = unwrap_model(self.trainable_module)
-        audio_cfg = model.audio.cfg
-
-        if getattr(audio_cfg, "model_type", "").lower() == "naflexvit":
-            # NaFlexClap: the audio tower consumes a NaFlex patch dict, not a raw waveform.
-            n = 16  # arbitrary token count for the dummy
-            dummy_audio = {
-                "patches": torch.zeros(batch_size, n, audio_cfg.in_chans * audio_cfg.patch_freq * audio_cfg.patch_time,
-                                       device=device, dtype=dtype),
-                "patch_coord": torch.zeros(batch_size, n, 2, dtype=torch.long, device=device),
-                "patch_valid": torch.ones(batch_size, n, dtype=torch.bool, device=device),
-            }
-            dummy_audio["patch_coord"][..., 1] = torch.arange(n, device=device)  # time index
-            return {
-                "audio": dummy_audio,
-                "text": torch.zeros(batch_size, model.context_length, dtype=torch.long, device=device),
-            }
-
-        dummy_audio = {
-            "waveform": torch.zeros(batch_size, audio_cfg.clip_samples, device=device, dtype=dtype),
-            "longer": torch.zeros(batch_size, dtype=torch.bool, device=device),
-        }
-        if audio_cfg.enable_fusion:
-            from open_clip.audio.transform import get_audio_frame_count
-
-            audio_frames = get_audio_frame_count(audio_cfg)
-            dummy_audio["mel_fusion"] = torch.zeros(
-                batch_size,
-                4,
-                audio_frames,
-                audio_cfg.mel_bins,
-                device=device,
-                dtype=dtype,
-            )
         return {
-            "audio": dummy_audio,
+            "audio": create_dummy_audio(model.audio.cfg, batch_size=batch_size, device=device, dtype=dtype),
             "text": torch.zeros(batch_size, model.context_length, dtype=torch.long, device=device),
         }
 

@@ -65,6 +65,13 @@ class SampleDecodeError(Exception):
     """
 
 
+def _advance_epoch(owner) -> int:
+    if hasattr(owner.epoch, "get_value"):
+        return int(owner.epoch.get_value())
+    owner.epoch += 1
+    return int(owner.epoch)
+
+
 def require_naflex() -> None:
     if not NAFLEX_AVAILABLE:
         raise RuntimeError(
@@ -994,14 +1001,9 @@ class NaFlexBatcher:
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
 
-    def _epoch(self) -> int:
-        if hasattr(self.epoch, "get_value"):
-            return int(self.epoch.get_value())
-        self.epoch += 1
-        return int(self.epoch)
 
     def run(self, src: Iterable[Sample]):
-        epoch = self._epoch()
+        epoch = _advance_epoch(self)
         generator = torch.Generator()
         generator.manual_seed(self.scheduler.seed + epoch)
         samples_iter = iter(src)
@@ -1115,11 +1117,6 @@ class NaFlexMapDatasetWrapper(IterableDataset):
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
 
-    def _epoch(self) -> int:
-        if hasattr(self.epoch, "get_value"):
-            return int(self.epoch.get_value())
-        self.epoch += 1
-        return int(self.epoch)
 
     def _epoch_indices(self, epoch: int, samples_per_rank: int) -> List[int]:
         dataset_len = len(self.base_dataset)
@@ -1142,7 +1139,7 @@ class NaFlexMapDatasetWrapper(IterableDataset):
         return indices
 
     def __iter__(self):
-        epoch = self._epoch()
+        epoch = _advance_epoch(self)
         worker_info = torch.utils.data.get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0

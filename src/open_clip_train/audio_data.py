@@ -7,16 +7,16 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 
 import torch
 import webdataset as wds
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import Dataset
 
 if TYPE_CHECKING:
     from open_clip.tokenizer import Tokenizer
 
 from open_clip.model_traits import InputMode
+from open_clip.audio.transform import stack_audio_inputs
 
 from open_clip_train.data import (
-    DataInfo,
+    create_map_loader,
     SharedEpoch,
     TokenizeText,
     append_naflex_train_stages,
@@ -118,8 +118,6 @@ def _audio_collate(
 ):
     audios = [sample["audio"] for sample in batch]
     texts = [sample["text"] for sample in batch]
-    waveforms = torch.stack([audio["waveform"] for audio in audios])
-    longers = torch.as_tensor([bool(audio["longer"]) for audio in audios], dtype=torch.bool)
     if pad_id is None:
         text_tensor = torch.stack(list(texts))
         text_valid = None
@@ -127,12 +125,7 @@ def _audio_collate(
         text_tensor, text_valid = collate_variable_text(
             texts, pad_id, pad_multiple=text_pad_multiple, pad_cap=text_pad_cap,
         )
-    audio_batch = {
-        "waveform": waveforms,
-        "longer": longers,
-    }
-    if "mel_fusion" in audios[0]:
-        audio_batch["mel_fusion"] = torch.stack([audio["mel_fusion"] for audio in audios])
+    audio_batch = stack_audio_inputs(audios)
     out = {"audio": audio_batch, "text": text_tensor}
     if text_valid is not None:
         out["text_valid"] = text_valid
@@ -353,24 +346,9 @@ def get_synthetic_audio_dataset(
         tokenizer=tokenizer,
         variable_text=variable_text,
     )
-    num_samples = len(dataset)
-    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
-    shuffle = is_train and sampler is None
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        num_workers=args.workers,
-        pin_memory=True,
-        sampler=sampler,
-        drop_last=is_train,
-        collate_fn=partial(
-            _audio_collate, pad_id=get_text_pad_id(tokenizer),
-            text_pad_multiple=getattr(args, "text_pad_multiple", None),
-            text_pad_cap=getattr(tokenizer, "context_length", None),
-        ) if variable_text else _audio_collate,
-        **_audio_loader_kwargs(args),
-    )
-    dataloader.num_samples = num_samples
-    dataloader.num_batches = len(dataloader)
-    return DataInfo(dataloader, sampler)
+    collate_fn = partial(
+        _audio_collate, pad_id=get_text_pad_id(tokenizer),
+        text_pad_multiple=getattr(args, "text_pad_multiple", None),
+        text_pad_cap=getattr(tokenizer, "context_length", None),
+    ) if variable_text else _audio_collate
+    return create_map_loader(dataset, args, is_train, collate_fn=collate_fn, **_audio_loader_kwargs(args))

@@ -22,23 +22,7 @@ class SigLIPTask(CLIPTask):
             dist_impl: Optional[str] = None,
             **kwargs,
     ):
-        if loss is not None or not default_loss:
-            super().__init__(
-                model,
-                loss=loss,
-                default_loss=False,
-                rank=rank,
-                world_size=world_size,
-                **kwargs,
-            )
-        else:
+        if loss is None and default_loss:
             from open_clip.loss import SigLipLoss
-            super().__init__(
-                model,
-                loss=SigLipLoss(
-                    rank=rank,
-                    world_size=world_size,
-                    dist_impl=dist_impl,
-                ),
-                **kwargs,
-            )
+            loss = SigLipLoss(rank=rank, world_size=world_size, dist_impl=dist_impl)
+        super().__init__(model, loss=loss, default_loss=False, rank=rank, world_size=world_size, **kwargs)
