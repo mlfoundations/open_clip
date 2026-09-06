@@ -19,8 +19,8 @@ from torch.nn import functional as F
 import numpy as np
 
 from .model_traits import MAMMUT_TRAITS
-from .coca_model import MultimodalCfg
-from .loss import fused_linear_cross_entropy
+from .coca_model import MultimodalCfg, MultimodalGenerationMixin
+from .loss import fused_caption_loss
 from .model import CLIPVisionCfg, _build_vision_tower
 from .transformer import (
     LayerNormFp32,
@@ -80,7 +80,7 @@ def _build_multimodal_decoder_tower(
     return decoder
 
 
-class MaMMUT(nn.Module):
+class MaMMUT(MultimodalGenerationMixin, nn.Module):
     traits = MAMMUT_TRAITS
 
     def __init__(
@@ -257,26 +257,16 @@ class MaMMUT(nn.Module):
             "logit_scale": self.logit_scale.exp(),
         }
         if labels is not None:
-            # fused caption loss: hidden positions [0, L-1) predict tokens [1, L) (same shift the
-            # task applies to logits on the legacy path)
             hidden = self.text(
                 text, context=image_kv, context_valid=image_embs_valid,
                 mode='caption', return_hidden=True)
-            pred = hidden[:, :-1]
-            weight, bias = self.text.lm_head_params
-            caption_loss_ce, caption_loss_z = fused_linear_cross_entropy(
-                pred.reshape(-1, pred.shape[-1]),
-                weight,
-                labels.reshape(-1),
-                bias=bias,
-                ignore_index=-100,
+            caption_losses = fused_caption_loss(
+                hidden, labels, *self.text.lm_head_params,
                 chunk_size=caption_loss_chunk_size,
                 z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
             )
-            out_dict["caption_loss_ce"] = caption_loss_ce
-            if caption_loss_z is not None:
-                out_dict["caption_loss_z"] = caption_loss_z
+            out_dict.update(caption_losses)
         else:
             out_dict["logits"] = self.text(
                 text, context=image_kv, context_valid=image_embs_valid, mode='caption')
@@ -284,61 +274,12 @@ class MaMMUT(nn.Module):
             out_dict["logit_bias"] = self.logit_bias
         return out_dict
 
-    def generate(
-        self,
-        image,
-        text=None,
-        seq_len=30,
-        max_seq_len=77,
-        temperature=1.,
-        generation_type="beam_search",
-        top_p=0.1,
-        top_k=1,
-        pad_token_id=None,
-        eos_token_id=None,
-        sot_token_id=None,
-        num_beams=6,
-        num_beam_groups=3,
-            min_seq_len=5,
-            stopping_criteria=None,
-            repetition_penalty=1.0,
-            fixed_output_length=False,
-            generation_config=None,
-            text_valid=None,
-    ):
-        try:
-            from .generation import generate_multimodal
-        except (ImportError, Exception) as e:
-            raise RuntimeError(
-                "Please install transformers for generate functionality. "
-                "`pip install transformers`."
-            ) from e
-
-        return generate_multimodal(
-            self,
-            image=image,
+    def _generation_components(self):
+        return dict(
             image_embs_fn=self._generation_image_context,
-            # the decoder embeds token ids internally, so pass ids straight through
+            # The decoder embeds token ids internally.
             text_encoder_fn=lambda ids: ids,
             text_decoder_fn=lambda img_kv, ids, valid=None: self.text(
                 ids, context=img_kv, context_valid=valid, mode='caption'),
             decoder=self.text,
-            text=text,
-            text_valid=text_valid,
-            seq_len=seq_len,
-            max_seq_len=max_seq_len,
-            temperature=temperature,
-            generation_type=generation_type,
-            top_p=top_p,
-            top_k=top_k,
-            pad_token_id=pad_token_id,
-            eos_token_id=eos_token_id,
-            sot_token_id=sot_token_id,
-            num_beams=num_beams,
-            num_beam_groups=num_beam_groups,
-            min_seq_len=min_seq_len,
-            stopping_criteria=stopping_criteria,
-            repetition_penalty=repetition_penalty,
-            fixed_output_length=fixed_output_length,
-            generation_config=generation_config,
         )
