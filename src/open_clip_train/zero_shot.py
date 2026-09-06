@@ -9,6 +9,7 @@ from tqdm import tqdm
 from open_clip import get_input_dtype, get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from open_clip.task import get_model_from_task
+from open_clip.utils import move_to_device as _move_to_device
 from open_clip_train.precision import get_autocast
 
 
@@ -16,16 +17,6 @@ def accuracy(output, target, topk=(1,)):
     pred = output.topk(max(topk), 1, True, True)[1].t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
     return [correct[:k].reshape(-1).float().sum().item() for k in topk]
-
-
-def _move_to_device(value, device, input_dtype=None):
-    if isinstance(value, torch.Tensor):
-        if value.is_floating_point():
-            return value.to(device=device, dtype=input_dtype, non_blocking=True)
-        return value.to(device=device, non_blocking=True)
-    if isinstance(value, dict):
-        return {key: _move_to_device(val, device, input_dtype) for key, val in value.items()}
-    return value
 
 
 def _image_batch_size(images) -> int:

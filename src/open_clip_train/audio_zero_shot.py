@@ -11,6 +11,7 @@ from tqdm import tqdm
 from open_clip import build_zero_shot_classifier, get_input_dtype, get_tokenizer
 from open_clip.audio.transform import audio_transform_v2
 from open_clip.task import get_model_from_task
+from open_clip.utils import move_to_device as _move_to_device
 from open_clip_train.precision import get_autocast
 from open_clip_train.zero_shot import accuracy
 
@@ -96,16 +97,6 @@ def _get_classnames(dataset, target_key: str, class_key: Optional[str]) -> List[
 
 def _get_target_map(dataset, target_key: str) -> Dict[int, int]:
     return _get_classnames_and_target_map(dataset, target_key, None)[1]
-
-
-def _move_to_device(value, device, input_dtype=None):
-    if isinstance(value, torch.Tensor):
-        if value.is_floating_point():
-            return value.to(device=device, dtype=input_dtype, non_blocking=True)
-        return value.to(device=device, non_blocking=True)
-    if isinstance(value, dict):
-        return {key: _move_to_device(val, device, input_dtype) for key, val in value.items()}
-    return value
 
 
 def _prepare_audio(model_or_task, audio, device, input_dtype=None):

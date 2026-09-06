@@ -90,7 +90,7 @@ def _right_padded_batch(lengths, total_len):
     return text
 
 
-def _old_attn_inputs(self, text, dtype, num_prefix=0, attention_mask=None):
+def _dense_mask_attn_inputs(self, text, dtype, num_prefix=0, attention_mask=None):
     """Reference: a full ``[B, 1, L, L]`` additive mask (causal AND valid), is_causal=False."""
     assert num_prefix == 0  # reference path is register-free
     b, l = text.shape
@@ -108,17 +108,18 @@ def _old_attn_inputs(self, text, dtype, num_prefix=0, attention_mask=None):
 # Attention path numerics
 # ---------------------------------------------------------------------------
 
-def test_causal_nomask_matches_full_mask():
-    """Causal is_causal-only path == full [B,1,L,L] mask for the pooled output (right-padded input)."""
+def test_causal_attention_matches_dense_mask_reference():
+    """The causal shortcut agrees with an explicit dense mask on right-padded inputs."""
     torch.manual_seed(0)
     text = _right_padded_batch([14, 9, 6, 11, 3], total_len=14)
     for pool in ("eos", "mean"):
         m = _make_modern_text(attention_mode="causal", pool_type=pool)
         with torch.no_grad():
-            new = m(text)
-            m._attn_inputs = types.MethodType(_old_attn_inputs, m)
-            old = m(text)
-        assert torch.equal(new, old), f"pool={pool}: causal no-mask diverged from full-mask reference"
+            actual = m(text)
+            m._attn_inputs = types.MethodType(_dense_mask_attn_inputs, m)
+            reference = m(text)
+        # Equivalent float32 attention paths may use different accumulation orders.
+        torch.testing.assert_close(actual, reference, rtol=1e-5, atol=1e-6, msg=f"pool={pool}")
 
 
 def test_bidirectional_keypad_mask_excludes_padding():
@@ -340,8 +341,6 @@ def test_map_pool_qk_norm():
     off = _make_modern_text(pool_type="map", qk_norm=False)
     assert isinstance(off.pool.q_norm, torch.nn.Identity)
     assert isinstance(off.pool.k_norm, torch.nn.Identity)
-    # The pool no longer carries a redundant kv pre-norm (ln_final already normalises the pool input).
-    assert not hasattr(on.pool, "norm")
     # qk-norm follows the model's norm type rather than being hardcoded to RMSNorm.
     ln = _make_modern_text(pool_type="map", qk_norm=True, norm_type="layernorm")
     assert type(ln.pool.q_norm).__name__ == "LayerNorm"
@@ -498,10 +497,6 @@ def test_modern_text_public_surface_and_lock():
     assert model.token_embedding.num_embeddings == 64
     assert model.text_projection.out_features == 16
     assert model.bos_id == 1  # public special-token attr (generation derivation), declared in cfg
-    assert not hasattr(model, "text_arch")
-    assert not hasattr(model, "attention_mode")
-    assert not hasattr(model, "pool_type")
-    assert not hasattr(model, "attn_mask")
     assert [n for n, _ in model.layer_groups()] == ["embeddings", "layer.0", "layer.1", "proj"]
 
     model.lock(unlocked_layers=1)

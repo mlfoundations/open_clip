@@ -6,20 +6,13 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import torch
 import torch.nn as nn
 
+from ..model_traits import unwrap_model
+from ..utils import move_to_device
+
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
     from torch.distributed._composable.fsdp import MixedPrecisionPolicy, CPUOffloadPolicy
     from ..naflex_config import NaFlexDataConfig
-
-
-def unwrap_model(model: nn.Module) -> nn.Module:
-    """Unwrap model from DDP and/or torch.compile wrappers."""
-    unwrapped = model
-    if hasattr(unwrapped, 'module'):
-        unwrapped = unwrapped.module
-    if hasattr(unwrapped, '_orig_mod'):
-        unwrapped = unwrapped._orig_mod
-    return unwrapped
 
 
 def get_model_from_task(task_or_model: nn.Module) -> nn.Module:
@@ -158,18 +151,7 @@ class TrainingTask(nn.Module):
         Float tensors get ``input_dtype``; integer tensors stay as-is. Recurses
         into nested dicts (e.g. NaFlex patch dicts under ``"image"``).
         """
-        prepared = {}
-        for key, val in batch.items():
-            if isinstance(val, torch.Tensor):
-                if val.is_floating_point():
-                    prepared[key] = val.to(device=device, dtype=input_dtype, non_blocking=True)
-                else:
-                    prepared[key] = val.to(device=device, non_blocking=True)
-            elif isinstance(val, dict):
-                prepared[key] = self.prepare_batch(val, device, input_dtype)
-            else:
-                prepared[key] = val
-        return prepared
+        return move_to_device(batch, device, input_dtype)
 
     def get_trainable_module(self, use_ema: bool = True) -> nn.Module:
         """Get the trainable module, optionally returning EMA version."""

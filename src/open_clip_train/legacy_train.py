@@ -6,47 +6,21 @@ import time
 
 import torch
 import torch.nn.functional as F
-from torch.nn.parallel.distributed import DistributedDataParallel
 
 try:
     import wandb
 except ImportError:
     wandb = None
 
-from open_clip import get_input_dtype, CLIP, CustomTextCLIP
+from open_clip import get_input_dtype
 from open_clip.utils import cat_padded_sequences
+from open_clip.task import unwrap_model
 from open_clip_train.distributed import is_master
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def postprocess_clip_output(model_out):
-    return {
-        "image_features": model_out[0],
-        "text_features": model_out[1],
-        "logit_scale": model_out[2]
-    }
+from open_clip_train.utils import AverageMeter, backward, postprocess_clip_output
 
 
 def _coca_apply_ar_shift(model_out, texts):
@@ -62,20 +36,6 @@ def _coca_apply_ar_shift(model_out, texts):
         model_out["logits"] = model_out["logits"][:, :-1]
         model_out["labels"] = texts[:, 1:]
     return model_out
-
-
-def unwrap_model(model):
-    if hasattr(model, 'module'):
-        return model.module
-    else:
-        return model
-
-
-def backward(total_loss, scaler):
-    if scaler is not None:
-        scaler.scale(total_loss).backward()
-    else:
-        total_loss.backward()
 
 
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
@@ -331,13 +291,14 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
 
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
+                if gen_loss is not None:
+                    cumulative_gen_loss += gen_loss * batch_size
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                         f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
                     if gen_loss is not None:
-                        cumulative_gen_loss += gen_loss * batch_size
                         logging.info(
                             f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 

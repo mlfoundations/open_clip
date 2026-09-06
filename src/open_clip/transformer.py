@@ -391,97 +391,6 @@ class CustomResidualAttentionBlock(nn.Module):
         return x
 
 
-class CustomTransformer(nn.Module):
-    """ A custom transformer that can use different block types. """
-    def __init__(
-            self,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float = 4.0,
-            ls_init_value: float = None,
-            act_layer: Type[nn.Module] = nn.GELU,
-            norm_layer: Type[nn.Module] = LayerNorm,
-            block_types: Union[str, List[str]] = 'CustomResidualAttentionBlock',
-    ):
-        super().__init__()
-        self.width = width
-        self.layers = layers
-        self.grad_checkpointing = False
-
-        if isinstance(block_types, str):
-            block_types = [block_types] * layers
-        assert len(block_types) == layers
-
-        def _create_block(bt: str):
-            if bt == 'CustomResidualAttentionBlock':
-                return CustomResidualAttentionBlock(
-                    width,
-                    heads,
-                    mlp_ratio=mlp_ratio,
-                    ls_init_value=ls_init_value,
-                    act_layer=act_layer,
-                    norm_layer=norm_layer,
-                )
-            else:
-                assert False
-
-        self.resblocks = nn.ModuleList([
-            _create_block(bt)
-            for bt in block_types
-        ])
-
-    def get_cast_dtype(self) -> torch.dtype:
-        return self.resblocks[0].get_weight_dtype()
-
-    def forward_intermediates(
-            self,
-            x: torch.Tensor,
-            attn_mask: Optional[torch.Tensor] = None,
-            indices: Optional[Union[int, List[int]]] = None,
-            stop_early: bool = False,
-    ):
-        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
-
-        intermediates = []
-        blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
-        for i, blk in enumerate(blocks):
-            if self.grad_checkpointing:
-                x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
-            else:
-                x = blk(x, attn_mask=attn_mask)
-
-            if i in take_indices:
-                intermediates.append(x)
-
-        return x, intermediates
-
-    def prune_intermediate_layers(self, indices: Union[int, List[int]] = 1):
-        """ Prune layers not required for specified intermediates.
-        """
-        take_indices, max_index = feature_take_indices(len(self.resblocks), indices)
-        self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
-        return take_indices
-
-    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
-        if impl == 'composable' and enable:
-            from torch.distributed._composable import checkpoint as composable_checkpoint
-            for r in self.resblocks:
-                composable_checkpoint(r)
-        else:
-            self.grad_checkpointing = enable
-
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        for r in self.resblocks:
-            if self.grad_checkpointing:
-                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
-            else:
-                x = r(x, attn_mask=attn_mask)
-
-        return x
-
-
 class Transformer(nn.Module):
     def __init__(
             self,
@@ -567,7 +476,7 @@ class Transformer(nn.Module):
         blocks = self.resblocks if not stop_early else self.resblocks[:max_index + 1]
         for i, blk in enumerate(blocks):
             if self.grad_checkpointing:
-                x = checkpoint(blk, x, None, None, attn_mask, use_reentrant=False)
+                x = checkpoint(blk, x, attn_mask=attn_mask, use_reentrant=False)
             else:
                 x = blk(x, attn_mask=attn_mask)
 
@@ -586,12 +495,34 @@ class Transformer(nn.Module):
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         for r in self.resblocks:
             if self.grad_checkpointing:
-                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
+                x = checkpoint(r, x, attn_mask=attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
 
         return x
+
+
+class CustomTransformer(Transformer):
+    """Compatibility constructor for a Transformer with custom residual attention blocks."""
+    def __init__(
+            self,
+            width: int,
+            layers: int,
+            heads: int,
+            mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = LayerNorm,
+            block_types: Union[str, List[str]] = 'CustomResidualAttentionBlock',
+    ):
+        if isinstance(block_types, str):
+            block_types = [block_types] * layers
+        assert len(block_types) == layers
+        assert all(bt == 'CustomResidualAttentionBlock' for bt in block_types)
+        super().__init__(
+            width, layers, heads, mlp_ratio=mlp_ratio, ls_init_value=ls_init_value,
+            act_layer=act_layer, norm_layer=norm_layer, block_type='custom',
+        )
 
 
 def _expand_token(token, batch_size: int):
@@ -2508,13 +2439,14 @@ class MultimodalDecoder(nn.Module):
 
         for idx, resblock in enumerate(self.resblocks):
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                x = checkpoint(resblock, x, None, None, attn_mask, use_reentrant=False)
+                x = checkpoint(resblock, x, attn_mask=attn_mask, use_reentrant=False)
             else:
                 x = resblock(x, attn_mask=attn_mask)
             if mode == 'caption' and idx % self.cross_step == 0:
                 cross_attn = self.cross_attn[idx // self.cross_step]
                 if self.grad_checkpointing and not torch.jit.is_scripting():
-                    x = checkpoint(cross_attn, x, context, context, context_attn_mask, use_reentrant=False)
+                    x = checkpoint(
+                        cross_attn, x, k_x=context, v_x=context, attn_mask=context_attn_mask, use_reentrant=False)
                 else:
                     x = cross_attn(x, k_x=context, v_x=context, attn_mask=context_attn_mask)
 

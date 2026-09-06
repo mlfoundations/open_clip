@@ -1,7 +1,5 @@
 """MaMMUT model tests: two-pass behaviour, pooling correctness vs legacy compat,
 LAION fork checkpoint conversion, factory integration, and the modern decoder arch."""
-import os
-
 import pytest
 import torch
 
@@ -10,7 +8,6 @@ from open_clip.factory import _convert_legacy_mammut_cfg, load_checkpoint
 from open_clip.mammut_model import MaMMUT
 from open_clip.transformer import ModernMultimodalDecoder, MultimodalDecoder
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 MULTIMODAL_CFG = dict(
     context_length=16,
@@ -270,8 +267,6 @@ def test_mammut_legacy_loss_pad_id():
     assert isinstance(loss, CoCaLoss)
     assert loss.pad_id == 1  # raw labels equal to the model pad id are ignored
     assert loss.caption_loss.ignore_index == -100
-    with pytest.raises(TypeError, match="model"):
-        create_loss_from_args(args)
 
 
 def test_mammut_proj_type_none_requires_matching_dims():

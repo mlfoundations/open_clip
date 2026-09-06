@@ -47,6 +47,7 @@ from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.scheduler import get_learning_rate
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
+from open_clip_train.utils import AverageMeter, backward, postprocess_clip_output, torch_compile_kwargs
 
 
 @dataclass
@@ -97,25 +98,6 @@ def restore_train_state_counters(
             state.samples_seen = int(metadata["samples_seen"])
 
 
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
 class SampleWeightedEMA:
     """Sample-count-weighted EMA of a scalar.
 
@@ -133,32 +115,6 @@ class SampleWeightedEMA:
         decay = math.exp(-n / self.ema_samples)
         self.value = val if self.value is None else decay * self.value + (1.0 - decay) * val
         return self.value
-
-
-def postprocess_clip_output(model_out):
-    return {
-        "image_features": model_out[0],
-        "text_features": model_out[1],
-        "logit_scale": model_out[2]
-    }
-
-
-def backward(total_loss, scaler):
-    if scaler is not None:
-        scaler.scale(total_loss).backward()
-    else:
-        total_loss.backward()
-
-
-def _torch_compile_kwargs(args):
-    kwargs = {}
-    backend = getattr(args, "torchcompile_backend", None)
-    mode = getattr(args, "torchcompile_mode", None)
-    if backend is not None:
-        kwargs["backend"] = backend
-    if mode is not None:
-        kwargs["mode"] = mode
-    return kwargs
 
 
 def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
@@ -193,7 +149,7 @@ def _get_compiled_train_step(state: TrainState, autocast, args):
 
     compiled_train_step = torch.compile(
         _make_train_step_no_accum_no_scaler(state.task, state.optimizer, autocast, args),
-        **_torch_compile_kwargs(args),
+        **torch_compile_kwargs(args),
     )
     state.compiled_train_step = compiled_train_step
     return state.compiled_train_step

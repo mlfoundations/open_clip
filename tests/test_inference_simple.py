@@ -4,7 +4,6 @@ from open_clip.factory import get_tokenizer
 import pytest
 import open_clip
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 test_simple_models = [
     # model, pretrained, force_custom_text
