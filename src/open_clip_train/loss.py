@@ -39,6 +39,6 @@ def create_loss_from_args(args, model):
             pad_id=model.pad_id,
         )
     elif loss_type == "siglip":
-        kwargs['dist_impl'] = args.loss_dist_impl
+        kwargs.update(dist_impl=args.loss_dist_impl, chunk_size=getattr(args, 'siglip_chunk_size', 0))
 
     return create_loss(loss_type, **kwargs)

@@ -6,12 +6,14 @@ unsupported combinations, and wires up task-specific loss defaults correctly.
 import types
 
 import pytest
+import torch
 
 from util_test import create_tiny_model
-from open_clip import create_task
+from open_clip import create_loss, create_task
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.model_traits import CLIP_TRAITS
 from open_clip_train.loss import create_loss_from_args
+from open_clip_train.params import parse_args
 from open_clip.task import CLIPTask, SigLIPTask, CoCaTask, DistillCLIPTask
 from open_clip.loss import ClipLoss, SigLipLoss, CoCaLoss, DistillClipLoss
 
@@ -80,8 +82,6 @@ def test_create_task_dispatches_on_model_type_not_name():
 
 def test_create_task_and_loss_dispatch_unwrap_wrapped_models():
     """Trait-based dispatch and pad-id lookup see through torch.compile wrappers."""
-    import torch
-
     model = create_tiny_model("coca")
     compiled = torch.compile(model, backend="eager")
     args = _make_args(model='hf-hub:someorg/my-renamed-captioner')
@@ -198,12 +198,29 @@ def test_legacy_loss_sets_cache_labels_for_compile_strategy(torchcompile, strate
     assert loss.cache_labels is expected_cache
 
 
-def test_create_task_siglip_plumbs_dist_impl():
+@pytest.mark.parametrize("chunk_size", [0, 3])
+@pytest.mark.parametrize("dist_impl", [None, "gather", "reduce", "bidir", "shift"])
+def test_siglip_cli_options_reach_both_trainers(chunk_size, dist_impl):
     model = create_tiny_model("clip")
-    args = _make_args(siglip=True, loss_dist_impl='gather')
+    argv = ["--siglip"]
+    if chunk_size:
+        argv += ["--siglip-chunk-size", str(chunk_size)]
+    if dist_impl is not None:
+        argv += ["--loss-dist-impl", dist_impl]
+    args = parse_args(argv)
+    args.distill, args.rank, args.world_size = False, 0, 1
     task = create_task(args, model=model)
     assert isinstance(task, SigLIPTask)
-    assert task.loss.dist_impl == 'gather'
+    for loss in (task.loss, create_loss_from_args(args, model),
+                 create_loss("siglip", dist_impl=dist_impl, chunk_size=chunk_size)):
+        assert loss.dist_impl == (dist_impl or "gather")
+        assert loss.chunk_size == chunk_size
+        image, text = (torch.randn(7, 4, requires_grad=True) for _ in range(2))
+        actual = loss(image, text, torch.tensor(2.), torch.tensor(-1.))
+        expected = SigLipLoss(chunk_size=0)(image, text, torch.tensor(2.), torch.tensor(-1.))
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(torch.autograd.grad(actual, (image, text)),
+                                   torch.autograd.grad(expected, (image, text)))
 
 
 def test_create_task_attaches_model_as_trainable_module():

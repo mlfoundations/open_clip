@@ -1190,7 +1190,7 @@ def create_task(args, model, dist_model=None, naflex_data_config=None):
             fused_caption_loss=getattr(args, 'fused_caption_loss', False),
         )
     elif task_cls is SigLIPTask:
-        options['dist_impl'] = args.loss_dist_impl
+        options.update(dist_impl=args.loss_dist_impl, chunk_size=getattr(args, 'siglip_chunk_size', 0))
     task = (task_cls(model, dist_model, **options) if task_cls is DistillCLIPTask
             else task_cls(model, **options))
     if naflex_data_config is not None:

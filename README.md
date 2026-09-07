@@ -23,9 +23,11 @@
 > - `--horovod` removed (Horovod support deleted; DDP/FSDP2 only)
 > - `--torchscript` and `--trace` removed (`torch.jit` is being deprecated upstream)
 > - Default `--precision` changed from `amp` → `amp_bf16` (silent behavior change; pass `--precision amp` explicitly to keep fp16 AMP)
+> - SigLIP's `--loss-dist-impl` now defaults to `gather`, as does standalone `SigLipLoss`. Pass `--loss-dist-impl bidir` to keep bidirectional ring exchange; `reduce` and `shift` remain available. Gather stores all ranks' text features on each rank.
 > - `--naflex-max-tokens-per-batch` now defaults to unset. The local token budget is inferred as `--batch-size * max(--naflex-seq-lens)`; GenLIP/GenLAP also include their caption-token cap in the per-row cost. Pass an explicit token budget to preserve older runs that relied on the previous `16384` default.
 >
 > **New training CLI flags (opt-in):**
+> - `--siglip-chunk-size` — image rows per SigLIP logits chunk (`0` disables). For example, `--siglip --siglip-chunk-size 1024` enables chunking in both current and legacy training.
 > - `--fsdp` — use FSDP2 (`fully_shard`) instead of DDP
 > - `--fsdp-no-reshard-after-forward`, `--fsdp-offload-cpu`
 > - `--fsdp-checkpoint {full,sharded}` — full gathers to rank-0 as a single `.pt`; `sharded` uses DCP per-rank shards (faster, lower memory)

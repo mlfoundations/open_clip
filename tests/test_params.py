@@ -51,3 +51,8 @@ def test_caption_loss_options_parse():
 def test_caption_loss_options_reject_invalid_values(option):
     with pytest.raises(ValueError):
         parse_args(option)
+
+
+def test_siglip_chunk_size_rejects_negative_values():
+    with pytest.raises(ValueError, match="--siglip-chunk-size must be >= 0"):
+        parse_args(["--siglip", "--siglip-chunk-size", "-1"])
