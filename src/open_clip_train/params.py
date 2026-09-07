@@ -800,10 +800,17 @@ def parse_args(args):
         help='Use SigLip (sigmoid) loss.'
     )
     parser.add_argument(
+        "--siglip-chunk-size",
+        default=0,
+        type=int,
+        help='Image rows per SigLIP logits chunk. 0 disables chunking (default).'
+    )
+    parser.add_argument(
         "--loss-dist-impl",
-        default=None,
+        default="gather",
         type=str,
-        help='A string to specify a specific distributed loss implementation.'
+        choices=("gather", "reduce", "bidir", "shift"),
+        help='SigLIP distributed loss implementation (default: gather).'
     )
     parser.add_argument(
         "--use-naflex",
@@ -961,6 +968,8 @@ def parse_args(args):
             f"--caption-z-loss-weight must be >= 0 (0 disables), got {args.caption_z_loss_weight}.")
     if args.caption_loss_chunk_size <= 0:
         raise ValueError(f"--caption-loss-chunk-size must be > 0, got {args.caption_loss_chunk_size}.")
+    if args.siglip_chunk_size < 0:
+        raise ValueError(f"--siglip-chunk-size must be >= 0 (0 disables), got {args.siglip_chunk_size}.")
 
     # Model-family effects (NaFlex data implied by GenLIP / GenLAP / NaFlexCLAP, grad-accum guards, the text-mask
     # default) are applied after model creation by apply_model_traits(): the built model's traits decide, not

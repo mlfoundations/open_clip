@@ -394,7 +394,7 @@ class SigLipLoss(nn.Module):
         self.cache_labels = cache_labels
         self.rank = rank
         self.world_size = world_size
-        self.dist_impl = dist_impl or 'bidir'  # default to bidir exchange for now, this will likely change
+        self.dist_impl = dist_impl or 'gather'
         self.chunk_size = chunk_size  # 0 = no chunking (original behavior)
         assert self.dist_impl in ('bidir', 'shift', 'reduce', 'gather')
 

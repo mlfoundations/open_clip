@@ -20,9 +20,10 @@ class SigLIPTask(CLIPTask):
             rank: int = 0,
             world_size: int = 1,
             dist_impl: Optional[str] = None,
+            chunk_size: int = 0,
             **kwargs,
     ):
         if loss is None and default_loss:
             from open_clip.loss import SigLipLoss
-            loss = SigLipLoss(rank=rank, world_size=world_size, dist_impl=dist_impl)
+            loss = SigLipLoss(rank=rank, world_size=world_size, dist_impl=dist_impl, chunk_size=chunk_size)
         super().__init__(model, loss=loss, default_loss=False, rank=rank, world_size=world_size, **kwargs)
