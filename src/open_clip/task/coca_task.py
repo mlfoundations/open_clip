@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from .base_task import unwrap_model
 from .image_text_task import ImageTextTask
-from ..utils import cat_padded_sequences
+from open_clip.utils import cat_padded_sequences
 
 
 class CoCaTask(ImageTextTask):

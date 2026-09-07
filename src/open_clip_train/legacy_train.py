@@ -19,7 +19,9 @@ from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.zero_shot import zero_shot_eval
 from open_clip_train.precision import get_autocast
-from open_clip_train.utils import AverageMeter, backward, pop_accum_scalars, postprocess_clip_output
+from open_clip_train.utils import (
+    AverageMeter, backward, pop_accum_scalars, postprocess_clip_output as postprocess_clip_output,
+)
 
 
 def _coca_apply_ar_shift(model_out, texts):

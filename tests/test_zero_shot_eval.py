@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from open_clip_train import zero_shot as zero_shot_module
+from open_clip_train.eval_utils import accuracy
 
 
 class _BareModel:
@@ -179,7 +180,7 @@ def test_accuracy_returns_python_floats():
     )
     target = torch.tensor([0, 1])
 
-    top1, top2 = zero_shot_module.accuracy(output, target, topk=(1, 2))
+    top1, top2 = accuracy(output, target, topk=(1, 2))
 
     assert isinstance(top1, float)
     assert isinstance(top2, float)
