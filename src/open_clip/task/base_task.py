@@ -6,13 +6,13 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import torch
 import torch.nn as nn
 
-from ..model_traits import unwrap_model
-from ..utils import move_to_device
+from open_clip.model_traits import unwrap_model
+from open_clip.utils import move_to_device
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
     from torch.distributed._composable.fsdp import MixedPrecisionPolicy, CPUOffloadPolicy
-    from ..naflex_config import NaFlexDataConfig
+    from open_clip.naflex_config import NaFlexDataConfig
 
 
 def get_model_from_task(task_or_model: nn.Module) -> nn.Module:

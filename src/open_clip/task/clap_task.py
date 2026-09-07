@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from .base_task import TrainingTask, unwrap_model
-from ..audio.transform import create_dummy_audio
+from open_clip.audio.transform import create_dummy_audio
 
 
 class CLAPTask(TrainingTask):

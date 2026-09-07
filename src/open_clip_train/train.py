@@ -1,7 +1,5 @@
 import logging
 import math
-
-_logger = logging.getLogger(__name__)
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -22,6 +20,21 @@ try:
 except ImportError:
     trackio = None
 
+from open_clip import get_input_dtype
+from open_clip.task import get_model_from_task
+from open_clip_train.distributed import is_master
+from open_clip_train.eval_utils import iter_eval_batches, log_eval_metrics, maybe_compute_generative_loss
+from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
+from open_clip_train.metrics import get_clip_metrics
+from open_clip_train.scheduler import get_learning_rate
+from open_clip_train.zero_shot import zero_shot_eval
+from open_clip_train.precision import get_autocast
+from open_clip_train.utils import (
+    AverageMeter, backward, pop_accum_scalars, postprocess_clip_output as postprocess_clip_output, torch_compile_kwargs,
+)
+
+_logger = logging.getLogger(__name__)
+
 
 def get_wandb_backend(args):
     """Return the active wandb-compatible run logger (wandb or trackio), or None if neither is selected.
@@ -36,17 +49,6 @@ def get_wandb_backend(args):
         assert wandb is not None, "Please install wandb."
         return wandb
     return None
-
-from open_clip import get_input_dtype
-from open_clip.task import get_model_from_task
-from open_clip_train.distributed import is_master
-from open_clip_train.eval_utils import iter_eval_batches, log_eval_metrics, maybe_compute_generative_loss
-from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
-from open_clip_train.metrics import get_clip_metrics
-from open_clip_train.scheduler import get_learning_rate
-from open_clip_train.zero_shot import zero_shot_eval
-from open_clip_train.precision import get_autocast
-from open_clip_train.utils import AverageMeter, backward, pop_accum_scalars, postprocess_clip_output, torch_compile_kwargs
 
 
 @dataclass

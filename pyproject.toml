@@ -84,3 +84,10 @@ testpaths = ['tests']
 markers = [
     'regression_test'
 ]
+
+[tool.wruff.lint]
+extend-select = ["TID252"]  # parent-relative imports (from ..x import y); sibling imports stay allowed
+
+[tool.wruff.format]
+quote-style = "preserve"
+preview = true

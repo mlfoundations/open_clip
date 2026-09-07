@@ -1,15 +1,15 @@
 import logging
 
-_logger = logging.getLogger(__name__)
-
 import torch
 
 from open_clip import get_tokenizer, build_zero_shot_classifier, \
     IMAGENET_CLASSNAMES, OPENAI_IMAGENET_TEMPLATES
 from open_clip.task import get_model_from_task
 from open_clip.utils import move_to_device
-from open_clip_train.eval_utils import accuracy, run_classification_eval
+from open_clip_train.eval_utils import run_classification_eval
 from open_clip_train.precision import get_autocast
+
+_logger = logging.getLogger(__name__)
 
 
 def is_imagenet_zeroshot_compatible(model_or_task) -> bool:
