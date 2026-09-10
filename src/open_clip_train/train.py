@@ -216,6 +216,18 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
     # Now, ready to take gradients for the last accum_freq batches.
     # Re-do the forward pass for those batches, and use the cached features from the other batches as negatives.
     # Call backwards each time, but only step optimizer at the end.
+    window_linear_loss_scale = None
+    if (
+        getattr(args, 'naflex_loss_scale', 'none') == 'linear'
+        and all(is_naflex_batch(accum_batch) for accum_batch in accum_batches)
+    ):
+        reference_batch_size = getattr(args, 'batch_size', None)
+        if reference_batch_size is None or reference_batch_size <= 0:
+            raise ValueError("NaFlex loss scaling requires a positive --batch-size reference.")
+        # Each replay differentiates the same window-wide loss, so its coefficient must match.
+        window_batch_size = sum(task.batch_size(accum_batch) for accum_batch in accum_batches)
+        window_linear_loss_scale = window_batch_size / (len(accum_batches) * reference_batch_size)
+
     optimizer.zero_grad()
     for j in range(args.accum_freq):
         batch_j = accum_batches[j]
@@ -253,7 +265,11 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
                 total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
                 losses["loss"] = total_loss
 
-            loss_scale = get_naflex_loss_scale(batch_j, args, task)
+            loss_scale = (
+                window_linear_loss_scale
+                if window_linear_loss_scale is not None
+                else get_naflex_loss_scale(batch_j, args, task)
+            )
             if loss_scale != 1.0:
                 total_loss = total_loss * loss_scale
             backward(total_loss, scaler)

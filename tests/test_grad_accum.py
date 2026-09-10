@@ -122,6 +122,61 @@ def test_grad_accum_no_accum_path_unchanged():
         assert torch.allclose(grads_step[name], grads_ref[name], rtol=1e-9, atol=1e-12), name
 
 
+@pytest.mark.parametrize('sizes', [(1, 2), (2, 1), (2, 2)])
+@pytest.mark.parametrize('loss_scale', ['linear', 'none'])
+def test_naflex_accum_matches_scaled_full_batch(sizes, loss_scale):
+    torch.manual_seed(0)
+    model = CLIP(
+        embed_dim=32,
+        vision_cfg=dict(
+            timm_model_name='naflexvit_base_patch16_gap',
+            timm_model_kwargs=dict(embed_dim=32, depth=2, num_heads=2),
+        ),
+        text_cfg=dict(context_length=8, vocab_size=64, width=32, heads=2, layers=2),
+        output_dict=True,
+    ).double()
+    task = CLIPTask(model, verbose=False)
+    task.train()
+    count = sum(sizes)
+    full = {
+        'image': {
+            'patches': torch.randn(count, 4, 3 * 16 * 16, dtype=torch.float64),
+            'patch_coord': torch.tensor([[0, 0], [0, 1], [1, 0], [1, 1]]).expand(count, -1, -1),
+            'patch_valid': torch.ones(count, 4, dtype=torch.bool),
+        },
+        'text': torch.randint(1, 60, (count, 8)),
+    }
+    reference_batch_size = 3
+    scale = count / (len(sizes) * reference_batch_size) if loss_scale == 'linear' else 1.0
+    losses, _ = task.training_forward(full)
+    (losses['loss'] * scale).backward()
+    expected = _grads(model)
+
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    optimizer.zero_grad()
+    args = _make_args(accum_freq=len(sizes))
+    args.naflex_loss_scale = loss_scale
+    args.batch_size = reference_batch_size
+    accum_state = ([], {})
+    start = 0
+    for size in sizes:
+        batch = {
+            'image': {key: value[start:start + size] for key, value in full['image'].items()},
+            'text': full['text'][start:start + size],
+        }
+        result = _train_step_eager(
+            task, batch, accum_state, optimizer, scaler=None,
+            autocast=contextlib.nullcontext, args=args,
+        )
+        start += size
+    assert result is not None
+    actual = _grads(model)
+    assert actual.keys() == expected.keys()
+    for name in expected:
+        # NaFlex position-embedding interpolation uses FP32 internally.
+        torch.testing.assert_close(actual[name], expected[name], rtol=1e-6, atol=1e-8, msg=name)
+
+
 def _tiny_caption_task(arch, z_loss_weight):
     torch.manual_seed(0)
     vision_cfg = dict(image_size=32, layers=1, width=32, head_width=16, patch_size=16, output_tokens=True)
