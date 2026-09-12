@@ -487,7 +487,7 @@ def image_transform(
                 ]
             else:
                 # resize shortest edge to matching target dim for non-square target
-                transforms = [ResizeKeepRatio(image_size)]
+                transforms = [ResizeKeepRatio(image_size, interpolation=interpolation_mode)]
             transforms += [CenterCrop(image_size)]
 
         transforms.extend([
