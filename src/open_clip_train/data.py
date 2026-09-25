@@ -821,8 +821,10 @@ def create_wds_loader(
         dataset, args, is_train, num_samples, shared_epoch, *, floor=False, naflex_batcher=None, **loader_kwargs,
 ):
     """Apply epoch sizing to an already-batched pipeline and retain loader count metadata."""
+    naflex_mean_batch_size = None
     if naflex_batcher is not None:
         num_batches, num_samples = naflex_loader_counts(naflex_batcher, args)
+        naflex_mean_batch_size = naflex_batcher.mean_batch_size_for_workers(max(1, args.workers))
     elif is_train:
         # Round to full batches on every worker/rank, repeating samples when rounding up.
         round_fn = math.floor if floor else math.ceil
@@ -843,6 +845,7 @@ def create_wds_loader(
     )
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
+    dataloader.naflex_mean_batch_size = naflex_mean_batch_size
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
@@ -1112,6 +1115,7 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         num_workers = max(1, args.workers)
         dataloader.num_samples = dataset.num_samples_for_workers(num_workers)
         dataloader.num_batches = dataset.num_batches_for_workers(num_workers)
+        dataloader.naflex_mean_batch_size = dataset.mean_batch_size_for_workers(num_workers)
         return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
     return create_map_loader(dataset, args, is_train, collate_fn=collate_fn)

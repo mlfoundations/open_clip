@@ -902,7 +902,8 @@ def parse_args(args):
         choices=("none", "linear", "sqrt"),
         default="none",
         help=(
-            "Scale NaFlex training loss by actual local batch size relative to --batch-size. "
+            "Scale NaFlex training loss by actual local batch size relative to the NaFlex train schedule's "
+            "mean batch size per step (linear scaling averages 1). An --accum-freq window is scaled as one step. "
             "Defaults to no scaling."
         ),
     )
