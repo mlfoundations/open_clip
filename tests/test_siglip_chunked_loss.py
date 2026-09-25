@@ -31,14 +31,17 @@ def test_chunked_matches_reference_forward(chunk_size, negative_only):
         f"chunked (cs={chunk_size}, neg_only={negative_only}) differs: ref={ref.item()} chunk={chunked.item()}"
 
 
-@pytest.mark.parametrize("chunk_size", [32, 8])
-def test_chunked_matches_reference_backward(chunk_size):
-    img, txt, ls, lb = _make_inputs(B=64)
-    img1 = img.clone().requires_grad_(True)
-    img2 = img.clone().requires_grad_(True)
-    SigLipLoss()._loss(img1, txt, ls, lb).backward()
-    SigLipLoss(chunk_size=chunk_size)._loss(img2, txt, ls, lb).backward()
-    assert torch.allclose(img1.grad, img2.grad, atol=1e-5)
+@pytest.mark.parametrize("B,chunk_size", [(64, 32), (64, 8), (70, 8)])
+@pytest.mark.parametrize("negative_only", [False, True])
+def test_chunked_matches_reference_backward(B, chunk_size, negative_only):
+    """Gradients for features, logit scale and bias match (chunks are recomputed in backward)."""
+    inputs = _make_inputs(B=B)
+    ref_inputs = [t.clone().requires_grad_(True) for t in inputs]
+    chunk_inputs = [t.clone().requires_grad_(True) for t in inputs]
+    SigLipLoss()._loss(*ref_inputs, negative_only=negative_only).backward()
+    SigLipLoss(chunk_size=chunk_size)._loss(*chunk_inputs, negative_only=negative_only).backward()
+    for name, ref, chunked in zip(("img", "txt", "scale", "bias"), ref_inputs, chunk_inputs):
+        assert torch.allclose(ref.grad, chunked.grad, rtol=1e-5, atol=1e-5), f"{name} grad differs"
 
 
 def test_chunked_handles_uneven_chunks():
