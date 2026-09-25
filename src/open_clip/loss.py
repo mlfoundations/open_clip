@@ -458,11 +458,11 @@ class SigLipLoss(nn.Module):
         for i in range(0, B, chunk_size):
             img_chunk = image_features[i:i + chunk_size]
             if use_checkpoint:
-                # Pass the offset explicitly: backward recomputation must use this
-                # chunk's positives, not the loop's final value of i.
+                # Chunk loss is deterministic, no RNG state to preserve for recompute.
                 chunk_loss = checkpoint(
                     self._loss_chunk, img_chunk, text_features, logit_scale, logit_bias, i, negative_only,
                     use_reentrant=False,
+                    preserve_rng_state=False,
                 )
             else:
                 chunk_loss = self._loss_chunk(
