@@ -18,7 +18,7 @@ from open_clip.coca_model import CoCa
 from open_clip.mammut_model import MaMMUT
 from open_clip.task import CLIPTask, CoCaTask
 from open_clip_train.loss import create_loss_from_args
-from open_clip_train.train import _train_step_eager
+from open_clip_train.train import _train_step_eager, make_loss_scale_fn
 
 ACCUM_FREQ = 4
 MICRO_BS = 2
@@ -120,6 +120,53 @@ def test_grad_accum_no_accum_path_unchanged():
     grads_step = _grads(model)
     for name in grads_ref:
         assert torch.allclose(grads_step[name], grads_ref[name], rtol=1e-9, atol=1e-12), name
+
+
+@pytest.mark.parametrize('sizes,loss_scale', [
+    ((1, 2), 'linear'),
+    ((1, 2), 'sqrt'),
+    ((1, 2), 'none'),
+    ((2, 2), 'linear'),
+    ((2, 2), 'sqrt'),
+])
+def test_naflex_loss_scale_accum_matches_scaled_full_batch(sizes, loss_scale):
+    """Issue #1211: every replay in a window differentiates the same window-wide loss, so all replays must share
+    one loss scale. Per-microbatch scales make the gradient depend on how the window is split."""
+    task, model = _tiny_task()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    reference_batch_size = 3.0
+    count = sum(sizes)
+
+    torch.manual_seed(3)
+    full = {
+        'image': torch.randn(count, 3, 32, 32, dtype=torch.float64),
+        'text': torch.randint(1, 60, (count, 8)),
+    }
+    ratio = count / (len(sizes) * reference_batch_size)
+    scale = {'linear': ratio, 'sqrt': ratio ** 0.5, 'none': 1.0}[loss_scale]
+
+    optimizer.zero_grad()
+    losses, _ = task.training_forward(full)
+    (losses['loss'] * scale).backward()
+    grads_ref = _grads(model)
+
+    args = _make_args(accum_freq=len(sizes))
+    args.naflex_loss_scale = loss_scale
+    loss_scale_fn = make_loss_scale_fn(args, types.SimpleNamespace(naflex_mean_batch_size=reference_batch_size))
+    accum_state = ([], {})
+    optimizer.zero_grad()
+    start = 0
+    for size in sizes:
+        batch = {k: v[start:start + size] for k, v in full.items()}
+        start += size
+        result = _train_step_eager(
+            task, batch, accum_state, optimizer, scaler=None,
+            autocast=contextlib.nullcontext, args=args, loss_scale_fn=loss_scale_fn,
+        )
+    assert result is not None
+    grads_step = _grads(model)
+    for name in grads_ref:
+        assert torch.allclose(grads_step[name], grads_ref[name], rtol=1e-6, atol=1e-10), name
 
 
 def _tiny_caption_task(arch, z_loss_weight):

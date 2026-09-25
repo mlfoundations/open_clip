@@ -789,6 +789,12 @@ class NaFlexBatchScheduler:
             return num_samples_per_rank * self.world_size
         return num_samples_per_rank
 
+    def mean_batch_size_for_workers(self, num_workers: int) -> float:
+        # Per-rank mean over the schedule actually trained (worker-padded). Seq-lens are drawn per batch with
+        # their probs, so the weighting is already in the schedule; identical across ranks (seeded).
+        schedule = self._worker_padded_schedule(num_workers)
+        return sum(batch_size for _, batch_size in schedule) / len(schedule)
+
     def sample_patch_idx(self, generator: torch.Generator) -> int:
         if not self.variable_patch_size:
             return 0
@@ -1001,6 +1007,9 @@ class NaFlexBatcher:
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
 
+    def mean_batch_size_for_workers(self, num_workers: int) -> float:
+        return self.scheduler.mean_batch_size_for_workers(num_workers)
+
     def run(self, src: Iterable[Sample]):
         epoch = _advance_epoch(self)
         generator = torch.Generator()
@@ -1115,6 +1124,9 @@ class NaFlexMapDatasetWrapper(IterableDataset):
 
     def num_samples_for_workers(self, num_workers: int) -> int:
         return self.scheduler.num_samples_for_workers(num_workers)
+
+    def mean_batch_size_for_workers(self, num_workers: int) -> float:
+        return self.scheduler.mean_batch_size_for_workers(num_workers)
 
     def _epoch_indices(self, epoch: int, samples_per_rank: int) -> List[int]:
         dataset_len = len(self.base_dataset)

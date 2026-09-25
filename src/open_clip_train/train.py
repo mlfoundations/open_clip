@@ -3,6 +3,7 @@ import math
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Callable, Optional
 
 import torch
@@ -118,7 +119,7 @@ class SampleWeightedEMA:
         return self.value
 
 
-def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
+def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args, loss_scale_fn=None):
     grad_clip_norm = getattr(args, "grad_clip_norm", None)
     # Parameters are snapshotted when the step is created/compiled. Do not swap
     # or re-wrap task.trainable_module after this point.
@@ -128,7 +129,7 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
         # Keep zero_grad and logit-scale clamp outside this compiled closure.
         # Dynamo intentionally graph-breaks on optimizer.zero_grad(), and the
         # clamp is tiny eager bookkeeping after the optimizer update.
-        loss_scale = get_naflex_loss_scale(batch, args, task)
+        loss_scale = 1.0 if loss_scale_fn is None else loss_scale_fn(task.batch_size(batch), 1)
         with autocast():
             losses, report = task(batch)
             total_loss = losses["loss"]
@@ -143,13 +144,13 @@ def _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args):
     return train_step
 
 
-def _get_compiled_train_step(state: TrainState, autocast, args):
+def _get_compiled_train_step(state: TrainState, autocast, args, loss_scale_fn=None):
     assert state.optimizer is not None, "_get_compiled_train_step requires state.optimizer."
     if state.compiled_train_step is not None:
         return state.compiled_train_step
 
     compiled_train_step = torch.compile(
-        _make_train_step_no_accum_no_scaler(state.task, state.optimizer, autocast, args),
+        _make_train_step_no_accum_no_scaler(state.task, state.optimizer, autocast, args, loss_scale_fn),
         **torch_compile_kwargs(args),
     )
     state.compiled_train_step = compiled_train_step
@@ -176,14 +177,14 @@ def _finish_eager_train_step(task, optimizer, scaler, args):
     task.clamp_logit_scale()
 
 
-def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, args):
+def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, args, loss_scale_fn=None):
     if args.accum_freq == 1:
         optimizer.zero_grad()
         with autocast():
             losses, report = task(batch)
             total_loss = losses["loss"]
 
-        loss_scale = get_naflex_loss_scale(batch, args, task)
+        loss_scale = 1.0 if loss_scale_fn is None else loss_scale_fn(task.batch_size(batch), 1)
         if loss_scale != 1.0:
             total_loss = total_loss * loss_scale
         backward(total_loss, scaler)
@@ -216,6 +217,9 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
     # Now, ready to take gradients for the last accum_freq batches.
     # Re-do the forward pass for those batches, and use the cached features from the other batches as negatives.
     # Call backwards each time, but only step optimizer at the end.
+    # Every replay differentiates the same window-wide loss, so all replays must share one loss scale.
+    step_batch_size = sum(task.batch_size(accum_batch) for accum_batch in accum_batches)
+    loss_scale = 1.0 if loss_scale_fn is None else loss_scale_fn(step_batch_size, len(accum_batches))
     optimizer.zero_grad()
     for j in range(args.accum_freq):
         batch_j = accum_batches[j]
@@ -253,7 +257,6 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
                 total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
                 losses["loss"] = total_loss
 
-            loss_scale = get_naflex_loss_scale(batch_j, args, task)
             if loss_scale != 1.0:
                 total_loss = total_loss * loss_scale
             backward(total_loss, scaler)
@@ -261,32 +264,33 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
         if use_fsdp_no_sync:
             task.trainable_module.set_requires_gradient_sync(True)
 
-    step_batch_size = sum(task.batch_size(accum_batch) for accum_batch in accum_batches)
     _finish_eager_train_step(task, optimizer, scaler, args)
     return losses, report, step_batch_size, ([], {})
 
 
-def is_naflex_batch(batch):
-    image = batch.get("image")
-    return isinstance(image, dict) and "patches" in image
+def make_loss_scale_fn(args, dataloader) -> Optional[Callable[[int, int], float]]:
+    """Resolve the run's loss scaling once: ``fn(step_batch_size, num_batches) -> float``, or None when disabled.
+
+    Called per optimizer step, where ``num_batches`` is 1 or the full accum window. Step functions only apply it,
+    so scaling policies stay out of the step code. Currently only NaFlex batch-size scaling.
+    """
+    mode = getattr(args, "naflex_loss_scale", "none")
+    if mode in (None, "none"):
+        return None
+    reference_batch_size = getattr(dataloader, "naflex_mean_batch_size", None)
+    if reference_batch_size is None:
+        raise ValueError("--naflex-loss-scale requires a NaFlex train loader (--use-naflex).")
+    return partial(naflex_loss_scale, mode=mode, reference_batch_size=reference_batch_size)
 
 
-def get_naflex_loss_scale(batch, args, task):
-    loss_scale = getattr(args, "naflex_loss_scale", "none")
-    if loss_scale in (None, "none") or not is_naflex_batch(batch):
-        return 1.0
-
-    batch_size = task.batch_size(batch)
-    reference_batch_size = getattr(args, "batch_size", None)
-    if reference_batch_size is None or reference_batch_size <= 0:
-        raise ValueError("NaFlex loss scaling requires a positive --batch-size reference.")
-
-    scale = batch_size / reference_batch_size
-    if loss_scale == "linear":
+def naflex_loss_scale(step_batch_size, num_batches, *, mode, reference_batch_size):
+    """Scale by the step's batch size relative to the NaFlex schedule's mean batch size (linear averages 1)."""
+    scale = step_batch_size / (num_batches * reference_batch_size)
+    if mode == "linear":
         return scale
-    if loss_scale == "sqrt":
+    if mode == "sqrt":
         return math.sqrt(scale)
-    raise ValueError(f"Unsupported NaFlex loss scale: {loss_scale}")
+    raise ValueError(f"Unsupported NaFlex loss scale: {mode}")
 
 
 def train_one_epoch(state: TrainState, data, args, tb_writer=None):
@@ -315,17 +319,20 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
         raise ValueError(
             "--torchcompile-strategy step requires --accum-freq 1 and a precision without GradScaler."
         )
-    if eager_step:
-        train_step = None
-    elif compile_step:
-        train_step = _get_compiled_train_step(state, autocast, args)
-    else:
-        train_step = _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args)
-
-    task.train()
 
     data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
     dataloader = data['train'].dataloader
+    loss_scale_fn = make_loss_scale_fn(args, dataloader)
+
+    if eager_step:
+        train_step = None
+    elif compile_step:
+        train_step = _get_compiled_train_step(state, autocast, args, loss_scale_fn)
+    else:
+        train_step = _make_train_step_no_accum_no_scaler(task, optimizer, autocast, args, loss_scale_fn)
+
+    task.train()
+
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
@@ -369,6 +376,7 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                 scaler,
                 autocast,
                 args,
+                loss_scale_fn=loss_scale_fn,
             )
             if result is None:
                 continue

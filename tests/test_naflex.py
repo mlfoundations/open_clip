@@ -22,7 +22,7 @@ from open_clip_train.naflex_data import (
     create_naflex_eval_transform,
 )
 from open_clip_train.params import parse_args
-from open_clip_train.train import get_naflex_loss_scale
+from open_clip_train.train import make_loss_scale_fn
 
 
 pytestmark = pytest.mark.skipif(not NAFLEX_AVAILABLE, reason="timm NaFlex data support is not available")
@@ -424,20 +424,36 @@ def test_naflex_loss_scale_defaults_to_none():
     assert args.naflex_max_tokens_per_batch is None
 
 
-def test_naflex_loss_scale_uses_actual_batch_size():
-    batch = {"image": {"patches": torch.zeros(8, 4, 3)}, "text": torch.zeros(8, 1)}
-    task = types.SimpleNamespace(batch_size=lambda batch: batch["image"]["patches"].shape[0])
+def test_naflex_loss_scale_relative_to_reference():
+    def make(mode, reference):
+        return make_loss_scale_fn(
+            types.SimpleNamespace(naflex_loss_scale=mode), types.SimpleNamespace(naflex_mean_batch_size=reference))
 
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="none", batch_size=4), task) == 1.0
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4), task) == 2.0
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="sqrt", batch_size=2), task) == 2.0
+    assert make("none", 4.0) is None
+    assert make("linear", 4.0)(8, 1) == 2.0
+    assert make("sqrt", 2.0)(8, 1) == 2.0
+    # An accum window is scaled as one step: summed batch size against num_batches * reference.
+    assert make("linear", 4.0)(12, 2) == 1.5
+    # Dense loaders carry no schedule mean; asking for NaFlex scaling there is a config error.
+    with pytest.raises(ValueError, match="NaFlex train loader"):
+        make("linear", None)
 
 
-def test_naflex_loss_scale_ignores_dense_batches():
-    batch = {"image": torch.zeros(8, 3, 32, 32), "text": torch.zeros(8, 1)}
-    task = types.SimpleNamespace(batch_size=lambda batch: len(batch["image"]))
+def test_naflex_mean_batch_size_follows_seq_len_probs():
+    def make(probs):
+        return NaFlexBatcher(
+            train_num_samples=4096, patch_size=16, seq_lens=[64, 256], seq_len_choice_probs=probs,
+            transform_factory=lambda **kw: (lambda x: x), max_tokens_per_batch=1024, batch_divisor=1,
+        )
 
-    assert get_naflex_loss_scale(batch, types.SimpleNamespace(naflex_loss_scale="linear", batch_size=4), task) == 1.0
+    short_heavy, long_heavy = make([0.9, 0.1]), make([0.1, 0.9])
+    for batcher in (short_heavy, long_heavy):
+        # Mean of the trained (worker-padded) schedule, i.e. the loader's own sample / batch counts.
+        assert batcher.mean_batch_size_for_workers(3) == (
+            batcher.num_samples_for_workers(3) / batcher.num_batches_for_workers(3))
+    # Row batch sizes are 16 (seq 64) and 4 (seq 256); the mean tracks the per-batch seq-len probs.
+    assert 14.0 < short_heavy.mean_batch_size_for_workers(1) < 16.0
+    assert 4.0 < long_heavy.mean_batch_size_for_workers(1) < 6.0
 
 
 def test_naflex_eval_config_rejects_non_positive_values():
