@@ -436,7 +436,10 @@ class SigLipLoss(nn.Module):
     def _chunked_loss(self, image_features, text_features, logit_scale, logit_bias=None, negative_only=False):
         """Memory-efficient loss that chunks the logit computation.
 
-        Peak memory: O(chunk_size * N) instead of O(B * N).
+        Pairwise activation memory: O(chunk_size * N) instead of O(B * N).
+        Under autograd, each chunk is checkpointed and recomputed in backward
+        so earlier chunks' logits do not remain live until the final reduction.
+        This trades additional computation for memory; feature storage is unchanged.
         Useful when per-device batch is large (e.g. B > 4096).
 
         Uses the identities -logsigmoid(-x) = softplus(x) and
@@ -445,34 +448,42 @@ class SigLipLoss(nn.Module):
         positive needs only a -logits[k, i+k] correction.
         """
         B = image_features.shape[0]
-        N = text_features.shape[0]
         chunk_size = min(self.chunk_size, B)
         total_loss = torch.zeros((), device=image_features.device, dtype=torch.float32)
+        use_checkpoint = torch.is_grad_enabled() and any(
+            isinstance(tensor, torch.Tensor) and tensor.requires_grad
+            for tensor in (image_features, text_features, logit_scale, logit_bias)
+        )
 
         for i in range(0, B, chunk_size):
-            end_i = min(i + chunk_size, B)
-            img_chunk = image_features[i:end_i]
-            logits = self.get_logits(img_chunk, text_features, logit_scale, logit_bias)
-            # Accumulate the O(chunk_size * N) pair losses in fp32.  Without
-            # this cast, a single chunk can overflow fp16 before it is added
-            # to the fp32 running total.
-            logits = logits.float()
-
-            # Treat every pair as negative: -logsigmoid(-logits) == softplus(logits)
-            chunk_loss = F.softplus(logits).sum()
-
-            if not negative_only:
-                # Replace local positives with positive-pair loss:
-                # softplus(-x) - softplus(x) == -x, so subtract the positive logits.
-                num_pos = max(0, min(end_i, N) - i)
-                if num_pos > 0:
-                    rows = torch.arange(num_pos, device=logits.device)
-                    pos_logits = logits[rows, i + rows]
-                    chunk_loss = chunk_loss - pos_logits.sum()
-
+            img_chunk = image_features[i:i + chunk_size]
+            if use_checkpoint:
+                # Pass the offset explicitly: backward recomputation must use this
+                # chunk's positives, not the loop's final value of i.
+                chunk_loss = checkpoint(
+                    self._loss_chunk, img_chunk, text_features, logit_scale, logit_bias, i, negative_only,
+                    use_reentrant=False,
+                )
+            else:
+                chunk_loss = self._loss_chunk(
+                    img_chunk, text_features, logit_scale, logit_bias, i, negative_only)
             total_loss = total_loss + chunk_loss
 
         return total_loss / B
+
+    def _loss_chunk(self, image_features, text_features, logit_scale, logit_bias, start, negative_only):
+        logits = self.get_logits(image_features, text_features, logit_scale, logit_bias)
+        # A chunk's fp16 reduction can overflow before being added to the fp32 total.
+        logits = logits.float()
+        # Treat every pair as negative: -logsigmoid(-logits) == softplus(logits).
+        chunk_loss = F.softplus(logits).sum()
+        if not negative_only:
+            # softplus(-x) - softplus(x) == -x for each diagonal positive.
+            num_pos = max(0, min(image_features.shape[0], text_features.shape[0] - start))
+            if num_pos > 0:
+                rows = torch.arange(num_pos, device=logits.device)
+                chunk_loss = chunk_loss - logits[rows, start + rows].sum()
+        return chunk_loss
 
     def forward(self, image_features, text_features, logit_scale, logit_bias, output_dict=False):
         loss = self._loss(image_features, text_features, logit_scale, logit_bias)
