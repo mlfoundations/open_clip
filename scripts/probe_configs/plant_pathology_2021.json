@@ -1,0 +1,7 @@
+{
+  "type": "hfids",
+  "dataset": "timm/plant-pathology-2021",
+  "revision": "e9c0d933b2013362ffa61eac42cc9cfd3ab1eb46",
+  "calibration_fraction": 0.1,
+  "splits": {"train": "train", "evaluation": "validation"}
+}
