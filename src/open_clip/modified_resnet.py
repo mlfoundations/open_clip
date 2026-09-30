@@ -223,7 +223,7 @@ class ModifiedResNet(nn.Module):
         output = {}
         intermediates = []
         blocks = [self.stem, self.layer1, self.layer2, self.layer3, self.layer4]
-        if not stop_early:
+        if stop_early:
             blocks = blocks[:max_index + 1]
         for i, blk in enumerate(blocks):
             x = blk(x)
