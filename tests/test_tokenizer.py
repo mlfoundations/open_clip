@@ -45,6 +45,17 @@ def test_simple_tokenizer_special_token_controls():
     assert body_valid[0].sum().item() == len(body)
 
 
+def test_simple_tokenizer_additional_special_tokens_with_regex_chars():
+    base = SimpleTokenizer()
+    tokenizer = SimpleTokenizer(additional_special_tokens=["[mask]", "<|image|>"])
+    mask_id, image_id = tokenizer.all_special_ids[2:]
+
+    # special tokens are matched literally, not as regex syntax (e.g. `[mask]` is not a character class)
+    assert tokenizer.encode("a small sky") == base.encode("a small sky")
+    assert tokenizer.encode("an image of a [mask]") == [*base.encode("an image of a"), mask_id]
+    assert tokenizer.encode("<|image|> a dog") == [image_id, *base.encode("a dog")]
+
+
 @pytest.mark.parametrize("reduction_mask", ["simple", "random", "shuffle"])
 def test_simple_tokenizer_body_only_reduction_mask(reduction_mask):
     tokenizer = SimpleTokenizer(context_length=4, reduction_mask=reduction_mask)
