@@ -1,0 +1,6 @@
+{
+  "type": "hfds",
+  "dataset": "timm/resisc45",
+  "revision": "main",
+  "splits": {"train": "train", "calibration": "validation", "evaluation": "test"}
+}

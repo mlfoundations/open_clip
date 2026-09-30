@@ -1,0 +1,6 @@
+{
+  "type": "hfids",
+  "dataset": "timm/bigearthnet-v2-rgb",
+  "revision": "edb997737d3888abe5257c71d8e4fabc3c8ec34d",
+  "splits": {"train": "train", "calibration": "validation", "evaluation": "test"}
+}

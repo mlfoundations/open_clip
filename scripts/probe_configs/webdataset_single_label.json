@@ -1,0 +1,12 @@
+{
+  "type": "webdataset",
+  "task": "single-label",
+  "classnames": ["cat", "dog", "bird"],
+  "image_key": "jpg;png;webp",
+  "target_key": "cls",
+  "splits": {
+    "train": "/path/to/train-{0000..0015}.tar",
+    "calibration": "/path/to/validation-{0000..0003}.tar",
+    "evaluation": "/path/to/test-{0000..0003}.tar"
+  }
+}

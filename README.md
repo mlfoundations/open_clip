@@ -71,6 +71,7 @@ Using this codebase, we have trained several models on a variety of data sources
 Many of our models and their scaling properties are studied in detail in the paper [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
 Some of the best models we've trained and their zero-shot ImageNet-1k accuracy are shown below, along with the ViT-L model trained by OpenAI and other state-of-the-art open source alternatives (all can be loaded via OpenCLIP).
 We provide more details about our full collection of pretrained models [here](docs/PRETRAINED.md), and zero-shot results for 38 datasets [here](docs/openclip_results.csv).
+Experimental helper scripts for [multilabel zero-shot evaluation](docs/multilabel_zeroshot.md) (`scripts/multilabel_zeroshot.py`) and [linear probes](docs/linear_probe.md) (`scripts/linear_probe.py`) are also available.
 
 
 

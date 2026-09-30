@@ -1,0 +1,7 @@
+{
+  "type": "hfds",
+  "dataset": "timm/oxford-iiit-pet",
+  "revision": "main",
+  "calibration_fraction": 0.1,
+  "splits": {"train": "train", "evaluation": "test"}
+}

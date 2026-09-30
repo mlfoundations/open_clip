@@ -1,0 +1,11 @@
+{
+  "type": "hfids",
+  "dataset": "timm/nih-chest-xray-14",
+  "revision": "c1bf579641b3256b4d49924436984b82bee5834d",
+  "group_key": "patient_id",
+  "splits": {
+    "train": {"split": "train", "exclude": {"fold": [0]}},
+    "calibration": {"split": "train", "include": {"fold": [0]}},
+    "evaluation": {"split": "test"}
+  }
+}

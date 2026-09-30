@@ -1,0 +1,13 @@
+{
+  "type": "csv",
+  "task": "multi-label",
+  "classnames": ["cat", "dog", "bird"],
+  "image_key": "filepath",
+  "target_key": "labels",
+  "id_key": "image_id",
+  "splits": {
+    "train": "/path/to/train.csv",
+    "calibration": "/path/to/validation.csv",
+    "evaluation": "/path/to/test.csv"
+  }
+}
