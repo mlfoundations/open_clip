@@ -230,6 +230,23 @@ def test_modern_text_low_precision_conversion():
         assert torch.isfinite(out.float()).all()
 
 
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
+    """model.to(dtype) / .half() (pure_bf16 / pure_fp16 precision) also casts the non-persistent inv_freq buffer.
+    The cos/sin table must still be computed in float32 and only rounded once, at the end."""
+    from open_clip.transformer import RotaryEmbedding1D
+
+    seq_len = 256
+    ref = RotaryEmbedding1D(64)(seq_len, torch.device("cpu"), torch.float32)
+    rope = RotaryEmbedding1D(64).to(dtype)
+    assert rope.inv_freq.dtype == dtype  # the cast this test guards against
+    table = rope(seq_len, torch.device("cpu"), dtype)
+    assert table.dtype == dtype
+    # Only error left is the final rounding of a value in [-1, 1] (<= 2**-8 for bf16, 2**-11 for fp16).
+    best = (ref.to(dtype).float() - ref).abs().max()
+    assert (table.float() - ref).abs().max() <= best
+
+
 def test_all_pad_row_is_finite():
     """Degenerate all-pad row must not produce NaNs (the _valid_mask fallback forces token 0 valid)."""
     m = _make_modern_text(attention_mode="causal", pool_type="eos")
