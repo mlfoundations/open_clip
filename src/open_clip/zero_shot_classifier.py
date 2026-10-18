@@ -33,14 +33,14 @@ def build_zero_shot_classifier(
         model: CLIP model instance
         tokenizer: CLIP tokenizer instance
         classnames: A sequence of class (label) names
-        templates: A sequence of callables or format() friendly strings to produce templates per class name
+        templates: A sequence of callables or format() friendly strings to produce templates per class name.
+            Strings and callables can be mixed in the same sequence.
         num_classes_per_batch: The number of classes to batch together in each forward, all if None
         device: Device to use.
         use_tqdm: Enable TQDM progress bar.
     """
     assert isinstance(templates, Sequence) and len(templates) > 0
     assert isinstance(classnames, Sequence) and len(classnames) > 0
-    use_format = isinstance(templates[0], str)
     num_templates = len(templates)
     num_classes = len(classnames)
     if use_tqdm:
@@ -52,7 +52,11 @@ def build_zero_shot_classifier(
 
     def _process_batch(batch_classnames):
         num_batch_classes = len(batch_classnames)
-        texts = [template.format(c) if use_format else template(c) for c in batch_classnames for template in templates]
+        texts = [
+            template.format(c) if isinstance(template, str) else template(c)
+            for c in batch_classnames
+            for template in templates
+        ]
         texts = tokenizer(texts).to(device)
         output = model(text=texts)
         if isinstance(output, dict):
@@ -88,7 +92,8 @@ def build_zero_shot_classifier_legacy(
         model: CLIP model instance
         tokenizer: CLIP tokenizer instance
         classnames: A sequence of class (label) names
-        templates: A sequence of callables or format() friendly strings to produce templates per class name
+        templates: A sequence of callables or format() friendly strings to produce templates per class name.
+            Strings and callables can be mixed in the same sequence.
         device: Device to use.
         use_tqdm: Enable TQDM progress bar.
     """
@@ -100,12 +105,13 @@ def build_zero_shot_classifier_legacy(
     else:
         iter_wrap = iter
 
-    use_format = isinstance(templates[0], str)
-
     with torch.no_grad():
         zeroshot_weights = []
         for classname in iter_wrap(classnames):
-            texts = [template.format(classname) if use_format else template(classname) for template in templates]
+            texts = [
+                template.format(classname) if isinstance(template, str) else template(classname)
+                for template in templates
+            ]
             texts = tokenizer(texts).to(device)  # tokenize
             output = model(text=texts)
             if isinstance(output, dict):
