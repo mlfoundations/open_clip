@@ -106,7 +106,7 @@ def get_latest_checkpoint(path: str, remote: bool, *, include_sharded: bool = Tr
             return None
         checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
     else:
-        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        checkpoints = glob.glob(os.path.join(path, '**', '*.pt'), recursive=True)
         # Also find DCP checkpoint dirs (contain .metadata file from DCP)
         if include_sharded:
             for d in glob.glob(os.path.join(path, 'epoch_*')):
