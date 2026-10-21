@@ -404,3 +404,44 @@ def test_coca_loss_dual_mode():
     # legacy positional call order still works
     positional = loss_fn(img_f, txt_f, logits, labels, scale, output_dict=True)
     torch.testing.assert_close(positional['caption_loss'], legacy['caption_loss'])
+
+
+@pytest.mark.parametrize(("pad_id", "label_value"), [(None, -100), (0, 0), (5, 5)])
+@pytest.mark.parametrize("label_smoothing", [0.0, 0.2])
+@pytest.mark.parametrize("compute_mode", ["float32", "model"])
+def test_coca_logits_all_targets_ignored(pad_id, label_value, label_smoothing, compute_mode):
+    """All-padding captions have graph-attached zero loss, including the public CE module path."""
+    from open_clip.loss import CoCaLoss
+
+    logits = torch.randn(2, 3, 7, dtype=torch.bfloat16, requires_grad=True)
+    labels = torch.full((2, 3), label_value, dtype=torch.long)
+    features = torch.ones(2, 4)
+    loss_fn = CoCaLoss(
+        caption_loss_weight=2.0, clip_loss_weight=0.0,
+        pad_id=pad_id, compute_dtype=compute_mode,
+    )
+    loss_fn.caption_loss = torch.nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=label_smoothing)
+    output = loss_fn(
+        features, features, logits=logits, labels=labels,
+        logit_scale=torch.tensor(1.0), output_dict=True,
+    )
+
+    assert output['caption_loss'].requires_grad
+    assert output['caption_loss'].item() == 0.0
+    assert output['caption_loss_ce'].item() == 0.0
+    output['caption_loss'].backward()
+    torch.testing.assert_close(logits.grad, torch.zeros_like(logits))
+
+
+def test_coca_logits_nonfinite_valid_targets_remain_visible():
+    """An invalid logit for a real target must not be mistaken for an all-padding caption."""
+    from open_clip.loss import CoCaLoss
+
+    logits = torch.full((1, 2, 3), float('nan'), requires_grad=True)
+    features = torch.ones(1, 4)
+    loss_fn = CoCaLoss(caption_loss_weight=1.0, clip_loss_weight=0.0, pad_id=None)
+    _, caption_loss = loss_fn(
+        features, features, logits=logits, labels=torch.ones(1, 2, dtype=torch.long),
+        logit_scale=torch.tensor(1.0),
+    )
+    assert torch.isnan(caption_loss)
