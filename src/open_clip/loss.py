@@ -698,13 +698,12 @@ def fused_linear_cross_entropy(
     target = target[valid]
 
     n_tokens = hidden.shape[0]
-    use_ckpt = torch.is_grad_enabled() and hidden.requires_grad
-    ce_total = hidden.new_zeros((), dtype=torch.float32)
-    z_total = hidden.new_zeros((), dtype=torch.float32)
-    needs_graph_tie = torch.is_grad_enabled() and (
+    use_ckpt = torch.is_grad_enabled() and (
         hidden.requires_grad or weight.requires_grad or (bias is not None and bias.requires_grad)
     )
-    if n_tokens == 0 and needs_graph_tie:
+    ce_total = hidden.new_zeros((), dtype=torch.float32)
+    z_total = hidden.new_zeros((), dtype=torch.float32)
+    if n_tokens == 0 and use_ckpt:
         # The chunk loop never runs; keep backward valid and DDP parameters marked as used.
         zero = _graph_tied_zero(hidden, weight, bias)
         ce_total = ce_total + zero
