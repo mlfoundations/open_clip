@@ -13,7 +13,6 @@ try:
         get_hf_file_metadata,
         hf_hub_download,
         hf_hub_url,
-        repo_type_and_id_from_hf_id,
         upload_folder,
         list_repo_files,
     )
@@ -153,8 +152,7 @@ def push_to_hf_hub(
 
     # Infer complete repo_id from repo_url
     # Can be different from the input `repo_id` if repo_owner was implicit
-    _, repo_owner, repo_name = repo_type_and_id_from_hf_id(repo_url)
-    repo_id = f"{repo_owner}/{repo_name}"
+    repo_id = repo_url.repo_id
 
     # Check if repo already exists and determine what needs updating
     repo_exists = False
