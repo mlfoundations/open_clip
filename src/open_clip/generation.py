@@ -443,6 +443,11 @@ def generate_multimodal(
         sot_token_id=sot_token_id,
     )
 
+    # Use the effective config for both HF generation and local prompt/padding steps.
+    pad_token_id = generation_config.pad_token_id
+    eos_token_id = generation_config.eos_token_id
+    sot_token_id = generation_config.bos_token_id
+
     was_training = model.training
     model.eval()
     try:
