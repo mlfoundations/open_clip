@@ -89,6 +89,11 @@ class ClipLoss(nn.Module):
         return labels
 
     def get_logits(self, image_features, text_features, logit_scale, logit_bias=None):
+        """Compute both logit directions with an optional scalar bias added once.
+
+        A scalar bias changes these logits but cancels out of the softmax cross-entropy
+        in ``forward``, so that loss does not learn the bias.
+        """
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
                 image_features,
@@ -111,7 +116,9 @@ class ClipLoss(nn.Module):
 
         if logit_bias is not None:
             logits_per_image += logit_bias
-            logits_per_text += logit_bias
+            # The global text logits are a transpose view and already include this bias.
+            if self.world_size == 1 or self.local_loss:
+                logits_per_text += logit_bias
 
         return logits_per_image, logits_per_text
 
