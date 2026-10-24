@@ -138,6 +138,8 @@ def _setup_size(size, error_msg):
 class ResizeKeepRatio:
     """ Resize and Keep Ratio
 
+    Nonempty images retain at least one pixel along each edge.
+
     Copy & paste from `timm`
     """
 
@@ -188,7 +190,7 @@ class ResizeKeepRatio:
         if random_aspect_prob > 0 and random.random() < random_aspect_prob:
             aspect_factor = random.uniform(random_aspect_range[0], random_aspect_range[1])
             ratio_factor = (ratio_factor[0] / aspect_factor, ratio_factor[1] * aspect_factor)
-        size = [round(x * f / ratio) for x, f in zip(source_size, ratio_factor)]
+        size = [max(1, round(x * f / ratio)) for x, f in zip(source_size, ratio_factor)]
         return size
 
     def __call__(self, img):
