@@ -3,6 +3,7 @@ import importlib
 from types import SimpleNamespace
 
 import pytest
+from huggingface_hub import RepoUrl
 
 import open_clip
 from open_clip.push_to_hf_hub import save_config_for_hf, save_for_hf
@@ -280,7 +281,8 @@ def test_hf_hub_tiktoken_uses_exported_asset(tmp_path, monkeypatch):
     assert tokenizer("hello", context_length=8).shape == (1, 8)
 
 
-def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch):
+@pytest.mark.parametrize('repo_id', ['foo', 'rwightman/foo'])
+def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch, repo_id):
     pytest.importorskip("tiktoken")
     hf_push = importlib.import_module("open_clip.push_to_hf_hub")
     from open_clip.tokenizer import TikTokenTokenizer
@@ -299,9 +301,12 @@ def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch):
         captured["upload_kwargs"] = kwargs
         return kwargs
 
+    def fake_create_repo(value, **kwargs):
+        captured["requested_repo_id"] = value
+        return RepoUrl("https://huggingface.co/rwightman/foo")
+
     monkeypatch.setattr(hf_push, "HFTokenizer", FailHFTokenizer)
-    monkeypatch.setattr(hf_push, "create_repo", lambda *args, **kwargs: "https://huggingface.co/rwightman/foo")
-    monkeypatch.setattr(hf_push, "repo_type_and_id_from_hf_id", lambda repo_url: (None, "rwightman", "foo"))
+    monkeypatch.setattr(hf_push, "create_repo", fake_create_repo)
     monkeypatch.setattr(hf_push, "list_repo_files", lambda repo_id: [])
     monkeypatch.setattr(hf_push, "get_hf_file_metadata", lambda *args, **kwargs: object())
     monkeypatch.setattr(hf_push, "save_for_hf", fake_save_for_hf)
@@ -319,8 +324,10 @@ def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch):
         },
     }
 
-    hf_push.push_to_hf_hub(model, tokenizer, model_config, repo_id="rwightman/foo")
+    hf_push.push_to_hf_hub(model, tokenizer, model_config, repo_id=repo_id)
 
+    assert captured["requested_repo_id"] == repo_id
+    assert captured["upload_kwargs"]["repo_id"] == "rwightman/foo"
     assert captured["tokenizer"] is tokenizer
     assert captured["model_config"] is model_config
     delete_patterns = captured["upload_kwargs"]["delete_patterns"]
