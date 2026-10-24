@@ -428,6 +428,38 @@ def test_coca_generate_honors_max_new_tokens_from_generation_config():
     assert torch.equal(out[:, :2], prompt)
 
 
+@pytest.mark.parametrize('bos_id,pad_id', [(1, 0), (4, 0), (1, 5), (4, 5)])
+@pytest.mark.parametrize('with_prompt', [False, True])
+@pytest.mark.parametrize('num_beams', [1, 2])
+def test_coca_generate_uses_config_special_ids(bos_id, pad_id, with_prompt, num_beams):
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    config = transformers.GenerationConfig(
+        max_length=6,
+        bos_token_id=bos_id,
+        eos_token_id=7,
+        pad_token_id=pad_id,
+        forced_bos_token_id=7,  # End immediately, so fixed-length padding is exercised.
+        num_beams=num_beams,
+    )
+    original_config = config.to_dict()
+    prompt = torch.tensor([[11], [12]]) if with_prompt else None
+
+    out = model.generate(
+        torch.randn(2, 3, 64, 64),
+        text=prompt,
+        generation_config=config,
+        fixed_output_length=True,
+    )
+
+    expected = torch.tensor([
+        [11 if with_prompt else bos_id, 7, pad_id, pad_id, pad_id, pad_id],
+        [12 if with_prompt else bos_id, 7, pad_id, pad_id, pad_id, pad_id],
+    ])
+    assert torch.equal(out, expected)
+    assert config.to_dict() == original_config
+
+
 def test_coca_generate_validates_effective_max_new_tokens_length():
     transformers = pytest.importorskip('transformers')
     model = _tiny_modern_coca().eval()
