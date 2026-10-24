@@ -172,10 +172,13 @@ class GenLipRotaryEmbedding(nn.Module):
             )
         self.mrope_section = tuple(cfg.mrope_section)
         self.mrope_interleaved = cfg.mrope_interleaved
-        inv_freq = 1.0 / (
-            cfg.rope_theta ** (torch.arange(0, head_dim, 2, dtype=torch.int64).float() / head_dim)
-        )
-        self.register_buffer('inv_freq', inv_freq, persistent=False)
+        self.head_dim = head_dim
+        self.rope_theta = cfg.rope_theta
+        self.register_buffer('inv_freq', self._compute_inv_freq(), persistent=False)
+
+    def _compute_inv_freq(self, device: Optional[torch.device] = None) -> torch.Tensor:
+        exponent = torch.arange(0, self.head_dim, 2, dtype=torch.int64, device=device).float() / self.head_dim
+        return 1.0 / (self.rope_theta ** exponent)
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -188,7 +191,12 @@ class GenLipRotaryEmbedding(nn.Module):
         Returns:
             ``(cos, sin)`` each of shape ``(B, S, head_dim)`` cast to ``x.dtype``.
         """
-        inv_freq = self.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
+        # model.to(bfloat16) / .half() (pure_bf16 / pure_fp16) also casts the inv_freq buffer, and upcasting it with
+        # .float() cannot restore the lost bits, so recompute it in float32 in that case.
+        inv_freq = self.inv_freq
+        if inv_freq.dtype != torch.float32:
+            inv_freq = self._compute_inv_freq(inv_freq.device)
+        inv_freq = inv_freq[None, None, :, None].expand(3, position_ids.shape[1], -1, 1)
         pos = position_ids[:, :, None, :].float()  # (3, B, 1, S)
         device_type = x.device.type if x.device.type != 'mps' else 'cpu'
         with torch.autocast(device_type=device_type, enabled=False):

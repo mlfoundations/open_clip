@@ -969,17 +969,29 @@ class RotaryEmbedding1D(nn.Module):
         super().__init__()
         if dim % 2:
             raise ValueError(f"RoPE head dim must be even, got {dim}.")
-        inv_freq = 1.0 / (temperature ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.dim = dim
+        self.temperature = temperature
+        self.register_buffer("inv_freq", self._compute_inv_freq(), persistent=False)
+
+    def _compute_inv_freq(self, device: Optional[torch.device] = None) -> torch.Tensor:
+        return 1.0 / (self.temperature ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float32) / self.dim))
 
     def forward(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         """Return cos/sin concatenated as one ``[seq_len, head_dim]`` table (cos | sin halves).
 
         Computed once per forward in the parent tower and threaded through every block (timm-style cat layout),
         rather than recomputed per layer.
+
+        The table is always computed in float32 and only the result is cast to ``dtype``. A ``model.to(bfloat16)``
+        or ``.half()`` (e.g. ``pure_bf16`` / ``pure_fp16`` precision) also casts the ``inv_freq`` buffer; in that
+        case it is recomputed in float32, since the angles ``pos * inv_freq`` exceed 100 rad at a 256-token context
+        and bfloat16 rounds them to the nearest 0.5-1.0.
         """
-        pos = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(pos, self.inv_freq.to(device=device))
+        inv_freq = self.inv_freq
+        if inv_freq.dtype != torch.float32:
+            inv_freq = self._compute_inv_freq(device)
+        pos = torch.arange(seq_len, device=device, dtype=torch.float32)
+        freqs = torch.outer(pos, inv_freq.to(device=device))
         return torch.cat((freqs.cos(), freqs.sin()), dim=-1).to(dtype=dtype)
 
 
