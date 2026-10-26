@@ -1,6 +1,6 @@
 """Parity test for SigLipLoss with chunk_size > 0.
 
-Verifies the chunked path matches the reference (chunk_size=0) bit-exactly
+Verifies the chunked path matches the reference (chunk_size=0) within floating-point tolerance
 across multiple chunk sizes and both ground-truth modes (negative_only on/off),
 in the forward pass and the gradient.
 """
@@ -31,17 +31,26 @@ def test_chunked_matches_reference_forward(chunk_size, negative_only):
         f"chunked (cs={chunk_size}, neg_only={negative_only}) differs: ref={ref.item()} chunk={chunked.item()}"
 
 
-@pytest.mark.parametrize("B,chunk_size", [(64, 32), (64, 8), (70, 8)])
+@pytest.mark.parametrize("B,chunk_size,margin", [
+    (64, 32, None), (64, 8, None), (70, 8, None), (7, 3, 15.0), (7, 3, 20.0),
+])
 @pytest.mark.parametrize("negative_only", [False, True])
-def test_chunked_matches_reference_backward(B, chunk_size, negative_only):
-    """Gradients for features, logit scale and bias match (chunks are recomputed in backward)."""
-    inputs = _make_inputs(B=B)
+def test_chunked_matches_reference_backward(B, chunk_size, margin, negative_only):
+    """Loss and gradients match, including confident pairs with tiny nonzero losses."""
+    if margin is None:
+        inputs = _make_inputs(B=B)
+    else:
+        inputs = (torch.eye(B), torch.eye(B), torch.tensor(2 * margin), torch.tensor(-margin))
+    atol = 1e-5 if margin is None else 0.0
     ref_inputs = [t.clone().requires_grad_(True) for t in inputs]
     chunk_inputs = [t.clone().requires_grad_(True) for t in inputs]
-    SigLipLoss()._loss(*ref_inputs, negative_only=negative_only).backward()
-    SigLipLoss(chunk_size=chunk_size)._loss(*chunk_inputs, negative_only=negative_only).backward()
+    ref_loss = SigLipLoss()._loss(*ref_inputs, negative_only=negative_only)
+    chunk_loss = SigLipLoss(chunk_size=chunk_size)._loss(*chunk_inputs, negative_only=negative_only)
+    torch.testing.assert_close(chunk_loss, ref_loss, rtol=1e-5, atol=atol)
+    ref_loss.backward()
+    chunk_loss.backward()
     for name, ref, chunked in zip(("img", "txt", "scale", "bias"), ref_inputs, chunk_inputs):
-        assert torch.allclose(ref.grad, chunked.grad, rtol=1e-5, atol=1e-5), f"{name} grad differs"
+        assert torch.allclose(ref.grad, chunked.grad, rtol=1e-5, atol=atol), f"{name} grad differs"
 
 
 def test_chunked_handles_uneven_chunks():

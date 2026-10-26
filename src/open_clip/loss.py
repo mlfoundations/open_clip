@@ -449,10 +449,9 @@ class SigLipLoss(nn.Module):
         This trades additional computation for memory; feature storage is unchanged.
         Useful when per-device batch is large (e.g. B > 4096).
 
-        Uses the identities -logsigmoid(-x) = softplus(x) and
-        softplus(-x) - softplus(x) = -x to avoid materializing a labels
-        tensor: the all-negative loss is softplus(logits), and each diagonal
-        positive needs only a -logits[k, i+k] correction.
+        Uses softplus(logits) for negatives and softplus(-logits) for diagonal
+        positives. Flip the diagonal before softplus to avoid cancellation
+        from subtracting positive logits after reduction, without a labels tensor.
         """
         B = image_features.shape[0]
         chunk_size = min(self.chunk_size, B)
@@ -482,15 +481,10 @@ class SigLipLoss(nn.Module):
         logits = self.get_logits(image_features, text_features, logit_scale, logit_bias)
         # A chunk's fp16 reduction can overflow before being added to the fp32 total.
         logits = logits.float()
-        # Treat every pair as negative: -logsigmoid(-logits) == softplus(logits).
-        chunk_loss = F.softplus(logits).sum()
         if not negative_only:
-            # softplus(-x) - softplus(x) == -x for each diagonal positive.
-            num_pos = max(0, min(image_features.shape[0], text_features.shape[0] - start))
-            if num_pos > 0:
-                rows = torch.arange(num_pos, device=logits.device)
-                chunk_loss = chunk_loss - logits[rows, start + rows].sum()
-        return chunk_loss
+            # Logits are a fresh temporary; flipping their diagonal gives stable positive losses.
+            logits.diagonal(offset=start).neg_()
+        return F.softplus(logits).sum()
 
     def forward(self, image_features, text_features, logit_scale, logit_bias, output_dict=False):
         loss = self._loss(image_features, text_features, logit_scale, logit_bias)
