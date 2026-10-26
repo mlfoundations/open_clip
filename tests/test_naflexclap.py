@@ -164,6 +164,23 @@ def test_naflexclap_sbb_shapes(name, embed_dim, depth, num_heads, reg_tokens):
     assert torch.allclose(af.norm(dim=-1), torch.ones(2), atol=1e-5)
 
 
+@pytest.mark.parametrize(
+    "name,params,hf_hub",
+    [
+        ("naflexclap_xxs", 27.3, "laion/clap2-xxs-audioxl-s1B/"),
+        ("naflexclap_xs", 48.3, "laion/clap2-xs-audioxl-s1B/"),
+        ("naflexclap_small", 103.9, "laion/clap2-small-audioxl-s1B/"),
+        ("naflexclap_medium", 152.8, "laion/clap2-medium-audioxl-s1B/"),
+        ("naflexclap_large", 340.1, "laion/clap2-large-audioxl-s1B/"),
+    ],
+)
+def test_naflexclap_pretrained_configs(name, params, hf_hub):
+    """The configs of the pretrained NaFlex CLAP models build at their released sizes and point at their Hub weights."""
+    model = open_clip.create_model(name)
+    assert round(sum(p.numel() for p in model.parameters()) / 1e6, 1) == params
+    assert open_clip.get_pretrained_cfg(name, "laion_audio_xl_s1b")["hf_hub"] == hf_hub
+
+
 def test_naflexclap_preprocess_and_params():
     model, ptrain, pval = open_clip.create_model_and_transforms(CONFIG)
     assert isinstance(ptrain, AudioNaFlexTransformFactory)

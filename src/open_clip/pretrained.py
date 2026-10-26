@@ -456,6 +456,26 @@ _CLAP_HTSAT_TINY_ROBERTA_FUSED = dict(
     ),
 )
 
+_NAFLEXCLAP_XXS = dict(
+    laion_audio_xl_s1b=_clapcfg(hf_hub='laion/clap2-xxs-audioxl-s1B/'),
+)
+
+_NAFLEXCLAP_XS = dict(
+    laion_audio_xl_s1b=_clapcfg(hf_hub='laion/clap2-xs-audioxl-s1B/'),
+)
+
+_NAFLEXCLAP_SMALL = dict(
+    laion_audio_xl_s1b=_clapcfg(hf_hub='laion/clap2-small-audioxl-s1B/'),
+)
+
+_NAFLEXCLAP_MEDIUM = dict(
+    laion_audio_xl_s1b=_clapcfg(hf_hub='laion/clap2-medium-audioxl-s1B/'),
+)
+
+_NAFLEXCLAP_LARGE = dict(
+    laion_audio_xl_s1b=_clapcfg(hf_hub='laion/clap2-large-audioxl-s1B/'),
+)
+
 
 _PRETRAINED = {
     "RN50": _RN50,
@@ -493,6 +513,12 @@ _PRETRAINED = {
 
     "CLAP-HTSAT-tiny-Roberta-base": _CLAP_HTSAT_TINY_ROBERTA,
     "CLAP-HTSAT-tiny-Roberta-base-fused": _CLAP_HTSAT_TINY_ROBERTA_FUSED,
+
+    "naflexclap_xxs": _NAFLEXCLAP_XXS,
+    "naflexclap_xs": _NAFLEXCLAP_XS,
+    "naflexclap_small": _NAFLEXCLAP_SMALL,
+    "naflexclap_medium": _NAFLEXCLAP_MEDIUM,
+    "naflexclap_large": _NAFLEXCLAP_LARGE,
 
     "EVA01-g-14": dict(
         # from QuanSun/EVA-CLIP/EVA01_CLIP_g_14_psz14_s11B.pt
