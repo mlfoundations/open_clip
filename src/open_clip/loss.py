@@ -608,11 +608,10 @@ def _caption_ce_z_from_valid_logits(logits, target, z_loss: bool, compute_dtype:
     if compute_dtype is not None:
         logits = logits.to(compute_dtype)
     if z_loss:
-        # CE = logsumexp(logits) - target_logit. Reusing log_z avoids a second vocabulary reduction
-        # when the auxiliary z-loss is enabled.
+        # Keep CE's stable log-softmax reduction: subtracting unshifted target
+        # logits from log_z loses precision and changes gradients in model dtype.
         log_z = torch.logsumexp(logits, dim=-1)
-        target_logits = logits.gather(-1, target.unsqueeze(-1)).squeeze(-1)
-        ce_sum = (log_z - target_logits).float().sum()
+        ce_sum = F.cross_entropy(logits, target, reduction="none").float().sum()
         z_sum = log_z.float().square().sum()
     else:
         ce_sum = F.cross_entropy(logits, target, reduction="none").float().sum()
@@ -766,11 +765,19 @@ def caption_cross_entropy(
     if z_loss:
         zero = logits.new_zeros((), dtype=torch.float32)
         log_z = torch.logsumexp(logits, dim=-1)
-        target_logits = logits.gather(-1, target.masked_fill(~valid, 0).unsqueeze(-1)).squeeze(-1)
-        # torch.where (not multiply-by-mask) keeps padded rows exactly out of the reductions.
-        # Like the historical full-tensor cross_entropy(ignore_index) path, padded logits are
-        # still reduced over, so they must be finite (extreme magnitudes are fine).
-        ce = torch.where(valid, (log_z - target_logits).float(), zero).sum() / n_valid
+        # CE must retain its stable log-softmax reduction even when z-loss is on.
+        # Recompute its log-softmax in backward instead of saving another full
+        # [tokens, vocab] activation alongside the z-loss's saved logits.
+        if torch.is_grad_enabled() and logits.requires_grad:
+            token_ce = checkpoint(
+                F.cross_entropy, logits, target, ignore_index=ignore_index,
+                reduction="none", use_reentrant=False, preserve_rng_state=False,
+            )
+        else:
+            token_ce = F.cross_entropy(logits, target, ignore_index=ignore_index, reduction="none")
+        ce = token_ce.float().sum() / n_valid
+        # torch.where (not multiply-by-mask) keeps padded rows out of z's reduction.
+        # Padded logits must still be finite, as with cross_entropy(ignore_index).
         z = torch.where(valid, log_z.float().square(), zero).sum() / n_valid
     else:
         ce = F.cross_entropy(logits, target, ignore_index=ignore_index, reduction="none")

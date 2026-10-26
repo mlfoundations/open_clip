@@ -150,7 +150,7 @@ def test_fused_linear_cross_entropy_model_compute():
     valid = target != -100
     logits = hidden[valid] @ weight.t()
     log_z = torch.logsumexp(logits, dim=-1)
-    ref_ce = (log_z - logits.gather(-1, target[valid, None]).squeeze(-1)).float().mean()
+    ref_ce = F.cross_entropy(logits, target[valid], reduction="none").float().mean()
     ref_z = log_z.float().square().mean()
 
     assert ce.dtype == z.dtype == torch.float32
@@ -430,3 +430,24 @@ def test_coca_logits_all_targets_ignored():
     assert output['caption_loss'].item() == 0.0
     output['caption_loss'].backward()
     torch.testing.assert_close(logits.grad, torch.zeros_like(logits))
+
+
+@pytest.mark.parametrize("fused", [False, True])
+def test_z_loss_preserves_cross_entropy_for_shifted_bfloat16_logits(fused):
+    """Enabling z-loss must not change the CE component or its gradients."""
+    logits = torch.full((3, 4), 64.0, dtype=torch.bfloat16, requires_grad=True)
+    target = torch.tensor([0, -100, 2])
+    expected = F.cross_entropy(logits, target, reduction="none").float().sum() / 2
+    expected_grad = torch.autograd.grad(expected, logits)[0]
+    if fused:
+        hidden = torch.eye(3, dtype=torch.bfloat16)
+        weight = logits.detach().t().contiguous().requires_grad_()
+        actual, z = fused_linear_cross_entropy(
+            hidden, weight, target, chunk_size=2, z_loss=True, compute_dtype="model")
+        actual_grad = torch.autograd.grad(actual, weight, retain_graph=True)[0].t()
+    else:
+        actual, z = caption_cross_entropy(logits, target, z_loss=True, compute_dtype="model")
+        actual_grad = torch.autograd.grad(actual, logits, retain_graph=True)[0]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(actual_grad, expected_grad, rtol=0, atol=0)
+    assert torch.isfinite(z)
