@@ -111,7 +111,9 @@ class ClipLoss(nn.Module):
 
         if logit_bias is not None:
             logits_per_image += logit_bias
-            logits_per_text += logit_bias
+            # The global text logits are a transpose view and already include this bias.
+            if self.world_size == 1 or self.local_loss:
+                logits_per_text += logit_bias
 
         return logits_per_image, logits_per_text
 
@@ -197,6 +199,8 @@ class CoCaLoss(ClipLoss):
           (see CoCa/MaMMUT ``forward(labels=...)``), with ``caption_loss_z`` alongside when the model
           also computed the z term -- only the loss weighting is applied here.
 
+        With no valid caption targets, both paths return graph-attached zero caption loss.
+
         """
         assert logit_scale is not None, 'logit_scale is required'
         if self.clip_loss_weight:
@@ -215,6 +219,9 @@ class CoCaLoss(ClipLoss):
                 # caption_cross_entropy. Reduced diagnostics/objectives remain fp32.
                 loss_logits = logits.to(self.compute_dtype) if self.compute_dtype is not None else logits
                 caption_loss_ce = self.caption_loss(loss_logits.permute(0, 2, 1), labels).float()
+                # Mean CE is NaN for all-ignored labels; match the fused path's graph-tied zero.
+                caption_loss_ce = torch.where(
+                    labels.ne(-100).any(), caption_loss_ce, loss_logits[:0].sum().float())
             else:
                 caption_loss_ce, caption_loss_z = caption_cross_entropy(
                     logits,
@@ -691,13 +698,12 @@ def fused_linear_cross_entropy(
     target = target[valid]
 
     n_tokens = hidden.shape[0]
-    use_ckpt = torch.is_grad_enabled() and hidden.requires_grad
-    ce_total = hidden.new_zeros((), dtype=torch.float32)
-    z_total = hidden.new_zeros((), dtype=torch.float32)
-    needs_graph_tie = torch.is_grad_enabled() and (
+    use_ckpt = torch.is_grad_enabled() and (
         hidden.requires_grad or weight.requires_grad or (bias is not None and bias.requires_grad)
     )
-    if n_tokens == 0 and needs_graph_tie:
+    ce_total = hidden.new_zeros((), dtype=torch.float32)
+    z_total = hidden.new_zeros((), dtype=torch.float32)
+    if n_tokens == 0 and use_ckpt:
         # The chunk loop never runs; keep backward valid and DDP parameters marked as used.
         zero = _graph_tied_zero(hidden, weight, bias)
         ce_total = ce_total + zero

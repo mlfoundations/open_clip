@@ -230,6 +230,21 @@ def test_modern_text_low_precision_conversion():
         assert torch.isfinite(out.float()).all()
 
 
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
+    """Low-precision casts and a return to fp32 must preserve the original RoPE frequencies."""
+    from open_clip.transformer import RotaryEmbedding1D
+
+    seq_len = 256
+    ref = RotaryEmbedding1D(64)(seq_len, torch.device("cpu"), torch.float32)
+    rope = RotaryEmbedding1D(64).to(dtype)
+    table = rope(seq_len, torch.device("cpu"), dtype)
+    assert table.dtype == dtype
+    torch.testing.assert_close(table, ref.to(dtype), rtol=0, atol=0)
+    rope.float()
+    torch.testing.assert_close(rope(seq_len, torch.device("cpu"), torch.float32), ref, rtol=0, atol=0)
+
+
 def test_all_pad_row_is_finite():
     """Degenerate all-pad row must not produce NaNs (the _valid_mask fallback forces token 0 valid)."""
     m = _make_modern_text(attention_mode="causal", pool_type="eos")

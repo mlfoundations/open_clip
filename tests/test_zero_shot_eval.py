@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from open_clip import CLIP, build_zero_shot_classifier, build_zero_shot_classifier_legacy
+from open_clip.tokenizer import SimpleTokenizer
 from open_clip_train import zero_shot as zero_shot_module
 from open_clip_train.eval_utils import accuracy
 
@@ -301,3 +303,27 @@ def test_classifier_fsdp_ranks_match_local_execution(modality, output_dict, monk
     assert runner(model, torch.eye(3), None, args, use_fsdp_eval=True) == (0., 0.)
     assert model.batch_sizes == [1, 1]
     assert next(pending, None) is None
+
+
+@pytest.mark.parametrize("builder", [build_zero_shot_classifier, build_zero_shot_classifier_legacy])
+def test_build_zero_shot_classifier_mixed_templates(builder):
+    torch.manual_seed(0)
+    model = CLIP(
+        embed_dim=8,
+        vision_cfg=dict(image_size=16, patch_size=8, width=32, head_width=8, layers=1),
+        text_cfg=dict(context_length=8, vocab_size=49408, width=32, heads=4, layers=1),
+    ).eval()
+    tokenizer = SimpleTokenizer(context_length=8)
+    classnames = ["cat", "dog", "bird"]
+    templates = ["a photo of a {}.", lambda name: f"a drawing of a {name}."]
+
+    expected = build_zero_shot_classifier(
+        model,
+        tokenizer,
+        classnames,
+        ["a photo of a {}.", "a drawing of a {}."],
+    )
+    actual = builder(model, tokenizer, classnames, templates)
+
+    assert actual.shape == (8, 3)
+    torch.testing.assert_close(actual, expected)
