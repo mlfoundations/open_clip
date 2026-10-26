@@ -40,7 +40,7 @@ dependencies = [
     'tqdm',
     'huggingface-hub',
     'safetensors',
-    'timm>=1.0.29',
+    'timm>=1.0.30',
     'tiktoken',
 ]
 dynamic = ["version"]
@@ -51,7 +51,7 @@ training = [
     'webdataset>=0.2.5,<=0.2.86',
     'pandas',
     'transformers[sentencepiece]',
-    'timm>=1.0.29',
+    'timm>=1.0.30',
     'fsspec',
 ]
 audio = [
