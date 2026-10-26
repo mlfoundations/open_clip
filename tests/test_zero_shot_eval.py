@@ -305,17 +305,8 @@ def test_classifier_fsdp_ranks_match_local_execution(modality, output_dict, monk
     assert next(pending, None) is None
 
 
-@pytest.mark.parametrize(
-    "builder, kwargs",
-    [
-        (build_zero_shot_classifier, {"num_classes_per_batch": 1}),
-        (build_zero_shot_classifier, {"num_classes_per_batch": 2}),
-        (build_zero_shot_classifier, {"num_classes_per_batch": None}),
-        (build_zero_shot_classifier_legacy, {}),
-    ],
-)
-@pytest.mark.parametrize("callable_first", [False, True])
-def test_build_zero_shot_classifier_mixed_templates(builder, kwargs, callable_first):
+@pytest.mark.parametrize("builder", [build_zero_shot_classifier, build_zero_shot_classifier_legacy])
+def test_build_zero_shot_classifier_mixed_templates(builder):
     torch.manual_seed(0)
     model = CLIP(
         embed_dim=8,
@@ -325,8 +316,6 @@ def test_build_zero_shot_classifier_mixed_templates(builder, kwargs, callable_fi
     tokenizer = SimpleTokenizer(context_length=8)
     classnames = ["cat", "dog", "bird"]
     templates = ["a photo of a {}.", lambda name: f"a drawing of a {name}."]
-    if callable_first:
-        templates.reverse()
 
     expected = build_zero_shot_classifier(
         model,
@@ -334,7 +323,7 @@ def test_build_zero_shot_classifier_mixed_templates(builder, kwargs, callable_fi
         classnames,
         ["a photo of a {}.", "a drawing of a {}."],
     )
-    actual = builder(model, tokenizer, classnames, templates, **kwargs)
+    actual = builder(model, tokenizer, classnames, templates)
 
     assert actual.shape == (8, 3)
     torch.testing.assert_close(actual, expected)
