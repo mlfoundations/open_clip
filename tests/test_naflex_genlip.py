@@ -649,6 +649,7 @@ def test_trunk_bias_and_norm_type_controls():
     ln_attn = NaFlexGenLip(**cfg).trunk.layers[0].self_attn
     assert isinstance(ln_attn.q_norm, torch.nn.LayerNorm) and isinstance(ln_attn.k_norm, torch.nn.LayerNorm)
 
+
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
     """model.to(dtype) / .half() (pure_bf16 / pure_fp16 precision) also casts the non-persistent inv_freq buffer.
