@@ -449,10 +449,10 @@ class SigLipLoss(nn.Module):
         This trades additional computation for memory; feature storage is unchanged.
         Useful when per-device batch is large (e.g. B > 4096).
 
-        Uses the identities -logsigmoid(-x) = softplus(x) and
-        softplus(-x) - softplus(x) = -x to avoid materializing a labels
-        tensor: the all-negative loss is softplus(logits), and each diagonal
-        positive needs only a -logits[k, i+k] correction.
+        Uses -logsigmoid(-x) = softplus(x) for negatives and softplus(-x)
+        for diagonal positives, without materializing a labels tensor.
+        Positive entries are replaced before reduction to avoid cancellation
+        between a large all-negative sum and its positive-pair correction.
         """
         B = image_features.shape[0]
         chunk_size = min(self.chunk_size, B)
@@ -483,14 +483,15 @@ class SigLipLoss(nn.Module):
         # A chunk's fp16 reduction can overflow before being added to the fp32 total.
         logits = logits.float()
         # Treat every pair as negative: -logsigmoid(-logits) == softplus(logits).
-        chunk_loss = F.softplus(logits).sum()
+        pair_loss = F.softplus(logits)
         if not negative_only:
-            # softplus(-x) - softplus(x) == -x for each diagonal positive.
+            # Replace positives before summing: subtracting their logits from
+            # the all-negative sum can erase small losses and gradients.
             num_pos = max(0, min(image_features.shape[0], text_features.shape[0] - start))
             if num_pos > 0:
                 rows = torch.arange(num_pos, device=logits.device)
-                chunk_loss = chunk_loss - logits[rows, start + rows].sum()
-        return chunk_loss
+                pair_loss[rows, start + rows] = F.softplus(-logits[rows, start + rows])
+        return pair_loss.sum()
 
     def forward(self, image_features, text_features, logit_scale, logit_bias, output_dict=False):
         loss = self._loss(image_features, text_features, logit_scale, logit_bias)

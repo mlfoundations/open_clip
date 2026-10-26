@@ -58,3 +58,18 @@ def test_chunk_size_zero_skips_chunked_path():
     ref = SigLipLoss()._loss(img, txt, ls, lb)
     explicit = SigLipLoss(chunk_size=0)._loss(img, txt, ls, lb)
     assert torch.equal(ref, explicit)
+
+
+@pytest.mark.parametrize("margin", [15.0, 20.0])
+def test_confident_chunked_loss_preserves_small_values_and_gradients(margin):
+    """Confident finite pairs must retain the small positive sigmoid objective."""
+    inputs = [torch.eye(4), torch.eye(4), torch.tensor(2 * margin), torch.tensor(-margin)]
+    reference = [value.clone().requires_grad_() for value in inputs]
+    chunked = [value.clone().requires_grad_() for value in inputs]
+    expected = SigLipLoss()(*reference)
+    actual = SigLipLoss(chunk_size=3)(*chunked)
+    torch.testing.assert_close(actual, expected, rtol=1e-6, atol=0)
+    expected_gradients = torch.autograd.grad(expected, reference)
+    actual_gradients = torch.autograd.grad(actual, chunked)
+    for actual_grad, expected_grad in zip(actual_gradients, expected_gradients):
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-6, atol=0)
