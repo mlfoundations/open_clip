@@ -11,3 +11,4 @@ safetensors
 transformers[sentencepiece]
 timm>=1.0.29
 fsspec
+tiktoken
