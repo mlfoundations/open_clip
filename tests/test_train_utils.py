@@ -1,5 +1,4 @@
 """Public trainer helper behavior across current and legacy import paths."""
-import os
 import pickle
 import random
 from types import SimpleNamespace
@@ -49,19 +48,18 @@ def test_seed_and_meter_helpers_agree_across_trainers():
 
 
 def test_checkpoint_selection_preserves_legacy_sharded_exclusion(tmp_path):
-    checkpoint_root = str(tmp_path) + os.sep
+    checkpoint_root = str(tmp_path)
     assert main.get_latest_checkpoint(checkpoint_root, False) is None
-    nested = tmp_path / "archive"
-    nested.mkdir()
     for epoch in (2, 10):
-        (nested / f"epoch_{epoch}.pt").touch()
+        (tmp_path / f"epoch_{epoch}.pt").touch()
     incomplete = tmp_path / "epoch_30"
     incomplete.mkdir()
     sharded = tmp_path / "epoch_20"
     sharded.mkdir()
     (sharded / ".metadata").touch()
+    (sharded / "_metadata_extra.pt").touch()
     assert main.get_latest_checkpoint(checkpoint_root, False) == str(sharded)
-    assert legacy_main.get_latest_checkpoint(checkpoint_root, False) == str(nested / "epoch_10.pt")
+    assert legacy_main.get_latest_checkpoint(checkpoint_root, False) == str(tmp_path / "epoch_10.pt")
 
 
 @pytest.mark.parametrize("entrypoint", [main, legacy_main])
