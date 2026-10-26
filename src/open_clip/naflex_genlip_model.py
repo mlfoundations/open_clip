@@ -180,6 +180,12 @@ class GenLipRotaryEmbedding(nn.Module):
         exponent = torch.arange(0, self.head_dim, 2, dtype=torch.int64, device=device).float() / self.head_dim
         return 1.0 / (self.rope_theta ** exponent)
 
+    def _apply(self, fn, recurse=True):
+        super()._apply(fn, recurse=recurse)
+        # Rebuild in fp32 after device/dtype conversion; upcasting cannot recover rounded frequencies.
+        self.inv_freq = self._compute_inv_freq(self.inv_freq.device)
+        return self
+
     @torch.no_grad()
     def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute cos/sin for the given position ids.
@@ -191,8 +197,7 @@ class GenLipRotaryEmbedding(nn.Module):
         Returns:
             ``(cos, sin)`` each of shape ``(B, S, head_dim)`` cast to ``x.dtype``.
         """
-        # model.to(bfloat16) / .half() (pure_bf16 / pure_fp16) also casts the inv_freq buffer, and upcasting it with
-        # .float() cannot restore the lost bits, so recompute it in float32 in that case.
+        # Wrappers such as FSDP can cast buffers without calling _apply.
         inv_freq = self.inv_freq
         if inv_freq.dtype != torch.float32:
             inv_freq = self._compute_inv_freq(inv_freq.device)

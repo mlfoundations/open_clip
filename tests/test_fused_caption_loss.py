@@ -5,11 +5,14 @@ the same caption loss and the same gradients as the legacy path (materialized ``
 logits -> ``CoCaLoss`` CE), for every decoder head variant (legacy Parameter heads, modern
 Linear heads).
 """
+from unittest.mock import patch
+
 import pytest
 import torch
 import torch.nn.functional as F
 
 import open_clip
+from open_clip import loss as loss_module
 from open_clip.loss import caption_cross_entropy, fused_linear_cross_entropy
 
 MODELS = [
@@ -91,30 +94,37 @@ def test_fused_linear_cross_entropy_chunking():
         torch.testing.assert_close(ce, ref, rtol=1e-6, atol=1e-6)
 
 
-def test_fused_linear_cross_entropy_z_loss_matches_materialized():
-    """CE, z-loss, ignored-token handling, and gradients match the materialized objective."""
+@pytest.mark.parametrize('trainable', ['all', 'weight', 'bias'])
+def test_fused_linear_cross_entropy_z_loss_matches_materialized(trainable):
+    """Chunks recompute and preserve loss/gradient parity, including when only the head is trainable."""
     torch.manual_seed(1)
     n, d, v = 37, 12, 41
     target = torch.randint(0, v, (n,))
     target[::6] = -100
     z_weight = 1e-4
 
-    hidden = torch.randn(n, d, requires_grad=True)
-    weight = torch.randn(v, d, requires_grad=True)
-    fused_ce, fused_z = fused_linear_cross_entropy(
-        hidden, weight, target,
-        chunk_size=7,
-        z_loss=True,
-    )
-    fused_grads = torch.autograd.grad(fused_ce + z_weight * fused_z, (hidden, weight))
+    hidden = torch.randn(n, d, requires_grad=trainable == 'all')
+    weight = torch.randn(v, d, requires_grad=trainable != 'bias')
+    bias = torch.randn(v, requires_grad=trainable != 'weight')
+    inputs = (hidden, weight, bias)
+    with patch.object(loss_module, '_chunk_linear_ce', wraps=loss_module._chunk_linear_ce) as chunk:
+        fused_ce, fused_z = fused_linear_cross_entropy(
+            hidden, weight, target, bias=bias,
+            chunk_size=7,
+            z_loss=True,
+        )
+        forward_calls = chunk.call_count
+        fused_grads = torch.autograd.grad(
+            fused_ce + z_weight * fused_z, [t for t in inputs if t.requires_grad])
+        assert chunk.call_count > forward_calls
 
-    hidden_ref = hidden.detach().clone().requires_grad_()
-    weight_ref = weight.detach().clone().requires_grad_()
+    references = [t.detach().clone().requires_grad_(t.requires_grad) for t in inputs]
     ref_ce, ref_z = caption_cross_entropy(
-        hidden_ref @ weight_ref.t(), target,
+        F.linear(*references), target,
         z_loss=True,
     )
-    ref_grads = torch.autograd.grad(ref_ce + z_weight * ref_z, (hidden_ref, weight_ref))
+    ref_grads = torch.autograd.grad(
+        ref_ce + z_weight * ref_z, [t for t in references if t.requires_grad])
 
     for actual, expected in ((fused_ce, ref_ce), (fused_z, ref_z)):
         torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)

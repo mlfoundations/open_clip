@@ -652,8 +652,7 @@ def test_trunk_bias_and_norm_type_controls():
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
-    """model.to(dtype) / .half() (pure_bf16 / pure_fp16 precision) also casts the non-persistent inv_freq buffer.
-    The cos/sin tables must still come from float32 frequencies and only be rounded once, at the end."""
+    """Low-precision casts and a return to fp32 must preserve the original RoPE frequencies."""
     from open_clip.naflex_genlip_model import GenLipRotaryEmbedding, NaFlexGenLipTrunkCfg
 
     cfg = NaFlexGenLipTrunkCfg()
@@ -661,9 +660,9 @@ def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
     x = torch.zeros(1, 272, 8)
     ref_cos, ref_sin = GenLipRotaryEmbedding(cfg)(x, position_ids)
     rope = GenLipRotaryEmbedding(cfg).to(dtype)
-    assert rope.inv_freq.dtype == dtype  # the cast this test guards against
     cos, sin = rope(x.to(dtype), position_ids)
     for table, ref in ((cos, ref_cos), (sin, ref_sin)):
         assert table.dtype == dtype
-        best = (ref.to(dtype).float() - ref).abs().max()
-        assert (table.float() - ref).abs().max() <= best
+        torch.testing.assert_close(table, ref.to(dtype), rtol=0, atol=0)
+    rope.float()
+    torch.testing.assert_close(rope(x, position_ids), (ref_cos, ref_sin), rtol=0, atol=0)

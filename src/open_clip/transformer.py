@@ -976,17 +976,21 @@ class RotaryEmbedding1D(nn.Module):
     def _compute_inv_freq(self, device: Optional[torch.device] = None) -> torch.Tensor:
         return 1.0 / (self.temperature ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float32) / self.dim))
 
+    def _apply(self, fn, recurse=True):
+        super()._apply(fn, recurse=recurse)
+        # Rebuild in fp32 after device/dtype conversion; upcasting cannot recover rounded frequencies.
+        self.inv_freq = self._compute_inv_freq(self.inv_freq.device)
+        return self
+
     def forward(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         """Return cos/sin concatenated as one ``[seq_len, head_dim]`` table (cos | sin halves).
 
         Computed once per forward in the parent tower and threaded through every block (timm-style cat layout),
         rather than recomputed per layer.
 
-        The table is always computed in float32 and only the result is cast to ``dtype``. A ``model.to(bfloat16)``
-        or ``.half()`` (e.g. ``pure_bf16`` / ``pure_fp16`` precision) also casts the ``inv_freq`` buffer; in that
-        case it is recomputed in float32, since the angles ``pos * inv_freq`` exceed 100 rad at a 256-token context
-        and bfloat16 rounds them to the nearest 0.5-1.0.
+        Frequencies and the table are kept in float32 across module casts; only the result is cast to ``dtype``.
         """
+        # Wrappers such as FSDP can cast buffers without calling _apply.
         inv_freq = self.inv_freq
         if inv_freq.dtype != torch.float32:
             inv_freq = self._compute_inv_freq(device)
