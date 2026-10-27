@@ -10,7 +10,7 @@ from torchvision import transforms
 import open_clip
 from open_clip.model_traits import CLIP_TRAITS
 from open_clip.naflex_config import NaFlexDataConfig
-from open_clip.transform import NaFlexEvalTransformFactory, image_transform
+from open_clip.transform import NaFlexEvalTransformFactory, PreprocessCfg, image_transform
 from open_clip_train.data import get_imagenet, get_wds_dataset
 from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
@@ -328,6 +328,19 @@ def test_image_transform_timm_non_naflex_remains_image_callable():
 
     assert isinstance(image, torch.Tensor)
     assert image.shape == (3, 32, 32)
+
+
+def test_timm_transforms_accept_list_image_size():
+    # Sizes parsed from JSON configs or `--force-image-size H W` arrive as lists, not tuples.
+    transform = image_transform(
+        [32, 48],
+        is_train=True,
+        aug_cfg={"use_timm": True, "scale": (1.0, 1.0), "ratio": (1.0, 1.0)},
+    )
+    image = transform(Image.new("RGB", (48, 32)))
+    assert image.shape == (3, 32, 48)
+
+    assert PreprocessCfg(size=[32, 48]).input_size == (3, 32, 48)
 
 
 def test_parse_naflex_args():

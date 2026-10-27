@@ -33,7 +33,7 @@ class PreprocessCfg:
 
     @property
     def input_size(self):
-        return (self.num_channels,) + to_2tuple(self.size)
+        return (self.num_channels,) + tuple(to_2tuple(self.size))
 
 _PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
 
@@ -413,7 +413,7 @@ def image_transform(
             from timm.data import create_transform  # timm can still be optional
             if isinstance(image_size, (tuple, list)):
                 assert len(image_size) >= 2
-                input_size = (3,) + image_size[-2:]
+                input_size = (3,) + tuple(image_size[-2:])
             else:
                 input_size = (3, image_size, image_size)
 
