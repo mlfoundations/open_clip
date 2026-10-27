@@ -648,3 +648,21 @@ def test_trunk_bias_and_norm_type_controls():
     cfg['genlip_cfg']['norm_type'] = 'layernorm'
     ln_attn = NaFlexGenLip(**cfg).trunk.layers[0].self_attn
     assert isinstance(ln_attn.q_norm, torch.nn.LayerNorm) and isinstance(ln_attn.k_norm, torch.nn.LayerNorm)
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
+    """Low-precision casts and a return to fp32 must preserve the original RoPE frequencies."""
+    from open_clip.naflex_genlip_model import GenLipRotaryEmbedding, NaFlexGenLipTrunkCfg
+
+    cfg = NaFlexGenLipTrunkCfg()
+    position_ids = torch.arange(272).view(1, 1, -1).expand(3, 1, -1)  # text positions past a 16x16 patch grid
+    x = torch.zeros(1, 272, 8)
+    ref_cos, ref_sin = GenLipRotaryEmbedding(cfg)(x, position_ids)
+    rope = GenLipRotaryEmbedding(cfg).to(dtype)
+    cos, sin = rope(x.to(dtype), position_ids)
+    for table, ref in ((cos, ref_cos), (sin, ref_sin)):
+        assert table.dtype == dtype
+        torch.testing.assert_close(table, ref.to(dtype), rtol=0, atol=0)
+    rope.float()
+    torch.testing.assert_close(rope(x, position_ids), (ref_cos, ref_sin), rtol=0, atol=0)

@@ -98,7 +98,6 @@ def natural_key(string_):
 
 
 def get_latest_checkpoint(path: str, remote: bool, *, include_sharded: bool = True):
-    # The glob recurses, so it can pick up checkpoints across multiple subfolders.
     if remote:
         result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         _logger.debug("Remote checkpoint listing: %s", result)
@@ -106,7 +105,8 @@ def get_latest_checkpoint(path: str, remote: bool, *, include_sharded: bool = Tr
             return None
         checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
     else:
-        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
+        # Flat like the remote listing; recursing would also pick up _metadata_extra.pt inside sharded DCP dirs.
+        checkpoints = glob.glob(os.path.join(path, '*.pt'))
         # Also find DCP checkpoint dirs (contain .metadata file from DCP)
         if include_sharded:
             for d in glob.glob(os.path.join(path, 'epoch_*')):

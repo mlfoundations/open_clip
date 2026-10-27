@@ -208,7 +208,8 @@ class ModifiedResNet(nn.Module):
         Args:
             x: Input image tensor
             indices: Take last n blocks if int, all if None, select matching indices if sequence
-            stop_early: Stop iterating over blocks when last desired intermediate hit
+            stop_early: Stop at the last requested intermediate when intermediates_only=True;
+                pooled features require the full trunk.
             normalize_intermediates: Apply final norm layer to all intermediates
             intermediates_only: Only return intermediate features
             output_fmt: Shape of intermediate feature outputs
@@ -223,7 +224,7 @@ class ModifiedResNet(nn.Module):
         output = {}
         intermediates = []
         blocks = [self.stem, self.layer1, self.layer2, self.layer3, self.layer4]
-        if not stop_early:
+        if stop_early and intermediates_only:
             blocks = blocks[:max_index + 1]
         for i, blk in enumerate(blocks):
             x = blk(x)
