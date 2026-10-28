@@ -63,9 +63,9 @@ class CLAPTask(TrainingTask):
         # Report from raw model_out (the source of truth for logit_scale/logit_bias) — uniform with clip/coca.
         return losses, self._report(model_out)
 
-    def eval_forward(self, batch: Dict[str, torch.Tensor]):
-        inputs = {key: batch[key] for key in self.data_keys if key in batch}
-        return self.get_trainable_module(use_ema=True)(**inputs)
+    def model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        # drop collator extras the forward doesn't take (e.g. variable-text ``text_valid``)
+        return {key: batch[key] for key in self.data_keys if key in batch}
 
     def compute_accum_loss(self, inputs, inputs_no_accum, accum_batches):
         loss_inputs = {

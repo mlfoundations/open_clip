@@ -230,3 +230,13 @@ def test_distill_teacher_no_grad():
 
     assert teacher_grads[0] is not None
     assert not teacher_grads[0].requires_grad
+
+
+def test_distill_ignores_extra_batch_keys():
+    """Variable-text collators add text_valid; neither student nor teacher forward accepts it."""
+    task = DistillCLIPTask(TinyModel(), TinyModel(), loss=DummyDistillLoss())
+    batch = {**_batch(), "text_valid": torch.ones(2, 5, dtype=torch.bool)}
+    task.train()
+    task(batch)
+    task.eval()
+    task(batch)

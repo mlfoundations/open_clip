@@ -79,6 +79,10 @@ class GenLipTask(ImageTextTask):
             # Eval-only construction: no loss module, no fused loss path.
             self.fused_loss = False
 
+    def model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        # GenLIP / GenLAP consume text_valid for attention and loss masking
+        return batch
+
     def _loss_forward(self, module: nn.Module, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         modality = batch[self._modality_key]
         if self.fused_loss:

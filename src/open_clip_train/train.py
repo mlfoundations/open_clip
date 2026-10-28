@@ -197,7 +197,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
     # First, cache the features without any gradient tracking.
     with torch.no_grad():
         with autocast():
-            model_out = task.trainable_module(**batch)
+            model_out = task.trainable_module(**task.model_inputs(batch))
 
             for f in ("logit_scale", "logit_bias"):
                 model_out.pop(f, None)
@@ -242,7 +242,7 @@ def _train_step_eager(task, batch, accum_state, optimizer, scaler, autocast, arg
         ddp_context = task.trainable_module.no_sync() if use_ddp_no_sync else nullcontext()
         with ddp_context:
             with autocast():
-                model_out = task.trainable_module(**batch_j)
+                model_out = task.trainable_module(**task.model_inputs(batch_j))
 
                 inputs_no_accum = pop_accum_scalars(model_out, is_last_step)
 

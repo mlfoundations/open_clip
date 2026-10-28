@@ -506,8 +506,12 @@ class TrainingTask(nn.Module):
         losses = self.loss(**inputs, **inputs_no_accum, output_dict=True)
         return losses, self._report(inputs_no_accum)
 
+    def model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Select batch entries accepted by the model forward."""
+        return batch
+
     def eval_forward(self, batch: Dict[str, torch.Tensor]):
-        return self.get_trainable_module(use_ema=True)(**batch)
+        return self.get_trainable_module(use_ema=True)(**self.model_inputs(batch))
 
     def forward(self, *args, **kwargs):
         """Normalize task call conventions, then run train or eval forward."""

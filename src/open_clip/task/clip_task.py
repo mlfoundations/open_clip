@@ -44,7 +44,3 @@ class CLIPTask(ImageTextTask):
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))
         losses["loss"] = total_loss
         return losses, self._report(model_out)
-
-    def eval_forward(self, batch: Dict[str, torch.Tensor]):
-        inputs = {key: batch[key] for key in self.data_keys if key in batch}
-        return self.get_trainable_module(use_ema=True)(**inputs)
