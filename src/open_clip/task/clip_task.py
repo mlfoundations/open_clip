@@ -45,6 +45,13 @@ class CLIPTask(ImageTextTask):
         losses["loss"] = total_loss
         return losses, self._report(model_out)
 
+    def accum_model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        # Issue #1236: training_forward passes only (image, text) to the model,
+        # but the accumulation path used to forward the whole batch, so a
+        # variable-text collate key (text_valid) crashed the model forward with
+        # TypeError for --accum-freq > 1. Select the same keys here.
+        return {key: batch[key] for key in self.data_keys if key in batch}
+
     def eval_forward(self, batch: Dict[str, torch.Tensor]):
         inputs = {key: batch[key] for key in self.data_keys if key in batch}
         return self.get_trainable_module(use_ema=True)(**inputs)

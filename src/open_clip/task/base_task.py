@@ -532,3 +532,14 @@ class TrainingTask(nn.Module):
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         """Run the train-time forward. Subclasses return ``(losses, report)`` — see :meth:`_report`."""
         raise NotImplementedError
+
+    def accum_model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Inputs for the accumulation path's direct model calls.
+
+        The accumulation path bypasses ``training_forward`` (it needs raw model
+        outputs, not losses), so a task whose ``training_forward`` selects a
+        subset of the batch must override this to select the same subset.
+        Defaults to the whole batch, preserving tasks (e.g. CoCa) whose model
+        consumes extra batch keys such as ``text_valid``.
+        """
+        return batch

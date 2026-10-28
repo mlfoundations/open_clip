@@ -54,6 +54,13 @@ class CLAPTask(TrainingTask):
             inputs["logit_bias"] = model_out["logit_bias"]
         return inputs
 
+    def accum_model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        # Issue #1236: training_forward passes only (audio, text) to the model,
+        # but the accumulation path used to forward the whole batch, so a
+        # variable-text collate key (text_valid) crashed CLAP.forward with
+        # TypeError for --accum-freq > 1. Select the same keys here.
+        return {key: batch[key] for key in self.data_keys if key in batch}
+
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         model_out = self.trainable_module(audio=batch["audio"], text=batch["text"])
         loss_inputs = self._loss_inputs(model_out)

@@ -12,11 +12,12 @@ import types
 
 import pytest
 import torch
+from torch import nn
 
 from open_clip.model import CLIP
 from open_clip.coca_model import CoCa
 from open_clip.mammut_model import MaMMUT
-from open_clip.task import CLIPTask, CoCaTask
+from open_clip.task import CLAPTask, CLIPTask, CoCaTask
 from open_clip_train.loss import create_loss_from_args
 from open_clip_train.train import _train_step_eager, make_loss_scale_fn
 
@@ -282,3 +283,108 @@ def test_legacy_caption_variable_text_accum_matches_full_batch(arch, z_loss_weig
     assert grads_accum.keys() == grads_full.keys()
     for name, grad in grads_full.items():
         torch.testing.assert_close(grads_accum[name], grad, rtol=1e-6, atol=1e-8, msg=name)
+
+
+def test_accum_ignores_extra_batch_keys():
+    """Issue #1236: the accum path bypasses training_forward's key selection, so a
+    variable-text collate key (text_valid) crashed CLIP/CLAP forwards with TypeError
+    for --accum-freq > 1. Accumulation must behave like the direct path for extra keys."""
+    task, model = _tiny_task()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+
+    torch.manual_seed(4)
+    full = {
+        'image': torch.randn(2 * MICRO_BS, 3, 32, 32, dtype=torch.float64),
+        'text': torch.randint(1, 60, (2 * MICRO_BS, 8)),
+        'text_valid': torch.ones(2 * MICRO_BS, 8, dtype=torch.bool),
+    }
+
+    optimizer.zero_grad()
+    losses, _ = task.training_forward(full)
+    losses['loss'].backward()
+    grads_ref = _grads(model)
+
+    optimizer.zero_grad()
+    args = _make_args(accum_freq=2)
+    accum_state = ([], {})
+    result = None
+    for j in range(2):
+        batch = {k: v[j * MICRO_BS:(j + 1) * MICRO_BS] for k, v in full.items()}
+        result = _train_step_eager(
+            task, batch, accum_state, optimizer, scaler=None,
+            autocast=contextlib.nullcontext, args=args,
+        )
+        if result is not None:
+            accum_state = result[-1]
+    assert result is not None, 'final accumulation step must produce a result'
+    grads_step = _grads(model)
+    assert grads_ref.keys() == grads_step.keys()
+    for name in grads_ref:
+        assert torch.allclose(grads_step[name], grads_ref[name], rtol=1e-9, atol=1e-12), name
+
+
+class _TinyAudioTower(nn.Module):
+    def __init__(self, embed_dim=4):
+        super().__init__()
+        self.proj = nn.Linear(1, embed_dim)
+
+    def forward(self, audio, apply_proj=True):
+        x = audio['waveform'].float().mean(dim=1, keepdim=True)
+        return self.proj(x)
+
+
+class _TinyCLAPLike(nn.Module):
+    # Mirrors the real CLAP forward contract: (audio, text) only, no **kwargs,
+    # so an extra batch key must not reach it.
+    output_dict = True
+
+    def __init__(self, embed_dim=4, context_length=5):
+        super().__init__()
+        self.audio = _TinyAudioTower(embed_dim)
+        self.context_length = context_length
+        self.logit_scale = nn.Parameter(torch.ones([]))
+        self.text_embedding = nn.Embedding(16, embed_dim)
+
+    def forward(self, audio=None, text=None):
+        audio_features = self.audio(audio) if audio is not None else None
+        text_features = self.text_embedding(text).mean(dim=1) if text is not None else None
+        if audio_features is not None:
+            audio_features = torch.nn.functional.normalize(audio_features, dim=-1)
+        if text_features is not None:
+            text_features = torch.nn.functional.normalize(text_features, dim=-1)
+        return {
+            'audio_features': audio_features,
+            'text_features': text_features,
+            'logit_scale': self.logit_scale.exp(),
+        }
+
+
+def test_accum_clap_ignores_text_valid():
+    """Issue #1236, CLAP case: variable-text batches carry text_valid, which
+    CLAP.forward does not accept; the accum path must not forward it."""
+    torch.manual_seed(0)
+    model = _TinyCLAPLike()
+    task = CLAPTask(model, verbose=False)
+    task.train()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+
+    args = _make_args(accum_freq=2)
+    accum_state = ([], {})
+    result = None
+    for j in range(2):
+        batch = {
+            'audio': {
+                'waveform': torch.randn(MICRO_BS, 8),
+                'longer': torch.zeros(MICRO_BS, dtype=torch.bool),
+            },
+            'text': torch.randint(0, 16, (MICRO_BS, 5)),
+            'text_valid': torch.ones(MICRO_BS, 5, dtype=torch.bool),
+        }
+        result = _train_step_eager(
+            task, batch, accum_state, optimizer, scaler=None,
+            autocast=contextlib.nullcontext, args=args,
+        )
+        if result is not None:
+            accum_state = result[-1]
+    assert result is not None, 'final accumulation step must produce a result'
+    assert torch.isfinite(result[0]['loss'])
