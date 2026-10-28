@@ -51,10 +51,11 @@ class DistillCLIPTask(ImageTextTask):
         return self
 
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
-        model_out = self.trainable_module(**batch)
+        inputs = self.model_inputs(batch)
+        model_out = self.trainable_module(**inputs)
         report = self._report(model_out)  # capture before the dist_* merge
         with torch.no_grad():
-            teacher_out = self.teacher(**batch)
+            teacher_out = self.teacher(**inputs)
         model_out.update({f'dist_{k}': v for k, v in teacher_out.items()})
         losses = self.loss(**model_out, output_dict=True)
         total_loss = sum(v for k, v in losses.items() if k.endswith('_loss'))

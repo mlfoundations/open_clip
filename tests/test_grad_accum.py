@@ -74,6 +74,8 @@ def test_grad_accum_matches_full_batch():
         batch = {
             'image': images[j * MICRO_BS:(j + 1) * MICRO_BS],
             'text': texts[j * MICRO_BS:(j + 1) * MICRO_BS],
+            # variable-text collators always emit text_valid; CLIP's forward doesn't take it
+            'text_valid': torch.ones(MICRO_BS, 8, dtype=torch.bool),
         }
         result = _train_step_eager(
             task, batch, accum_state, optimizer, scaler=None,

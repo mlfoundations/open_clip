@@ -24,6 +24,10 @@ class ImageTextTask(TrainingTask):
         """Keys expected in the batch dict from the data pipeline."""
         return ("image", "text")
 
+    def model_inputs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        # drop collator extras the forward doesn't take (e.g. variable-text ``text_valid``)
+        return {key: batch[key] for key in self.data_keys if key in batch}
+
     def create_dummy_batch(
             self,
             image_size=None,

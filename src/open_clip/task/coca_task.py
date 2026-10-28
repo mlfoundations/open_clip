@@ -103,6 +103,10 @@ class CoCaTask(ImageTextTask):
             inputs["labels"] = self._caption_labels(batch["text"], batch.get("text_valid"))
         return inputs
 
+    def model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        # CoCa / MaMMUT forwards consume text_valid
+        return batch
+
     def training_forward(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict, Dict]:
         if self.fused_caption_loss:
             labels = self._caption_labels(batch["text"], batch.get("text_valid"))
