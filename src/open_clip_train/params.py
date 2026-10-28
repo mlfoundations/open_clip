@@ -164,7 +164,7 @@ def parse_args(args):
         default="forkserver",
         choices=["fork", "forkserver", "spawn"],
         help="Multiprocessing context for the (training/eval) audio DataLoader workers. forkserver avoids the "
-             "fork-after-torchaudio-threads deadlock; only applied when --workers > 0.",
+             "fork-after-threads deadlock; only applied when --workers > 0.",
     )
     parser.add_argument(
         "--dataset-resampled",

@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Dict, List, Optional, Sequence
 
@@ -8,6 +8,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 
 from open_clip import build_zero_shot_classifier, get_tokenizer
+from open_clip.audio.io import load_audio
 from open_clip.audio.transform import audio_transform_v2, create_dummy_audio, stack_audio_inputs
 from open_clip.task import get_model_from_task
 from open_clip.utils import move_to_device
@@ -122,6 +123,10 @@ def _extract_audio_array_and_rate(sample: Dict, audio_key: str):
     if isinstance(audio, tuple) and len(audio) == 2:
         return audio
 
+    if isinstance(audio, dict) and "array" not in audio and (audio.get("bytes") or audio.get("path")):
+        # undecoded HF Audio column (decode=False): {"bytes", "path"}
+        return load_audio(audio["bytes"] or audio["path"])
+
     if isinstance(audio, dict):
         array = audio["array"]
         sample_rate = audio["sampling_rate"]
@@ -188,7 +193,7 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
     except ImportError as e:
         raise RuntimeError(
             "Audio zero-shot evaluation with Hugging Face datasets requires `datasets`. "
-            "Install with `pip install datasets[audio]`."
+            "Install with `pip install datasets`."
         ) from e
 
     dataset_name = args.audio_zeroshot_dataset
@@ -197,6 +202,10 @@ def build_hf_audio_zero_shot_dataset(args, model_or_task):
     target_key = getattr(args, "audio_zeroshot_target_key", "target")
     class_key = getattr(args, "audio_zeroshot_class_key", "category")
     dataset = load_dataset(dataset_name, split=split)
+    audio_feature = (getattr(dataset, "features", None) or {}).get(audio_key)
+    if getattr(audio_feature, "decode", False):
+        # decode with load_audio (soundfile) rather than datasets' own audio decoder (torchcodec)
+        dataset = dataset.cast_column(audio_key, replace(audio_feature, decode=False))
     classnames, target_map = _get_classnames_and_target_map(dataset, target_key=target_key, class_key=class_key)
 
     model = get_model_from_task(model_or_task)

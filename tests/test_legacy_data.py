@@ -56,7 +56,7 @@ def test_legacy_wds_image_variable_text():
 
 def test_legacy_wds_audio(monkeypatch):
     # Stub the extension-keyed decoder (the legacy assembly decodes first via wds.decode) so the test does
-    # not depend on a torchaudio file backend; mirrors the fixture in test_audio_wds.
+    # not depend on a file-decode backend; mirrors the fixture in test_audio_wds.
     monkeypatch.setattr(
         audio_data, "_decode_audio",
         lambda key, data: (torch.randn(1, SR), SR) if key.rsplit(".", 1)[-1] in ("wav", "flac") else None,

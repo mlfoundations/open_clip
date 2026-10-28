@@ -6,7 +6,7 @@ and scores ``audio_features @ text_classifier``. Reuses ``open_clip_train.audio_
 so the same script works for both tower types -- NaFlexClap gets the NaFlex mel-patch transform, HTSAT the
 fixed-clip ``AudioPreprocess``.
 
-Needs ``datasets[audio]`` and the eval set (downloaded to ``HF_HOME``).
+Needs ``datasets``, ``soundfile`` and the eval set (downloaded to ``HF_HOME``).
 
 Example:
     python scripts/clap_zeroshot.py \

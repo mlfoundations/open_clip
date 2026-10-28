@@ -19,7 +19,6 @@ def _tokens(tok, text):
 def test_audio_naflex_batch_via_scheduler_feeds_model():
     """End-to-end: AudioNaFlexTransformFactory + the modality-agnostic scheduler (primary_key='audio') produce
     a `{audio, text, text_valid}` batch the GenLAP model consumes."""
-    pytest.importorskip("torchaudio")
     from open_clip_train.naflex_data import NaFlexBatchScheduler
 
     cfg = AudioNaFlexCfg(n_mels=64, patch_freq=64, patch_time=4)  # 1-D full-height strips
@@ -55,7 +54,6 @@ def test_audio_naflex_batch_via_scheduler_feeds_model():
 
 def test_audio_naflex_2d_token_cap_preserves_freq_rows():
     """2-D cap must crop whole time columns (max_time = max_tokens // freq_tokens), keeping every freq row."""
-    pytest.importorskip("torchaudio")
     cfg = AudioNaFlexCfg(n_mels=64, patch_freq=32, patch_time=4)  # F = 2
     patchify = AudioNaFlexPatchify(cfg, max_audio_tokens=64)      # max_time = 64 // 2 = 32 columns
     sr = cfg.sample_rate
@@ -237,7 +235,6 @@ def test_audio_transform_factory_carries_pack_prefix():
 def test_audio_token_length_estimate_matches_actual_patch_count():
     """The AudioTokenLength estimate must equal the patch count the transform actually emits (ceil), for short
     AND remainder clips -- otherwise audio bucketing mis-sizes the per-batch max."""
-    pytest.importorskip("torchaudio")
     from open_clip_train.naflex_data import AudioTokenLength
 
     # patch_time=2 (not 4) so a dropped window_size would actually diverge on the sub-window clip below; and pass

@@ -95,9 +95,9 @@ class AudioNaFlexCfg:
         return self.freq_tokens == 1
 
 
-# Absolute dB-mel silence floor for the `_get_mel` path: AmplitudeToDB(top_db=None) on zero power bottoms out at
-# 10*log10(1e-10) = -100 dB (verified: an all-zero waveform yields exactly -100 everywhere). It also matches the
-# mel of the zero-padded region used for sub-window clips, so "silence"-padded tails are consistent with those.
+# Absolute dB-mel silence floor for the `_get_mel` path: the dB conversion (clamp 1e-10, no top_db) on zero power
+# bottoms out at 10*log10(1e-10) = -100 dB (verified: an all-zero waveform yields exactly -100 everywhere). It also
+# matches the mel of the zero-padded region used for sub-window clips, so "silence"-padded tails are consistent.
 _MEL_SILENCE_DB = -100.0
 
 
@@ -219,7 +219,7 @@ class MelPatchEmbed(nn.Module):
 class AudioNaFlexPatchify:
     """Picklable transform: ``(waveform, sample_rate)`` -> ``{patches, patch_coord, patch_valid}``.
 
-    Reuses the CLAP log-mel extractor (``audio/transform._get_mel``; torchaudio is imported lazily). Unlike
+    Reuses the CLAP log-mel extractor (``audio/transform._get_mel``). Unlike
     ``AudioPreprocess`` there is no fixed-clip repeat/pad or fusion: time stays native. ``max_audio_tokens`` caps
     over-length clips by whole time columns; audio collate pads to batch max (optionally modulus-rounded).
     """
@@ -238,15 +238,14 @@ class AudioNaFlexPatchify:
         self.max_audio_tokens = max_audio_tokens
 
     def __call__(self, audio_data: Tuple[torch.Tensor, int]) -> Dict[str, torch.Tensor]:
-        import torchaudio
-
+        from .dsp import resample
         from .transform import _get_mel
 
         waveform, sr = audio_data
         if waveform.ndim == 2 and waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if sr != self.target_sr:
-            waveform = torchaudio.functional.resample(waveform, sr, self.target_sr)
+            waveform = resample(waveform, sr, self.target_sr)
         waveform = waveform.squeeze(0)
         # The mel STFT (center=True, reflect pad) needs at least one analysis window of samples, so pad sub-window
         # clips up to window_size with zeros -- otherwise torch.stft errors on a tiny clip. Patch-level completion
