@@ -114,6 +114,8 @@ Note that portions of `src/open_clip/` modelling and tokenizer code are adaptati
 
 ## Usage
 
+OpenCLIP requires Python 3.9+ and PyTorch 2.6+. Python 3.14 and 3.15 have been validated with PyTorch 2.15 for inference, zero-shot evaluation, and compiled training. Install matching PyTorch and torchvision builds for your Python version and hardware.
+
 ```
 pip install open_clip_torch
 ```
