@@ -55,10 +55,9 @@ training = [
     'fsspec',
 ]
 audio = [
-    'torchaudio',
+    'soundfile>=0.12',
     'torchlibrosa',
     'openai-whisper',
-    'datasets[audio]',
 ]
 test = [
     'pytest-split',

@@ -131,7 +131,6 @@ def test_audio_coords_feed_existing_position_builders():
 
 def test_audio_patchify_transform_variable_duration():
     """Full waveform->mel->patches path: longer audio yields more time tokens (no fusion/truncation)."""
-    pytest.importorskip("torchaudio")
     from open_clip.audio.naflex_audio import AudioNaFlexPatchify
 
     cfg = AudioNaFlexCfg(n_mels=64, patch_freq=64, patch_time=4)  # self-contained: mel + geometry
@@ -147,3 +146,29 @@ def test_audio_patchify_transform_variable_duration():
     # resampling path: a non-native sample rate still produces valid patches
     resampled = patchify((torch.randn(1, 16000 * 1), 16000))
     assert resampled["patches"].shape[1] == cfg.patch_dim
+
+
+def test_dsp_matches_torchaudio():
+    """The plain-torch resample / log-mel must stay bit-compatible with torchaudio (pretrained CLAP weights)."""
+    torchaudio = pytest.importorskip("torchaudio")
+    from open_clip.audio.dsp import log_mel_spectrogram, resample
+
+    x = torch.randn(2, 44100)
+    torch.testing.assert_close(resample(x, 44100, 32000), torchaudio.functional.resample(x, 44100, 32000))
+    y = torch.randn(1110642)  # output length rounds differently in float32 vs float64
+    torch.testing.assert_close(resample(y, 44100, 32000), torchaudio.functional.resample(y, 44100, 32000))
+    mel_tf = torchaudio.transforms.MelSpectrogram(
+        sample_rate=32000, n_fft=1024, hop_length=320, n_mels=128, f_min=50, f_max=16000, norm=None)
+    expected = torchaudio.transforms.AmplitudeToDB(top_db=None)(mel_tf(x))
+    torch.testing.assert_close(log_mel_spectrogram(x, 32000, 1024, 320, 128, 50, 16000), expected)
+
+
+def test_dsp_cache_outside_inference_mode():
+    """Kernels / filter banks first built under inference_mode must not break later autograd use."""
+    from open_clip.audio.dsp import log_mel_spectrogram, resample
+
+    with torch.inference_mode():
+        log_mel_spectrogram(resample(torch.randn(1, 22050), 22050, 16000), 16000, 400, 160, 80, 50, 8000)
+    x = torch.randn(1, 22050, requires_grad=True)
+    log_mel_spectrogram(resample(x, 22050, 16000), 16000, 400, 160, 80, 50, 8000).sum().backward()
+    assert x.grad is not None

@@ -547,10 +547,10 @@ python -m open_clip_train.main \
 
 ### Evaluating CLAP audio models on zero-shot audio classification:
 
-Audio zero-shot evaluation uses Hugging Face audio classification datasets. Install the optional audio dependencies before running these examples.
+Audio zero-shot evaluation uses Hugging Face audio classification datasets. Install the optional audio dependencies before running these examples (use `datasets[audio]` for local audio folders, which `datasets` encodes with TorchCodec).
 
 ```bash
-pip install 'datasets[audio]' torchaudio torchlibrosa
+pip install datasets soundfile torchlibrosa
 ```
 
 ESC-50:

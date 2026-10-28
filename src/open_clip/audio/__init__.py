@@ -12,7 +12,7 @@ from .tower import AudioTower
 from .transform import AudioAugmentationCfg, audio_transform_v2
 
 _AUDIO_DEPS = {
-    "torchaudio": "torchaudio",
+    "soundfile": "soundfile",
     "torchlibrosa": "torchlibrosa",
     "whisper": "openai-whisper",
 }

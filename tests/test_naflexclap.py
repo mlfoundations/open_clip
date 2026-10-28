@@ -113,7 +113,6 @@ def test_naflexclap_dummy_batch_is_patch_dict():
 
 def test_naflexclap_naflex_audio_batch_via_scheduler():
     """Contrastive audio NaFlex batch (pad_id=None -> fixed-length text) feeds CLAP to a finite loss."""
-    pytest.importorskip("torchaudio")
     from open_clip_train.naflex_data import NaFlexBatchScheduler
 
     model = open_clip.create_model(CONFIG, output_dict=True)
@@ -185,7 +184,6 @@ def test_naflexclap_audio_zero_shot_run_path():
     """NaFlex audio zero-shot: mel-patch transform -> collate -> model(audio=) -> text classifier -> accuracy.
     The run loop is generic; only the transform/collate differ from HTSAT, so this guards that the NaFlex-aware
     audio_zero_shot path stays wired for naflexvit towers."""
-    pytest.importorskip("torchaudio")  # the NaFlex transform's mel extractor needs torchaudio
     from open_clip import build_zero_shot_classifier
     from open_clip_train.audio_zero_shot import AUDIO_ZEROSHOT_TEMPLATES, run_audio_zero_shot_classifier
     from open_clip_train.naflex_data import collate_naflex_dicts

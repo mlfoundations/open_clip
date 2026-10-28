@@ -4,8 +4,7 @@ Covers both branches the function dispatches: the standard CLAP path ({audio: {w
 the NaFlex audio path (GenLAP/NaFlexClap -> {audio: {patches, patch_coord, patch_valid}, text[, text_valid]}).
 
 We stub the file decoder (``_decode_audio``) so the test exercises OUR pipeline wiring (filter/rename/collate/
-NaFlex batching) rather than torchaudio's file-decode backend (which may be unavailable in CI). The mel
-transform (``MelSpectrogram``, a pure torch op) is still real, so torchaudio is required.
+NaFlex batching) rather than the file-decode backend. The mel transform is still real.
 """
 import io
 import os
@@ -14,8 +13,6 @@ import tarfile
 import pytest
 import torch
 import util_test
-
-pytest.importorskip("torchaudio")  # mel transform (not file decode) needs torchaudio
 
 import open_clip
 from open_clip.model_traits import CLAP_TRAITS
@@ -32,7 +29,7 @@ SR = 48000
 
 
 def _fake_decode(key, data):
-    """Stand in for torchaudio.load: (key, bytes) -> (waveform, sr) for audio members, None otherwise."""
+    """Stand in for the file decoder: (key, bytes) -> (waveform, sr) for audio members, None otherwise."""
     ext = key.rsplit(".", 1)[-1] if "." in key else key
     if ext in ("wav", "flac", "mp3", "ogg"):
         return torch.randn(1, SR), SR
@@ -40,14 +37,14 @@ def _fake_decode(key, data):
 
 
 def _fake_decode_bytes(data):
-    """Stand in for the post-rename bytes decode map (torchaudio.load on raw bytes)."""
+    """Stand in for the post-rename bytes decode map (load_audio on raw bytes)."""
     return torch.randn(1, SR), SR
 
 
 @pytest.fixture(autouse=True)
 def _audio_wds_env(monkeypatch):
     # Tiny shuffle buffers (public env knob) so the first batch doesn't wait on a 1000-sample buffer fill,
-    # and stub decoders so the test doesn't depend on a torchaudio file-decode backend (the default pipeline
+    # and stub decoders so the test doesn't depend on a file-decode backend (the default pipeline
     # decodes via _decode_audio_bytes after rename; the legacy assembly uses the extension-keyed _decode_audio).
     for name in ("OPENCLIP_WDS_SHARD_SHUFFLE_SIZE", "OPENCLIP_WDS_SHARD_SHUFFLE_INITIAL",
                  "OPENCLIP_WDS_SAMPLE_SHUFFLE_SIZE", "OPENCLIP_WDS_SAMPLE_SHUFFLE_INITIAL"):
@@ -77,7 +74,7 @@ def _base_args(shard, num_samples=12, batch_size=4):
     args.train_num_samples = num_samples
     args.dataset_resampled = True       # single shard -> resampled head (skips num_shards>=workers assert)
     args.seed = 0
-    args.workers = 0                    # decode inline; avoids a fork-after-torchaudio-threads deadlock
+    args.workers = 0                    # decode inline; avoids a fork-after-threads deadlock
     args.world_size = 1
     args.rank = 0                       # normally set by distributed init; NaFlexBatcher reads it
     args.batch_size = batch_size

@@ -1,4 +1,3 @@
-import io
 import logging
 import math
 import os
@@ -382,9 +381,8 @@ class AudioTokenLength:
             # header (e.g. some VBR mp3 backends) fall through to 0 -- those samples just sort together,
             # a sort-key quality degradation only, never a correctness issue.
             try:
-                import torchaudio
-                info = torchaudio.info(io.BytesIO(audio))
-                num_samples, sr = int(info.num_frames), int(info.sample_rate)
+                from open_clip.audio.io import audio_info
+                num_samples, sr = audio_info(audio)
             except Exception:
                 return 0
             if num_samples <= 0:

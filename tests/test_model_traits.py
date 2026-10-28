@@ -164,7 +164,7 @@ def test_factory_attaches_traits_that_agree_with_config(name):
     if "naflex" in name.lower() and not _NAFLEX_AVAILABLE:
         pytest.skip("timm NaFlex support not available")
     if "clap" in name.lower() and "naflex" not in name.lower():
-        pytest.importorskip("torchaudio")
+        pytest.importorskip("torchlibrosa")
     model = open_clip.create_model(name, load_weights=False)
     attached = model.__dict__["traits"]
     assert isinstance(attached, ModelTraits)

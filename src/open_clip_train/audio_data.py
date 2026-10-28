@@ -1,4 +1,3 @@
-import io
 import json
 import random
 from dataclasses import asdict, is_dataclass
@@ -13,6 +12,7 @@ if TYPE_CHECKING:
     from open_clip.tokenizer import Tokenizer
 
 from open_clip.model_traits import InputMode
+from open_clip.audio.io import load_audio
 from open_clip.audio.transform import stack_audio_inputs
 
 from open_clip_train.data import (
@@ -40,7 +40,7 @@ from open_clip_train.naflex_data import (
 def _audio_loader_kwargs(args):
     """Extra DataLoader kwargs for audio loaders: a forkserver multiprocessing context (only when workers > 0).
 
-    Audio decode/mel work in the workers pulls in torchaudio, which spawns threads; the default ``fork`` start
+    Audio decode/mel work in the workers runs threaded native code; the default ``fork`` start
     method then deadlocks the child. forkserver (configurable via --audio-multiprocessing-context) avoids it.
     """
     if getattr(args, "workers", 0) and args.workers > 0:
@@ -56,12 +56,10 @@ def filter_no_caption_or_no_audio(sample):
 
 def _decode_audio(key, data):
     # Extension-keyed `wds.decode` handler; used by the legacy (decode-first) pipeline assembly.
-    import torchaudio
-
     ext = key.rsplit(".", 1)[-1] if "." in key else key
     if ext not in ("wav", "flac", "mp3", "ogg"):
         return None
-    return torchaudio.load(io.BytesIO(data))
+    return load_audio(data)
 
 
 def _decode_audio_bytes(data):
@@ -70,9 +68,7 @@ def _decode_audio_bytes(data):
     The format is sniffed from the byte stream (extension keys are gone after ``wds.rename``), matching what
     the extension-keyed ``_decode_audio`` handler produces.
     """
-    import torchaudio
-
-    return torchaudio.load(io.BytesIO(data))
+    return load_audio(data)
 
 
 class AudioCaptionTokenizer:

@@ -6,6 +6,7 @@ import numpy as np
 import torch
 
 from .config import CLIPAudioCfg
+from .dsp import log_mel_spectrogram, resample
 
 
 @dataclass
@@ -70,23 +71,15 @@ def float32_to_int16_torch(x: torch.Tensor) -> torch.Tensor:
 
 
 def _get_mel(audio_data: torch.Tensor, audio_cfg: Dict[str, Any]) -> torch.Tensor:
-    import torchaudio
-
-    mel_tf = torchaudio.transforms.MelSpectrogram(
+    mel = log_mel_spectrogram(
+        audio_data,
         sample_rate=audio_cfg.get("sample_rate", 48000),
         n_fft=audio_cfg.get("window_size", 1024),
-        win_length=audio_cfg.get("window_size", 1024),
         hop_length=audio_cfg.get("hop_size", 480),
-        center=True,
-        pad_mode="reflect",
-        power=2.0,
-        norm=None,
         n_mels=audio_cfg.get("mel_bins", 64),
         f_min=audio_cfg.get("fmin", 50),
         f_max=audio_cfg.get("fmax", 14000),
     )
-    mel = mel_tf(audio_data)
-    mel = torchaudio.transforms.AmplitudeToDB(top_db=None)(mel)
     return mel.T
 
 
@@ -125,13 +118,11 @@ class AudioPreprocess:
         return waveform
 
     def __call__(self, audio_data):
-        import torchaudio
-
         waveform, sr = audio_data
         if waveform.ndim == 2 and waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if sr != self.target_sr:
-            waveform = torchaudio.functional.resample(waveform, sr, self.target_sr)
+            waveform = resample(waveform, sr, self.target_sr)
         waveform = waveform.squeeze(0)
         if self.int16_normalize:
             waveform = int16_to_float32_torch(float32_to_int16_torch(waveform))
