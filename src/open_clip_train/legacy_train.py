@@ -253,6 +253,8 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         # compute respectively.
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
+        cumulative_gen_weight = 0
+        gen_loss_pad_id = getattr(unwrap_model(model), 'pad_id', 0)
         all_image_features, all_text_features = [], []
         with torch.inference_mode():
             for i, batch in enumerate(dataloader):
@@ -280,21 +282,26 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
 
-                    gen_loss = maybe_compute_generative_loss(
-                        model_out, texts=texts, pad_id=getattr(unwrap_model(model), 'pad_id', 0))
+                    if "logits" in model_out:
+                        # Count before launching caption CE so .item() does not wait for it.
+                        # Next-token CE excludes the first caption token.
+                        gen_weight = eval_utils.text_valid_mask(texts, pad_id=gen_loss_pad_id)[:, 1:].sum().item()
+                    gen_loss = maybe_compute_generative_loss(model_out, texts=texts, pad_id=gen_loss_pad_id)
 
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
-                if gen_loss is not None:
-                    cumulative_gen_loss += gen_loss * batch_size
+                # Batches without targets have no mean to accumulate (the CE helper returns NaN for them).
+                if gen_loss is not None and gen_weight > 0:
+                    cumulative_gen_loss += gen_loss.float() * gen_weight
+                    cumulative_gen_weight += gen_weight
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                         f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
 
-                    if gen_loss is not None:
+                    if cumulative_gen_weight > 0:
                         logging.info(
-                            f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+                            f"Generative Loss: {cumulative_gen_loss / cumulative_gen_weight:.6f}\t")
 
             retrieval_chunk_size = getattr(
                 args,
@@ -315,8 +322,8 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
             metrics.update(
                 {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
-            if gen_loss is not None:
-                gen_loss = cumulative_gen_loss / num_samples
+            if cumulative_gen_weight > 0:
+                gen_loss = cumulative_gen_loss / cumulative_gen_weight
                 metrics.update({"val_generative_loss": gen_loss.item()})
 
     if not metrics:
