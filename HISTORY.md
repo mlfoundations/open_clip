@@ -1,3 +1,15 @@
+## 4.2.1
+
+First 4.x release on PyPI. See the [migration guide](docs/MIGRATING_3_TO_4.md) for breaking changes when upgrading from 3.x.
+
+* Add pretrained NaFlex CLAP audio-text models
+* Add NaFlex CLIP, NaFlex GenLIP / GenLAP, MaMMUT, and CoCa v2 model families
+* Add modern and variable-length text towers
+* Move training to the `TrainingTask` stack with dict-based batches, FSDP2, and `torch.compile` strategies
+* Require PyTorch 2.6+ and load all checkpoints with `weights_only=True`
+
+Releases between 2.24.0 and 4.2.1 are not recorded in this file; see the [GitHub releases](https://github.com/mlfoundations/open_clip/releases).
+
 ## 2.24.0
 
 * Fix missing space in error message

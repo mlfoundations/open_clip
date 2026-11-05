@@ -286,3 +286,15 @@ If you use DFN models, please cite the following:
   year={2023}
 }
 ```
+
+### NaFlex CLAP (LAION-Audio-XL)
+
+Five audio-text models trained on LAION-Audio-XL for 1,024M samples seen. All use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmark results, usage, training details, and limitations. The weights are licensed CC BY-NC 4.0 (non-commercial use only).
+
+| Model | Model card |
+| ----- | ---------- |
+| `naflexclap_xxs` | [laion/clap2-xxs-audioxl-s1B](https://huggingface.co/laion/clap2-xxs-audioxl-s1B) |
+| `naflexclap_xs` | [laion/clap2-xs-audioxl-s1B](https://huggingface.co/laion/clap2-xs-audioxl-s1B) |
+| `naflexclap_small` | [laion/clap2-small-audioxl-s1B](https://huggingface.co/laion/clap2-small-audioxl-s1B) |
+| `naflexclap_medium` | [laion/clap2-medium-audioxl-s1B](https://huggingface.co/laion/clap2-medium-audioxl-s1B) |
+| `naflexclap_large` | [laion/clap2-large-audioxl-s1B](https://huggingface.co/laion/clap2-large-audioxl-s1B) |
