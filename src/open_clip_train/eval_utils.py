@@ -62,14 +62,19 @@ def run_classification_eval(
     return (top1 / n, top5 / n) if n else (0., 0.)
 
 
+def text_valid_mask(texts, text_valid=None, pad_id=0):
+    """Valid caption tokens, with explicit validity taking precedence over the padding id."""
+    return text_valid.bool() if text_valid is not None else texts != pad_id
+
+
 def maybe_compute_generative_loss(model_out, texts=None, text_valid=None, pad_id=0):
-    """Next-token validation CE, with explicit validity taking precedence over the padding id."""
+    """Next-token validation CE over valid targets."""
     if 'logits' in model_out and texts is not None:
         logits = model_out['logits'][:, :-1]
         labels = texts[:, 1:]
-        valid = text_valid[:, 1:].bool() if text_valid is not None else labels != pad_id
+        valid = text_valid_mask(texts, text_valid, pad_id)[:, 1:]
         labels = labels.masked_fill(~valid, -100)
-        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=-100)
+        return F.cross_entropy(logits.float().permute(0, 2, 1), labels, ignore_index=-100)
 
 
 def log_eval_metrics(metrics, data, epoch, args, logger, tb_writer=None, backend=None):

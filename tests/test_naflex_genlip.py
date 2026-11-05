@@ -12,6 +12,7 @@ from open_clip.naflex_genlip_model import (
     build_patch_attn_mask,
     build_mrope_position_ids,
     build_prefix_lm_mask,
+    pack_prefix_sequence,
 )
 from open_clip_train.naflex_data import collate_variable_text
 
@@ -292,6 +293,23 @@ def test_pack_prefix_variable_prefix_runs():
     )
     assert out['caption_loss_ce'].ndim == 0 and torch.isfinite(out['caption_loss_ce'])
     assert out['caption_loss_z'] > 0
+
+
+@pytest.mark.parametrize("prefix_dtype", [torch.bfloat16, torch.float16])
+def test_pack_prefix_mixed_dtype_matches_cat(prefix_dtype):
+    """AMP leaves identity-projected text in fp32 beside a low-precision prefix; packing promotes like torch.cat."""
+    prefix = torch.randn(2, 3, 4, dtype=prefix_dtype)
+    text = torch.randn(2, 2, 4)
+    prefix_valid = torch.tensor([[True, True, True], [True, False, False]])
+    text_valid = torch.tensor([[True, False], [True, True]])
+    pos = torch.zeros(3, 2, 5, dtype=torch.long)
+
+    packed = pack_prefix_sequence(prefix, prefix_valid, pos, text, text_valid)[0]
+    expected = torch.stack([
+        torch.cat([prefix[0], text[0, :1]]),
+        torch.nn.functional.pad(torch.cat([prefix[1, :1], text[1]]), (0, 0, 0, 1)),
+    ])
+    torch.testing.assert_close(packed, expected, rtol=0, atol=0)
 
 
 def test_task_fused_loss_flag():
