@@ -12,7 +12,7 @@ authors = [
     {name = "Mitchell Wortsman"},
     {name = "Romain Beaumont"},
 ]
-description = "Open reproduction of consastive language-image pretraining (CLIP) and related."
+description = "Open reproduction of contrastive language-image pretraining (CLIP) and related."
 readme = "README.md"
 requires-python = ">=3.9"
 keywords = ["pytorch", "clip", "image-text", "language-image", "multimodal"]
