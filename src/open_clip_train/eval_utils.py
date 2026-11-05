@@ -62,6 +62,16 @@ def run_classification_eval(
     return (top1 / n, top5 / n) if n else (0., 0.)
 
 
+def count_generative_tokens(texts, text_valid=None, pad_id=0, *, shift=True):
+    """Count caption targets; prefix-LM models also predict the first text token (``shift=False``)."""
+    labels = texts[:, 1:] if shift else texts
+    if text_valid is None:
+        valid = labels != pad_id
+    else:
+        valid = (text_valid[:, 1:] if shift else text_valid).bool()
+    return (valid & labels.ne(-100)).sum()
+
+
 def maybe_compute_generative_loss(model_out, texts=None, text_valid=None, pad_id=0):
     """Next-token validation CE, with explicit validity taking precedence over the padding id."""
     if 'logits' in model_out and texts is not None:
@@ -69,7 +79,8 @@ def maybe_compute_generative_loss(model_out, texts=None, text_valid=None, pad_id
         labels = texts[:, 1:]
         valid = text_valid[:, 1:].bool() if text_valid is not None else labels != pad_id
         labels = labels.masked_fill(~valid, -100)
-        return F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=-100)
+        loss = F.cross_entropy(logits.permute(0, 2, 1), labels, ignore_index=-100)
+        return torch.where(labels.ne(-100).any(), loss, logits[:0].sum())
 
 
 def log_eval_metrics(metrics, data, epoch, args, logger, tb_writer=None, backend=None):

@@ -253,6 +253,8 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         # compute respectively.
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
+        cumulative_gen_tokens = 0
+        gen_loss_pad_id = getattr(unwrap_model(model), 'pad_id', 0)
         all_image_features, all_text_features = [], []
         with torch.inference_mode():
             for i, batch in enumerate(dataloader):
@@ -281,12 +283,15 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                     ) / 2
 
                     gen_loss = maybe_compute_generative_loss(
-                        model_out, texts=texts, pad_id=getattr(unwrap_model(model), 'pad_id', 0))
+                        model_out, texts=texts, pad_id=gen_loss_pad_id)
 
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
                 if gen_loss is not None:
-                    cumulative_gen_loss += gen_loss * batch_size
+                    gen_tokens = eval_utils.count_generative_tokens(texts, pad_id=gen_loss_pad_id)
+                    gen_loss = gen_loss.to(torch.promote_types(gen_loss.dtype, torch.float32))
+                    cumulative_gen_loss += torch.where(gen_tokens > 0, gen_loss, 0) * gen_tokens
+                    cumulative_gen_tokens += gen_tokens
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
@@ -294,7 +299,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
 
                     if gen_loss is not None:
                         logging.info(
-                            f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+                            f"Generative Loss: {cumulative_gen_loss / cumulative_gen_tokens.clamp_min(1):.6f}\t")
 
             retrieval_chunk_size = getattr(
                 args,
@@ -316,7 +321,7 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
                 {**val_metrics, "clip_val_loss": loss.item(), "epoch": epoch, "num_samples": num_samples}
             )
             if gen_loss is not None:
-                gen_loss = cumulative_gen_loss / num_samples
+                gen_loss = cumulative_gen_loss / cumulative_gen_tokens.clamp_min(1)
                 metrics.update({"val_generative_loss": gen_loss.item()})
 
     if not metrics:

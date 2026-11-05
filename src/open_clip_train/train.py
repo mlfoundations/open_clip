@@ -24,7 +24,9 @@ except ImportError:
 from open_clip import get_input_dtype
 from open_clip.task import get_model_from_task
 from open_clip_train.distributed import is_master
-from open_clip_train.eval_utils import iter_eval_batches, log_eval_metrics, maybe_compute_generative_loss
+from open_clip_train.eval_utils import (
+    count_generative_tokens, iter_eval_batches, log_eval_metrics, maybe_compute_generative_loss,
+)
 from open_clip_train.metrics import DEFAULT_RETRIEVAL_CHUNK_SIZE
 from open_clip_train.metrics import get_clip_metrics
 from open_clip_train.scheduler import get_learning_rate
@@ -543,6 +545,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         # compute respectively.
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
+        cumulative_gen_tokens = 0
         gen_loss_pad_id = getattr(get_model_from_task(task), 'pad_id', 0)
         all_primary_features, all_text_features = [], []
         with torch.inference_mode():
@@ -588,7 +591,13 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                             "caption_loss_ce", model_out.get("caption_loss", model_out.get("loss")))
 
                     if gen_loss is not None:
-                        cumulative_gen_loss += gen_loss * batch_size
+                        gen_tokens = count_generative_tokens(
+                            batch["text"], batch.get("text_valid"), gen_loss_pad_id, shift=paired,
+                        )
+                        gen_loss = gen_loss.to(torch.promote_types(gen_loss.dtype, torch.float32))
+                        # Empty caption means must not poison validation, even if a model returns NaN.
+                        cumulative_gen_loss += torch.where(gen_tokens > 0, gen_loss, 0) * gen_tokens
+                        cumulative_gen_tokens += gen_tokens
                     num_samples += batch_size
                     if (i % 100) == 0:
                         if paired:
@@ -597,7 +606,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                                 f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
                         if gen_loss is not None:
                             _logger.info(
-                                f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
+                                f"Generative Loss: {cumulative_gen_loss / cumulative_gen_tokens.clamp_min(1):.6f}\t")
 
             if is_rank0 and num_samples > 0:
                 if all_primary_features:
@@ -628,7 +637,9 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                     # Generative-only task (e.g. GenLIP): no retrieval metrics, just the LM/caption loss.
                     metrics.update({"epoch": epoch, "num_samples": num_samples})
                 if isinstance(cumulative_gen_loss, torch.Tensor):
-                    metrics.update({"val_generative_loss": (cumulative_gen_loss / num_samples).item()})
+                    metrics.update({
+                        "val_generative_loss": (cumulative_gen_loss / cumulative_gen_tokens.clamp_min(1)).item()
+                    })
 
     if not is_rank0:
         return metrics
