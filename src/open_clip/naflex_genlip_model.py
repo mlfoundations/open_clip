@@ -515,9 +515,12 @@ def pack_prefix_sequence(
     prefix_src = torch.arange(n_prefix, device=device)[None, :] < k[:, None]          # (B, Np) front-valid
     text_src = torch.arange(n_text, device=device)[None, :] < m[:, None]              # (B, Nt) front-valid
 
-    combined = prefix_emb.new_zeros(b, seq_t, width)
-    combined[prefix_dst] = prefix_emb[prefix_src]
-    combined[text_dst] = text_emb[text_src]
+    # Match the unpacked torch.cat: AMP can leave identity-projected text in fp32
+    # while the prefix projection produces bf16/fp16. Indexed writes need matching dtypes.
+    dtype = torch.promote_types(prefix_emb.dtype, text_emb.dtype)
+    combined = prefix_emb.new_zeros(b, seq_t, width, dtype=dtype)
+    combined[prefix_dst] = prefix_emb[prefix_src].to(dtype)
+    combined[text_dst] = text_emb[text_src].to(dtype)
 
     pos = block_pos.new_zeros(3, b, seq_t)
     pos[:, prefix_dst] = block_pos[:, :, :n_prefix][:, prefix_src]
