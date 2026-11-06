@@ -9,7 +9,7 @@
 > - **3.x** remains available on the [`v3` branch](https://github.com/mlfoundations/open_clip/tree/v3). To stay on it, run `pip install 'open_clip_torch<4'`. Further 3.3.x releases will only be made if needed.
 > - **Upgrading from 3.x:** pretrained image/text inference is intended to remain compatible, but training scripts and downstream integrations need review. See the [migration guide](https://github.com/mlfoundations/open_clip/blob/main/docs/MIGRATING_3_TO_4.md).
 
-Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). OpenCLIP also includes language-audio (CLAP) models and related generative models.
+Welcome to an open source implementation of OpenAI's [CLIP](https://arxiv.org/abs/2103.00020) (Contrastive Language-Image Pre-training). OpenCLIP also includes language-audio ([CLAP](https://arxiv.org/abs/2211.06687)) models and related generative models.
 
 Using this codebase, we have trained several models on a variety of data sources and compute budgets, ranging from [small-scale experiments](docs/LOW_ACC.md) to larger runs including models trained on datasets such as [LAION-400M](https://arxiv.org/abs/2111.02114), [LAION-2B](https://arxiv.org/abs/2210.08402) and [DataComp-1B](https://arxiv.org/abs/2304.14108).
 Many of our models and their scaling properties are studied in detail in the paper [reproducible scaling laws for contrastive language-image learning](https://arxiv.org/abs/2212.07143).
@@ -137,7 +137,7 @@ model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrai
 
 ### Audio-text models (NaFlex CLAP)
 
-The NaFlex CLAP models map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use. The weights are licensed CC BY-NC 4.0 (non-commercial use only).
+The NaFlex CLAP models (paper: arXiv TBD, see [Citing](#citing)) map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use. The weights are licensed CC BY-NC 4.0 (non-commercial use only).
 
 | Model | Model card | Params | Embedding dim |
 | ----- | ---------- | ------ | ------------- |
@@ -732,6 +732,16 @@ If you found this repository useful, please consider citing:
   booktitle={Thirty-sixth Conference on Neural Information Processing Systems Datasets and Benchmarks Track},
   year={2022},
   url={https://openreview.net/forum?id=M3Y74vmsMcY}
+}
+```
+
+```bibtex
+@misc{naflexclap_tbd,
+  title={LAION-Audio-XL: A Web-Scale Corpus and Scaling Studies for Contrastive Language-Audio Pretraining},
+  author={TBD},
+  year={TBD},
+  eprint={TBD},
+  archivePrefix={arXiv}
 }
 ```
 
