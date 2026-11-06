@@ -289,7 +289,7 @@ If you use DFN models, please cite the following:
 
 ### NaFlex CLAP (LAION-Audio-XL)
 
-Five audio-text models trained on LAION-Audio-XL for 1,024M samples seen. All use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmark results, usage, training details, and limitations. The weights are licensed CC BY-NC 4.0 (non-commercial use only).
+Five audio-text models trained on LAION-Audio-XL for 1,024M samples seen. All use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmark results, usage, training details, and limitations.
 
 | Model | Model card |
 | ----- | ---------- |

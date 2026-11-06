@@ -137,7 +137,7 @@ model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrai
 
 ### Audio-text models (NaFlex CLAP)
 
-The NaFlex CLAP models (paper: arXiv TBD, see [Citing](#citing)) map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use. The weights are licensed CC BY-NC 4.0 (non-commercial use only).
+The NaFlex CLAP models (paper: arXiv TBD, see [Citing](#citing)) map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use.
 
 | Model | Model card | Params | Embedding dim |
 | ----- | ---------- | ------ | ------------- |
