@@ -443,7 +443,7 @@ def image_transform(
                 RandomResizedCrop(
                     image_size,
                     scale=aug_cfg_dict.pop('scale'),
-                    interpolation=InterpolationMode.BICUBIC,
+                    interpolation=interpolation_mode,
                 ),
                 MaybeConvertMode(),
             ]
