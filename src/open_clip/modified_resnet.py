@@ -174,13 +174,15 @@ class ModifiedResNet(nn.Module):
         # idempotent (progressive unfreezing / multi-stage training).
         groups = self.layer_groups()
         n_freeze = len(groups) if not unlocked_groups else len(groups) - unlocked_groups
+        child_names = {id(m): n for n, m in self.named_children()}
         for i, (_, members) in enumerate(groups):
             freeze = i < n_freeze
-            for module in members:  # ResNet group members are all modules
+            for module in members:  # ResNet group members are all direct child modules
                 for p in module.parameters():
                     p.requires_grad = not freeze
                 if freeze and freeze_bn_stats:
-                    freeze_batch_norm_2d(module)
+                    # Assign the result back: a bare BatchNorm2d member (the stem bn1-3) is replaced, not converted.
+                    setattr(self, child_names[id(module)], freeze_batch_norm_2d(module))
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         # FIXME support for non-transformer

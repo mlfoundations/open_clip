@@ -265,6 +265,16 @@ def test_resnet_layer_groups_partial_lock():
     assert all(not p.requires_grad for p in model.visual.layer1.parameters())
 
 
+def test_resnet_lock_freezes_bn_stats():
+    from open_clip.utils import FrozenBatchNorm2d
+
+    model = open_clip.create_model("RN50")
+    model.lock_image_tower(unlocked_groups=0, freeze_bn_stats=True)
+    bns = [m for m in model.visual.modules() if isinstance(m, torch.nn.BatchNorm2d)]
+    assert not bns  # stem bn1-3 included, not just the BNs inside the residual stages
+    assert isinstance(model.visual.bn1, FrozenBatchNorm2d)
+
+
 def test_timm_adapter_is_head():
     pytest.importorskip("timm")
     from open_clip.timm_model import TimmModel
