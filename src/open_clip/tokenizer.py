@@ -494,6 +494,8 @@ def random_mask_tokenize(
         add_special_tokens: bool = True,
         output_mask: bool = False,
 ):
+    if isinstance(texts, str):
+        texts = [texts]
     all_tokens = [encode_fn(text) for text in texts]
     reduced_tokens = []
     num_special_tokens = 2 if add_special_tokens else 0
@@ -525,6 +527,8 @@ def simple_mask_tokenize(
         add_special_tokens: bool = True,
         output_mask: bool = False,
 ):
+    if isinstance(texts, str):
+        texts = [texts]
     all_tokens = [encode_fn(text) for text in texts]
     reduced_tokens = []
     num_special_tokens = 2 if add_special_tokens else 0
@@ -554,6 +558,8 @@ def syntax_mask_tokenize(
     """ Returns the tokenized representation of given input string(s).
     Apply syntax masking before tokenize.
     """
+    if isinstance(texts, str):
+        texts = [texts]
     import nltk
     global _nltk_init
     if not _nltk_init:
