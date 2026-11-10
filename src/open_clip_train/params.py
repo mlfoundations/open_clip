@@ -650,6 +650,25 @@ def parse_args(args):
              "'sharded' uses DCP per-rank shards in a directory (faster, lower memory).",
     )
     parser.add_argument(
+        "--model-ema",
+        default=False,
+        action='store_true',
+        help="Keep an exponential moving average of the model weights. Eval and inference checkpoints use the EMA.",
+    )
+    parser.add_argument(
+        "--model-ema-decay",
+        type=float,
+        default=0.9999,
+        help="Maximum decay per optimizer step for --model-ema.",
+    )
+    parser.add_argument(
+        "--model-ema-warmup",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Ramp the --model-ema decay up from 0 with the update count (1 - (1 + step) ** -2/3) until it reaches "
+             "--model-ema-decay; 0.9999 takes about 1M updates. --no-model-ema-warmup uses that decay from the start.",
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",

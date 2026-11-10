@@ -1,4 +1,5 @@
 from .base_task import TrainingTask, unwrap_model, get_model_from_task
+from .fsdp_ema import FSDPModelEma
 from .image_text_task import ImageTextTask
 from .checkpoint import save_checkpoint, load_checkpoint, save_sharded_checkpoint, load_sharded_checkpoint
 from .clip_task import CLIPTask
