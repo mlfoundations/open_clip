@@ -198,6 +198,32 @@ def test_load_checkpoint_strips_module_prefix_when_not_distributed(tmp_path):
         assert torch.equal(pa, pb)
 
 
+def test_load_without_ema_weights_seeds_ema_from_loaded_model():
+    source = _make_task()
+    with torch.no_grad():
+        for p in source.trainable_module.parameters():
+            p.add_(1.0)
+    task = _make_task()
+    task.setup_ema(decay=0.99)
+    task.load_state_dict({'state_dict': source.state_dict()['state_dict']})
+    for pa, pb in zip(source.trainable_module.parameters(), task.trainable_module_ema.module.parameters()):
+        assert torch.equal(pa, pb)
+
+
+def test_setup_ema_updates_aliased_params_once():
+    task = _make_task()
+    model = task.trainable_module
+    model.alias = model.visual
+    task.setup_ema(decay=0.9)
+    param = next(model.visual.parameters())
+    ema_param = next(task.trainable_module_ema.module.visual.parameters())
+    start = ema_param.clone()
+    with torch.no_grad():
+        param.add_(1.0)
+    task.update_ema()
+    assert torch.allclose(ema_param, start + 0.1)
+
+
 def test_state_dict_for_inference_without_ema_returns_trainable():
     task = _make_task()
     sd = task.state_dict_for_inference()

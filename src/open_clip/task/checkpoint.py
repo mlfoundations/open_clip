@@ -149,15 +149,18 @@ def save_sharded_checkpoint(
     saved as a small .pt file by the master rank only.
     """
     import torch.distributed.checkpoint as dcp
-    from torch.distributed.checkpoint.state_dict import get_state_dict
+    from torch.distributed.checkpoint.state_dict import get_model_state_dict, get_state_dict
 
     model = unwrap_model(task.trainable_module)
     model_sd, optim_sd = get_state_dict(model, optimizer)
-    dcp.save({"model": model_sd, "optimizer": optim_sd}, checkpoint_id=checkpoint_dir)
+    state = {"model": model_sd, "optimizer": optim_sd}
+    if task.has_ema:
+        state["model_ema"] = get_model_state_dict(task.trainable_module_ema.module)
+    dcp.save(state, checkpoint_id=checkpoint_dir)
 
     # Metadata on master rank only
     if is_master:
-        metadata = {"epoch": epoch, "name": name}
+        metadata = {"epoch": epoch, "name": name, "has_ema": task.has_ema}
         if scaler is not None:
             metadata["scaler"] = scaler.state_dict()
         if global_step is not None:
@@ -179,38 +182,54 @@ def load_sharded_checkpoint(
     Returns start_epoch.
     """
     import torch.distributed.checkpoint as dcp
-    from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+    from torch.distributed.checkpoint.state_dict import (
+        get_model_state_dict,
+        get_state_dict,
+        set_model_state_dict,
+        set_state_dict,
+    )
 
     model = unwrap_model(task.trainable_module)
 
-    # Build empty DTensor scaffolding, then let DCP fill it
-    if optimizer is not None:
-        model_sd, optim_sd = get_state_dict(model, optimizer)
-        dcp.load({"model": model_sd, "optimizer": optim_sd}, checkpoint_id=checkpoint_dir)
-        set_state_dict(
-            model, optimizer,
-            model_state_dict=model_sd,
-            optim_state_dict=optim_sd,
-        )
-    else:
-        from torch.distributed.checkpoint.state_dict import get_model_state_dict, set_model_state_dict
-        model_sd = get_model_state_dict(model)
-        dcp.load({"model": model_sd}, checkpoint_id=checkpoint_dir)
-        set_model_state_dict(model, model_sd)
-
-    # Load metadata
-    start_epoch = 0
     metadata_path = os.path.join(checkpoint_dir, "_metadata_extra.pt")
+    loaded_metadata = {}
     if os.path.exists(metadata_path):
         loaded_metadata = torch.load(metadata_path, map_location='cpu', weights_only=True)
-        start_epoch = loaded_metadata.get("epoch", 0)
-        if scaler is not None and "scaler" in loaded_metadata:
-            scaler.load_state_dict(loaded_metadata["scaler"])
-        if metadata is not None:
-            if "global_step" in loaded_metadata:
-                metadata["global_step"] = int(loaded_metadata["global_step"])
-            if "samples_seen" in loaded_metadata:
-                metadata["samples_seen"] = int(loaded_metadata["samples_seen"])
+
+    # Build empty DTensor scaffolding, then let DCP fill it
+    state = {}
+    if optimizer is not None:
+        state["model"], state["optimizer"] = get_state_dict(model, optimizer)
+    else:
+        state["model"] = get_model_state_dict(model)
+    load_ema = task.has_ema and loaded_metadata.get("has_ema", False)
+    if load_ema:
+        state["model_ema"] = get_model_state_dict(task.trainable_module_ema.module)
+    dcp.load(state, checkpoint_id=checkpoint_dir)
+
+    if optimizer is not None:
+        set_state_dict(
+            model, optimizer,
+            model_state_dict=state["model"],
+            optim_state_dict=state["optimizer"],
+        )
+    else:
+        set_model_state_dict(model, state["model"])
+    if load_ema:
+        set_model_state_dict(task.trainable_module_ema.module, state["model_ema"])
+    elif task.has_ema:
+        _logger.warning('Checkpoint has no EMA weights; initializing the EMA from the loaded model weights.')
+        task.trainable_module_ema.set(model)
+
+    # Load metadata
+    start_epoch = loaded_metadata.get("epoch", 0)
+    if scaler is not None and "scaler" in loaded_metadata:
+        scaler.load_state_dict(loaded_metadata["scaler"])
+    if metadata is not None:
+        if "global_step" in loaded_metadata:
+            metadata["global_step"] = int(loaded_metadata["global_step"])
+        if "samples_seen" in loaded_metadata:
+            metadata["samples_seen"] = int(loaded_metadata["samples_seen"])
 
     _logger.info(f"=> resuming sharded checkpoint '{checkpoint_dir}' (epoch {start_epoch})")
     return start_epoch

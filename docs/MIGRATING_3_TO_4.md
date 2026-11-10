@@ -50,9 +50,10 @@ Existing pretrained `.pt` checkpoints load without changes. Training checkpoints
 ## New training CLI flags (opt-in)
 
 - `--siglip-chunk-size` — image rows per SigLIP logits chunk (`0` disables). For example, `--siglip --siglip-chunk-size 1024` enables chunking in both current and legacy training.
-- `--fsdp` — use FSDP2 (`fully_shard`) instead of DDP
+- `--fsdp` — use FSDP2 (`fully_shard`) instead of DDP. `--precision bf16` and `fp16` need PyTorch 2.15+, and store all params in fp32 while running them in the same dtypes as without FSDP, except that `logit_scale` and `logit_bias` also run in low precision
 - `--fsdp-no-reshard-after-forward`, `--fsdp-offload-cpu`
 - `--fsdp-checkpoint {full,sharded}` — full gathers to rank-0 as a single `.pt`; `sharded` uses DCP per-rank shards (faster, lower memory)
+- `--model-ema`, `--model-ema-decay`, `--model-ema-warmup` / `--no-model-ema-warmup` — keep an EMA of the model weights (also under `--fsdp`), ramping the decay up to `--model-ema-decay` by default; eval uses the EMA, and resuming from a checkpoint without EMA weights restarts it from the loaded weights
 - `--torchcompile-strategy {task,model,step}` — choose whether `torch.compile` captures task forward/loss, the underlying model, or the full single-batch train step
 - `--use-naflex` and `--naflex-*` flags — enable NaFlex variable-aspect image pipelines for compatible timm/OpenCLIP ViT-family models (token-budget batching via `--naflex-seq-lens` / `--naflex-max-tokens-per-batch`; the same machinery drives the NaFlex audio and generative models)
 - `--audio-*` and `--audio-zeroshot-*` flags — enable CLAP audio preprocessing/training and Hugging Face audio zero-shot evaluation

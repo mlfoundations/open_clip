@@ -24,12 +24,12 @@ TINY_KW = dict(
 )
 
 
-def _tiny_coca(attentional_pool=True, seed=0, **text_over):
+def _tiny_coca(attentional_pool=True, seed=0, cast_dtype=None, **text_over):
     kw = {k: dict(v) if isinstance(v, dict) else v for k, v in TINY_KW.items()}
     kw['vision_cfg']['attentional_pool'] = attentional_pool
     kw['text_cfg'].update(text_over)
     torch.manual_seed(seed)
-    return CoCa(**kw)
+    return CoCa(**kw, cast_dtype=cast_dtype)
 
 
 @pytest.mark.parametrize('mode', ['parallel', 'cascade'])
@@ -68,6 +68,22 @@ def test_attentional_pool_legacy_bool_unchanged():
     with torch.no_grad():
         out = model(torch.randn(2, 3, 64, 64), torch.randint(1, 60, (2, 16)))
     assert out['image_features'].shape == (2, 64)
+
+
+@pytest.mark.parametrize('mode', [True, 'parallel', 'cascade'])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16], ids=['fp16', 'bf16'])
+def test_coca_low_precision(mode, dtype):
+    """Static fp16/bf16 conversion must cover the pooler norms and query, and the text cls_emb cast at use."""
+    from open_clip.model import convert_weights_to_lp
+
+    model = _tiny_coca(attentional_pool=mode, cast_dtype=dtype).eval()
+    convert_weights_to_lp(model, dtype=dtype)
+    assert model.visual.attn_pool.query.dtype == dtype
+    assert model.visual.attn_pool.ln_q.weight.dtype == torch.float32
+    with torch.no_grad():
+        out = model(torch.randn(2, 3, 64, 64).to(dtype), torch.randint(1, 60, (2, 16)))
+    assert out['logits'].dtype == dtype
+    assert torch.isfinite(out['image_features'].float()).all()
 
 
 def test_vision_lock_includes_attentional_poolers():

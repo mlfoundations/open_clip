@@ -203,12 +203,14 @@ class CoCa(MultimodalGenerationMixin, nn.Module):
                 trunk_dim,
                 n_head=vision_cfg.attn_pooler_heads,
                 n_queries=vision_cfg.attn_pooler_queries,
+                norm_layer=norm_layer,
             )
             self.attn_pool_contrastive = AttentionalPooler(
                 embed_dim,
                 embed_dim if self.attn_pool_type == 'cascade' else trunk_dim,
                 n_head=vision_cfg.attn_pooler_heads,
                 n_queries=1,
+                norm_layer=norm_layer,
             )
             with torch.no_grad():  # match VisionTransformer.init_parameters pooler query init
                 nn.init.normal_(self.attn_pool.query, std=embed_dim ** -0.5)
