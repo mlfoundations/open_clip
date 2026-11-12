@@ -17,12 +17,13 @@ from open_clip.pretrained import download_pretrained_from_url
 
 class DownloadPretrainedTests(unittest.TestCase):
 
-    def create_response(self, data, status_code=200, content_type='application/octet-stream'):
+    def create_response(self, data, status_code=200, content_type='application/octet-stream', content_length=True):
         fp = BytesIO(data)
         headers = HTTPHeaderDict({
             'Content-Type': content_type,
-            'Content-Length': str(len(data))
         })
+        if content_length:
+            headers['Content-Length'] = str(len(data))
         raw = HTTPResponse(fp, preload_content=False, headers=headers, status=status_code)
         return raw
 
@@ -90,6 +91,28 @@ class DownloadPretrainedTests(unittest.TestCase):
             url = f'https://github.com/mlfoundations/download/v0.2-weights/rn50-quickgelu-{expected_hash}.pt'
             with self.assertRaisesRegex(RuntimeError, r'checksum does not not match'):
                 download_pretrained_from_url(url, root)
+        urllib.request.urlopen.assert_called_once()
+
+    @patch('open_clip.pretrained.urllib')
+    def test_download_pretrained_from_url_without_content_length(self, urllib):
+        file_contents = b'pretrained model weights'
+        urllib.request.urlopen.return_value = self.create_response(file_contents, content_length=False)
+        with tempfile.TemporaryDirectory() as root:
+            url = 'https://example.com/weights/RN50.pt'
+            path = download_pretrained_from_url(url, root)
+            self.assertEqual(Path(path).read_bytes(), file_contents)
+        urllib.request.urlopen.assert_called_once()
+
+    @patch('open_clip.pretrained.urllib')
+    def test_download_pretrained_from_url_with_empty_content_length(self, urllib):
+        file_contents = b'pretrained model weights'
+        response = self.create_response(file_contents, content_length=False)
+        response.headers['Content-Length'] = ''
+        urllib.request.urlopen.return_value = response
+        with tempfile.TemporaryDirectory() as root:
+            url = 'https://example.com/weights/RN50.pt'
+            path = download_pretrained_from_url(url, root)
+            self.assertEqual(Path(path).read_bytes(), file_contents)
         urllib.request.urlopen.assert_called_once()
 
     @patch('open_clip.pretrained.urllib')

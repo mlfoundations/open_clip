@@ -872,7 +872,11 @@ def download_pretrained_from_url(
             return download_target
 
     with urllib.request.urlopen(url) as source, open(download_target, "wb") as output:
-        with tqdm(total=int(source.headers.get("Content-Length")), ncols=80, unit='iB', unit_scale=True) as loop:
+        # Chunked or otherwise unlength-delimited responses omit Content-Length.
+        # int(None) would crash after the destination file had already been opened.
+        content_length = source.headers.get("Content-Length")
+        total = int(content_length) if content_length else None
+        with tqdm(total=total, ncols=80, unit='iB', unit_scale=True) as loop:
             while True:
                 buffer = source.read(8192)
                 if not buffer:
