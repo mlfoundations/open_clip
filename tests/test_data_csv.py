@@ -123,7 +123,7 @@ def test_get_csv_dataset_val_keeps_partial(tmp_path):
 def test_csv_retrieval_ids_follow_validation_rows(tmp_path):
     path = _make_csv(tmp_path, n=3)
     rows = pd.read_csv(path, sep="\t")
-    rows["source"] = ["b", "a", "b"]
+    rows["source"] = ["001", "1", "001"]
     rows.to_csv(path, sep="\t", index=False)
     args = types.SimpleNamespace(
         train_data=str(path), val_data=str(path), csv_img_key="filepath",

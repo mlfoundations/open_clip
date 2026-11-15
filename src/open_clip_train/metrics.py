@@ -148,6 +148,8 @@ def _paired_retrieval_ranks(
 
     num_items = image_shape[0]
     if image_ids is not None:
+        if isinstance(image_ids, torch.Tensor):
+            image_ids = image_ids.detach().cpu().numpy()
         image_ids = np.asarray(image_ids)
         if image_ids.shape != (num_items,):
             raise ValueError("Retrieval needs one image ID per image-caption pair.")

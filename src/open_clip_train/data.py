@@ -167,7 +167,7 @@ class CsvDataset(Dataset):
             image_id_key=None,
     ):
         _logger.debug(f'Loading csv data from {input_filename}.')
-        df = pd.read_csv(input_filename, sep=sep)
+        df = pd.read_csv(input_filename, sep=sep, dtype={image_id_key: str} if image_id_key is not None else None)
 
         # Keep as pandas Series rather than converting to Python lists.
         # Python lists of strings cause copy-on-write memory duplication in
