@@ -410,6 +410,14 @@ def test_coca_generate_copies_generation_config_and_fills_special_ids():
     assert config.use_cache is True
 
 
+def test_coca_generate_uses_seq_len_when_generation_config_has_no_length():
+    transformers = pytest.importorskip('transformers')
+    model = _tiny_modern_coca().eval()
+    config = transformers.GenerationConfig(max_length=None)
+    out = model.generate(torch.randn(2, 3, 64, 64), seq_len=6, fixed_output_length=True, generation_config=config)
+    assert out.shape == (2, 6)
+
+
 def test_coca_generate_honors_max_new_tokens_from_generation_config():
     transformers = pytest.importorskip('transformers')
     model = _tiny_modern_coca().eval()
