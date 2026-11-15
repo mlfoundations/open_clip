@@ -328,6 +328,9 @@ def build_generation_config(
             generation_config.eos_token_id = eos_token_id
         if getattr(generation_config, 'bos_token_id', None) is None:
             generation_config.bos_token_id = sot_token_id
+        if generation_config.max_length is None and generation_config.max_new_tokens is None:
+            # transformers>=5 has no default max_length
+            generation_config.max_length = seq_len
         generation_config.use_cache = False
         return generation_config
 
