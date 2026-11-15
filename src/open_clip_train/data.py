@@ -647,16 +647,23 @@ class ResampledShards2(IterableDataset):
 
 
 class RepeatedShardList(IterableDataset):
-    """An iterable dataset that repeats a finite shard list."""
+    """Endlessly repeat a shard list, reshuffling each pass with seed + epoch."""
 
-    def __init__(self, urls):
+    def __init__(self, urls, seed=0, epoch=0):
         super().__init__()
         self.urls, _ = expand_urls(urls)
         assert isinstance(self.urls[0], str)
+        self.seed = seed
+        self.epoch = epoch
 
     def __iter__(self):
+        epoch = self.epoch.get_value() if isinstance(self.epoch, SharedEpoch) else self.epoch
+        # same order on every node/worker so split_by_node/split_by_worker stay disjoint
+        rng = random.Random(self.seed + epoch)
+        urls = list(self.urls)
         while True:
-            for url in self.urls:
+            rng.shuffle(urls)
+            for url in urls:
                 yield dict(url=url)
 
 
@@ -796,18 +803,17 @@ def wds_shard_head(
             input_shards, weights=args.train_data_upsampling_factors, deterministic=True, epoch=shared_epoch,
         )]
     elif repeat:
-        pipeline = [RepeatedShardList(input_shards)]
+        pipeline = [RepeatedShardList(input_shards, seed=args.seed, epoch=shared_epoch)]
     else:
         pipeline = [wds.SimpleShardList(expand_urls(input_shards)[0])]
 
     if is_train:
         shard_size, shard_initial, sample_size, sample_initial = wds_shuffle_sizes()
         if not resampled:
-            pipeline.extend([
-                detshuffle2(bufsize=shard_size, initial=shard_initial, seed=args.seed, epoch=shared_epoch),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ])
+            if not repeat:
+                pipeline.append(
+                    detshuffle2(bufsize=shard_size, initial=shard_initial, seed=args.seed, epoch=shared_epoch))
+            pipeline.extend([wds.split_by_node, wds.split_by_worker])
         pipeline.extend([
             tarfile_to_samples_nothrow,
             wds.shuffle(bufsize=sample_size, initial=sample_initial),
