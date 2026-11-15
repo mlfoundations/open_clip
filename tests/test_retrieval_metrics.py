@@ -31,6 +31,30 @@ def _features(num_items=11, dim=7):
     return image_features, text_features
 
 
+@pytest.mark.parametrize("chunk_size", [1, 3, 12])
+def test_multi_caption_retrieval_matches_stable_dense_ranking(chunk_size):
+    from open_clip_train.metrics import get_clip_metrics
+
+    # Non-adjacent captions, unequal group sizes and tied scores in both directions.
+    owners = torch.tensor([0, 1, 0, 2, 1, 0])
+    images = torch.tensor([[1., 0.], [0., 1.], [1., 0.]])
+    texts = torch.tensor([[0., 1.], [1., 0.], [1., 0.], [0., 1.], [0., 1.], [1., 0.]])
+    scores = images @ texts.T
+    i_order = scores.argsort(dim=1, descending=True, stable=True)
+    t_order = scores.T.argsort(dim=1, descending=True, stable=True)
+    i_ranks = (owners[i_order] == torch.arange(len(images))[:, None]).int().argmax(1)
+    t_ranks = (t_order == owners[:, None]).int().argmax(1)
+    metrics = get_clip_metrics(
+        list(images[owners].split(2)), list(texts.split(4)), 1.0,
+        image_ids=np.array(["z", "b", "z", "a", "b", "z"]), retrieval_chunk_size=chunk_size,
+    )
+    for prefix, ranks in [("image_to_text", i_ranks.numpy()), ("text_to_image", t_ranks.numpy())]:
+        assert metrics[f"{prefix}_mean_rank"] == pytest.approx(ranks.mean() + 1)
+        assert metrics[f"{prefix}_median_rank"] == np.floor(np.median(ranks)) + 1
+        for k in (1, 5, 10):
+            assert metrics[f"{prefix}_R@{k}"] == pytest.approx(np.mean(ranks < k))
+
+
 def _assert_metrics_close(actual, expected):
     assert set(actual) == set(expected)
     for key, value in expected.items():

@@ -92,6 +92,44 @@ def _iter_feature_chunks(features, chunk_size):
         yield chunk_start, chunk_start + part_size, _cat_chunk(parts)
 
 
+def _multi_caption_targets(image_features, text_features, image_ids, chunk_size, device, dtype, scale):
+    # Keep the first embedding of each image in dataset order, including when
+    # captions for the same image fall in different loader batches.
+    _, first, inverse = np.unique(image_ids, return_index=True, return_inverse=True)
+    order = np.argsort(first)
+    owners = np.argsort(order)[inverse]
+    keep = np.zeros(len(image_ids), dtype=bool)
+    keep[first] = True
+    images = [
+        chunk[torch.as_tensor(keep[start:end], device=chunk.device)]
+        for start, end, chunk in _iter_feature_chunks(image_features, chunk_size)
+        if keep[start:end].any()
+    ]
+
+    # Score positives with the same tiles as the ranking pass. Computing them
+    # as individual dot products can break ties under reduced precision.
+    targets = torch.empty(len(owners), dtype=dtype, device=device)
+    for start, end, chunk in _iter_feature_chunks(images, chunk_size):
+        image = _to_device(chunk, device, dtype)
+        for t0, t1, text in _iter_feature_chunks(text_features, chunk_size):
+            local = owners[t0:t1]
+            cols = np.flatnonzero((local >= start) & (local < end))
+            if cols.size:
+                scores = scale * (image @ _to_device(text, device, dtype).T)
+                col_idx = torch.as_tensor(cols, device=device)
+                row_idx = torch.as_tensor(local[cols] - start, device=device)
+                targets[t0 + col_idx] = scores[row_idx, col_idx]
+
+    owner = torch.as_tensor(owners, device=device)
+    best = torch.full((len(first),), -torch.inf, dtype=dtype, device=device)
+    best.scatter_reduce_(0, owner, targets, reduce="amax")
+    # Ties use the earliest relevant caption, just like stable descending sort.
+    positions = torch.arange(len(owners), device=device)
+    first_best = torch.full_like(best, len(owners), dtype=torch.long)
+    first_best.scatter_reduce_(0, owner, torch.where(targets == best[owner], positions, len(owners)), reduce="amin")
+    return images, best, first_best, targets, owner
+
+
 def _paired_retrieval_ranks(
         image_features,
         text_features,
@@ -99,6 +137,7 @@ def _paired_retrieval_ranks(
         chunk_size,
         device=None,
         retrieval_dtype=torch.float32,
+        image_ids=None,
 ):
     image_shape = _feature_shape(image_features)
     text_shape = _feature_shape(text_features)
@@ -108,6 +147,10 @@ def _paired_retrieval_ranks(
         )
 
     num_items = image_shape[0]
+    if image_ids is not None:
+        image_ids = np.asarray(image_ids)
+        if image_ids.shape != (num_items,):
+            raise ValueError("Retrieval needs one image ID per image-caption pair.")
     if num_items == 0:
         empty = np.array([], dtype=np.int64)
         return empty, empty
@@ -120,7 +163,6 @@ def _paired_retrieval_ranks(
         device = torch.device(device)
     retrieval_dtype = _resolve_retrieval_dtype(retrieval_dtype, first_feature.dtype)
     chunk_size = _resolve_chunk_size(chunk_size, num_items)
-    image_to_text_ranks = torch.empty(num_items, dtype=torch.long)
     text_to_image_ranks = torch.zeros(num_items, device=device, dtype=torch.long)
 
     scale = torch.as_tensor(
@@ -128,28 +170,33 @@ def _paired_retrieval_ranks(
         device=device,
         dtype=retrieval_dtype,
     )
-    targets = torch.empty(num_items, device=device, dtype=retrieval_dtype)
-
-    paired_chunks = zip(
-        _iter_feature_chunks(image_features, chunk_size),
-        _iter_feature_chunks(text_features, chunk_size),
-    )
-    for (image_start, image_end, image_chunk), (text_start, text_end, text_chunk) in paired_chunks:
-        assert image_start == text_start and image_end == text_end
-        image = _to_device(image_chunk, device, retrieval_dtype)
-        text = _to_device(text_chunk, device, retrieval_dtype)
-        paired_scores = scale * (image @ text.T)
-        targets[image_start:image_end] = paired_scores.diagonal()
+    if image_ids is None:
+        targets = torch.empty(num_items, device=device, dtype=retrieval_dtype)
+        paired_chunks = zip(
+            _iter_feature_chunks(image_features, chunk_size),
+            _iter_feature_chunks(text_features, chunk_size),
+        )
+        for (start, end, image_chunk), (_, _, text_chunk) in paired_chunks:
+            image = _to_device(image_chunk, device, retrieval_dtype)
+            text = _to_device(text_chunk, device, retrieval_dtype)
+            targets[start:end] = (scale * (image @ text.T)).diagonal()
+        best = targets
+        first_best = owners = torch.arange(num_items, device=device)
+    else:
+        image_features, best, first_best, targets, owners = _multi_caption_targets(
+            image_features, text_features, image_ids, chunk_size, device, retrieval_dtype, scale,
+        )
+    image_to_text_ranks = torch.empty(len(best), dtype=torch.long)
 
     for image_start, image_end, image_chunk in _iter_feature_chunks(image_features, chunk_size):
         image = _to_device(image_chunk, device, retrieval_dtype)
-        image_target = targets[image_start:image_end]
+        image_target = best[image_start:image_end]
         image_rank = torch.zeros(image.shape[0], device=device, dtype=torch.long)
-        image_query_idx = torch.arange(image_start, image_end, device=device)[:, None]
+        image_query_idx = first_best[image_start:image_end, None]
 
         for text_start, text_end, text_chunk in _iter_feature_chunks(text_features, chunk_size):
             text = _to_device(text_chunk, device, retrieval_dtype)
-            text_query_idx = torch.arange(text_start, text_end, device=device)[None, :]
+            text_query_idx = owners[None, text_start:text_end]
             scores = scale * (image @ text.T)
             text_candidate_idx = torch.arange(text_start, text_end, device=device)[None, :]
             image_candidate_idx = torch.arange(image_start, image_end, device=device)[:, None]
@@ -185,6 +232,7 @@ def get_clip_metrics(
         retrieval_chunk_size=DEFAULT_RETRIEVAL_CHUNK_SIZE,
         retrieval_device=None,
         retrieval_dtype=torch.float32,
+        image_ids=None,
 ):
     metrics = {}
 
@@ -195,6 +243,7 @@ def get_clip_metrics(
         retrieval_chunk_size,
         device=retrieval_device,
         retrieval_dtype=retrieval_dtype,
+        image_ids=image_ids,
     )
 
     _add_rank_metrics(metrics, f"{image_key}_to_{text_key}", image_to_text_ranks)

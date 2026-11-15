@@ -548,9 +548,12 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
         cumulative_gen_weight = 0
         gen_loss_pad_id = getattr(get_model_from_task(task), 'pad_id', 0)
         all_primary_features, all_text_features = [], []
+        retrieval_image_ids = []
         with torch.inference_mode():
             for i, batch in enumerate(iter_eval_batches(
                     dataloader if is_rank0 else None, device, args.rank, use_fsdp_eval)):
+                if is_rank0 and isinstance(batch, dict) and "retrieval_image_id" in batch:
+                    retrieval_image_ids.append(batch.pop("retrieval_image_id"))
                 batch = dummy_batch if use_fsdp_eval and not is_rank0 else task.prepare_batch(batch, device, input_dtype)
 
                 with autocast():
@@ -633,6 +636,7 @@ def evaluate(task, data, epoch, args, tb_writer=None, tokenizer=None):
                         text_key="text",
                         retrieval_chunk_size=retrieval_chunk_size,
                         retrieval_device=retrieval_device,
+                        image_ids=torch.cat(retrieval_image_ids) if retrieval_image_ids else None,
                         retrieval_dtype="model" if retrieval_precision == "model" else torch.float32,
                     )
                     loss = cumulative_loss / num_samples

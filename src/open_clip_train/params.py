@@ -185,6 +185,11 @@ def parse_args(args):
         help="For csv-like datasets, the name of the key for the image paths."
     )
     parser.add_argument(
+        "--val-csv-image-id-key",
+        help="Optional validation CSV column identifying an image shared by multiple captions "
+             "(e.g. filepath). Retrieval ranks count each image once and accept any of its captions.",
+    )
+    parser.add_argument(
         "--csv-caption-key",
         type=str,
         default="title",
