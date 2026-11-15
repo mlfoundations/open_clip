@@ -2,9 +2,10 @@ import pickle
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from open_clip.audio import AudioAugmentationCfg, CLIPAudioCfg, audio_transform_v2
-from open_clip.audio.transform import get_audio_frame_count, make_audio_preprocess
+from open_clip.audio.transform import _get_mel, get_audio_frame_count, make_audio_preprocess
 
 
 
@@ -76,6 +77,17 @@ def test_audio_preprocess_fusion_shape_for_long_audio():
     assert out["longer"] is True
     assert out["waveform"].shape == (8,)
     assert out["mel_fusion"].shape == (4, get_audio_frame_count(cfg), cfg.mel_bins)
+
+
+def test_audio_preprocess_fusion_global_view_is_whole_clip():
+    cfg = _cfg()
+    preprocess = make_audio_preprocess(cfg, data_trunc="fusion")
+    waveform = _waveform(range(40))
+    out = preprocess((waveform, 8))
+
+    mel = _get_mel(waveform[0], preprocess.cfg)
+    expected = F.interpolate(mel[None, None], size=out["mel_fusion"].shape[1:], mode="bilinear", align_corners=False)
+    torch.testing.assert_close(out["mel_fusion"][0], expected[0, 0])
 
 
 def test_audio_transform_eval_uses_fixed_truncation_policy():

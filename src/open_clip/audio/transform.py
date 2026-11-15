@@ -147,13 +147,10 @@ class AudioPreprocess:
                         local_mels = [
                             torch.nn.functional.pad(m, (0, 0, 0, chunk_frames - m.shape[0])) for m in local_mels
                         ]
-                    global_mel = mel
-                    if global_mel.shape[0] < chunk_frames:
-                        global_mel = torch.nn.functional.pad(global_mel, (0, 0, 0, chunk_frames - global_mel.shape[0]))
-                    elif global_mel.shape[0] > chunk_frames:
-                        overflow = global_mel.shape[0] - chunk_frames
-                        idx = random.randint(0, overflow)
-                        global_mel = global_mel[idx:idx + chunk_frames]
+                    # global view: whole mel resized to chunk_frames (LAION-CLAP / HF ClapFeatureExtractor)
+                    global_mel = torch.nn.functional.interpolate(
+                        mel[None, None], size=(chunk_frames, mel.shape[1]), mode="bilinear", align_corners=False
+                    )[0, 0]
                     mel_fusion = torch.stack([global_mel] + local_mels, dim=0)
                     longer = True
                 result["mel_fusion"] = mel_fusion
