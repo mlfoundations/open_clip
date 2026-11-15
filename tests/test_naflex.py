@@ -1,9 +1,11 @@
 import io
+import itertools
 import tarfile
 import types
 
 import pytest
 import torch
+import webdataset as wds
 from PIL import Image
 from torchvision import transforms
 
@@ -11,7 +13,7 @@ import open_clip
 from open_clip.model_traits import CLIP_TRAITS
 from open_clip.naflex_config import NaFlexDataConfig
 from open_clip.transform import NaFlexEvalTransformFactory, PreprocessCfg, image_transform
-from open_clip_train.data import get_imagenet, get_wds_dataset
+from open_clip_train.data import SharedEpoch, get_imagenet, get_wds_dataset, wds_shard_head
 from open_clip_train.naflex_data import (
     NAFLEX_AVAILABLE,
     NaFlexBatcher,
@@ -577,6 +579,13 @@ def test_get_wds_dataset_naflex_rolls_over_non_resampled_input(tmp_path):
 
     assert len(batches) == 3
     assert sum(batch["image"]["patches"].shape[0] for batch in batches) == 6
+
+
+def test_naflex_repeated_shards_read_each_shard_once_per_pass():
+    args = types.SimpleNamespace(train_data_upsampling_factors=None, workers=1, world_size=1, seed=0)
+    head = wds_shard_head(args, "s-{000..099}.tar", True, False, SharedEpoch(0), repeat=True)
+    urls = [s["url"] for s in itertools.islice(wds.DataPipeline(*head[:-2]), 200)]
+    assert len(set(urls[:100])) == len(set(urls[100:])) == 100
 
 
 def test_create_model_and_transforms_returns_naflex_eval_factory():
