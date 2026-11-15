@@ -646,12 +646,15 @@ def main(args):
 
         # Saving checkpoints.
         sharded_ckpt = args.fsdp and args.fsdp_checkpoint == 'sharded'
+        save_epoch = completed_epoch == args.epochs or (
+            args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+        )
+        previous_epoch = 0
+        if args.save_frequency > 0:
+            previous_epoch = (completed_epoch - 1) // args.save_frequency * args.save_frequency
 
         if sharded_ckpt:
             # Sharded DCP — all ranks write shard files to a directory
-            save_epoch = completed_epoch == args.epochs or (
-                args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-            )
             if save_epoch:
                 save_sharded_checkpoint(
                     train_state.task, train_state.optimizer,
@@ -684,8 +687,7 @@ def main(args):
                     os.rename(tmp_dir, latest_dir)
                     if os.path.exists(trash_dir):
                         shutil.rmtree(trash_dir)
-            if args.delete_previous_checkpoint and args.save_logs:
-                previous_epoch = completed_epoch - args.save_frequency
+            if args.delete_previous_checkpoint and args.save_logs and save_epoch:
                 if previous_epoch > 0:
                     prev_dir = os.path.join(args.checkpoint_path, f"epoch_{previous_epoch}")
                     if os.path.isdir(prev_dir):
@@ -705,15 +707,12 @@ def main(args):
                 )
 
             if args.save_logs:
-                if completed_epoch == args.epochs or (
-                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-                ):
+                if save_epoch:
                     torch.save(
                         checkpoint_dict,
                         os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
                     )
-                if args.delete_previous_checkpoint:
-                    previous_epoch = completed_epoch - args.save_frequency
+                if args.delete_previous_checkpoint and save_epoch:
                     if previous_epoch > 0:
                         previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{previous_epoch}.pt")
                         if os.path.exists(previous_checkpoint):
