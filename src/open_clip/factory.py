@@ -544,6 +544,8 @@ def create_model(
                 apply_naflex_vision_config(model_cfg)
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
+        if "multimodal_cfg" in model_cfg:
+            model_cfg["multimodal_cfg"]["context_length"] = force_context_length
 
     # Check compatibility (e.g., QuickGELU warning for tags)
     if schema is None and pretrained_cfg_for_tag:

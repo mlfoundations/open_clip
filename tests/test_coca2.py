@@ -119,6 +119,11 @@ def test_coca2_config():
     assert model.visual.attn_pool_contrastive is not None
 
 
+def test_coca_force_context_length_applies_to_decoder():
+    model = open_clip.create_model('coca_ViT-B-32', force_context_length=80)
+    assert model.context_length == model.text_decoder.context_length == 80
+
+
 def test_multimodal_transformer_calls_init_parameters_from_constructor(monkeypatch):
     calls = 0
     original = MultimodalTransformer.init_parameters
