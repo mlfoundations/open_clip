@@ -872,8 +872,7 @@ def download_pretrained_from_url(
             return download_target
 
     with urllib.request.urlopen(url) as source, open(download_target, "wb") as output:
-        # Chunked or otherwise unlength-delimited responses omit Content-Length.
-        # int(None) would crash after the destination file had already been opened.
+        # Content-Length may be absent (e.g. chunked responses); progress total is then unknown.
         content_length = source.headers.get("Content-Length")
         total = int(content_length) if content_length else None
         with tqdm(total=total, ncols=80, unit='iB', unit_scale=True) as loop:
