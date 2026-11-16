@@ -52,7 +52,7 @@ Note that portions of `src/open_clip/` modelling and tokenizer code are adaptati
 
 ## What's new in 4.x
 
-- **[NaFlex CLAP](#audio-text-models-naflex-clap)**: new pretrained audio-text models that take variable-length audio
+- **[CLAP 2 (NaFlex CLAP)](#audio-text-models-clap-2)**: new pretrained audio-text models that take variable-length audio
 - **NaFlex CLIP**: variable-resolution/aspect image towers (timm `naflexvit`) with token-budget batching (`--use-naflex`, `naflex_*` configs)
 - **NaFlex GenLIP / GenLAP**: generative image/audio captioning with prefix-LM attention (`naflexgenlip_*`, `naflexgenlap_*` training configs, no pretrained weights yet)
 - **Modern text towers**: RoPE, SwiGLU/ReLU², and RMSNorm options (`moderntext-*` configs), per-batch variable-length text, and Hugging Face ModernBERT towers
@@ -135,9 +135,9 @@ You can also load checkpoints from huggingface this way. To do so, download the 
 model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k') 
 ```
 
-### Audio-text models (NaFlex CLAP)
+### Audio-text models (CLAP 2)
 
-The NaFlex CLAP models (paper: arXiv TBD, see [Citing](#citing)) map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use.
+The CLAP 2 (NaFlex CLAP) models ([paper](https://arxiv.org/abs/2611.11592), see [Citing](#citing)) map variable-length audio and English text into a shared embedding space. All five use the pretrained tag `laion_audio_xl_s1b`. See the model cards for benchmarks, input notes, batching, and intended use.
 
 | Model | Model card | Params | Embedding dim |
 | ----- | ---------- | ------ | ------------- |
@@ -736,12 +736,14 @@ If you found this repository useful, please consider citing:
 ```
 
 ```bibtex
-@misc{naflexclap_tbd,
+@misc{wijngaard2026laionaudioxlwebscalecorpusscaling,
   title={LAION-Audio-XL: A Web-Scale Corpus and Scaling Studies for Contrastive Language-Audio Pretraining},
-  author={TBD},
-  year={TBD},
-  eprint={TBD},
-  archivePrefix={arXiv}
+  author={Gijs Wijngaard and Felix Förster and Ross Wightman and Marianna Nezhurina and Christoph Schuhmann and Jenia Jitsev and A. Sophia Koepke},
+  year={2026},
+  eprint={2611.11592},
+  archivePrefix={arXiv},
+  primaryClass={cs.SD},
+  url={https://arxiv.org/abs/2611.11592},
 }
 ```
 

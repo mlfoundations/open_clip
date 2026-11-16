@@ -147,3 +147,13 @@ def test_hf_tokenizer_encode_decode_controls_delegate_cleanly():
     assert tokenizer.batch_decode([[10, 2, 99], [11]]) == ["[10, 2]:False", "[11]:False"]
     batch_tokens = torch.tensor([[10, 2, 99], [11, 2, 98]])
     assert tokenizer.batch_decode(batch_tokens) == ["[10, 2]:False", "[11, 2]:False"]
+
+
+def test_mask_tokenize_single_string_input():
+    from open_clip.tokenizer import random_mask_tokenize, simple_mask_tokenize
+    tok = SimpleTokenizer()
+    # Passing a single string directly should result in a batch of size 1, not iterating over chars
+    out_rand = random_mask_tokenize("hello world", 10, 0, 1, tok.encode)
+    assert out_rand.shape == (1, 10)
+    out_simple = simple_mask_tokenize("hello world", 10, 0, 1, tok.encode)
+    assert out_simple.shape == (1, 10)

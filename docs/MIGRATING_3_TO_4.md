@@ -64,7 +64,7 @@ Existing pretrained `.pt` checkpoints load without changes. Training checkpoints
 ## New model families
 
 - **NaFlex CLIP** — variable-resolution/aspect image towers (timm `naflexvit`) with token-budget batching (`--use-naflex`, `naflex_*` configs)
-- **NaFlex CLAP** — audio-text contrastive training with variable-duration audio (`naflexclap_*` configs, with [pretrained checkpoints](PRETRAINED.md#naflex-clap-laion-audio-xl))
+- **CLAP 2 (NaFlex CLAP)** — audio-text contrastive training with variable-duration audio (`naflexclap_*` configs, with [pretrained checkpoints](PRETRAINED.md#clap-2-laion-audio-xl))
 - **NaFlex GenLIP / GenLAP** — generative image/audio captioning with prefix-LM attention and packed `[media ; text]` rows (`naflexgenlip_*`, `naflexgenlap_*` configs, tiktoken text; training configs, no pretrained weights yet)
 - **Modern text tower** — `text_cfg.text_arch="modern"`: RoPE, SwiGLU/ReLU², RMSNorm, masked pooling (`eos`/`mean`/`map`), with optional qk-norm, gated attention, register tokens, sandwich norm, value residuals, and zero-init residual (`moderntext-*` configs)
 - **Variable-length text** — `text_cfg.variable_text=true` pads captions to the per-batch max instead of a fixed context length (works with the modern tower and HF towers)

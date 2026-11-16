@@ -265,13 +265,15 @@ class DistillClipLoss(ClipLoss):
             dist_image_features,
             dist_text_features,
             dist_logit_scale,
+            logit_bias=None,
+            dist_logit_bias=None,
             output_dict=False,
     ):
         logits_per_image, logits_per_text = \
-            self.get_logits(image_features, text_features, logit_scale)
+            self.get_logits(image_features, text_features, logit_scale, logit_bias=logit_bias)
 
         dist_logits_per_image, dist_logits_per_text = \
-            self.get_logits(dist_image_features, dist_text_features, dist_logit_scale)
+            self.get_logits(dist_image_features, dist_text_features, dist_logit_scale, logit_bias=dist_logit_bias)
 
         labels = self.get_ground_truth(image_features.device, logits_per_image.shape[0])
 

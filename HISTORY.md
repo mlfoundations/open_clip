@@ -2,7 +2,7 @@
 
 First 4.x release on PyPI. See the [migration guide](docs/MIGRATING_3_TO_4.md) for breaking changes when upgrading from 3.x.
 
-* Add pretrained NaFlex CLAP audio-text models
+* Add pretrained CLAP 2 (NaFlex CLAP) audio-text models
 * Add NaFlex CLIP, NaFlex GenLIP / GenLAP, MaMMUT, and CoCa v2 model families
 * Add modern and variable-length text towers
 * Move training to the `TrainingTask` stack with dict-based batches, FSDP2, and `torch.compile` strategies
