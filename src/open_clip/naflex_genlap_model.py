@@ -5,7 +5,8 @@ Same single-transformer, autoregressive-LM-on-captions design as GenLIP, but the
 spectrogram into the same ``{patches, patch_coord=(freq,time), patch_valid}`` contract, so this model reuses
 the entire GenLIP trunk stack -- ``GenLipTrunk``, ``GenLipRotaryEmbedding``, the prefix-LM mask, the untied LM
 head and the memory-efficient fused linear cross-entropy -- unchanged. Only the patch embed (``MelPatchEmbed``)
-and the position-id construction differ.
+and the position-id construction differ. The trunk's optional in-fusion capacity (``prefix_layers``) applies to
+the audio prefix tokens the same way it does to GenLIP's image tokens.
 
 RoPE has two modes, chosen by patch geometry:
   * **1-D time** (``rope_1d=True``; full-height freq strips, ``F == 1``): the time index is broadcast to all
@@ -116,6 +117,7 @@ class NaFlexGenLap(nn.Module):
         self.text_cfg = text_cfg
         self.trunk_cfg = genlap_cfg
         self.pack_prefix = genlap_cfg.pack_prefix
+        self.prefix_routing = genlap_cfg.prefix_routing
         self.output_dict = output_dict
         self.embed_dim = embed_dim
         # 1-D time vs 2-D axial rope; default derives from patch geometry (full-height strips -> 1-D).
@@ -178,7 +180,7 @@ class NaFlexGenLap(nn.Module):
         attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_audio_position_ids(audio['patch_coord'], patch_valid, rope_1d=self.rope_1d)
         cos, sin = self.rotary(x, pos)
-        x = self.trunk(x, attn_mask, cos, sin)  # ln_post applied inside trunk
+        x = self.trunk(x, attn_mask, cos, sin, prefix_tokens=x.shape[1])  # ln_post applied inside trunk
         pv = patch_valid.to(x.dtype)
         pooled = (x * pv.unsqueeze(-1)).sum(dim=1) / pv.sum(dim=1, keepdim=True).clamp(min=1.0)
         pooled = self.audio_proj(pooled)
@@ -199,7 +201,7 @@ class NaFlexGenLap(nn.Module):
         attn_mask = build_prefix_lm_mask(patch_valid, text_valid)
         pos = build_audio_position_ids(audio['patch_coord'], patch_valid, text_valid, rope_1d=self.rope_1d)
         cos, sin = self.rotary(h, pos)
-        h = self.trunk(h, attn_mask, cos, sin)
+        h = self.trunk(h, attn_mask, cos, sin, prefix_tokens=aud_emb.shape[1])
         return self.out_proj(h), aud_emb.shape[1]
 
     def forward(
