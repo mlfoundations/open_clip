@@ -13,6 +13,8 @@ from transformers import GenerationConfig
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+from .transformer import KVCache
+
 _logger = logging.getLogger(__name__)
 
 _LEGACY_SOT_TOKEN_ID = 49406
@@ -53,6 +55,9 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
         text_encoder_fn: Callable (text_ids) -> token_embs ``(B, S, D)``.
         text_decoder_fn: Callable (image_embs, token_embs) -> logits ``(B, S, V)``.
         image_embs: Pre-computed image context for cross-attention ``(B, N, D)``.
+        cached_text_encoder_fn: Optional callable (text_ids, kv_cache) -> token_embs for the positions
+            after ``kv_cache.seq_len``. When given, decoding is incremental with a ``KVCache`` and
+            ``text_decoder_fn`` must accept ``kv_cache``.
         vocab_size: Vocabulary size for config.
         pad_token_id: Pad token id.
         eos_token_id: End-of-sequence token id.
@@ -70,10 +75,12 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
             pad_token_id: int = 0,
             eos_token_id: int = 49407,
             bos_token_id: int = 49406,
+            cached_text_encoder_fn: Optional[Callable] = None,
     ):
         super().__init__()
         self._text_encoder_fn = text_encoder_fn
         self._text_decoder_fn = text_decoder_fn
+        self._cached_text_encoder_fn = cached_text_encoder_fn
         # Register as buffer so .device / expansion for beam search works.
         self.register_buffer("_image_embs", image_embs)
         self.config = _SimpleConfig(
@@ -106,16 +113,17 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
             input_ids,
             image_embs=None,
             context_valid=None,
+            past_key_values=None,
             **kwargs,
     ):
-        # TODO(kv-cache): When past_key_values is not None, slice input_ids
-        # to only the last token and forward past_key_values + cache_position.
         inputs = {
             "input_ids": input_ids,
             "image_embs": image_embs if image_embs is not None else self._image_embs,
         }
         if context_valid is not None:
             inputs["context_valid"] = context_valid
+        if past_key_values is not None:
+            inputs["past_key_values"] = past_key_values
         return inputs
 
     def forward(
@@ -123,25 +131,32 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
             input_ids: torch.Tensor,
             image_embs: Optional[torch.Tensor] = None,
             context_valid: Optional[torch.Tensor] = None,
+            past_key_values: Optional[KVCache] = None,
             **kwargs,  # absorb cache_position, attention_mask, etc.
     ) -> CausalLMOutputWithPast:
         if image_embs is None:
             image_embs = self._image_embs
-        # TODO(kv-cache): Accept past_key_values, pass to decoder, return
-        # updated cache.  With KV-cache, only encode the new token positions
-        # and concatenate cached K/V in the self-attention layers of the
-        # decoder.  The cross-attention K/V (image_embs) are constant and can
-        # be cached once.
-        token_embs = self._text_encoder_fn(input_ids)
+        decoder_kwargs = {}
+        if self._cached_text_encoder_fn is not None:
+            # HF passes our cache back each step (use_cache stays off so it never builds its own)
+            if past_key_values is None:
+                past_key_values = KVCache()
+            token_embs = self._cached_text_encoder_fn(input_ids, past_key_values)
+            decoder_kwargs['kv_cache'] = past_key_values
+        else:
+            token_embs = self._text_encoder_fn(input_ids)
         if context_valid is not None:
             # 3-arg form only when masking is in play; 2-arg decoder fns stay compatible
-            logits = self._text_decoder_fn(image_embs, token_embs, context_valid)
+            logits = self._text_decoder_fn(image_embs, token_embs, context_valid, **decoder_kwargs)
         else:
-            logits = self._text_decoder_fn(image_embs, token_embs)
-        return CausalLMOutputWithPast(logits=logits, past_key_values=None)
+            logits = self._text_decoder_fn(image_embs, token_embs, **decoder_kwargs)
+        if past_key_values is not None:
+            past_key_values.seq_len = input_ids.shape[1]
+        return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
 
     def _reorder_cache(self, past_key_values, beam_idx):
-        # TODO(kv-cache): Reorder cached K/V for beam search beam reordering.
+        if past_key_values is not None:
+            past_key_values.reorder(beam_idx)
         return past_key_values
 
 
@@ -411,6 +426,7 @@ def generate_multimodal(
         repetition_penalty: float = 1.0,
         fixed_output_length: bool = False,
         generation_config: Optional[GenerationConfig] = None,
+        cached_text_encoder_fn: Optional[Callable] = None,
 ) -> torch.Tensor:
     if stopping_criteria is not None:
         import warnings
@@ -481,6 +497,7 @@ def generate_multimodal(
                 pad_token_id=pad_token_id,
                 eos_token_id=eos_token_id,
                 bos_token_id=sot_token_id,
+                cached_text_encoder_fn=cached_text_encoder_fn,
             )
             generate_kwargs = dict(image_embs=image_embs)
             if context_valid is not None:

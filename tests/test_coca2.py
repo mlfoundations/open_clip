@@ -8,6 +8,7 @@ import torch
 import open_clip
 from open_clip.coca_model import CoCa, MultimodalCfg
 from open_clip.transformer import (
+    KVCache,
     ModernMultimodalDecoder,
     ModernMultimodalTransformer,
     ModernTextTransformer,
@@ -254,6 +255,27 @@ def test_coca2_moderntext_config():
     assert out['image_features'].shape == (2, 512)
     assert out['text_features'].shape == (2, 512)
     assert out['logits'].shape == (2, text.shape[1], 49408)
+
+
+def test_coca_kv_cache_matches_full_decode():
+    pytest.importorskip('transformers')
+    model = _tiny_coca().eval()
+    image = torch.randn(2, 3, 64, 64)
+    text = torch.randint(3, 60, (2, 10))
+    text[0, 4] = 0  # pad id mid-sequence exercises the pad/cls key mask
+    with torch.no_grad():
+        _, image_embs = model._encode_image(image)
+        full = model.text_decoder(image_embs, model._encode_text(text)[1])
+        cache, steps = KVCache(), []
+        for t in range(1, text.shape[1] + 1):
+            tokens = model.text.forward_tokens_cached(text[:, :t], cache)
+            steps.append(model.text_decoder(image_embs, tokens, kv_cache=cache))
+            cache.seq_len = t
+    torch.testing.assert_close(torch.cat(steps, 1), full)
+
+    kw = dict(generation_type='beam_search', num_beams=3, num_beam_groups=1, seq_len=10,
+              sot_token_id=1, eos_token_id=2, pad_token_id=0)
+    assert torch.equal(model.generate(image, **kw), model.generate(image, use_kv_cache=False, **kw))
 
 
 def _tiny_modern_coca(seed=0):

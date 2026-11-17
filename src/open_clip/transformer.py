@@ -77,6 +77,20 @@ class PatchDropout(nn.Module):
         return x
 
 
+class KVCache:
+    """Per-attention-module K/V for incremental decoding. Self-attn entries grow, cross-attn (static)
+    entries are computed once."""
+
+    def __init__(self):
+        self.seq_len = 0  # text positions already cached, advanced by the caller after each step
+        self.kv = {}
+        self.static_kv = {}
+
+    def reorder(self, index: torch.Tensor):
+        # static_kv rows are identical within a sample's beams, no reorder needed
+        self.kv = {m: (k.index_select(0, index), v.index_select(0, index)) for m, (k, v) in self.kv.items()}
+
+
 class Attention(nn.Module):
     def __init__(
             self,
@@ -179,8 +193,15 @@ class Attention(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            kv_cache: Optional[KVCache] = None,
+            static_kv: bool = False,
     ):
         N, L, C = x.shape
+        cache_store, cached_kv = None, None
+        if kv_cache is not None:
+            cache_store = kv_cache.static_kv if static_kv else kv_cache.kv
+            cached_kv = cache_store.get(self)
+        reuse_kv = static_kv and cached_kv is not None
 
         if k_x is None and v_x is None:
             # Self-attention fast path: fused QKV projection
@@ -212,16 +233,25 @@ class Attention(nn.Module):
                 w_q, w_k, w_v = self.q_proj_weight, self.k_proj_weight, self.v_proj_weight
 
             q = F.linear(x, w_q, bias_q)
-            k = F.linear(k_x, w_k, bias_k)
-            v = F.linear(v_x, w_v, bias_v)
+            if not reuse_kv:
+                k = F.linear(k_x, w_k, bias_k)
+                v = F.linear(v_x, w_v, bias_v)
 
         q = q.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        if reuse_kv:
+            k, v = cached_kv
+        else:
+            k = k.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+            v = v.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+            if cache_store is not None:
+                if cached_kv is not None:
+                    k = torch.cat([cached_kv[0], k], dim=2)
+                    v = torch.cat([cached_kv[1], v], dim=2)
+                cache_store[self] = (k, v)
 
         if attn_mask is not None and attn_mask.ndim == 3:
-            # reshape (N*num_heads, L, L) -> (N, num_heads, L, L)
-            attn_mask = attn_mask.reshape(N, self.num_heads, L, L)
+            # reshape (N*num_heads, L, L_k) -> (N, num_heads, L, L_k)
+            attn_mask = attn_mask.reshape(N, self.num_heads, L, -1)
 
         if self.logit_scale is not None:
             attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-1, -2)
@@ -334,6 +364,7 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            kv_cache: Optional[KVCache] = None,
     ):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
@@ -341,7 +372,8 @@ class ResidualAttentionBlock(nn.Module):
             # align additive (float) masks with compute dtype; bool masks pass through untouched
             # (SDPA and the manual masked_fill path both consume bool directly)
             attn_mask = attn_mask.to(q_x.dtype)
-        return self.attn(q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask)
+        return self.attn(
+            q_x, k_x=k_x, v_x=v_x, attn_mask=attn_mask, kv_cache=kv_cache, static_kv=hasattr(self, "ln_1_kv"))
 
     def forward(
             self,
@@ -349,10 +381,15 @@ class ResidualAttentionBlock(nn.Module):
             k_x: Optional[torch.Tensor] = None,
             v_x: Optional[torch.Tensor] = None,
             attn_mask: Optional[torch.Tensor] = None,
+            kv_cache: Optional[KVCache] = None,
     ):
-        k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
-        v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
-        x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
+        if not hasattr(self, "ln_1_kv"):
+            k_x = v_x = None
+        elif kv_cache is None or self.attn not in kv_cache.static_kv:  # context K/V not cached yet
+            k_x = self.ln_1_kv(k_x) if k_x is not None else None
+            v_x = self.ln_1_kv(v_x) if v_x is not None else None
+        x = q_x + self.ls_1(self.attention(
+            q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask, kv_cache=kv_cache))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
 
@@ -510,9 +547,16 @@ class Transformer(nn.Module):
         self.resblocks = self.resblocks[:max_index + 1]  # truncate blocks
         return take_indices
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    def forward(
+            self,
+            x: torch.Tensor,
+            attn_mask: Optional[torch.Tensor] = None,
+            kv_cache: Optional[KVCache] = None,
+    ):
         for r in self.resblocks:
-            if self.grad_checkpointing:
+            if kv_cache is not None:
+                x = r(x, attn_mask=attn_mask, kv_cache=kv_cache)
+            elif self.grad_checkpointing:
                 x = checkpoint(r, x, attn_mask=attn_mask, use_reentrant=False)
             else:
                 x = r(x, attn_mask=attn_mask)
@@ -2089,6 +2133,22 @@ class TextTransformer(nn.Module):
 
         return pooled
 
+    def forward_tokens_cached(self, text: torch.Tensor, kv_cache: KVCache) -> torch.Tensor:
+        """Token features for positions after ``kv_cache.seq_len``. CLS is skipped, it is last under the causal mask."""
+        past, seq_len = kv_cache.seq_len, text.shape[1]
+        cast_dtype = self.transformer.get_cast_dtype()
+        x = self.token_embedding(text[:, past:]).to(cast_dtype)
+        x = x + self.positional_embedding[past:seq_len].to(cast_dtype)
+
+        attn_mask = self.attn_mask[past:seq_len, :seq_len]
+        if self.cls_emb is not None:
+            # same pad/cls key masking as the full pass, keys limited to the text positions
+            add_mask = self._build_additive_mask(text, seq_len - past, x.dtype)[:, :, :seq_len]
+            attn_mask = attn_mask.unsqueeze(0) + add_mask
+
+        x = self.transformer(x, attn_mask=attn_mask, kv_cache=kv_cache)
+        return x if self.cls_emb is not None else self.ln_final(x)
+
 
 def context_attn_mask_from_valid(context_valid: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     """[B, L_ctx] bool/int validity (True/1 = real K/V token) -> SDPA bool mask [B, 1, 1, L_ctx].
@@ -2220,28 +2280,34 @@ class MultimodalTransformer(Transformer):
         # (weight, bias) in F.linear convention ([vocab, width]) for the fused caption-loss path.
         return self.text_projection.t(), None
 
-    def forward(self, context, text_embs, context_valid=None, return_hidden: bool = False):
+    def forward(
+            self,
+            context,
+            text_embs,
+            context_valid=None,
+            return_hidden: bool = False,
+            kv_cache: Optional[KVCache] = None,
+    ):
         """context: [B, L_ctx, D] cross-attention K/V tokens (modality-agnostic; the caller names the
         modality). context_valid: optional [B, L_ctx] bool/int, True/1 = real token -- masks padded
-        context keys (e.g. NaFlex patch batches)."""
-        # TODO(kv-cache): Accept past_key_values (list of (K, V) per layer)
-        # and cache_position. When past_key_values is not None, only process
-        # new positions for self-attention (concatenate past K/V).
-        # Cross-attention K/V from context are constant per generation and
-        # can be cached once.
-        seq_len = text_embs.shape[1]
+        context keys (e.g. NaFlex patch batches). kv_cache: ``text_embs`` holds only positions after
+        ``kv_cache.seq_len``."""
+        past = kv_cache.seq_len if kv_cache is not None else 0
+        seq_len = past + text_embs.shape[1]
+        attn_mask = self.attn_mask[past:seq_len, :seq_len]
         context_attn_mask = context_attn_mask_from_valid(context_valid)
 
         for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
-            if self.grad_checkpointing:
+            if self.grad_checkpointing and kv_cache is None:
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
                 text_embs = checkpoint(
-                    resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len], use_reentrant=False)
+                    resblock, text_embs, None, None, attn_mask, use_reentrant=False)
                 text_embs = checkpoint(
                     cross_attn, text_embs, context, context, context_attn_mask, use_reentrant=False)
             else:
-                text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
-                text_embs = cross_attn(text_embs, k_x=context, v_x=context, attn_mask=context_attn_mask)
+                text_embs = resblock(text_embs, attn_mask=attn_mask, kv_cache=kv_cache)
+                text_embs = cross_attn(
+                    text_embs, k_x=context, v_x=context, attn_mask=context_attn_mask, kv_cache=kv_cache)
 
         out = self.ln_final(text_embs)
         if return_hidden:
