@@ -850,8 +850,9 @@ class VisionTransformer(nn.Module):
         )
 
         # process intermediates
-        if normalize_intermediates:
-            # apply final norm to all intermediates
+        if normalize_intermediates and not (self.attn_pool is not None and self.attn_pool_contrastive is None):
+            # apply final norm to all intermediates; the original CoCa setup (single attn_pool) has no norm on the
+            # encoder tokens, its ln_post is applied to the pooled output (output_dim) so it can't be applied here
             intermediates = [self.ln_post(xi) for xi in intermediates]
         num_prefix_tokens = 1  # one class token that's always there (as of now)
         if num_prefix_tokens:
