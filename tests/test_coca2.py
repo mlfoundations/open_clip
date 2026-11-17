@@ -70,6 +70,20 @@ def test_attentional_pool_legacy_bool_unchanged():
     assert out['image_features'].shape == (2, 64)
 
 
+@pytest.mark.parametrize('mode', [True, 'parallel', 'cascade'])
+def test_vision_forward_intermediates_normalize(mode):
+    """normalize_intermediates must not apply the output_dim-sized ln_post of the legacy single-pooler CoCa
+    tower (width 96 != output_dim 64) to the width-dim encoder tokens; the paper modes norm encoder tokens."""
+    visual = _tiny_coca(attentional_pool=mode).eval().visual
+    image = torch.randn(2, 3, 64, 64)
+    with torch.no_grad():
+        plain = visual.forward_intermediates(image, intermediates_only=True)['image_intermediates']
+        normed = visual.forward_intermediates(
+            image, normalize_intermediates=True, intermediates_only=True)['image_intermediates']
+    assert plain[0].shape == normed[0].shape == (2, 96, 2, 2)
+    assert torch.allclose(plain[0], normed[0]) == (mode is True)
+
+
 def test_vision_lock_includes_attentional_poolers():
     """layer_groups must place the pooler(s) in the head group: --lock-image has to freeze them
     (regression: cascade/parallel poolers -- and the legacy single pooler -- were ungrouped, so
