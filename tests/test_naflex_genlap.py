@@ -193,3 +193,61 @@ def test_genlap_pre_norm_per_modality_streams():
     with torch.no_grad():
         loss = model(audio=audio, text=text, text_valid=text_valid, compute_loss=True)['caption_loss_ce']
     assert torch.isfinite(loss)
+
+
+@pytest.mark.parametrize("config", [CONFIG_1D, CONFIG_2D])
+@pytest.mark.parametrize('prefix_routing', ['mask', 'gather'])
+def test_genlap_infusion_zero_init_identity_and_trains(config, prefix_routing):
+    """The shared trunk's in-fusion capacity applies to the audio prefix: zero init matches the plain model
+    (block / packed loss, encode_audio), and the loss reaches the in-fusion params."""
+    import copy
+
+    torch.manual_seed(0)
+    base = open_clip.create_model(config).eval()
+    cfg = copy.deepcopy(open_clip.get_model_config(config))
+    cfg['genlap_cfg'].update(prefix_layers=1, prefix_ffn_size=32, prefix_routing=prefix_routing)
+    model = NaFlexGenLap(**cfg).eval()
+    assert model.prefix_routing == prefix_routing
+    missing, unexpected = model.load_state_dict(base.state_dict(), strict=False)
+    assert not unexpected and missing and all(('_delta' in k or '.prefix_mlp.' in k) for k in missing)
+
+    audio = _audio_batch(model)
+    text, text_valid = _text(model.pad_id)
+    kw = dict(audio=audio, text=text, text_valid=text_valid, compute_loss=True)
+    with torch.no_grad():
+        for pack in (False, True):
+            base.pack_prefix = model.pack_prefix = pack
+            torch.testing.assert_close(model(**kw)['caption_loss_ce'], base(**kw)['caption_loss_ce'])
+        torch.testing.assert_close(model.encode_audio(audio), base.encode_audio(audio))
+
+    model.pack_prefix = False
+    model(**kw)['caption_loss_ce'].backward()
+    attn = model.trunk.layers[0].self_attn
+    assert attn.v_delta.grad is not None and attn.v_delta.grad.abs().sum() > 0
+    assert model.trunk.layers[0].prefix_mlp.fc2.weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize('config', [CONFIG_1D, CONFIG_2D])
+def test_genlap_infusion_packed_routing_parity(config):
+    torch.manual_seed(0)
+    cfg = open_clip.get_model_config(config)
+    cfg['genlap_cfg'].update(prefix_layers=1, prefix_ffn_size=32, pack_prefix=True, prefix_routing='gather')
+    model = NaFlexGenLap(**cfg).eval()
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if '_delta' in n or '.prefix_mlp.' in n:
+                p.normal_(std=0.05)
+    audio = _audio_batch(model)
+    text, text_valid = _text(model.pad_id)
+    kw = dict(audio=audio, text=text, text_valid=text_valid, compute_loss=True)
+    gathered = model(**kw)['caption_loss_ce']
+    gathered.backward()
+    grads = {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None}
+    model.zero_grad(set_to_none=True)
+    model.prefix_routing = 'mask'
+    masked = model(**kw)['caption_loss_ce']
+    torch.testing.assert_close(gathered, masked)
+    masked.backward()
+    for n, p in model.named_parameters():
+        if n in grads:
+            torch.testing.assert_close(p.grad, grads[n], atol=2e-6, rtol=1e-4, msg=n)

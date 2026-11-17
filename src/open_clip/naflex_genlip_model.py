@@ -14,6 +14,9 @@ are concatenated into one sequence ``S = [v0..vM, t0..tL]`` run through a unifie
 - **gated attention**: ``q_proj`` emits ``2*width`` channels split into a query and a sigmoid gate applied to
   the attention output (the paper's attention-sink fix).
 - **SwiGLU** FFN, **LayerScale**, and **DropPath**.
+- optional **in-fusion** prefix capacity (arXiv 2611.17334): in the first ``prefix_layers`` blocks the prefix
+  (image / audio) tokens get zero-init weight deltas on the attention projections and an extra zero-init
+  SwiGLU branch, text tokens use the shared weights only (see :func:`prefix_linear`).
 
 The cross-entropy LM loss is applied only to text tokens (image patches and padding are ``ignore_index``).
 Used as a pure vision encoder the LM head / text embedding are discarded and prefix-LM degrades to full
@@ -25,7 +28,7 @@ sequence packing -- a batch is a set of padded rows, each row ``[one image's pat
 Attention uses torch SDPA with a dense per-sample boolean prefix-LM mask.
 """
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -90,6 +93,18 @@ class NaFlexGenLipTrunkCfg:
     # instead of the fixed [prefix-block ; text-block] layout -- removes wasted padding between the prefix and
     # text (big win for variable-length audio). Default False = current block layout (existing runs unchanged).
     pack_prefix: bool = False
+    # In-fusion (arXiv 2611.17334): extra prefix (image / audio) token only capacity in the first `prefix_layers`
+    # blocks, zero init so the model starts as the plain shared trunk. `prefix_attn_delta` adds image only deltas
+    # to the q (incl. the fused gate) / k / v / out projections (prefix tokens use W + dW),
+    # `prefix_ffn_size` > 0 adds a prefix only SwiGLU / MLP branch of that hidden size on the norm2 output.
+    prefix_layers: int = 0
+    prefix_attn_delta: bool = True
+    prefix_ffn_size: int = 0
+    # Packed prefixes only: 'mask' computes dense branches, 'gather' projects each token with its routed
+    # weights and runs the extra FFN only on prefix tokens. Gather builds indices once per packed forward;
+    # its prefix count shares the existing packed-length host read (no extra CUDA synchronization).
+    # Switching modes on a compiled model can trigger recompilation.
+    prefix_routing: str = 'mask'
 
 
 _ACT_FN = {
@@ -217,6 +232,108 @@ class GenLipRotaryEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# In-fusion prefix token routing
+# ---------------------------------------------------------------------------------------------------------------------
+class PackedPrefixRoute(NamedTuple):
+    """Disjoint indices into flattened ``(B, S)`` tokens; other_idx includes text and padding."""
+
+    prefix_idx: torch.Tensor
+    other_idx: torch.Tensor
+
+    @classmethod
+    def from_mask(cls, prefix_mask: torch.Tensor, num_prefix: Optional[int] = None) -> 'PackedPrefixRoute':
+        """Build once at the packing boundary, outside the transformer blocks.
+
+        Args:
+            prefix_mask: ``(B, S)`` bool, True for prefix tokens.
+            num_prefix: The mask's True count as a host int, when the caller already has it (e.g. read along w/
+                the packed length). The indices are then built w/o a host sync (``nonzero_static``), otherwise the
+                count is read from the device (one sync).
+        """
+        mask = prefix_mask.flatten()
+        if num_prefix is None:
+            num_prefix = int(mask.sum())
+        # NOTE a wrong num_prefix pads w/ -1 (or truncates), the caller must pass the exact count
+        prefix_idx = torch.nonzero_static(mask, size=num_prefix).squeeze(1)
+        other_idx = torch.nonzero_static(~mask, size=mask.numel() - num_prefix).squeeze(1)
+        return cls(prefix_idx, other_idx)
+
+    def prefix(self, x: torch.Tensor) -> torch.Tensor:
+        """The prefix tokens of ``x`` ``(B, S, ...)``, flattened ``(num_prefix, ...)``."""
+        return x.flatten(0, 1).index_select(0, self.prefix_idx)
+
+    def split(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """``x`` ``(B, S, ...)`` -> flattened ``(prefix tokens, other tokens)``."""
+        flat = x.flatten(0, 1)
+        return flat.index_select(0, self.prefix_idx), flat.index_select(0, self.other_idx)
+
+    def merge(self, prefix: torch.Tensor, other: torch.Tensor, batch_shape: Tuple[int, int]) -> torch.Tensor:
+        """Inverse of :meth:`split`, back to ``(*batch_shape, ...)``."""
+        out = prefix.new_empty(prefix.shape[0] + other.shape[0], *prefix.shape[1:])
+        # every position is written exactly once (padding is in other_idx)
+        out.index_copy_(0, self.prefix_idx, prefix)
+        out.index_copy_(0, self.other_idx, other)
+        return out.view(*batch_shape, *prefix.shape[1:])
+
+
+# Prefix (image / audio) token selection: an int n (first n positions of every row; n >= S for encoder-only
+# sequences), a (B, S) bool mask (dense packed routing), or precomputed indices (gather packed routing).
+PrefixTokens = Union[int, torch.Tensor, PackedPrefixRoute, None]
+
+
+def _validate_prefix_routing(routing: str) -> None:
+    if routing not in ('mask', 'gather'):
+        raise ValueError(f"prefix_routing={routing!r} must be 'mask' or 'gather'")
+
+
+def _has_prefix_tokens(prefix_tokens: PrefixTokens) -> bool:
+    # NOTE masks/routes may select no tokens; avoid data dependent checks (host sync).
+    return prefix_tokens is not None and (not isinstance(prefix_tokens, int) or prefix_tokens > 0)
+
+
+def prefix_linear(
+        x: torch.Tensor,
+        lin: nn.Linear,
+        delta: Optional[torch.Tensor],
+        prefix_tokens: PrefixTokens,
+) -> torch.Tensor:
+    """``lin(x)``, w/ the prefix tokens projected by ``(W + delta)``."""
+    if delta is None or not _has_prefix_tokens(prefix_tokens):
+        return lin(x)
+    weight = lin.weight + delta
+    if isinstance(prefix_tokens, int):
+        if prefix_tokens >= x.shape[1]:
+            return F.linear(x, weight, lin.bias)  # prefix only (encoder) pass
+        # block layout: the prefix is a slice, one matmul per modality
+        pre = F.linear(x[:, :prefix_tokens], weight, lin.bias)
+        return torch.cat([pre, lin(x[:, prefix_tokens:])], dim=1)
+    if isinstance(prefix_tokens, PackedPrefixRoute):
+        x_pre, x_other = prefix_tokens.split(x)
+        return prefix_tokens.merge(F.linear(x_pre, weight, lin.bias), lin(x_other), x.shape[:2])
+    # per token mask: masked dense (both projections over all tokens)
+    return torch.where(prefix_tokens[..., None], F.linear(x, weight, lin.bias), lin(x))
+
+
+def prefix_residual(
+        y: torch.Tensor,
+        x: torch.Tensor,
+        fn: Optional[nn.Module],
+        prefix_tokens: PrefixTokens,
+) -> torch.Tensor:
+    """``y + fn(x)`` for the prefix tokens, ``y`` for the rest."""
+    if fn is None or not _has_prefix_tokens(prefix_tokens):
+        return y
+    if isinstance(prefix_tokens, int):
+        if prefix_tokens >= x.shape[1]:
+            return y + fn(x)
+        return torch.cat([y[:, :prefix_tokens] + fn(x[:, :prefix_tokens]), y[:, prefix_tokens:]], dim=1)
+    if isinstance(prefix_tokens, PackedPrefixRoute):
+        extra = fn(prefix_tokens.prefix(x))
+        return y.flatten(0, 1).index_add(0, prefix_tokens.prefix_idx, extra).view_as(y)
+    return y + fn(x) * prefix_tokens[..., None].to(y.dtype)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # Attention / FFN / blocks
 # ---------------------------------------------------------------------------------------------------------------------
 class GenLipAttention(nn.Module):
@@ -227,6 +344,7 @@ class GenLipAttention(nn.Module):
             cfg: NaFlexGenLipTrunkCfg,
             bias: bool = True,
             norm_layer: Optional[Callable[[int], nn.Module]] = None,
+            prefix_delta: bool = False,
     ):
         super().__init__()
         self.width = cfg.width
@@ -244,6 +362,15 @@ class GenLipAttention(nn.Module):
         qk_norm_layer = norm_layer if norm_layer is not None else (lambda d: nn.RMSNorm(d, eps=cfg.layer_norm_eps))
         self.q_norm = qk_norm_layer(self.head_dim) if cfg.qk_norm else nn.Identity()
         self.k_norm = qk_norm_layer(self.head_dim) if cfg.qk_norm else nn.Identity()
+        if prefix_delta:
+            # in-fusion: prefix token only weight deltas, zero init (prefix tokens start w/ the shared weights).
+            # The q delta covers the fused gate chunk too.
+            self.q_delta = nn.Parameter(torch.zeros_like(self.q_proj.weight))
+            self.k_delta = nn.Parameter(torch.zeros_like(self.k_proj.weight))
+            self.v_delta = nn.Parameter(torch.zeros_like(self.v_proj.weight))
+            self.out_delta = nn.Parameter(torch.zeros_like(self.out_proj.weight))
+        else:
+            self.q_delta = self.k_delta = self.v_delta = self.out_delta = None
 
     def forward(
             self,
@@ -251,22 +378,21 @@ class GenLipAttention(nn.Module):
             attn_mask: Optional[torch.Tensor],
             cos: torch.Tensor,
             sin: torch.Tensor,
+            prefix_tokens: PrefixTokens = None,
     ) -> torch.Tensor:
         """Args:
             x: Hidden states of shape ``(B, S, width)``.
             attn_mask: Boolean mask ``(B, 1, S, S)`` where True means the pair may attend.
             cos: MRoPE cosine of shape ``(B, S, head_dim)``.
             sin: MRoPE sine of shape ``(B, S, head_dim)``.
+            prefix_tokens: Prefix token selection for the in-fusion deltas (see :func:`prefix_linear`).
         """
         bs, seq_len, _ = x.shape
 
+        q, k, v = self._qkv(x, prefix_tokens)
         if self.gated_attention:
-            q, gate = self.q_proj(x).chunk(2, dim=-1)
+            q, gate = q.chunk(2, dim=-1)
             gate = gate.reshape(bs, seq_len, self.num_heads, self.head_dim)
-        else:
-            q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
 
         q = q.view(bs, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(bs, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -282,27 +408,40 @@ class GenLipAttention(nn.Module):
             attn_out = attn_out * torch.sigmoid(gate)
 
         attn_out = attn_out.reshape(bs, seq_len, self.width)
-        return self.out_proj(attn_out)
+        return prefix_linear(attn_out, self.out_proj, self.out_delta, prefix_tokens)
+
+    def _qkv(self, x: torch.Tensor, prefix_tokens: PrefixTokens) -> List[torch.Tensor]:
+        projs = ((self.q_proj, self.q_delta), (self.k_proj, self.k_delta), (self.v_proj, self.v_delta))
+        if isinstance(prefix_tokens, PackedPrefixRoute) and self.q_delta is not None:
+            # gather routing: split the shared input once for the q / k / v projections
+            x_pre, x_other = prefix_tokens.split(x)
+            return [
+                prefix_tokens.merge(F.linear(x_pre, lin.weight + delta, lin.bias), lin(x_other), x.shape[:2])
+                for lin, delta in projs
+            ]
+        return [prefix_linear(x, lin, delta, prefix_tokens) for lin, delta in projs]
 
 
 class GenLipSwiGLUFFN(nn.Module):
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
+    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True, hidden_size: Optional[int] = None):
         super().__init__()
+        hidden_size = hidden_size or cfg.intermediate_size
         self.act = _ACT_FN[cfg.hidden_act]
-        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
-        self.gate_fc = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
-        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width, bias=bias)
+        self.fc1 = nn.Linear(cfg.width, hidden_size, bias=bias)
+        self.gate_fc = nn.Linear(cfg.width, hidden_size, bias=bias)
+        self.fc2 = nn.Linear(hidden_size, cfg.width, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc2(self.act(self.gate_fc(x)) * self.fc1(x))
 
 
 class GenLipMLP(nn.Module):
-    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True):
+    def __init__(self, cfg: NaFlexGenLipTrunkCfg, bias: bool = True, hidden_size: Optional[int] = None):
         super().__init__()
+        hidden_size = hidden_size or cfg.intermediate_size
         self.act = _ACT_FN[cfg.hidden_act]
-        self.fc1 = nn.Linear(cfg.width, cfg.intermediate_size, bias=bias)
-        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.width, bias=bias)
+        self.fc1 = nn.Linear(cfg.width, hidden_size, bias=bias)
+        self.fc2 = nn.Linear(hidden_size, cfg.width, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc2(self.act(self.fc1(x)))
@@ -326,12 +465,21 @@ class GenLipBlock(nn.Module):
             norm_layer: Callable[[int], nn.Module],
             attn_bias: bool = True,
             mlp_bias: bool = True,
+            prefix_infusion: bool = False,
     ):
         super().__init__()
         self.layer_norm1 = norm_layer(cfg.width)
-        self.self_attn = GenLipAttention(cfg, bias=attn_bias, norm_layer=norm_layer)
+        self.self_attn = GenLipAttention(
+            cfg, bias=attn_bias, norm_layer=norm_layer, prefix_delta=prefix_infusion and cfg.prefix_attn_delta)
         self.layer_norm2 = norm_layer(cfg.width)
-        self.mlp = GenLipSwiGLUFFN(cfg, bias=mlp_bias) if cfg.use_swiglu_ffn else GenLipMLP(cfg, bias=mlp_bias)
+        mlp_layer = GenLipSwiGLUFFN if cfg.use_swiglu_ffn else GenLipMLP
+        self.mlp = mlp_layer(cfg, bias=mlp_bias)
+        # in-fusion: prefix token only FFN branch on the same norm2 output, added to the shared FFN output
+        # (output projection zero init in init_genlm_weights)
+        if prefix_infusion and cfg.prefix_ffn_size:
+            self.prefix_mlp = mlp_layer(cfg, bias=mlp_bias, hidden_size=cfg.prefix_ffn_size)
+        else:
+            self.prefix_mlp = None
 
         use_ls = cfg.ls_init_value is not None and cfg.ls_init_value > 1e-6
         self.layer_scale1 = GenLipLayerScale(cfg.width, cfg.ls_init_value) if use_ls else nn.Identity()
@@ -350,9 +498,12 @@ class GenLipBlock(nn.Module):
             attn_mask: Optional[torch.Tensor],
             cos: torch.Tensor,
             sin: torch.Tensor,
+            prefix_tokens: PrefixTokens = None,
     ) -> torch.Tensor:
-        x = x + self.drop_path(self.layer_scale1(self.self_attn(self.layer_norm1(x), attn_mask, cos, sin)))
-        x = x + self.drop_path(self.layer_scale2(self.mlp(self.layer_norm2(x))))
+        x = x + self.drop_path(self.layer_scale1(
+            self.self_attn(self.layer_norm1(x), attn_mask, cos, sin, prefix_tokens)))
+        h = self.layer_norm2(x)
+        x = x + self.drop_path(self.layer_scale2(prefix_residual(self.mlp(h), h, self.prefix_mlp, prefix_tokens)))
         return x
 
 
@@ -361,10 +512,17 @@ class GenLipTrunk(nn.Module):
 
     def __init__(self, cfg: NaFlexGenLipTrunkCfg):
         super().__init__()
+        _validate_prefix_routing(cfg.prefix_routing)
         norm_layer = _make_norm_layer(cfg.norm_type, cfg.layer_norm_eps)
+        if not 0 <= cfg.prefix_layers <= cfg.depth:
+            raise ValueError(f"prefix_layers={cfg.prefix_layers} must be in [0, depth={cfg.depth}]")
+        self.has_prefix_infusion = cfg.prefix_layers > 0 and (cfg.prefix_attn_delta or cfg.prefix_ffn_size > 0)
         self.layers = nn.ModuleList([
-            GenLipBlock(cfg, norm_layer, attn_bias=cfg.attention_bias, mlp_bias=cfg.mlp_bias)
-            for _ in range(cfg.depth)
+            GenLipBlock(
+                cfg, norm_layer, attn_bias=cfg.attention_bias, mlp_bias=cfg.mlp_bias,
+                prefix_infusion=i < cfg.prefix_layers,
+            )
+            for i in range(cfg.depth)
         ])
         self.ln_post = norm_layer(cfg.width)
         self.grad_checkpointing = False
@@ -375,12 +533,17 @@ class GenLipTrunk(nn.Module):
             attn_mask: Optional[torch.Tensor],
             cos: torch.Tensor,
             sin: torch.Tensor,
+            prefix_tokens: PrefixTokens = None,
     ) -> torch.Tensor:
+        """``prefix_tokens`` selects the prefix (image / audio) tokens for the in-fusion params: the prefix
+        length (int, block layout, >= S for a prefix only pass), a ``(B, S)`` bool mask, or a
+        :class:`PackedPrefixRoute` (packed layout)."""
         for layer in self.layers:
             if self.grad_checkpointing and self.training and not torch.jit.is_scripting():
-                x = torch.utils.checkpoint.checkpoint(layer, x, attn_mask, cos, sin, use_reentrant=False)
+                x = torch.utils.checkpoint.checkpoint(
+                    layer, x, attn_mask, cos, sin, prefix_tokens, use_reentrant=False)
             else:
-                x = layer(x, attn_mask, cos, sin)
+                x = layer(x, attn_mask, cos, sin, prefix_tokens)
         return self.ln_post(x)
 
 
@@ -485,6 +648,7 @@ def pack_prefix_sequence(
         block_pos: torch.Tensor,
         text_emb: torch.Tensor,
         text_valid: torch.Tensor,
+        seq_len: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compact each row to ``[valid prefix ; valid text ; PAD]`` (drops the padding between prefix and text).
 
@@ -497,6 +661,8 @@ def pack_prefix_sequence(
             then continuing text positions) -- compacted here rather than recomputed.
         text_emb: ``(B, Nt, W)`` embedded caption tokens.
         text_valid: ``(B, Nt)`` bool.
+        seq_len: The packed length ``max_i(k_i + m_i)`` as a host int, when the caller already read it (read from
+            the device here otherwise, a host sync).
 
     Returns:
         ``(combined_emb (B,T,W), combined_pos (3,B,T), attn_mask (B,1,T,T), prefix_lens (B,), text_lens (B,))``
@@ -507,7 +673,7 @@ def pack_prefix_sequence(
     device = prefix_emb.device
     k = prefix_valid.bool().sum(dim=1)  # (B,) valid prefix lengths
     m = text_valid.bool().sum(dim=1)    # (B,) valid text lengths
-    seq_t = int((k + m).amax().item())
+    seq_t = int((k + m).amax().item()) if seq_len is None else seq_len
 
     cols = torch.arange(seq_t, device=device)
     prefix_dst = cols[None, :] < k[:, None]                                          # (B, T)
@@ -552,14 +718,26 @@ def packed_caption_loss(
     the loss gathers each row's text-predicting window ``[k_i-1, k_i+m_i-1)`` -- so the first caption token is
     predicted from the last *valid* prefix token (not a padding slot, as the fixed-block layout would).
     """
+    _validate_prefix_routing(model.prefix_routing)
+    gather = model.trunk.has_prefix_infusion and model.prefix_routing == 'gather'
+    seq_len = num_prefix = None
+    if gather:
+        # one host read for the packed length and the routed prefix token count (no extra sync for the route)
+        k = prefix_valid.bool().sum(dim=1)
+        seq_len, num_prefix = torch.stack([(k + text_valid.bool().sum(dim=1)).amax(), k.sum()]).tolist()
     text_emb = model.embed_text(text)
     combined, pos, attn_mask, k, m = pack_prefix_sequence(
-        prefix_emb, prefix_valid, block_pos, text_emb, text_valid,
+        prefix_emb, prefix_valid, block_pos, text_emb, text_valid, seq_len=seq_len,
     )
     cos, sin = model.rotary(combined, pos)
-    hidden = model.out_proj(model.trunk(combined, attn_mask, cos, sin))  # (B, T, text_embed_dim)
+    cols = torch.arange(combined.shape[1], device=combined.device)
+    prefix_tokens = None
+    if model.trunk.has_prefix_infusion:
+        prefix_tokens = cols[None, :] < k[:, None]  # (B, T) each row's prefix positions
+        if gather:
+            prefix_tokens = PackedPrefixRoute.from_mask(prefix_tokens, num_prefix=num_prefix)
+    hidden = model.out_proj(model.trunk(combined, attn_mask, cos, sin, prefix_tokens))  # (B, T, text_embed_dim)
 
-    cols = torch.arange(hidden.shape[1], device=hidden.device)
     pred_dst = (cols[None, :] >= (k - 1)[:, None]) & (cols[None, :] < (k + m - 1)[:, None])  # (B, T)
     text_src = torch.arange(text.shape[1], device=text.device)[None, :] < m[:, None]         # (B, Nt)
     pred = hidden[pred_dst]   # (sum(m), D) row-major
@@ -654,6 +832,16 @@ def init_genlm_weights(model: nn.Module, std: float = 0.02) -> None:
     for module in model.modules():
         if isinstance(module, (GenLipAttention, GenLipSwiGLUFFN, GenLipMLP)):
             _init(module)
+    # in-fusion params start as a no-op (the model is the plain shared trunk at init)
+    for module in model.modules():
+        if isinstance(module, GenLipAttention):
+            for delta in (module.q_delta, module.k_delta, module.v_delta, module.out_delta):
+                if delta is not None:
+                    nn.init.zeros_(delta)
+        elif isinstance(module, GenLipBlock) and module.prefix_mlp is not None:
+            nn.init.zeros_(module.prefix_mlp.fc2.weight)
+            if module.prefix_mlp.fc2.bias is not None:
+                nn.init.zeros_(module.prefix_mlp.fc2.bias)
 
 
 class NaFlexGenLipVisualAdapter(nn.Module):
@@ -696,7 +884,7 @@ class NaFlexGenLipVisualAdapter(nn.Module):
         attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_image_position_ids(patch_coord, patch_valid)
         cos, sin = self.rotary(x, pos)
-        x = self.trunk(x, attn_mask, cos, sin)  # ln_post applied inside trunk
+        x = self.trunk(x, attn_mask, cos, sin, prefix_tokens=x.shape[1])  # ln_post applied inside trunk
 
         pv = patch_valid.to(x.dtype)
         summed = (x * pv.unsqueeze(-1)).sum(dim=1)
@@ -735,6 +923,7 @@ class NaFlexGenLip(nn.Module):
         self.output_dict = output_dict
         self.embed_dim = embed_dim
         self.pack_prefix = genlip_cfg.pack_prefix
+        self.prefix_routing = genlip_cfg.prefix_routing
 
         width = genlip_cfg.width
         text_embed_dim = genlip_cfg.text_embed_dim
@@ -815,7 +1004,7 @@ class NaFlexGenLip(nn.Module):
         pos = build_mrope_position_ids(image['patch_coord'], patch_valid, text_valid)
         cos, sin = self.rotary(h, pos)
 
-        h = self.trunk(h, attn_mask, cos, sin)  # ln_post applied inside trunk
+        h = self.trunk(h, attn_mask, cos, sin, prefix_tokens=img_emb.shape[1])  # ln_post applied inside trunk
         return self.out_proj(h), img_emb.shape[1]
 
     def forward(

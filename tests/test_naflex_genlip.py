@@ -8,6 +8,7 @@ import open_clip
 from open_clip import create_task, get_tokenizer
 from open_clip.naflex_genlip_model import (
     NaFlexGenLip,
+    PackedPrefixRoute,
     apply_interleaved_mrope,
     build_patch_attn_mask,
     build_mrope_position_ids,
@@ -684,3 +685,304 @@ def test_rope_table_stays_fp32_accurate_after_module_cast(dtype):
         torch.testing.assert_close(table, ref.to(dtype), rtol=0, atol=0)
     rope.float()
     torch.testing.assert_close(rope(x, position_ids), (ref_cos, ref_sin), rtol=0, atol=0)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# In-fusion (prefix token only capacity, arXiv 2611.17334)
+# ---------------------------------------------------------------------------------------------------------------------
+INFUSION_KEYS = ('_delta', '.prefix_mlp.')
+
+
+def _infusion_cfg(prefix_layers=1, prefix_ffn_size=32, prefix_attn_delta=True, **trunk_kw):
+    import copy
+    cfg = copy.deepcopy(open_clip.get_model_config(TEST_MODEL))
+    cfg['genlip_cfg'].update(
+        prefix_layers=prefix_layers, prefix_ffn_size=prefix_ffn_size, prefix_attn_delta=prefix_attn_delta, **trunk_kw)
+    return cfg
+
+
+@torch.no_grad()
+def _randomize_infusion(model, std=0.05):
+    for name, p in model.named_parameters():
+        if any(k in name for k in INFUSION_KEYS):
+            p.normal_(std=std)
+
+
+def test_infusion_defaults_off_and_structure():
+    base = open_clip.create_model(TEST_MODEL)
+    assert base.prefix_routing == 'mask'
+    assert not base.trunk.has_prefix_infusion
+    assert not any(k in n for n in base.state_dict() for k in INFUSION_KEYS)  # existing checkpoints unaffected
+
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=1))
+    l0, l1 = model.trunk.layers
+    attn = l0.self_attn
+    assert attn.q_delta.shape == attn.q_proj.weight.shape  # covers the fused gate chunk (2 * width)
+    assert attn.out_delta.shape == attn.out_proj.weight.shape
+    assert l0.prefix_mlp is not None and l0.prefix_mlp.fc1.out_features == 32
+    assert l1.self_attn.q_delta is None and l1.prefix_mlp is None  # only the first prefix_layers blocks
+
+    attn_only = NaFlexGenLip(**_infusion_cfg(prefix_layers=2, prefix_ffn_size=0))
+    assert all(blk.prefix_mlp is None and blk.self_attn.k_delta is not None for blk in attn_only.trunk.layers)
+    ffn_only = NaFlexGenLip(**_infusion_cfg(prefix_layers=2, prefix_attn_delta=False))
+    assert all(blk.prefix_mlp is not None and blk.self_attn.k_delta is None for blk in ffn_only.trunk.layers)
+    with pytest.raises(ValueError):
+        NaFlexGenLip(**_infusion_cfg(prefix_layers=3))
+    with pytest.raises(ValueError, match='prefix_routing'):
+        NaFlexGenLip(**_infusion_cfg(prefix_routing='invalid'))
+
+
+@pytest.mark.parametrize('prefix_routing', ['mask', 'gather'])
+def test_infusion_zero_init_is_identity(prefix_routing):
+    """Zero init in-fusion params: a plain checkpoint loads (only in-fusion keys missing) and every forward path
+    (block loss, packed loss, logits, vision encoder) matches the plain model."""
+    torch.manual_seed(0)
+    base = open_clip.create_model(TEST_MODEL).eval()
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=2, prefix_routing=prefix_routing)).eval()
+    missing, unexpected = model.load_state_dict(base.state_dict(), strict=False)
+    assert not unexpected
+    assert missing and all(any(k in m for k in INFUSION_KEYS) for m in missing)
+
+    batch = _make_batch(model.pad_id)
+    kw = dict(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'])
+    with torch.no_grad():
+        for pack in (False, True):
+            base.pack_prefix = model.pack_prefix = pack
+            torch.testing.assert_close(
+                model(**kw, compute_loss=True)['caption_loss_ce'], base(**kw, compute_loss=True)['caption_loss_ce'])
+        torch.testing.assert_close(model(**kw)['logits'], base(**kw)['logits'])
+        torch.testing.assert_close(model.encode_image(batch['image']), base.encode_image(batch['image']))
+
+
+@pytest.mark.parametrize('prefix_routing', ['mask', 'gather'])
+def test_infusion_prefix_routing(prefix_routing):
+    """Prefix selection by int (block layout) == by mask; w/o prefix tokens the in-fusion params are unused; w/
+    prefix tokens they change the output."""
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=2)).eval()
+    _randomize_infusion(model)
+    b, s, p = 2, 10, 6
+    x = torch.randn(b, s, model.trunk_cfg.width)
+    pos = torch.arange(s)[None, None].expand(3, b, s)
+    cos, sin = model.rotary(x, pos)
+    mask = build_prefix_lm_mask(torch.ones(b, p, dtype=torch.bool), torch.ones(b, s - p, dtype=torch.bool))
+    cols = torch.arange(s)[None].expand(b, s)
+
+    def packed_tokens(mask):
+        return PackedPrefixRoute.from_mask(mask) if prefix_routing == 'gather' else mask
+
+    with torch.no_grad():
+        by_int = model.trunk(x, mask, cos, sin, prefix_tokens=p)
+        by_mask = model.trunk(x, mask, cos, sin, prefix_tokens=packed_tokens(cols < p))
+        torch.testing.assert_close(by_int, by_mask)
+        torch.testing.assert_close(
+            model.trunk(x, mask, cos, sin, prefix_tokens=s),
+            model.trunk(x, mask, cos, sin, prefix_tokens=packed_tokens(torch.ones(b, s, dtype=torch.bool))))
+        no_prefix = model.trunk(x, mask, cos, sin, prefix_tokens=0)
+        torch.testing.assert_close(no_prefix, model.trunk(x, mask, cos, sin))
+        torch.testing.assert_close(no_prefix, model.trunk(x, mask, cos, sin, prefix_tokens=packed_tokens(cols < 0)))
+        assert not torch.allclose(by_int, no_prefix)
+        # zeroing the in-fusion params recovers the shared trunk
+        _randomize_infusion(model, std=0.)
+        torch.testing.assert_close(model.trunk(x, mask, cos, sin, prefix_tokens=p), no_prefix)
+
+
+def test_infusion_pack_prefix_parity_and_grads():
+    """W/ trained (non-zero) in-fusion params the packed layout (mask routing) matches the block layout (slice
+    routing) for a full prefix, and the caption loss reaches every in-fusion param."""
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=2)).eval()
+    _randomize_infusion(model)
+    batch = _make_batch(model.pad_id)
+    batch['image']['patch_valid'][:] = True  # full prefix: block == packed
+    kw = dict(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True)
+    block = model(**kw)['caption_loss_ce']
+    model.pack_prefix = True
+    packed = model(**kw)['caption_loss_ce']
+    torch.testing.assert_close(block, packed, atol=1e-5, rtol=1e-5)
+    packed.backward()
+    for name, p in model.named_parameters():
+        if any(k in name for k in INFUSION_KEYS) and 'bias' not in name:
+            assert p.grad is not None and p.grad.abs().sum() > 0, name
+
+
+@pytest.mark.parametrize('pack_prefix,prefix_routing', [(False, 'mask'), (True, 'mask'), (True, 'gather')])
+def test_infusion_grad_checkpointing_parity(pack_prefix, prefix_routing):
+    import copy
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(
+        prefix_layers=1, pack_prefix=pack_prefix, prefix_routing=prefix_routing))
+    _randomize_infusion(model)
+    ckpt = copy.deepcopy(model)
+    ckpt.set_grad_checkpointing(True)
+    batch = _make_batch(model.pad_id)
+    kw = dict(image=batch['image'], text=batch['text'], text_valid=batch['text_valid'], compute_loss=True)
+    l_ref = model(**kw)['caption_loss_ce']
+    l_ref.backward()
+    l_ckpt = ckpt(**kw)['caption_loss_ce']
+    l_ckpt.backward()
+    torch.testing.assert_close(l_ref, l_ckpt)
+    torch.testing.assert_close(
+        model.trunk.layers[0].self_attn.q_delta.grad, ckpt.trunk.layers[0].self_attn.q_delta.grad)
+    torch.testing.assert_close(
+        model.trunk.layers[0].prefix_mlp.fc1.weight.grad, ckpt.trunk.layers[0].prefix_mlp.fc1.weight.grad)
+
+
+@pytest.mark.parametrize('trunk_kw', [
+    {},
+    {'prefix_attn_delta': False},
+    {'prefix_ffn_size': 0},
+    dict(use_swiglu_ffn=False, gated_attention=False, attention_bias=True, mlp_bias=True,
+         norm_type='rmsnorm', qk_norm=True),
+])
+def test_infusion_packed_routing_variable_prefix_parity(trunk_kw):
+    """Both modes match individually trimmed examples, including gradients, with trained in-fusion weights."""
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=2, **trunk_kw)).eval()
+    _randomize_infusion(model)
+    batch = _make_batch(model.pad_id)
+    image, text, tv = batch['image'], batch['text'], batch['text_valid']
+
+    # Independent reference: each example has no padding between its prefix and caption.
+    losses = []
+    for i in range(text.shape[0]):
+        ni = int(image['patch_valid'][i].sum())
+        nt = int(tv[i].sum())
+        one_image = {k: v[i:i + 1, :ni] for k, v in image.items()}
+        losses.append(model(one_image, text[i:i + 1, :nt], compute_loss=True)['caption_loss_ce'] * nt)
+    ref_loss = sum(losses) / tv.sum()
+    ref_loss.backward()
+    ref_grads = {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None}
+
+    model.pack_prefix = True
+    # Also exercise switching back on the same model, without rebuilding or reloading weights.
+    for routing in ('mask', 'gather', 'mask'):
+        model.prefix_routing = routing
+        model.zero_grad(set_to_none=True)
+        loss = model(**batch, compute_loss=True)['caption_loss_ce']
+        torch.testing.assert_close(loss, ref_loss)
+        loss.backward()
+        for n, p in model.named_parameters():
+            if n in ref_grads:
+                # Per-example GEMMs/reductions differ slightly from the batched fp32 reference.
+                torch.testing.assert_close(p.grad, ref_grads[n], atol=5e-6, rtol=1e-4, msg=n)
+            else:
+                assert p.grad is None, n
+
+
+@pytest.mark.parametrize('text_embed_dim', [32, 64])
+def test_infusion_gather_cpu_autocast(text_embed_dim):
+    """Gather/scatter supports AMP with either identity or linear text projections."""
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(pack_prefix=True, text_embed_dim=text_embed_dim)).eval()
+    _randomize_infusion(model)
+    batch = _make_batch(model.pad_id)
+    with torch.no_grad(), torch.autocast('cpu', dtype=torch.bfloat16):
+        ref = model(**batch, compute_loss=True)['caption_loss_ce']
+    model.prefix_routing = 'gather'
+    with torch.autocast('cpu', dtype=torch.bfloat16):
+        loss = model(**batch, compute_loss=True)['caption_loss_ce']
+    torch.testing.assert_close(loss, ref, atol=2e-3, rtol=2e-3)
+    loss.backward()
+    for n, p in model.named_parameters():
+        if p.grad is not None:
+            assert torch.isfinite(p.grad).all(), n
+        if any(k in n for k in INFUSION_KEYS):
+            assert p.grad is not None and p.grad.abs().sum() > 0, n
+
+
+@pytest.mark.parametrize('trunk_kw', [
+    {'prefix_layers': 0},
+    {'prefix_attn_delta': False, 'prefix_ffn_size': 0},
+])
+def test_infusion_disabled_skips_gather_indices(trunk_kw, monkeypatch):
+    model = NaFlexGenLip(**_infusion_cfg(pack_prefix=True, prefix_routing='gather', **trunk_kw)).eval()
+
+    def unexpected_route(*args, **kwargs):
+        pytest.fail('disabled in-fusion must not construct gather indices')
+
+    monkeypatch.setattr(PackedPrefixRoute, 'from_mask', unexpected_route)
+    with torch.no_grad():
+        assert torch.isfinite(model(**_make_batch(model.pad_id), compute_loss=True)['caption_loss_ce'])
+    model.prefix_routing = 'invalid'
+    with pytest.raises(ValueError, match='prefix_routing'):
+        model(**_make_batch(model.pad_id), compute_loss=True)
+
+
+def test_infusion_gather_compiled_block():
+    """Precomputed routes work through compiled forward/backward with varying token counts."""
+    import copy
+
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg()).eval()
+    _randomize_infusion(model)
+    block = model.trunk.layers[0]
+    ref = copy.deepcopy(block)
+    compiled = torch.compile(block, backend='aot_eager', fullgraph=True, dynamic=True)
+    for lens in ([2, 5], [3, 6]):
+        x = torch.randn(2, 9, model.trunk_cfg.width, requires_grad=True)
+        xr = x.detach().clone().requires_grad_()
+        prefix_mask = torch.arange(9)[None] < torch.tensor(lens)[:, None]
+        pos = torch.arange(9)[None, None].expand(3, 2, 9)
+        cos, sin = model.rotary(x, pos)
+        route = PackedPrefixRoute.from_mask(prefix_mask)
+        block.zero_grad(set_to_none=True)
+        ref.zero_grad(set_to_none=True)
+        out = compiled(x, None, cos, sin, route)
+        expected = ref(xr, None, cos, sin, prefix_mask)
+        torch.testing.assert_close(out, expected)
+        target = torch.randn_like(out)
+        (out * target).sum().backward()
+        (expected * target).sum().backward()
+        torch.testing.assert_close(x.grad, xr.grad)
+        for (name, p), rp in zip(block.named_parameters(), ref.parameters()):
+            torch.testing.assert_close(p.grad, rp.grad, atol=2e-6, rtol=1e-4, msg=name)
+
+
+def test_packed_prefix_route_known_count_and_round_trip():
+    """from_mask w/ the host side prefix count (no sync) == w/o, and merge(split(x)) == x incl. padding."""
+    prefix_mask = torch.arange(7)[None] < torch.tensor([3, 0, 7])[:, None]
+    route = PackedPrefixRoute.from_mask(prefix_mask)
+    known = PackedPrefixRoute.from_mask(prefix_mask, num_prefix=int(prefix_mask.sum()))
+    assert torch.equal(route.prefix_idx, known.prefix_idx) and torch.equal(route.other_idx, known.other_idx)
+    assert torch.equal(route.prefix_idx, prefix_mask.flatten().nonzero().squeeze(1))
+    x = torch.randn(3, 7, 5)
+    pre, other = route.split(x)
+    assert pre.shape == (10, 5) and other.shape == (11, 5)
+    assert torch.equal(route.prefix(x), pre)
+    assert torch.equal(route.merge(pre, other, x.shape[:2]), x)
+
+
+def test_infusion_gather_splits_qkv_input_once(monkeypatch):
+    """The q / k / v projections share one split of the attention input (the out projection splits its own)."""
+    torch.manual_seed(0)
+    model = NaFlexGenLip(**_infusion_cfg(prefix_layers=1, prefix_ffn_size=0)).eval()
+    _randomize_infusion(model)
+    attn = model.trunk.layers[0].self_attn
+    x = torch.randn(2, 9, model.trunk_cfg.width)
+    cos, sin = model.rotary(x, torch.arange(9)[None, None].expand(3, 2, 9))
+    prefix_mask = torch.arange(9)[None] < torch.tensor([4, 6])[:, None]
+    calls = []
+    split = PackedPrefixRoute.split
+    monkeypatch.setattr(PackedPrefixRoute, 'split', lambda self, t: calls.append(t.shape) or split(self, t))
+    with torch.no_grad():
+        out = attn(x, None, cos, sin, PackedPrefixRoute.from_mask(prefix_mask))
+        torch.testing.assert_close(out, attn(x, None, cos, sin, prefix_mask))
+    assert len(calls) == 2  # qkv input once + out projection input once
+
+
+def test_infusion_packed_gather_passes_known_prefix_count(monkeypatch):
+    """The packed loss reads the prefix count w/ the packed length and hands it to the route (no extra sync)."""
+    model = NaFlexGenLip(**_infusion_cfg(pack_prefix=True, prefix_routing='gather')).eval()
+    batch = _make_batch(model.pad_id)  # last sample has fewer valid patches
+    seen = []
+    from_mask = PackedPrefixRoute.from_mask.__func__
+
+    def recording_from_mask(cls, prefix_mask, num_prefix=None):
+        seen.append((num_prefix, int(prefix_mask.sum())))
+        return from_mask(cls, prefix_mask, num_prefix=num_prefix)
+
+    monkeypatch.setattr(PackedPrefixRoute, 'from_mask', classmethod(recording_from_mask))
+    with torch.no_grad():
+        model(**batch, compute_loss=True)
+    assert len(seen) == 1 and seen[0][0] is not None and seen[0][0] == seen[0][1]
