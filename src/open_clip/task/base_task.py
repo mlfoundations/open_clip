@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -159,17 +160,41 @@ class TrainingTask(nn.Module):
             return self.trainable_module_ema.module
         return unwrap_model(self.trainable_module)
 
-    def setup_ema(self, decay: float = 0.9999, device: Optional[torch.device] = None) -> 'TrainingTask':
-        """Set up exponential moving average for the trainable module."""
+    def setup_ema(
+            self,
+            decay: float = 0.9999,
+            device: Optional[torch.device] = None,
+            use_warmup: bool = True,
+            warmup_gamma: float = 1.0,
+            warmup_power: float = 2 / 3,
+    ) -> 'TrainingTask':
+        """Set up exponential moving average for the trainable module.
+
+        Uses timm's ``ModelEmaV3``. A later ``prepare_fsdp()`` replaces it with an ``FSDPModelEma``, which must start
+        from this copy because FSDP2 modules can't be deep-copied.
+
+        Warmup ramps the decay up to ``decay`` as ``1 - (1 + step / warmup_gamma) ** -warmup_power``, and needs
+        ``update_ema()`` to be given the 1-based update count. Without a step, the decay is constant.
+        """
         assert not self._fsdp_enabled, (
             'EMA must be set up before prepare_fsdp(). '
-            'FSDP2 sharded parameters are not compatible with ModelEmaV3.'
+            'FSDP2 modules cannot be copied to create the EMA.'
         )
         from timm.utils import ModelEmaV3
+        model = unwrap_model(self.trainable_module)
+        # timm's default update zips state_dict() values, which repeat aliased params (e.g. GenLIP's patch_embed)
+        # and would update them twice per step. Its no-buffers update de-duplicates, but copies buffers.
+        has_aliased_params = (
+            len(list(model.named_parameters(remove_duplicate=False))) != len(list(model.named_parameters()))
+        )
         self.trainable_module_ema = ModelEmaV3(
-            unwrap_model(self.trainable_module),
+            model,
             decay=decay,
+            use_warmup=use_warmup,
+            warmup_gamma=warmup_gamma,
+            warmup_power=warmup_power,
             device=device,
+            exclude_buffers=has_aliased_params,
         )
         return self
 
@@ -272,39 +297,22 @@ class TrainingTask(nn.Module):
 
         Reshapes any 0-D params to 1-D (FSDP2 requires dim-0 for sharding),
         then applies fully_shard() to discovered submodules and the root.
+        An EMA from setup_ema() is sharded the same way and becomes an FSDPModelEma.
         """
         assert not isinstance(self.trainable_module, torch.nn.parallel.DistributedDataParallel), \
             'Cannot apply FSDP2 to a DDP-wrapped module. Use --fsdp OR DDP, not both.'
-        from torch.distributed._composable.fsdp import fully_shard
 
         fsdp_kwargs = dict(
             mesh=mesh,
             reshard_after_forward=reshard_after_forward,
         )
-        if mp_policy is not None:
-            fsdp_kwargs['mp_policy'] = mp_policy
         if offload_policy is not None:
             fsdp_kwargs['offload_policy'] = offload_policy
 
-        # Reshape any 0-D (scalar) params to 1-D so FSDP2 can shard them.
-        # This affects logit_scale (always present) and logit_bias (SigLIP only).
-        # Both are accessed via .exp() or multiplication, which broadcast
-        # identically on [1] tensors.
         model = unwrap_model(self.trainable_module)
-        for name, param in list(model.named_parameters()):
-            if param.ndim == 0:
-                parts = name.rsplit('.', 1)
-                if len(parts) == 2:
-                    parent = model.get_submodule(parts[0])
-                    attr_name = parts[1]
-                else:
-                    parent = model
-                    attr_name = parts[0]
-                setattr(parent, attr_name, nn.Parameter(
-                    param.data.unsqueeze(0), requires_grad=param.requires_grad,
-                ))
-                if self._verbose:
-                    _logger.info(f'FSDP2: reshaped 0-D param {name!r} to [1]')
+        self._reshape_scalar_params(model)
+        if mp_policy is not None:
+            fsdp_kwargs['mp_policy'] = self._resolve_mixed_param_dtypes(model, mp_policy)
 
         # Shard discovered submodules (transformer blocks) first
         shard_modules = self._get_fsdp_shard_modules()
@@ -347,24 +355,110 @@ class TrainingTask(nn.Module):
                 compiled_modules.append((name, compiled_mod))
             shard_modules = compiled_modules
 
+        self._fully_shard_model(self.trainable_module, shard_modules, fsdp_kwargs)
+
+        if self.trainable_module_ema is not None:
+            from .fsdp_ema import FSDPModelEma
+            ema_module = self.trainable_module_ema.module
+            self._reshape_scalar_params(ema_module)
+            ema_kwargs = {**fsdp_kwargs, 'reshard_after_forward': True}
+            if mp_policy is not None:
+                ema_kwargs['mp_policy'] = self._resolve_mixed_param_dtypes(ema_module, mp_policy)
+            # The EMA only runs eval forwards, so it always reshards regardless of the training memory trade-off.
+            # It isn't compiled either: compile_blocks and composable checkpointing above target the training path.
+            self._fully_shard_model(
+                ema_module,
+                [(name, ema_module.get_submodule(name.replace('._orig_mod', ''))) for name, _ in shard_modules],
+                ema_kwargs,
+            )
+            timm_ema = self.trainable_module_ema
+            self.trainable_module_ema = FSDPModelEma(
+                ema_module,
+                decay=timm_ema.decay,
+                min_decay=timm_ema.min_decay,
+                update_after_step=timm_ema.update_after_step,
+                use_warmup=timm_ema.use_warmup,
+                warmup_gamma=timm_ema.warmup_gamma,
+                warmup_power=timm_ema.warmup_power,
+            )
+
+        self._fsdp_enabled = True
+        return self
+
+    def _reshape_scalar_params(self, model: nn.Module) -> None:
+        """Reshape any 0-D (scalar) params to 1-D so FSDP2 can shard them.
+
+        This affects logit_scale (always present) and logit_bias (SigLIP only).
+        Both are accessed via .exp() or multiplication, which broadcast
+        identically on [1] tensors.
+        """
+        for name, param in list(model.named_parameters()):
+            if param.ndim == 0:
+                parts = name.rsplit('.', 1)
+                if len(parts) == 2:
+                    parent = model.get_submodule(parts[0])
+                    attr_name = parts[1]
+                else:
+                    parent = model
+                    attr_name = parts[0]
+                setattr(parent, attr_name, nn.Parameter(
+                    param.data.unsqueeze(0), requires_grad=param.requires_grad,
+                ))
+                if self._verbose:
+                    _logger.info(f'FSDP2: reshaped 0-D param {name!r} to [1]')
+
+    @staticmethod
+    def _resolve_mixed_param_dtypes(model: nn.Module, mp_policy: 'MixedPrecisionPolicy') -> 'MixedPrecisionPolicy':
+        """Express a model's mixed param dtypes (e.g. precision='bf16') as an FSDP2 mixed-precision policy.
+
+        FSDP2 requires one stored dtype per param group. Mixed models are upcast to fp32 for storage (and the optimizer
+        step), with the policy running each param in the dtype it arrived in. Other models are left as they are.
+        """
+        params = [p for p in model.parameters() if p.is_floating_point()]
+        dtypes = {p.dtype for p in params}
+        if len(dtypes) <= 1:
+            return mp_policy
+        if dtypes != {torch.float32, mp_policy.param_dtype}:
+            raise ValueError(
+                f'FSDP2 can only run mixed param dtypes as fp32 plus the policy param_dtype, '
+                f'got {sorted(map(str, dtypes))} and param_dtype={mp_policy.param_dtype}.')
+        if 'param_dtype_override_fn' not in {f.name for f in dataclasses.fields(mp_policy)}:
+            raise RuntimeError(
+                'FSDP2 with mixed param dtypes (--precision bf16 or fp16) needs MixedPrecisionPolicy.param_dtype_override_fn, '
+                f'added in PyTorch 2.15 (found {torch.__version__}). Upgrade, or use --precision amp_bf16 or pure_bf16.')
+        # Scalars like logit_scale were reshaped to [1] and, unlike a 0-D fp32, would promote what they multiply to fp32.
+        keep_fp32 = {id(p) for p in params if p.dtype == torch.float32 and p.numel() > 1}
+        for p in params:
+            p.data = p.data.to(torch.float32)
+        return dataclasses.replace(
+            mp_policy,
+            param_dtype_override_fn=lambda p: torch.float32 if id(p) in keep_fp32 else None,
+        )
+
+    @staticmethod
+    def _fully_shard_model(
+            root: nn.Module,
+            shard_modules: List[Tuple[str, nn.Module]],
+            fsdp_kwargs: dict,
+    ) -> None:
+        """Apply fully_shard() to the given submodules, then to the root."""
+        from torch.distributed._composable.fsdp import fully_shard
+        from torch.distributed.fsdp import register_fsdp_forward_method
+
         for name, mod in shard_modules:
             fully_shard(mod, **fsdp_kwargs)
 
-        # Shard root trainable module (covers remaining params: embeddings, projections, logit_scale)
-        fully_shard(self.trainable_module, **fsdp_kwargs)
+        # Shard root module (covers remaining params: embeddings, projections, logit_scale)
+        fully_shard(root, **fsdp_kwargs)
 
         # Register encode_text/encode_image as FSDP forward methods so they trigger
         # the same all-gather/reshard hooks as __call__. Without this, direct calls
         # like build_zero_shot_classifier → model.encode_text() fail with DTensor errors.
-        from torch.distributed.fsdp import register_fsdp_forward_method
         # Only register methods the model actually defines (e.g. GenLIP has encode_image but no encode_text).
-        unwrapped = unwrap_model(self.trainable_module)
+        unwrapped = unwrap_model(root)
         for method_name in ("encode_text", "encode_image"):
             if hasattr(unwrapped, method_name):
-                register_fsdp_forward_method(self.trainable_module, method_name)
-
-        self._fsdp_enabled = True
-        return self
+                register_fsdp_forward_method(root, method_name)
 
     @staticmethod
     def _normalize_scalar_params(sd: dict) -> dict:
@@ -389,28 +483,29 @@ class TrainingTask(nn.Module):
         """
         return {k.replace('._orig_mod.', '.').removeprefix('_orig_mod.'): v for k, v in sd.items()}
 
+    def _module_state_dict(self, module: nn.Module) -> dict:
+        """Full state dict for a module, gathering shards under FSDP (collective)."""
+        if not self._fsdp_enabled:
+            return module.state_dict()
+        from torch.distributed.checkpoint.state_dict import (
+            get_model_state_dict,
+            StateDictOptions,
+        )
+        # full_state_dict=True gathers shards into full tensors
+        # cpu_offload=True to avoid GPU OOM during gather
+        options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        sd = get_model_state_dict(module, options=options)
+        if self.normalize_checkpoint_scalars:
+            sd = self._normalize_scalar_params(sd)
+        return sd
+
     def state_dict(self, *args, **kwargs) -> dict:
         """Return state dict with both main and EMA weights."""
-        if self._fsdp_enabled:
-            from torch.distributed.checkpoint.state_dict import (
-                get_model_state_dict,
-                StateDictOptions,
-            )
-            # full_state_dict=True gathers shards into full tensors
-            # cpu_offload=True to avoid GPU OOM during gather
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            model_sd = get_model_state_dict(
-                unwrap_model(self.trainable_module), options=options,
-            )
-            if self.normalize_checkpoint_scalars:
-                model_sd = self._normalize_scalar_params(model_sd)
-            sd = {'state_dict': self._strip_compiled_keys(model_sd)}
-        else:
-            sd = {'state_dict': self._strip_compiled_keys(
-                unwrap_model(self.trainable_module).state_dict())}
+        sd = {'state_dict': self._strip_compiled_keys(
+            self._module_state_dict(unwrap_model(self.trainable_module)))}
         if self.trainable_module_ema is not None:
             sd['state_dict_ema'] = self._strip_compiled_keys(
-                self.trainable_module_ema.module.state_dict())
+                self._module_state_dict(self.trainable_module_ema.module))
         return sd
 
     @staticmethod
@@ -434,52 +529,46 @@ class TrainingTask(nn.Module):
                     sd[key] = val.squeeze(0)
         return sd
 
-    def load_state_dict(self, state_dict: dict, strict: bool = True, **kwargs):
-        """Load state dict for both main and EMA weights."""
-        if 'state_dict' in state_dict:
-            model = unwrap_model(self.trainable_module)
-            # normalize away compile-wrapper segments from the incoming checkpoint, then remap
-            # clean names onto the live model's keys when its blocks are compiled in place
-            sd = self._strip_compiled_keys(state_dict['state_dict'])
-            model_keys = list(model.state_dict().keys())
-            if any('_orig_mod' in k for k in model_keys):
-                clean_to_model = {
-                    k.replace('._orig_mod.', '.').removeprefix('_orig_mod.'): k for k in model_keys
-                }
-                # unmapped (unexpected) keys keep their name so strict-mode reporting is unchanged
-                sd = {clean_to_model.get(k, k): v for k, v in sd.items()}
-            sd = self._reconcile_state_dict_shapes(model, sd)
-            if self._fsdp_enabled:
-                from torch.distributed.checkpoint.state_dict import (
-                    set_model_state_dict,
-                    StateDictOptions,
-                )
-                options = StateDictOptions(full_state_dict=True, cpu_offload=True, strict=strict)
-                set_model_state_dict(model, sd, options=options)
-            else:
-                model.load_state_dict(sd, strict=strict)
-        if 'state_dict_ema' in state_dict and self.trainable_module_ema is not None:
-            self.trainable_module_ema.module.load_state_dict(
-                self._strip_compiled_keys(state_dict['state_dict_ema']), strict=strict,
+    def _load_module_state_dict(self, module: nn.Module, state_dict: dict, strict: bool = True) -> None:
+        # normalize away compile-wrapper segments from the incoming checkpoint, then remap
+        # clean names onto the live model's keys when its blocks are compiled in place
+        sd = self._strip_compiled_keys(state_dict)
+        model_keys = list(module.state_dict().keys())
+        if any('_orig_mod' in k for k in model_keys):
+            clean_to_model = {
+                k.replace('._orig_mod.', '.').removeprefix('_orig_mod.'): k for k in model_keys
+            }
+            # unmapped (unexpected) keys keep their name so strict-mode reporting is unchanged
+            sd = {clean_to_model.get(k, k): v for k, v in sd.items()}
+        sd = self._reconcile_state_dict_shapes(module, sd)
+        if self._fsdp_enabled:
+            from torch.distributed.checkpoint.state_dict import (
+                set_model_state_dict,
+                StateDictOptions,
             )
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True, strict=strict)
+            set_model_state_dict(module, sd, options=options)
+        else:
+            module.load_state_dict(sd, strict=strict)
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True, **kwargs):
+        """Load state dict for both main and EMA weights.
+
+        With no EMA weights in the checkpoint, the EMA restarts from the loaded main weights.
+        """
+        if 'state_dict' in state_dict:
+            self._load_module_state_dict(unwrap_model(self.trainable_module), state_dict['state_dict'], strict=strict)
+        if self.trainable_module_ema is not None:
+            ema_sd = state_dict.get('state_dict_ema')
+            if ema_sd is None and 'state_dict' in state_dict:
+                _logger.warning('Checkpoint has no EMA weights; initializing the EMA from the loaded model weights.')
+                ema_sd = state_dict['state_dict']
+            if ema_sd is not None:
+                self._load_module_state_dict(self.trainable_module_ema.module, ema_sd, strict=strict)
 
     def state_dict_for_inference(self) -> dict:
         """Return state dict for inference (prefers EMA if available)."""
-        if self.trainable_module_ema is not None:
-            return self.trainable_module_ema.module.state_dict()
-        if self._fsdp_enabled:
-            from torch.distributed.checkpoint.state_dict import (
-                get_model_state_dict,
-                StateDictOptions,
-            )
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            sd = get_model_state_dict(
-                unwrap_model(self.trainable_module), options=options,
-            )
-            if self.normalize_checkpoint_scalars:
-                sd = self._normalize_scalar_params(sd)
-            return sd
-        return unwrap_model(self.trainable_module).state_dict()
+        return self._module_state_dict(self.get_trainable_module(use_ema=True))
 
     @staticmethod
     def _report(source: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

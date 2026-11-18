@@ -208,6 +208,15 @@ def main(args):
     else:
         _logger.info(f'Running with a single process. Device {args.device}.')
 
+    if args.fsdp and args.distributed and args.torchcompile and args.grad_checkpointing and torch.get_num_threads() > 1:
+        # DataLoader pin-memory threads call set_num_threads(1), which can also reach the autograd device thread. The
+        # checkpoint recompute then runs under a different thread count than the forward, recompiling the block and
+        # failing with a CheckpointError. torchrun avoids this by default by setting OMP_NUM_THREADS=1.
+        _logger.warning(
+            f'Reducing torch num_threads from {torch.get_num_threads()} to 1 to avoid a CheckpointError '
+            'with --fsdp, --torchcompile and --grad-checkpointing.')
+        torch.set_num_threads(1)
+
     dist_model = None
     args.distill = args.distill_model is not None and args.distill_pretrained is not None
     if args.distill:
@@ -373,6 +382,10 @@ def main(args):
         else:
             _logger.warning(
                 '--torchcompile-pass-break: model has no dual-pass graph break support; ignoring.')
+
+    if args.model_ema:
+        # Before compile and distributed wrapping, so the copy is of the plain model.
+        task.setup_ema(decay=args.model_ema_decay, use_warmup=args.model_ema_warmup)
 
     if args.torchcompile and args.torchcompile_strategy in ('model', 'blocks'):
         if args.fsdp:

@@ -648,12 +648,14 @@ class VisionTransformer(nn.Module):
                         width,
                         n_head=attn_pooler_heads,
                         n_queries=attn_pooler_queries,
+                        norm_layer=norm_layer,
                     )
                     self.attn_pool_contrastive = AttentionalPooler(
                         output_dim,
                         width if attentional_pool == 'parallel' else output_dim,
                         n_head=attn_pooler_heads,
                         n_queries=1,
+                        norm_layer=norm_layer,
                     )
                 else:
                     assert False
@@ -666,6 +668,7 @@ class VisionTransformer(nn.Module):
                     width,
                     n_head=attn_pooler_heads,
                     n_queries=attn_pooler_queries,
+                    norm_layer=norm_layer,
                 )
                 self.attn_pool_contrastive = None
                 pool_dim = output_dim
@@ -1957,7 +1960,7 @@ class TextTransformer(nn.Module):
 
         # Optional class token (always appended ala CoCa)
         if self.cls_emb is not None:
-            x = torch.cat([x, _expand_token(self.cls_emb, x.size(0))], 1)
+            x = torch.cat([x, _expand_token(self.cls_emb, x.size(0)).to(x.dtype)], 1)
             seq_len += 1
 
         attn_mask = self.attn_mask  # Base causal mask (if any)

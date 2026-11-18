@@ -384,6 +384,8 @@ def train_one_epoch(state: TrainState, data, args, tb_writer=None):
                 continue
             losses, report, step_batch_size, accum_state = result
 
+        task.update_ema(step=step + 1)
+
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1

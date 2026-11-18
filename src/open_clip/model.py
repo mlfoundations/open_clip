@@ -25,6 +25,7 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     Attention,
+    AttentionalPooler,
     VisionTransformer,
     TextTransformer,
     ModernTextTransformer,
@@ -776,6 +777,9 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
                 tensor = getattr(l, attr, None)
                 if tensor is not None:
                     tensor.data = tensor.data.to(dtype)
+
+        if isinstance(l, AttentionalPooler):
+            l.query.data = l.query.data.to(dtype)
 
         if isinstance(l, (CLIP, TextTransformer, MultimodalTransformer, MultimodalDecoder)):
             # convert text nn.Parameter projections / heads (nn.Linear variants are handled above)
