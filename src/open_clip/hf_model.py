@@ -301,7 +301,10 @@ class HFTextEncoder(nn.Module):
         return [f"*{name}*" for name in self._NO_WD_EMBED_NAMES]
 
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
-        self.transformer.gradient_checkpointing_enable()
+        if enable:
+            self.transformer.gradient_checkpointing_enable()
+        else:
+            self.transformer.gradient_checkpointing_disable()
 
     def init_parameters(self):
         pass
