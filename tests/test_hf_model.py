@@ -86,23 +86,12 @@ def test_hf_text_encoder_ignores_config_pinned_dtype():
 
 
 def test_hf_text_encoder_set_grad_checkpointing_respects_enable():
-    transformers = pytest.importorskip("transformers")
-    cfg = transformers.BertConfig(
-        vocab_size=128,
-        hidden_size=32,
-        intermediate_size=64,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        max_position_embeddings=64,
-    )
+    cfg = AutoConfig.for_model(
+        "bert", vocab_size=128, hidden_size=32, intermediate_size=64,
+        num_hidden_layers=1, num_attention_heads=4, max_position_embeddings=64)
     model = HFTextEncoder("bert", 16, config=cfg, pooler_type="mean_pooler", proj_type="linear")
-
-    model.set_grad_checkpointing(False)
-    assert not model.transformer.is_gradient_checkpointing
-
     model.set_grad_checkpointing(True)
     assert model.transformer.is_gradient_checkpointing
-
     model.set_grad_checkpointing(False)
     assert not model.transformer.is_gradient_checkpointing
 
