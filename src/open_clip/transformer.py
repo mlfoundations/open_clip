@@ -633,6 +633,7 @@ class VisionTransformer(nn.Module):
             scale_fc=scale_fc,
         )
 
+        ln_post_on_tokens = True
         if attentional_pool:
             if isinstance(attentional_pool, str):
                 # paper CoCa pooling: task-specific poolers (generative n_queries + contrastive n=1),
@@ -669,6 +670,8 @@ class VisionTransformer(nn.Module):
                 )
                 self.attn_pool_contrastive = None
                 pool_dim = output_dim
+                # original OpenCLIP CoCa: ln_post norms the pooled output_dim tokens, never the encoder tokens
+                ln_post_on_tokens = False
         else:
             self.attn_pool = None
             self.attn_pool_contrastive = None
@@ -677,6 +680,7 @@ class VisionTransformer(nn.Module):
             self.pool_type = pool_type
 
         self.ln_post = norm_layer(pool_dim)
+        self.ln_post_on_tokens = ln_post_on_tokens  # whether ln_post can norm the width-dim encoder tokens
         # parallel/cascade poolers already project to output_dim; no extra head projection
         self.proj = None if self.attn_pool_type in ('parallel', 'cascade') else \
             nn.Parameter(scale * torch.randn(pool_dim, output_dim))
@@ -831,7 +835,7 @@ class VisionTransformer(nn.Module):
             indices: Take last n blocks if int, all if None, select matching indices if sequence
             stop_early: Stop iterating over blocks when last desired intermediate hit
             intermediates_only: Only return intermediate features
-            normalize_intermediates: Apply final norm layer to all intermediates
+            normalize_intermediates: Apply final norm layer to all intermediates (if possible)
             output_fmt: Shape of intermediate feature outputs
             output_extra_tokens: Return both extra prefix class tokens
         Returns:
@@ -850,9 +854,8 @@ class VisionTransformer(nn.Module):
         )
 
         # process intermediates
-        if normalize_intermediates and not (self.attn_pool is not None and self.attn_pool_contrastive is None):
-            # apply final norm to all intermediates; the original CoCa setup (single attn_pool) has no norm on the
-            # encoder tokens, its ln_post is applied to the pooled output (output_dim) so it can't be applied here
+        if normalize_intermediates and self.ln_post_on_tokens:
+            # apply final norm to all intermediates (skipped for legacy CoCa, which has no encoder token norm)
             intermediates = [self.ln_post(xi) for xi in intermediates]
         num_prefix_tokens = 1  # one class token that's always there (as of now)
         if num_prefix_tokens:
