@@ -7,9 +7,61 @@
 # Position embedding utils
 # --------------------------------------------------------
 
-import numpy as np
+from __future__ import annotations
 
+from typing import Optional
+
+import numpy as np
 import torch
+
+
+def _resample_rows(table: torch.Tensor, idx: torch.Tensor, length: torch.Tensor) -> torch.Tensor:
+    """Select rows from a linearly resampled ``[L, C]`` table without per-sample tables or host sync.
+
+    ``idx`` is ``[B, N]`` and ``length`` is ``[B, 1]``. Matches ``F.interpolate`` with
+    ``mode='linear', align_corners=False``.
+    """
+    size = table.shape[0]
+    src = ((idx.float() + 0.5) * (size / length.float()) - 0.5).clamp(0, size - 1)
+    i0 = src.floor().long()
+    i1 = (i0 + 1).clamp(max=size - 1)
+    weight = (src - i0)[..., None].to(table.dtype)
+    return torch.lerp(table[i0], table[i1], weight)
+
+
+def factorized_pos_embed(
+        pos_embed_y: Optional[torch.Tensor],
+        pos_embed_x: Optional[torch.Tensor],
+        patch_coord: torch.Tensor,
+        patch_valid: Optional[torch.Tensor] = None,
+        ar_preserving: bool = False,
+) -> torch.Tensor:
+    """Learned factorized positions for NaFlex patches (as in timm NaFlexVit's factorized pos embed).
+
+    Returns ``[B, N, C]`` at ``(y, x)`` coordinates (or ``(freq, time)`` for audio). Infer each
+    sample's grid from valid coordinates, then resize the axis tables to its height / width.
+    Either axis table may be ``None`` (e.g. ``pos_embed_y=None`` for 1-D full-height audio strips).
+    With ``ar_preserving``, resize both to ``max(height, width)`` and crop the shorter axis.
+    Padding coordinates do not affect the grid size; callers still mask padded tokens downstream.
+    """
+    coord = patch_coord.long()
+    if patch_valid is not None:
+        coord = coord.masked_fill(~patch_valid.bool()[..., None], 0)
+    shape = coord.amax(1) + 1
+    if ar_preserving:
+        len_y = len_x = shape.amax(1, keepdim=True)
+    else:
+        len_y, len_x = shape[:, :1], shape[:, 1:]
+    out: Optional[torch.Tensor] = None
+    if pos_embed_y is not None:
+        out = _resample_rows(pos_embed_y, coord[..., 0], len_y)
+    if pos_embed_x is not None:
+        emb_x = _resample_rows(pos_embed_x, coord[..., 1], len_x)
+        out = emb_x if out is None else out + emb_x
+    if out is None:
+        raise ValueError('at least one of pos_embed_y or pos_embed_x must be provided')
+    return out
+
 
 # --------------------------------------------------------
 # 2D sine-cosine position embedding

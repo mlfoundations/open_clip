@@ -728,6 +728,8 @@ def test_infusion_defaults_off_and_structure():
     assert all(blk.prefix_mlp is not None and blk.self_attn.k_delta is None for blk in ffn_only.trunk.layers)
     with pytest.raises(ValueError):
         NaFlexGenLip(**_infusion_cfg(prefix_layers=3))
+    with pytest.raises(ValueError, match='prefix_ffn_size'):
+        NaFlexGenLip(**_infusion_cfg(prefix_ffn_size=-1))
     with pytest.raises(ValueError, match='prefix_routing'):
         NaFlexGenLip(**_infusion_cfg(prefix_routing='invalid'))
 
@@ -944,7 +946,9 @@ def test_packed_prefix_route_known_count_and_round_trip():
     prefix_mask = torch.arange(7)[None] < torch.tensor([3, 0, 7])[:, None]
     route = PackedPrefixRoute.from_mask(prefix_mask)
     known = PackedPrefixRoute.from_mask(prefix_mask, num_prefix=int(prefix_mask.sum()))
+    int_route = PackedPrefixRoute.from_mask(prefix_mask.long())
     assert torch.equal(route.prefix_idx, known.prefix_idx) and torch.equal(route.other_idx, known.other_idx)
+    assert torch.equal(route.prefix_idx, int_route.prefix_idx) and torch.equal(route.other_idx, int_route.other_idx)
     assert torch.equal(route.prefix_idx, prefix_mask.flatten().nonzero().squeeze(1))
     x = torch.randn(3, 7, 5)
     pre, other = route.split(x)

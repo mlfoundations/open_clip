@@ -23,6 +23,8 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from open_clip.pos_embed import factorized_pos_embed
+
 
 @dataclass
 class AudioNaFlexCfg:
@@ -50,6 +52,10 @@ class AudioNaFlexCfg:
     # audio). "floor" = per-clip mel min (quiet relative to the clip); "silence" = absolute dB silence floor
     # (-100, true acoustic silence); "repeat" = repeat the last real frame.
     patch_pad_mode: str = "floor"
+    pos_embed: str = 'none'  # 'none' or 'factorized'; additive patch positions, independent of RoPE
+    pos_embed_size: int = 32  # learned table length per axis (frequency, time)
+    # False: resize each axis independently. True: resize both to max(freq, time), then crop.
+    pos_embed_ar_preserving: bool = False
 
     @classmethod
     def from_clip_audio_cfg(cls, clip_cfg) -> "AudioNaFlexCfg":
@@ -209,11 +215,53 @@ class MelPatchEmbed(nn.Module):
         # Optional post-projection norm: equalizes the audio stream's scale entering the shared trunk
         # (mirrors GenLipPatchEmbed.norm_pre).
         self.norm_pre = norm_layer(width) if cfg.pre_norm else nn.Identity()
+        if cfg.pos_embed not in ('none', 'factorized'):
+            raise ValueError(f"unknown pos_embed={cfg.pos_embed!r}")
+        self.pos_embed_ar_preserving = cfg.pos_embed_ar_preserving
+        self.pos_embed_y: Optional[nn.Parameter] = None
+        self.pos_embed_x: Optional[nn.Parameter] = None
+        if cfg.pos_embed == 'factorized':
+            if cfg.pos_embed_size < 1:
+                raise ValueError('pos_embed_size must be positive')
+            # y / x follow patch_coord's (frequency, time) order; 1-D full-height strips omit the freq axis.
+            if not cfg.is_1d_time:
+                self.pos_embed_y = nn.Parameter(torch.empty(cfg.pos_embed_size, width))
+            self.pos_embed_x = nn.Parameter(torch.empty(cfg.pos_embed_size, width))
+        self.reset_parameters()
 
-    def forward(self, patches: torch.Tensor) -> torch.Tensor:
+    @torch.no_grad()
+    def reset_parameters(self):
+        """Initialize direct position parameters; child modules manage their own defaults."""
+        for param in self.pos_embed_params():
+            nn.init.normal_(param, std=0.02)
+
+    def pos_embed_params(self):
+        return tuple(p for p in (self.pos_embed_y, self.pos_embed_x) if p is not None)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            name for name, param in (('pos_embed_y', self.pos_embed_y), ('pos_embed_x', self.pos_embed_x))
+            if param is not None
+        }
+
+    def forward(
+            self,
+            patches: torch.Tensor,
+            patch_coord: Optional[torch.Tensor] = None,
+            patch_valid: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if self.norm_input is not None:
             patches = self.norm_input(patches)
-        return self.norm_pre(self.proj(patches))
+        x = self.proj(patches)
+        if self.pos_embed_y is not None or self.pos_embed_x is not None:
+            if patch_coord is None:
+                raise ValueError('factorized pos_embed needs patch_coord')
+            pos = factorized_pos_embed(
+                self.pos_embed_y, self.pos_embed_x, patch_coord, patch_valid, self.pos_embed_ar_preserving,
+            )
+            x = x + pos.to(x.dtype)
+        return self.norm_pre(x)
 
 
 class AudioNaFlexPatchify:
