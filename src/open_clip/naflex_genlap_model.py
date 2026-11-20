@@ -157,6 +157,10 @@ class NaFlexGenLap(nn.Module):
         init_genlm_weights(self, std)
 
     @torch.jit.ignore
+    def no_weight_decay(self):
+        return {f'audio_embed.{name}' for name in self.audio_embed.no_weight_decay()}
+
+    @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         if impl == 'composable' and enable:
             from torch.distributed._composable import checkpoint as composable_checkpoint
@@ -176,7 +180,7 @@ class NaFlexGenLap(nn.Module):
     def encode_audio(self, audio: Dict[str, torch.Tensor], normalize: bool = False) -> torch.Tensor:
         """Audio-only bidirectional pass -> pooled features (the downstream encoder; no text)."""
         patch_valid = audio['patch_valid']
-        x = self.audio_embed(audio['patches'])
+        x = self.audio_embed(audio['patches'], audio['patch_coord'], patch_valid)
         attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_audio_position_ids(audio['patch_coord'], patch_valid, rope_1d=self.rope_1d)
         cos, sin = self.rotary(x, pos)
@@ -194,7 +198,7 @@ class NaFlexGenLap(nn.Module):
     ) -> Tuple[torch.Tensor, int]:
         """Run the shared trunk over ``[audio_patches ; caption_tokens]``; returns ``(hidden, audio_seq_len)``."""
         patch_valid = audio['patch_valid']
-        aud_emb = self.audio_embed(audio['patches'])           # (B, Ni, width)
+        aud_emb = self.audio_embed(audio['patches'], audio['patch_coord'], patch_valid)  # (B, Ni, width)
         txt_emb = self.embed_text(text)                        # (B, Lt, width)
         h = torch.cat([aud_emb, txt_emb], dim=1)               # (B, S, width)
 
@@ -233,7 +237,7 @@ class NaFlexGenLap(nn.Module):
             # the first caption token is then predicted from the last *valid* audio token, not a padding slot.
             caption_loss_ce, caption_loss_z = packed_caption_loss(
                 self,
-                self.audio_embed(audio['patches']), audio['patch_valid'],
+                self.audio_embed(audio['patches'], audio['patch_coord'], audio['patch_valid']), audio['patch_valid'],
                 build_audio_position_ids(audio['patch_coord'], audio['patch_valid'], text_valid,
                                          rope_1d=self.rope_1d),
                 text, text_valid,

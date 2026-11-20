@@ -10,7 +10,8 @@ are concatenated into one sequence ``S = [v0..vM, t0..tL]`` run through a unifie
 
 - **prefix-LM attention**: image patches attend bidirectionally among themselves; text attends causally;
   text attends to image; image never attends to text.
-- **MRoPE**: 3-axis (T/H/W) interleaved rotary positions on Q/K. Absolute position embeddings are discarded.
+- **MRoPE**: 3-axis (T/H/W) interleaved rotary positions on Q/K. Optional learned factorized absolute
+  positions are added to patch embeddings; disabled by default.
 - **gated attention**: ``q_proj`` emits ``2*width`` channels split into a query and a sigmoid gate applied to
   the attention output (the paper's attention-sink fix).
 - **SwiGLU** FFN, **LayerScale**, and **DropPath**.
@@ -41,6 +42,7 @@ except ImportError:
 
 from .model_traits import GENLIP_TRAITS
 from .loss import fused_linear_cross_entropy
+from .pos_embed import factorized_pos_embed
 
 
 @dataclass
@@ -52,6 +54,10 @@ class NaFlexGenLipVisionCfg:
     input_norm: bool = False  # apply LayerNorm to the flat patch input before projection
     pre_norm: bool = False  # LayerNorm on the projected patch embeddings before the trunk (stream equalization)
     pool_type: str = 'avg'  # masked pooling used for vision-encoder-only feature extraction
+    pos_embed: str = 'none'  # 'none' or 'factorized'; additive patch positions, independent of MRoPE
+    pos_embed_size: int = 32  # learned table length per axis, resampled to each sample's valid grid
+    # False: resize each axis independently. True: resize both to max(h, w), then crop.
+    pos_embed_ar_preserving: bool = True
 
 
 @dataclass
@@ -250,7 +256,7 @@ class PackedPrefixRoute(NamedTuple):
                 the packed length). The indices are then built w/o a host sync (``nonzero_static``), otherwise the
                 count is read from the device (one sync).
         """
-        mask = prefix_mask.flatten()
+        mask = prefix_mask.bool().flatten()
         if num_prefix is None:
             num_prefix = int(mask.sum())
         # NOTE a wrong num_prefix pads w/ -1 (or truncates), the caller must pass the exact count
@@ -330,7 +336,7 @@ def prefix_residual(
     if isinstance(prefix_tokens, PackedPrefixRoute):
         extra = fn(prefix_tokens.prefix(x))
         return y.flatten(0, 1).index_add(0, prefix_tokens.prefix_idx, extra).view_as(y)
-    return y + fn(x) * prefix_tokens[..., None].to(y.dtype)
+    return torch.where(prefix_tokens[..., None], y + fn(x), y)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -365,12 +371,20 @@ class GenLipAttention(nn.Module):
         if prefix_delta:
             # in-fusion: prefix token only weight deltas, zero init (prefix tokens start w/ the shared weights).
             # The q delta covers the fused gate chunk too.
-            self.q_delta = nn.Parameter(torch.zeros_like(self.q_proj.weight))
-            self.k_delta = nn.Parameter(torch.zeros_like(self.k_proj.weight))
-            self.v_delta = nn.Parameter(torch.zeros_like(self.v_proj.weight))
-            self.out_delta = nn.Parameter(torch.zeros_like(self.out_proj.weight))
+            self.q_delta = nn.Parameter(torch.empty_like(self.q_proj.weight))
+            self.k_delta = nn.Parameter(torch.empty_like(self.k_proj.weight))
+            self.v_delta = nn.Parameter(torch.empty_like(self.v_proj.weight))
+            self.out_delta = nn.Parameter(torch.empty_like(self.out_proj.weight))
         else:
             self.q_delta = self.k_delta = self.v_delta = self.out_delta = None
+        self.reset_parameters()
+
+    @torch.no_grad()
+    def reset_parameters(self):
+        """Zero direct attention deltas; child modules manage their own defaults."""
+        for param in (self.q_delta, self.k_delta, self.v_delta, self.out_delta):
+            if param is not None:
+                param.zero_()
 
     def forward(
             self,
@@ -476,7 +490,7 @@ class GenLipBlock(nn.Module):
         self.mlp = mlp_layer(cfg, bias=mlp_bias)
         # in-fusion: prefix token only FFN branch on the same norm2 output, added to the shared FFN output
         # (output projection zero init in init_genlm_weights)
-        if prefix_infusion and cfg.prefix_ffn_size:
+        if prefix_infusion and cfg.prefix_ffn_size > 0:
             self.prefix_mlp = mlp_layer(cfg, bias=mlp_bias, hidden_size=cfg.prefix_ffn_size)
         else:
             self.prefix_mlp = None
@@ -516,6 +530,8 @@ class GenLipTrunk(nn.Module):
         norm_layer = _make_norm_layer(cfg.norm_type, cfg.layer_norm_eps)
         if not 0 <= cfg.prefix_layers <= cfg.depth:
             raise ValueError(f"prefix_layers={cfg.prefix_layers} must be in [0, depth={cfg.depth}]")
+        if cfg.prefix_ffn_size < 0:
+            raise ValueError(f"prefix_ffn_size={cfg.prefix_ffn_size} must be >= 0")
         self.has_prefix_infusion = cfg.prefix_layers > 0 and (cfg.prefix_attn_delta or cfg.prefix_ffn_size > 0)
         self.layers = nn.ModuleList([
             GenLipBlock(
@@ -551,7 +567,7 @@ class GenLipTrunk(nn.Module):
 # Patch embedding (timm NaFlexVit linear-patch-embed style)
 # ---------------------------------------------------------------------------------------------------------------------
 class GenLipPatchEmbed(nn.Module):
-    """Linear patch embedding over pre-patchified inputs ``[B, N, P*P*C]`` (no position embedding)."""
+    """Linear patch embedding over ``[B, N, P*P*C]`` with optional factorized absolute positions."""
 
     def __init__(
             self,
@@ -571,11 +587,51 @@ class GenLipPatchEmbed(nn.Module):
         # Optional post-projection norm: equalizes this modality's stream scale entering the shared trunk
         # (pre-norm blocks only normalize branch inputs; the residual stream carries raw embed scales).
         self.norm_pre = norm_layer(width) if vision_cfg.pre_norm else nn.Identity()
+        if vision_cfg.pos_embed not in ('none', 'factorized'):
+            raise ValueError(f"unknown pos_embed={vision_cfg.pos_embed!r}")
+        self.pos_embed_ar_preserving = vision_cfg.pos_embed_ar_preserving
+        self.pos_embed_y: Optional[nn.Parameter] = None
+        self.pos_embed_x: Optional[nn.Parameter] = None
+        if vision_cfg.pos_embed == 'factorized':
+            if vision_cfg.pos_embed_size < 1:
+                raise ValueError('pos_embed_size must be positive')
+            self.pos_embed_y = nn.Parameter(torch.empty(vision_cfg.pos_embed_size, width))
+            self.pos_embed_x = nn.Parameter(torch.empty(vision_cfg.pos_embed_size, width))
+        self.reset_parameters()
 
-    def forward(self, patches: torch.Tensor) -> torch.Tensor:
+    @torch.no_grad()
+    def reset_parameters(self):
+        """Initialize direct position parameters; child modules manage their own defaults."""
+        for param in self.pos_embed_params():
+            nn.init.normal_(param, std=0.02)
+
+    def pos_embed_params(self):
+        return tuple(p for p in (self.pos_embed_y, self.pos_embed_x) if p is not None)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            name for name, param in (('pos_embed_y', self.pos_embed_y), ('pos_embed_x', self.pos_embed_x))
+            if param is not None
+        }
+
+    def forward(
+            self,
+            patches: torch.Tensor,
+            patch_coord: Optional[torch.Tensor] = None,
+            patch_valid: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if self.norm_input is not None:
             patches = self.norm_input(patches)
-        return self.norm_pre(self.proj(patches))
+        x = self.proj(patches)
+        if self.pos_embed_y is not None or self.pos_embed_x is not None:
+            if patch_coord is None:
+                raise ValueError('factorized pos_embed needs patch_coord')
+            pos = factorized_pos_embed(
+                self.pos_embed_y, self.pos_embed_x, patch_coord, patch_valid, self.pos_embed_ar_preserving,
+            )
+            x = x + pos.to(x.dtype)
+        return self.norm_pre(x)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -842,6 +898,9 @@ def init_genlm_weights(model: nn.Module, std: float = 0.02) -> None:
             nn.init.zeros_(module.prefix_mlp.fc2.weight)
             if module.prefix_mlp.fc2.bias is not None:
                 nn.init.zeros_(module.prefix_mlp.fc2.bias)
+        elif hasattr(module, 'pos_embed_params'):
+            for param in module.pos_embed_params():
+                nn.init.normal_(param, std=std)
 
 
 class NaFlexGenLipVisualAdapter(nn.Module):
@@ -875,12 +934,16 @@ class NaFlexGenLipVisualAdapter(nn.Module):
     def get_patch_size(self) -> Tuple[int, int]:
         return self.patch_size
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {f'patch_embed.{name}' for name in self.patch_embed.no_weight_decay()}
+
     def forward(self, image: Dict[str, torch.Tensor]) -> torch.Tensor:
         patches = image['patches']
         patch_coord = image['patch_coord']
         patch_valid = image['patch_valid']
 
-        x = self.patch_embed(patches)
+        x = self.patch_embed(patches, patch_coord, patch_valid)
         attn_mask = build_patch_attn_mask(patch_valid)
         pos = build_image_position_ids(patch_coord, patch_valid)
         cos, sin = self.rotary(x, pos)
@@ -960,6 +1023,10 @@ class NaFlexGenLip(nn.Module):
         init_genlm_weights(self, std)
 
     @torch.jit.ignore
+    def no_weight_decay(self):
+        return {f'patch_embed.{name}' for name in self.patch_embed.no_weight_decay()}
+
+    @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
         if impl == 'composable' and enable:
             from torch.distributed._composable import checkpoint as composable_checkpoint
@@ -996,7 +1063,7 @@ class NaFlexGenLip(nn.Module):
         shape ``(B, S, text_embed_dim)`` and ``image_seq_len`` is the per-batch image patch count ``Ni``.
         """
         patch_valid = image['patch_valid']
-        img_emb = self.patch_embed(image['patches'])  # (B, Ni, width)
+        img_emb = self.patch_embed(image['patches'], image['patch_coord'], patch_valid)  # (B, Ni, width)
         txt_emb = self.embed_text(text)  # (B, Lt, width)
         h = torch.cat([img_emb, txt_emb], dim=1)  # (B, S, width)
 
@@ -1041,7 +1108,7 @@ class NaFlexGenLip(nn.Module):
             # Packed layout: compact [valid image ; valid text ; PAD] per row (no padding between the two).
             caption_loss_ce, caption_loss_z = packed_caption_loss(
                 self,
-                self.patch_embed(image['patches']), image['patch_valid'],
+                self.patch_embed(image['patches'], image['patch_coord'], image['patch_valid']), image['patch_valid'],
                 build_mrope_position_ids(image['patch_coord'], image['patch_valid'], text_valid),
                 text, text_valid,
                 z_loss=caption_z_loss,

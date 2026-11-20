@@ -61,7 +61,7 @@ def extract_patch_features(visual, image, device, autocast):
     coord = image["patch_coord"].to(device, non_blocking=True)
     valid = image["patch_valid"].to(device, non_blocking=True)
     with autocast():
-        x = visual.patch_embed(patches)
+        x = visual.patch_embed(patches, coord, valid)
         cos, sin = visual.rotary(x, build_image_position_ids(coord, valid))
         x = visual.trunk(
             x, build_patch_attn_mask(valid), cos, sin, prefix_tokens=x.shape[1],
