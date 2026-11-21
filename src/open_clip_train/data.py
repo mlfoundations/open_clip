@@ -148,6 +148,11 @@ def collate_variable_text_dicts(
     return out
 
 
+def _collate_retrieval_rows(batch, *, collate_fn):
+    image_ids = [sample.pop("retrieval_image_id") for sample in batch]
+    return {**collate_fn(batch), "retrieval_image_id": torch.tensor(image_ids)}
+
+
 class CsvDataset(Dataset):
     def __init__(
             self,
@@ -159,9 +164,10 @@ class CsvDataset(Dataset):
             tokenizer=None,
             variable_text: bool = False,
             output_text_mask: bool = False,
+            image_id_key=None,
     ):
         _logger.debug(f'Loading csv data from {input_filename}.')
-        df = pd.read_csv(input_filename, sep=sep)
+        df = pd.read_csv(input_filename, sep=sep, dtype={image_id_key: str} if image_id_key is not None else None)
 
         # Keep as pandas Series rather than converting to Python lists.
         # Python lists of strings cause copy-on-write memory duplication in
@@ -170,6 +176,11 @@ class CsvDataset(Dataset):
         # numpy/pyarrow buffers that the GC does not traverse.
         self.images = df[img_key]
         self.captions = df[caption_key]
+        self.image_ids = None
+        if image_id_key is not None:
+            self.image_ids, _ = pd.factorize(df[image_id_key])
+            if (self.image_ids < 0).any():
+                raise ValueError(f"Missing retrieval image ID in CSV column {image_id_key!r}.")
         self.transforms = transforms
         _logger.debug('Done loading data.')
 
@@ -188,7 +199,10 @@ class CsvDataset(Dataset):
             image = self.transforms(image)
         caption = str(self.captions.iloc[idx])
         # Preserve CSV's list input for fixed-length tokenizers, including user-provided callables.
-        return self._tokenize_text.map_sample({"image": image, "text": caption if self.variable_text else [caption]})
+        sample = self._tokenize_text.map_sample({"image": image, "text": caption if self.variable_text else [caption]})
+        if self.image_ids is not None:
+            sample["retrieval_image_id"] = self.image_ids[idx]
+        return sample
 
 
 class SharedEpoch:
@@ -1072,7 +1086,10 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None, nafl
         tokenizer=tokenizer,
         variable_text=variable_text,
         output_text_mask=bool(getattr(args, 'text_attention_mask', None)) and not variable_text,
+        image_id_key=getattr(args, "val_csv_image_id_key", None) if not is_train else None,
     )
+    if dataset.image_ids is not None:
+        collate_fn = partial(_collate_retrieval_rows, collate_fn=collate_fn)
 
     if use_naflex_train:
         naflex_patch_size = None

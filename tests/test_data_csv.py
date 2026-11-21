@@ -120,6 +120,24 @@ def test_get_csv_dataset_val_keeps_partial(tmp_path):
     assert val_info.dataloader.num_batches == 2
 
 
+def test_csv_retrieval_ids_follow_validation_rows(tmp_path):
+    path = _make_csv(tmp_path, n=3)
+    rows = pd.read_csv(path, sep="\t")
+    rows["source"] = ["001", "1", "001"]
+    rows.to_csv(path, sep="\t", index=False)
+    args = types.SimpleNamespace(
+        train_data=str(path), val_data=str(path), csv_img_key="filepath",
+        csv_caption_key="caption", csv_separator="\t", val_csv_image_id_key="source",
+        distributed=False, batch_size=2, workers=0,
+    )
+    def loader(train):
+        return get_csv_dataset(args, transforms.ToTensor(), train, tokenizer=lambda xs: xs,
+                               model_traits=CLIP_TRAITS).dataloader
+
+    assert [batch["retrieval_image_id"].tolist() for batch in loader(False)] == [[0, 1], [0]]
+    assert "retrieval_image_id" not in next(iter(loader(True)))
+
+
 def test_get_csv_dataset_batches_are_dicts(tmp_path):
     """Batches from the dataloader should be dicts with 'image' and 'text'."""
     csv_path = _make_csv(tmp_path, n=4)
