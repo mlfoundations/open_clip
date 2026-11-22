@@ -1,12 +1,77 @@
 import json
 import importlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 from huggingface_hub import RepoUrl
 
 import open_clip
 from open_clip.push_to_hf_hub import save_config_for_hf, save_for_hf
+
+
+@pytest.mark.parametrize("token", [None, "hf_offline_test_token"])
+@pytest.mark.parametrize("private", [False, True])
+def test_push_to_hf_hub_uses_one_token_for_reads_and_upload(monkeypatch, token, private):
+    """An explicit upload token also authenticates the preceding repository reads."""
+    hf_push = importlib.import_module("open_clip.push_to_hf_hub")
+    observed_tokens = {}
+
+    class OfflineTokenizer:
+        def save_pretrained(self, save_directory):
+            pass
+
+    def authenticate(stage, actual_token):
+        observed_tokens[stage] = actual_token
+        if actual_token != token:
+            raise PermissionError("The repository requires the supplied token")
+
+    def create_repo(repo_id, token=None, **kwargs):
+        authenticate("create", token)
+        assert kwargs["private"] is private
+        return RepoUrl("https://huggingface.co/test-owner/test-model")
+
+    def list_repo_files(repo_id, token=None):
+        authenticate("list", token)
+        return ["README.md"]
+
+    def get_metadata(url, token=None):
+        if private:
+            authenticate("metadata", token)
+        else:
+            observed_tokens["metadata"] = token
+        return object()
+
+    def upload_folder(repo_id, folder_path, token=None, **kwargs):
+        authenticate("upload", token)
+        assert repo_id == "test-owner/test-model"
+        folder = Path(folder_path)
+        saved = json.loads((folder / hf_push.HF_CONFIG_NAME).read_text())
+        assert saved["model_cfg"] == {"embed_dim": 2}
+        state = torch.load(folder / hf_push.HF_WEIGHTS_NAME, weights_only=True)
+        assert state["weight"].shape == (2, 2)
+        assert not (folder / "README.md").exists()
+        return "offline-commit"
+
+    monkeypatch.setattr(hf_push, "HFTokenizer", OfflineTokenizer)
+    monkeypatch.setattr(hf_push, "create_repo", create_repo)
+    monkeypatch.setattr(hf_push, "list_repo_files", list_repo_files)
+    monkeypatch.setattr(hf_push, "get_hf_file_metadata", get_metadata)
+    monkeypatch.setattr(hf_push, "upload_folder", upload_folder)
+
+    result = hf_push.push_to_hf_hub(
+        torch.nn.Linear(2, 2),
+        OfflineTokenizer(),
+        {"embed_dim": 2},
+        repo_id="test-model",
+        token=token,
+        private=private,
+        safe_serialization=False,
+    )
+
+    assert result == "offline-commit"
+    assert observed_tokens == dict.fromkeys(("create", "list", "metadata", "upload"), token)
 
 
 def test_save_config_for_hf_writes_image_preprocess_cfg(tmp_path):
@@ -307,7 +372,7 @@ def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch, r
 
     monkeypatch.setattr(hf_push, "HFTokenizer", FailHFTokenizer)
     monkeypatch.setattr(hf_push, "create_repo", fake_create_repo)
-    monkeypatch.setattr(hf_push, "list_repo_files", lambda repo_id: [])
+    monkeypatch.setattr(hf_push, "list_repo_files", lambda repo_id, **kwargs: [])
     monkeypatch.setattr(hf_push, "get_hf_file_metadata", lambda *args, **kwargs: object())
     monkeypatch.setattr(hf_push, "save_for_hf", fake_save_for_hf)
     monkeypatch.setattr(hf_push, "upload_folder", fake_upload_folder)

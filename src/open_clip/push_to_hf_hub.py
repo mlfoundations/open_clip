@@ -158,14 +158,14 @@ def push_to_hf_hub(
     repo_exists = False
     repo_files = {}
     try:
-        repo_files = set(list_repo_files(repo_id))
+        repo_files = set(list_repo_files(repo_id, token=token))
         repo_exists = True
         print('Repo exists', repo_files)
     except Exception as e:
         print('Repo does not exist', e)
 
     try:
-        get_hf_file_metadata(hf_hub_url(repo_id=repo_id, filename="README.md", revision=revision))
+        get_hf_file_metadata(hf_hub_url(repo_id=repo_id, filename="README.md", revision=revision), token=token)
         has_readme = True
     except EntryNotFoundError:
         has_readme = False
@@ -192,6 +192,7 @@ def push_to_hf_hub(
         # Upload model and return
         return upload_folder(
             repo_id=repo_id,
+            token=token,
             folder_path=tmpdir,
             revision=revision,
             create_pr=create_pr,
