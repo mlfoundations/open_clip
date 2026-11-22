@@ -1166,8 +1166,8 @@ class TikTokenTokenizer:
             json.dump(config, f, indent=2)
 
         return {
-            "tiktoken_bpe_path": str(bpe_path.relative_to(dest)),
-            "tiktoken_config_path": str(config_path.relative_to(dest)),
+            "tiktoken_bpe_path": bpe_path.relative_to(dest).as_posix(),
+            "tiktoken_config_path": config_path.relative_to(dest).as_posix(),
         }
 
     def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
