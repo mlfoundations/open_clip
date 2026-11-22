@@ -275,16 +275,27 @@ def load_checkpoint(
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
 
+    # Generative models (e.g. GenLIP / GenLAP) have no logit_scale / logit_bias, and non-SigLIP models set
+    # logit_bias to None, so look them up defensively.
+    model_logit_scale = getattr(model, 'logit_scale', None)
+    model_logit_bias = getattr(model, 'logit_bias', None)
+
     # correct if logit_scale differs in being scaler vs 1d param
-    if 'logit_scale' in state_dict and model.logit_scale.ndim != state_dict['logit_scale'].ndim:
-        state_dict['logit_scale'] = state_dict['logit_scale'].reshape(model.logit_scale.shape)
+    if (
+            'logit_scale' in state_dict and model_logit_scale is not None
+            and model_logit_scale.ndim != state_dict['logit_scale'].ndim
+    ):
+        state_dict['logit_scale'] = state_dict['logit_scale'].reshape(model_logit_scale.shape)
 
     # correct if logit_bias differs in being scaler vs 1d param
-    if 'logit_bias' in state_dict and model.logit_bias.ndim != state_dict['logit_bias'].ndim:
-        state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model.logit_bias.shape)
+    if (
+            'logit_bias' in state_dict and model_logit_bias is not None
+            and model_logit_bias.ndim != state_dict['logit_bias'].ndim
+    ):
+        state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model_logit_bias.shape)
 
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
-    if 'logit_bias' not in state_dict and model.logit_bias is not None:
+    if 'logit_bias' not in state_dict and model_logit_bias is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
 
     # Certain text transformers no longer expect position_ids after transformers==4.31
