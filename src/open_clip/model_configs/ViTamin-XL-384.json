@@ -7,7 +7,7 @@
       "timm_proj": "linear",
       "timm_drop": 0.0,
       "timm_drop_path": 0.1,
-      "image_size": 256
+      "image_size": 384
     },
     "text_cfg": {
       "context_length": 77,
