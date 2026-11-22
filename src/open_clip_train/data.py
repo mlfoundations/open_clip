@@ -243,22 +243,28 @@ def expand_urls(urls, weights=None):
 
 def get_dataset_size(shards):
     shards_list, _ = expand_urls(shards)
-    dir_path = os.path.dirname(shards_list[0])
-    sizes_filename = os.path.join(dir_path, 'sizes.json')
-    len_filename = os.path.join(dir_path, '__len__')
-    if os.path.exists(sizes_filename):
-        sizes = json.load(open(sizes_filename, 'r'))
-        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
-    elif os.path.exists(len_filename):
-        # FIXME this used to be eval(open(...)) but that seemed rather unsafe
-        total_size = ast.literal_eval(open(len_filename, 'r').read())
-    else:
-        total_size = None  # num samples undefined
-        # some common dataset sizes (at time of authors last download)
-        # CC3M (train): 2905954
-        # CC12M: 10968539
-        # LAION-400M: 407332084
-        # LAION-2B (english): 2170337258
+    # Shards from `::`-combined sources can live in different directories, each with its own size info.
+    shards_by_dir = {}
+    for shard in shards_list:
+        shards_by_dir.setdefault(os.path.dirname(shard), []).append(shard)
+    total_size = 0
+    for dir_path, dir_shards in shards_by_dir.items():
+        sizes_filename = os.path.join(dir_path, 'sizes.json')
+        len_filename = os.path.join(dir_path, '__len__')
+        if os.path.exists(sizes_filename):
+            sizes = json.load(open(sizes_filename, 'r'))
+            total_size += sum([int(sizes[os.path.basename(shard)]) for shard in dir_shards])
+        elif os.path.exists(len_filename):
+            # FIXME this used to be eval(open(...)) but that seemed rather unsafe
+            total_size += ast.literal_eval(open(len_filename, 'r').read())
+        else:
+            total_size = None  # num samples undefined
+            # some common dataset sizes (at time of authors last download)
+            # CC3M (train): 2905954
+            # CC12M: 10968539
+            # LAION-400M: 407332084
+            # LAION-2B (english): 2170337258
+            break
     num_shards = len(shards_list)
     return total_size, num_shards
 
