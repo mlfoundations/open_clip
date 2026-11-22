@@ -334,3 +334,35 @@ def test_push_to_hf_hub_tiktoken_deletes_stale_hf_tokenizer_files(monkeypatch, r
     assert "tokenizer_config.json" in delete_patterns
     assert "vocab.json" in delete_patterns
     assert "merges.txt" in delete_patterns
+
+
+@pytest.mark.parametrize("description", ["Example model.", "多语言模型 🚀"])
+def test_push_to_hf_hub_writes_utf8_model_card(monkeypatch, description):
+    """Model-card text is UTF-8 regardless of the uploader's default encoding."""
+    hf_push = importlib.import_module("open_clip.push_to_hf_hub")
+
+    class OfflineTokenizer:
+        pass
+
+    def missing_readme(*args, **kwargs):
+        raise hf_push.EntryNotFoundError("No existing model card")
+
+    def upload_folder(folder_path, **kwargs):
+        with open(f"{folder_path}/README.md", "rb") as file:
+            readme = file.read().decode("utf-8")
+        assert description in readme
+        return "offline-commit"
+
+    monkeypatch.setattr(hf_push, "HFTokenizer", OfflineTokenizer)
+    monkeypatch.setattr(hf_push, "create_repo", lambda *args, **kwargs: RepoUrl("https://huggingface.co/test/model"))
+    monkeypatch.setattr(hf_push, "list_repo_files", lambda *args, **kwargs: [])
+    monkeypatch.setattr(hf_push, "get_hf_file_metadata", missing_readme)
+    monkeypatch.setattr(hf_push, "save_for_hf", lambda *args, **kwargs: None)
+    monkeypatch.setattr(hf_push, "upload_folder", upload_folder)
+
+    result = hf_push.push_to_hf_hub(
+        SimpleNamespace(), OfflineTokenizer(), {}, repo_id="test/model",
+        model_card={"description": description},
+    )
+
+    assert result == "offline-commit"
