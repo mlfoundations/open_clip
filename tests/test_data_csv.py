@@ -77,6 +77,16 @@ def test_csvdataset_getitem_stringifies_numeric_caption(tmp_path):
     assert received[0] == "0"
 
 
+def test_csvdataset_getitem_converts_to_rgb(tmp_path):
+    """Grayscale images load as RGB; timm and NaFlex transforms do not convert."""
+    p = tmp_path / "gray.png"
+    Image.new("L", (4, 4)).save(p)
+    csv_path = tmp_path / "gray.tsv"
+    pd.DataFrame([{"filepath": str(p), "caption": "c"}]).to_csv(csv_path, sep="\t", index=False)
+    ds = CsvDataset(csv_path, transforms.ToTensor(), "filepath", "caption", sep="\t", tokenizer=lambda xs: xs)
+    assert ds[0]["image"].shape == (3, 4, 4)
+
+
 # ---------------------------------------------------------------------------
 # get_csv_dataset
 # ---------------------------------------------------------------------------

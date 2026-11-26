@@ -183,7 +183,7 @@ class CsvDataset(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        image = Image.open(str(self.images.iloc[idx]))
+        image = Image.open(str(self.images.iloc[idx])).convert("RGB")
         if self.transforms is not None:
             image = self.transforms(image)
         caption = str(self.captions.iloc[idx])
