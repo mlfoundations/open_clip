@@ -14,6 +14,8 @@ from .transformer import (
     QuickGELU,
     ModernMultimodalTransformer,
     MultimodalTransformer,
+    ResidualAttentionBlock,
+    TextTransformer,
 )
 from .loss import fused_caption_loss
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower, _forward_tower_intermediates
@@ -90,6 +92,7 @@ class MultimodalGenerationMixin:
         fixed_output_length=False,
         generation_config=None,
         text_valid=None,
+        use_kv_cache=True,
     ):
         try:
             from .generation import generate_multimodal
@@ -99,10 +102,13 @@ class MultimodalGenerationMixin:
                 "`pip install transformers`."
             ) from e
 
+        components = self._generation_components()
+        if not use_kv_cache:
+            components.pop('cached_text_encoder_fn', None)
         return generate_multimodal(
             self,
             image=image,
-            **self._generation_components(),
+            **components,
             text=text,
             text_valid=text_valid,
             seq_len=seq_len,
@@ -433,9 +439,17 @@ class CoCa(MultimodalGenerationMixin, nn.Module):
         return out_dict
 
     def _generation_components(self):
-        return dict(
+        components = dict(
             image_embs_fn=lambda images: self._encode_image(images)[1],
             text_encoder_fn=lambda ids: self._encode_text(ids)[1],
             text_decoder_fn=self.text_decoder,
             decoder=self.text_decoder,
         )
+        # KV cache: classic causal text tower + decoder only
+        if (
+                isinstance(self.text, TextTransformer) and self.text.attn_mask is not None
+                and all(type(b) is ResidualAttentionBlock for b in self.text.transformer.resblocks)
+                and isinstance(self.text_decoder, MultimodalTransformer)
+        ):
+            components['cached_text_encoder_fn'] = self.text.forward_tokens_cached
+        return components
