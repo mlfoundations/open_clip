@@ -187,7 +187,7 @@ def push_to_hf_hub(
             model_name = repo_id.split('/')[-1]
             readme_path = Path(tmpdir) / "README.md"
             readme_text = generate_readme(model_card, model_name)
-            readme_path.write_text(readme_text)
+            readme_path.write_text(readme_text, encoding="utf-8")
 
         # Upload model and return
         return upload_folder(
