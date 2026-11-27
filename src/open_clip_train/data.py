@@ -246,17 +246,19 @@ def get_dataset_size(shards):
     # Shards from `::`-combined sources can live in different directories, each with its own size info.
     shards_by_dir = {}
     for shard in shards_list:
-        shards_by_dir.setdefault(os.path.dirname(shard), []).append(shard)
-    total_size = 0
+        shards_by_dir.setdefault(os.path.normpath(os.path.dirname(shard)), []).append(shard)
+    total_size = 0 if shards_by_dir else None
     for dir_path, dir_shards in shards_by_dir.items():
         sizes_filename = os.path.join(dir_path, 'sizes.json')
         len_filename = os.path.join(dir_path, '__len__')
         if os.path.exists(sizes_filename):
-            sizes = json.load(open(sizes_filename, 'r'))
+            with open(sizes_filename, 'r') as f:
+                sizes = json.load(f)
             total_size += sum([int(sizes[os.path.basename(shard)]) for shard in dir_shards])
         elif os.path.exists(len_filename):
             # FIXME this used to be eval(open(...)) but that seemed rather unsafe
-            total_size += ast.literal_eval(open(len_filename, 'r').read())
+            with open(len_filename, 'r') as f:
+                total_size += ast.literal_eval(f.read())
         else:
             total_size = None  # num samples undefined
             # some common dataset sizes (at time of authors last download)
