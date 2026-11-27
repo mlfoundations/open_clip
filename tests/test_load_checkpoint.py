@@ -3,6 +3,7 @@ import torch
 
 import open_clip
 from open_clip import CLIP, load_checkpoint
+from open_clip.factory import load_state_dict
 
 
 def _tiny_clip(init_logit_bias=None):
@@ -79,3 +80,13 @@ def test_load_checkpoint_preserves_persistent_position_ids(tmp_path):
     incompatible = load_checkpoint(dst, str(ckpt), strict=True)
     assert incompatible.missing_keys == [] and incompatible.unexpected_keys == []
     assert torch.equal(dst.text.transformer.embeddings.position_ids, src.text.transformer.embeddings.position_ids)
+
+
+def test_load_state_dict_handles_empty_and_module_prefix(tmp_path):
+    empty = tmp_path / 'empty.pt'
+    torch.save({}, empty)
+    assert load_state_dict(str(empty)) == {}
+
+    non_ddp = tmp_path / 'module_foo.pt'
+    torch.save({'module_foo': torch.tensor(1.0)}, non_ddp)
+    assert list(load_state_dict(str(non_ddp)).keys()) == ['module_foo']

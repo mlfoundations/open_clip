@@ -112,8 +112,8 @@ def load_checkpoint(
     if 'epoch' in checkpoint:
         start_epoch = checkpoint["epoch"]
         sd = checkpoint["state_dict"]
-        if not is_distributed and next(iter(sd.items()))[0].startswith('module'):
-            sd = {k[len('module.'):]: v for k, v in sd.items()}
+        if not is_distributed and sd and next(iter(sd)).startswith('module.'):
+            sd = {k.removeprefix('module.'): v for k, v in sd.items()}
         task_sd = {"state_dict": sd}
         if 'state_dict_ema' in checkpoint:
             task_sd["state_dict_ema"] = checkpoint["state_dict_ema"]
