@@ -287,7 +287,7 @@ def load_checkpoint(
 
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
-    if position_id_key in state_dict and not hasattr(model, position_id_key):
+    if position_id_key in state_dict and position_id_key not in model.state_dict():
         del state_dict[position_id_key]
 
     resize_pos_embed(state_dict, model)

@@ -60,3 +60,22 @@ def test_load_clip_checkpoint_into_audio_only_model_non_strict(tmp_path):
     genlap = open_clip.create_model('naflexgenlap_test_1d')
     incompatible = load_checkpoint(genlap, str(ckpt), strict=False)
     assert 'visual.positional_embedding' in incompatible.unexpected_keys
+
+
+def test_load_checkpoint_preserves_persistent_position_ids(tmp_path):
+    def _make():
+        m = torch.nn.Module()
+        m.text = torch.nn.Module()
+        m.text.transformer = torch.nn.Module()
+        m.text.transformer.embeddings = torch.nn.Module()
+        m.text.transformer.embeddings.register_buffer('position_ids', torch.arange(8).unsqueeze(0), persistent=True)
+        return m
+
+    src, dst = _make(), _make()
+    src.text.transformer.embeddings.position_ids.fill_(5)
+    ckpt = tmp_path / 'pos_ids.pt'
+    torch.save(src.state_dict(), ckpt)
+
+    incompatible = load_checkpoint(dst, str(ckpt), strict=True)
+    assert incompatible.missing_keys == [] and incompatible.unexpected_keys == []
+    assert torch.equal(dst.text.transformer.embeddings.position_ids, src.text.transformer.embeddings.position_ids)
