@@ -56,3 +56,9 @@ def test_caption_loss_options_reject_invalid_values(option):
 def test_siglip_chunk_size_rejects_negative_values():
     with pytest.raises(ValueError, match="--siglip-chunk-size must be >= 0"):
         parse_args(["--siglip", "--siglip-chunk-size", "-1"])
+
+
+def test_lock_text_freeze_layer_norm_defaults_true():
+    assert parse_args([]).lock_text_freeze_layer_norm is True
+    assert parse_args(["--lock-text-freeze-layer-norm"]).lock_text_freeze_layer_norm is True
+    assert parse_args(["--no-lock-text-freeze-layer-norm"]).lock_text_freeze_layer_norm is False
