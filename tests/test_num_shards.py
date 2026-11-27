@@ -55,3 +55,10 @@ def test_dataset_size_unknown_when_any_source_lacks_info(tmp_path):
     (tmp_path / 'e').mkdir()
     shards = f'{tmp_path}/a/00000.tar::{tmp_path}/e/00000.tar'
     assert get_dataset_size(shards) == (None, 2)
+
+
+def test_dataset_size_equivalent_dir_paths_counted_once(tmp_path):
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'a' / '__len__').write_text('100')
+    shards = f'{tmp_path}/a/00000.tar::{tmp_path}/a/./00001.tar'
+    assert get_dataset_size(shards) == (100, 2)
