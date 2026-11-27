@@ -253,7 +253,7 @@ def load_state_dict(
 
 
 def load_checkpoint(
-        model: Union[CLIP, CustomTextCLIP],
+        model: torch.nn.Module,
         checkpoint_path: str,
         strict: bool = True,
         weights_only: bool = True,
@@ -275,17 +275,15 @@ def load_checkpoint(
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
 
-    # correct if logit_scale differs in being scaler vs 1d param
-    if 'logit_scale' in state_dict and model.logit_scale.ndim != state_dict['logit_scale'].ndim:
-        state_dict['logit_scale'] = state_dict['logit_scale'].reshape(model.logit_scale.shape)
-
-    # correct if logit_bias differs in being scaler vs 1d param
-    if 'logit_bias' in state_dict and model.logit_bias.ndim != state_dict['logit_bias'].ndim:
-        state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model.logit_bias.shape)
+    # correct if logit_scale / logit_bias differ in being scalar vs 1d param
+    for key in ('logit_scale', 'logit_bias'):
+        param = getattr(model, key, None)
+        if param is not None and key in state_dict and param.ndim != state_dict[key].ndim:
+            state_dict[key] = state_dict[key].reshape(param.shape)
 
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
-    if 'logit_bias' not in state_dict and model.logit_bias is not None:
-        state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
+    if 'logit_bias' not in state_dict and getattr(model, 'logit_bias', None) is not None and 'logit_scale' in state_dict:
+        state_dict['logit_bias'] = torch.zeros_like(state_dict['logit_scale'])
 
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
