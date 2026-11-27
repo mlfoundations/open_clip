@@ -675,9 +675,10 @@ def parse_args(args):
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
-        default=False,
-        action='store_true',
-        help="Freeze LayerNorm running stats in text tower for any locked layers.",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Freeze LayerNorm weights in locked text tower layers (default: True; pass "
+             "--no-lock-text-freeze-layer-norm to leave BERT-style HF LayerNorms trainable).",
     )
     parser.add_argument(
         "--log-every-n-steps",
