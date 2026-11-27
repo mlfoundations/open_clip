@@ -247,8 +247,8 @@ def load_state_dict(
         state_dict = checkpoint['state_dict']
     else:
         state_dict = checkpoint
-    if next(iter(state_dict.items()))[0].startswith('module'):
-        state_dict = {k[7:]: v for k, v in state_dict.items()}
+    if state_dict and next(iter(state_dict)).startswith('module.'):
+        state_dict = {k.removeprefix('module.'): v for k, v in state_dict.items()}
     return state_dict
 
 

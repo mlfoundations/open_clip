@@ -354,8 +354,8 @@ def main(args):
             # resuming a train checkpoint w/ epoch and optimizer state
             start_epoch = checkpoint["epoch"]
             sd = checkpoint["state_dict"]
-            if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                sd = {k[len('module.'):]: v for k, v in sd.items()}
+            if not args.distributed and sd and next(iter(sd)).startswith('module.'):
+                sd = {k.removeprefix('module.'): v for k, v in sd.items()}
             model.load_state_dict(sd)
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint["optimizer"])
