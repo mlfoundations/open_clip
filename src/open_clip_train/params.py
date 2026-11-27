@@ -677,7 +677,8 @@ def parse_args(args):
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze LayerNorm running stats in text tower for any locked layers.",
+        help="Also freeze LayerNorm weights in locked layers of BERT-style HF text towers "
+             "(RoBERTa, XLM-R). No effect on other text towers.",
     )
     parser.add_argument(
         "--log-every-n-steps",

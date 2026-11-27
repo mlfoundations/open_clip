@@ -519,6 +519,9 @@ def test_modern_text_public_surface_and_lock():
     assert any(n.startswith("blocks.0.") for n in frozen)
     assert not any(n.startswith("text_projection.") for n in frozen)
 
+    model.lock(unlocked_layers=0, freeze_layer_norm=False)
+    assert not any(p.requires_grad for p in model.parameters())
+
 
 def test_modern_text_validates_attention_geometry():
     with pytest.raises(ValueError, match=r"width \(30\) must be divisible by heads \(8\)"):

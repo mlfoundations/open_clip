@@ -1669,7 +1669,7 @@ class ModernTextTransformer(nn.Module):
         return groups
 
     def lock(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True, pooler_in_head: bool = True):
-        assert freeze_layer_norm, 'Unfreezing normalization layers is not supported.'
+        # freeze_layer_norm is ignored (kept for a common signature): norms lock and unlock with their layer group.
         _lock_layer_groups(self.layer_groups(pooler_in_head), unlocked_layers)
 
     def no_weight_decay(self):
@@ -1911,7 +1911,6 @@ class TextTransformer(nn.Module):
             freeze_layer_norm: LayerNorm freeze (only for API compatibility, not functional)
             pooler_in_head: pooler placement policy (no effect for the native tower; kept for a common signature).
         """
-        assert freeze_layer_norm, 'Unfreezing LayerNorm is not supported. LayerNorm treated like other weights.'
         lock_text_tower(self, unlocked_layers, pooler_in_head)
 
     def no_weight_decay(self):

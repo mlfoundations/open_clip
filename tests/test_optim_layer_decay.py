@@ -85,6 +85,17 @@ def test_native_lock_unlocks_top_groups():
     assert not any(n.startswith(f"transformer.resblocks.{n_blocks - 1}.") for n in frozen2), "top block trainable"
 
 
+@pytest.mark.parametrize("model_name", [NATIVE_MODEL, "ViT-B-32"])
+def test_native_lock_accepts_freeze_layer_norm_false(model_name):
+    # --lock-text passes freeze_layer_norm=False unless --lock-text-freeze-layer-norm is set. Native towers ignore
+    # the flag and freeze their norms with the rest of the layer.
+    model = open_clip.create_model(model_name)
+    model.lock_text_tower(unlocked_layers=0, freeze_layer_norm=True)
+    expected = {n: p.requires_grad for n, p in model.named_parameters()}
+    model.lock_text_tower(unlocked_layers=0, freeze_layer_norm=False)
+    assert {n: p.requires_grad for n, p in model.named_parameters()} == expected
+
+
 def test_create_optimizer_default_path_unchanged():
     model = open_clip.create_model(NATIVE_MODEL)
     opt = create_optimizer(model, _cfg(opt="adamw", text_layer_decay=None))
