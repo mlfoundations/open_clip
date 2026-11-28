@@ -90,3 +90,27 @@ def test_load_state_dict_handles_empty_and_module_prefix(tmp_path):
     non_ddp = tmp_path / 'module_foo.pt'
     torch.save({'module_foo': torch.tensor(1.0)}, non_ddp)
     assert list(load_state_dict(str(non_ddp)).keys()) == ['module_foo']
+
+
+def _tiny_resnet_clip(image_size):
+    return CLIP(
+        embed_dim=16,
+        vision_cfg=dict(layers=(1, 1, 1, 1), width=8, image_size=image_size),
+        text_cfg=dict(context_length=8, vocab_size=64, width=32, heads=2, layers=1),
+    )
+
+
+def test_load_checkpoint_resizes_modified_resnet_attnpool(tmp_path):
+    torch.manual_seed(0)
+    sd = _tiny_resnet_clip(224).state_dict()
+    old_pos_embed = sd['visual.attnpool.positional_embedding']
+    ckpt = tmp_path / 'rn_224.pt'
+    torch.save(sd, ckpt)
+
+    model = _tiny_resnet_clip(288)
+    incompatible = load_checkpoint(model, str(ckpt), strict=True)
+    assert incompatible.missing_keys == [] and incompatible.unexpected_keys == []
+    pos_embed = model.visual.attnpool.positional_embedding.detach()
+    assert pos_embed.shape == (9 * 9 + 1, old_pos_embed.shape[1])
+    assert torch.equal(pos_embed[0], old_pos_embed[0])
+    assert model.encode_image(torch.randn(1, 3, 288, 288)).shape == (1, 16)

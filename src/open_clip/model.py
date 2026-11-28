@@ -822,11 +822,18 @@ def convert_to_custom_text_state_dict(state_dict: dict):
 
 def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialias: bool = True):
     # Rescale the grid of position embeddings when loading from state_dict
-    old_pos_embed = state_dict.get('visual.positional_embedding', None)
+    pos_embed_key = 'visual.positional_embedding'
+    old_pos_embed = state_dict.get(pos_embed_key, None)
     visual = getattr(model, 'visual', None)
-    if old_pos_embed is None or not hasattr(visual, 'grid_size'):
+    if old_pos_embed is not None and hasattr(visual, 'grid_size'):
+        grid_size = to_2tuple(visual.grid_size)
+    elif getattr(visual, 'attnpool', None) is not None and 'visual.attnpool.positional_embedding' in state_dict:
+        # ModifiedResNet attention pools over the stride 32 feature map
+        pos_embed_key = 'visual.attnpool.positional_embedding'
+        old_pos_embed = state_dict[pos_embed_key]
+        grid_size = to_2tuple(visual.image_size // 32)
+    else:
         return
-    grid_size = to_2tuple(visual.grid_size)
     extra_tokens = 1  # FIXME detect different token configs (ie no class token, or more)
     new_seq_len = grid_size[0] * grid_size[1] + extra_tokens
     if new_seq_len == old_pos_embed.shape[0]:
@@ -852,7 +859,7 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
         new_pos_embed = torch.cat([pos_emb_tok, pos_emb_img], dim=0)
     else:
         new_pos_embed = pos_emb_img
-    state_dict['visual.positional_embedding'] = new_pos_embed
+    state_dict[pos_embed_key] = new_pos_embed
 
 
 def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
