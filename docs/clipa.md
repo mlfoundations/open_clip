@@ -37,15 +37,25 @@ Eight token length reduction strategies are investigated in this work, detailed 
 
 ## Text token length reduction
 
-* `syntax mask`: Assign different masking priorities to parts of speech. Specify `"text_mask": syntax` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. 
+* `syntax mask`: Assign different masking priorities to parts of speech. Specify `"reduction_mask": "syntax"` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. 
 Specifically, we prioritize retaining nouns, followed by adjectives, and then other words. 
 We find this strategy generally works the best as it retains critical information for contrastive learning.
 
 * `truncate`: Truncation selects the first N text tokens and discards the rest. This is the default setting of `open_clip`. 
 
-* `random mask`: Randomly drops a portion of the text tokens. Specify `"text_mask": random` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. 
+* `random mask`: Randomly drops a portion of the text tokens. Specify `"reduction_mask": "random"` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. `"reduction_mask": "shuffle"` does the same but also shuffles the order of the kept tokens.
 
-* `block mask`: Randomly preserves consecutive text sequences. Specify `"text_mask": block` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. 
+* `block mask`: Randomly preserves consecutive text sequences. Specify `"reduction_mask": "simple"` in `"tokenizer_kwargs"` in `"text_cfg"` of model config `json` file to use. 
+
+For example, to use `syntax mask`, add this to the `"text_cfg"` of the model config:
+
+```json
+"tokenizer_kwargs": {
+    "reduction_mask": "syntax"
+}
+```
+
+`"reduction_mask"` is an option of the default `SimpleTokenizer`, so it only applies to configs that do not set `"hf_tokenizer_name"`.
 
 
 ## Installation
